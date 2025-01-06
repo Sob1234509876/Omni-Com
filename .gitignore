@@ -1,21 +1,6 @@
-# Ignore .*
-.gradle
-.vscode
-.idea
-
 # Ignore Gradle build output directory
-build
+**/build
 
-# Ignore run test folders
-plugins
-configs
-reports
-saves
-
-# Java compile outputs
-*.jar
-*.class
-
-# But the classes of jopt and log4j shouldn`t be ignored
-!core/src/**
+# Ignore temporary folders
+**/.**
 

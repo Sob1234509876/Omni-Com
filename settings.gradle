@@ -1,28 +1,15 @@
 pluginManagement {
+    plugins {
+        id 'org.jetbrains.kotlin.jvm' version '2.0.20'
+    }
 
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+
+        maven {url = uri("https://maven.aliyun.com/repository/gradle-plugin")}
+
         mavenLocal()
     }
-
-    plugins {
-        id 'top.sob.idp' version '1.0a'
-        id 'org.jetbrains.kotlin.jvm' version '2.0.20'
-
-        id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
-    }
-
 }
 
-rootProject.name = 'Omni com'
-
-include ':projects:core:loader',
-        ':projects:core:utils',
-        ':projects:core:proof',
-        'projects:core:gui',
-        'projects:core:idp'
-
-include ':projects:plugins:vanilla'
-include 'projects:core:api'
-findProject(':projects:core:api')?.name = 'api'
-
+rootProject.name = 'Omni Platform'
+include 'app'
