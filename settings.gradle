@@ -1,15 +1,1 @@
-pluginManagement {
-    plugins {
-        id 'org.jetbrains.kotlin.jvm' version '2.0.20'
-    }
-
-    repositories {
-
-        maven {url = uri("https://maven.aliyun.com/repository/gradle-plugin")}
-
-        mavenLocal()
-    }
-}
-
 rootProject.name = 'Omni Platform'
-include 'app'

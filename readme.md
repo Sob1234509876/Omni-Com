@@ -1,27 +1,22 @@
-Omni com
+Omni Platform
 ===
-A little game which it has __Nearly__ no GUI! This game is being inspired by a game on Crazy Games called "Space
-Company"<p>
-Link : https://www.crazygames.com/game/space-company<p>
-![logo_HAND_MADE_TM](https://static.wikia.nocookie.net/omni-com-official/images/2/29/Blank_128x128.png) The logo of this
-game.
+A part of Omni applications, used as an execution platform for the applications.
 
-Compiling
+Compile
 ===
-Simply run <code>gradlew build</code>.
+Simply run command <code>gradlew build</code>. If you cannot download Gradle using this wrapper, please change the
+distribution URL to the one you prefer. This wrapper uses the Tencent Mirror.
 
-Running
+Tutorial
 ===
-To run the core, run command <code>gradlew core:run</code>.<p>
-To run the core with Vanilla plugin installed, run command <code>gradlew vanilla:runByCore</code>.
+Here is how the platform works through the <code>java</code> command :
+<br>
 
-Change logs :
-===
-See [here](https://omni-com-official.fandom.com/wiki/Change_log) at the fandom wiki.
+1. Invoke <code>top.sob.platform.Main.main(String[])</code>
+2. Resolve the passed in classpath *
+3. Create a PlatformBuilder (<code>top.sob.platform.api.PlatformBuilder</code>) and build a new platform
+4. Execute the created platform using the <code>exec()</code> method
 
-Q&A :
-===
-Q: Why did the game crashed on the first time of launch?<br>
-
-A: Probably because the core is generating configurations and temporary files. Rerun the core and the problem will
-probably disappear.
+\* The classpath is passed through the <code>java -D</code> option, the classpath`s key is "cp". One can pass in
+multiple classpath by adding semicolons between. Note that the classpath will be automatically expanded, to close the
+auto-expand process please pass in another option with the key "dae" and the value "true".

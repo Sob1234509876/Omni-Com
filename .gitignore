@@ -4,3 +4,6 @@
 # Ignore temporary folders
 **/.**
 
+# Ignore plugins folders
+**/plugins
+

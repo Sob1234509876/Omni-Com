@@ -1,0 +1,55 @@
+//file:noinspection VulnerableLibrariesLocal
+plugins {
+    id 'java'
+    id 'application'
+    id 'maven-publish'
+
+    id 'org.springframework.boot' version '3.4.2'
+}
+
+group = 'top.sob.platform'
+version = '2.0a'
+
+repositories {
+    maven { url = uri('https://maven.aliyun.com/repository/central') }
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    testImplementation libs.junit.jupiter
+
+    implementation libs.spring.boot
+
+    implementation libs.lombok
+
+    implementation libs.jannotations
+
+    annotationProcessor libs.lombok
+}
+
+application {
+    mainClass = 'top.sob.platform.Main'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'top.sob.platform.Main'
+    }
+}
+
+test {
+    useJUnitPlatform()
+}
+
+publishing {
+    publications {
+        Authorizer(MavenPublication) {
+            from components.java
+
+            groupId = 'top.sob'
+            artifactId = 'platform'
+            version = '2.0a'
+        }
+    }
+}
