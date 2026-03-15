@@ -1,0 +1,12 @@
+spring:
+  messages:
+    basename: assets/lang/engine
+
+oc:
+  mongo:
+    database: omni-com
+    address: mongodb://localhost
+  data:
+    repository: mongo
+  engine:
+    msu: 50

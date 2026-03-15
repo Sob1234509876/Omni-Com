@@ -624,7 +624,7 @@
 
 package io.github.sob1234509876.oc.engine.api.type;
 
-import io.github.sob1234509876.oc.engine.api.ArithmeticNumber;
+import io.github.sob1234509876.oc.engine.api.Ordinal;
 import io.github.sob1234509876.oc.engine.api.Parent;
 import io.github.sob1234509876.oc.engine.api.event.EventListener;
 import io.github.sob1234509876.oc.engine.api.ui.Size;
@@ -643,7 +643,7 @@ public interface Building extends EventListener, Parent {
     Size getSize();
 
     @NonNull
-    Optional<ArithmeticNumber> getHp();
+    Optional<Ordinal> getHp();
 
     @NonNull
     List<@NonNull Machine> getMachines();

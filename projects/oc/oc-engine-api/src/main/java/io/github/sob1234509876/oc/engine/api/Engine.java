@@ -624,29 +624,30 @@
 
 package io.github.sob1234509876.oc.engine.api;
 
-import io.github.sob1234509876.oc.engine.api.event.EventBus;
+import io.github.sob1234509876.oc.engine.api.collection.EngineEventBusCollection;
 import lombok.NonNull;
 
 import java.util.Timer;
 
-public interface Engine {
-
-    @NonNull
-    String getInstanceName();
-
-    long getCreationTimestamp();
+public interface Engine extends Parent {
 
     @NonNull
     Context getContext();
 
     @NonNull
-    EventBus getEventBus();
+    ResourceManager getResourceManager();
 
     @NonNull
-    Timer getUpdater();
+    EngineEventBusCollection getEventBusCollection();
 
     @NonNull
     Timer getSchedule();
 
-    void update() throws Exception;
+    void start();
+
+    boolean isStarted();
+
+    int getMsu();
+
+    void update();
 }

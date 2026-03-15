@@ -624,13 +624,30 @@
 
 package io.github.sob1234509876.oc.engine.api.type;
 
-import io.github.sob1234509876.oc.engine.api.ArithmeticNumber;
+import io.github.sob1234509876.oc.engine.api.Ordinal;
 import io.github.sob1234509876.oc.engine.api.Parent;
-import io.github.sob1234509876.oc.engine.api.collection.LimitedSet;
-import io.github.sob1234509876.oc.engine.api.event.EventListener;
 import lombok.NonNull;
 
-public interface Storage extends Parent, EventListener {
+import java.util.Map;
+import java.util.Optional;
+
+public interface Storage extends Parent {
+
     @NonNull
-    LimitedSet<@NonNull Item, @NonNull ArithmeticNumber> getItems();
+    Ordinal getLimitSize();
+
+    boolean add(@NonNull Item item);
+
+    @NonNull
+    Optional<Item> get(@NonNull Class<? extends Item> clazz);
+
+    boolean remove(@NonNull Item item);
+
+    boolean delete(@NonNull Class<? extends Item> clazz);
+
+    @NonNull
+    Ordinal size();
+
+    @NonNull
+    Map<@NonNull Class<? extends Item>, @NonNull Item> asMap();
 }

@@ -632,29 +632,14 @@ import java.util.Optional;
 public interface Tag {
 
     @NonNull
-    Optional<Long> asLong();
+    Optional<Object> as();
+
+    void set(@NonNull Object o);
 
     @NonNull
-    Optional<Double> asDouble();
+    Optional<Tag> get(@NonNull String attr);
 
-    @NonNull
-    Optional<byte[]> asBytes();
-
-    @NonNull
-    Optional<String> asString();
-
-    void setLong(long l);
-
-    void setDouble(double d);
-
-    void setBytes(byte @NonNull [] bytes);
-
-    void setString(@NonNull String s);
-
-    @NonNull
-    Optional<Tag> getTag(@NonNull String... attrs);
-
-    void setTag(@NonNull Tag tag, @NonNull String... attrs);
+    void set(@NonNull String attr, @NonNull Tag tag);
 
     @NonNull
     Map<@NonNull String, @NonNull Tag> asMap();

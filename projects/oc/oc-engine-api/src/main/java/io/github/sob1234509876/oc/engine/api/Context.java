@@ -624,44 +624,21 @@
 
 package io.github.sob1234509876.oc.engine.api;
 
-import io.github.sob1234509876.oc.engine.api.registry.MainRegistry;
+import io.github.sob1234509876.oc.engine.api.collection.ParentMap;
 import io.github.sob1234509876.oc.engine.api.type.Area;
 import io.github.sob1234509876.oc.engine.api.type.Player;
 import lombok.NonNull;
 
-import java.util.Map;
-import java.util.Optional;
+import java.util.UUID;
 
-public interface Context {
-
-    @NonNull
-    Map<@NonNull Long, @NonNull Area> getLoadedArea();
+public interface Context extends Parent {
 
     @NonNull
-    default Optional<Area> getLoadedArea(long id) {
-        return Optional.ofNullable(getLoadedArea()
-                .get(id));
-    }
+    ParentMap<@NonNull UUID, @NonNull Area> getAreas();
 
     @NonNull
-    default Optional<Area> getArea(long id) {
-        var tmp = getLoadedArea(id);
-        if (tmp.isEmpty())
-            return loadArea(id);
-        return tmp;
-    }
+    ParentMap<@NonNull UUID, @NonNull Player> getPlayers();
 
     @NonNull
-    Optional<Area> loadArea(long id);
-
-    default boolean existsArea(long id) {
-        return getArea(id)
-                .isPresent();
-    }
-
-    @NonNull
-    MainRegistry getRegistry();
-
-    @NonNull
-    Player getPlayer(long id);
+    ParentMap<@NonNull Player, @NonNull Area> getPlayerToAreas();
 }

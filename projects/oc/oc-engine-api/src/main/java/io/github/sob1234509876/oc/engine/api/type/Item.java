@@ -624,7 +624,7 @@
 
 package io.github.sob1234509876.oc.engine.api.type;
 
-import io.github.sob1234509876.oc.engine.api.ArithmeticNumber;
+import io.github.sob1234509876.oc.engine.api.Ordinal;
 import io.github.sob1234509876.oc.engine.api.Parent;
 import lombok.NonNull;
 
@@ -632,7 +632,9 @@ import java.util.Optional;
 
 public interface Item extends Parent {
     @NonNull
-    Optional<ArithmeticNumber> getAmount();
+    Optional<Ordinal> getAmount();
 
     void add(@NonNull Item item);
+
+    void remove(@NonNull Item item);
 }

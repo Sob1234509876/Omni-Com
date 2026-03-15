@@ -625,12 +625,25 @@
 package io.github.sob1234509876.oc.engine.api.type;
 
 import io.github.sob1234509876.oc.engine.api.Parent;
-import io.github.sob1234509876.oc.engine.api.event.EventListener;
+import io.github.sob1234509876.oc.engine.api.event.Event;
 import io.github.sob1234509876.oc.engine.api.ui.UserInterface;
 import lombok.NonNull;
 
-public interface Machine extends EventListener, Parent {
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Future;
+
+public interface Machine extends Parent {
+
+    @NonNull
+    List<@NonNull Condition> getConditions();
+
+    @NonNull
+    Optional<Future<@NonNull Optional<Event>>> post(@NonNull Recipe recipe);
 
     @NonNull
     UserInterface getUserInterface();
+
+    @NonNull
+    List<@NonNull Recipe> getAllowedRecipes();
 }

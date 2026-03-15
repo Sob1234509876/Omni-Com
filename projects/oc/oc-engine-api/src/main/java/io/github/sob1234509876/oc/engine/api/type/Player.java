@@ -624,11 +624,15 @@
 
 package io.github.sob1234509876.oc.engine.api.type;
 
+import io.github.sob1234509876.oc.engine.api.ui.Position;
 import lombok.NonNull;
 
 public interface Player extends Entity {
+
     @NonNull
     String getName();
 
     void execute();
+
+    void move(@NonNull Position position);
 }

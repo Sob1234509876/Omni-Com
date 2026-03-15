@@ -636,7 +636,7 @@ import java.util.Optional;
 public interface Area extends Parent {
 
     @NonNull
-    Optional<URL> getBackground();
+    Optional<URL> getTexture();
 
     @NonNull
     Size getSize();
