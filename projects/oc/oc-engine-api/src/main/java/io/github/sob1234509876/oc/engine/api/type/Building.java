@@ -624,7 +624,7 @@
 
 package io.github.sob1234509876.oc.engine.api.type;
 
-import io.github.sob1234509876.oc.engine.api.Ordinal;
+import io.github.sob1234509876.oc.engine.api.googology.Ordinal;
 import io.github.sob1234509876.oc.engine.api.Parent;
 import io.github.sob1234509876.oc.engine.api.event.EventListener;
 import io.github.sob1234509876.oc.engine.api.ui.Size;
