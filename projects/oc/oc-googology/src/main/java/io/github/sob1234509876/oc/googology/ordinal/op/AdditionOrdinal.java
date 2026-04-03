@@ -15,18 +15,16 @@ import io.github.sob1234509876.oc.googology.optional.op.OptionalAdditionOrdinal;
 import io.github.sob1234509876.oc.googology.optional.op.OptionalOperationOrdinal;
 import io.github.sob1234509876.oc.googology.optional.transfinite.OptionalLimitOrdinal;
 import io.github.sob1234509876.oc.googology.optional.transfinite.OptionalTransfiniteOrdinal;
-import io.github.sob1234509876.oc.googology.ordinal.finite.hierarchy.FghOrdinal;
 import io.github.sob1234509876.oc.googology.ordinal.finite.successor.LongOrdinal;
-import io.github.sob1234509876.oc.googology.support.Functions;
 import io.github.sob1234509876.oc.googology.support.Longs;
 import io.github.sob1234509876.oc.googology.support.Ordinals;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 
+import java.util.LinkedList;
 import java.util.Optional;
 
-// TODO
 @Data
 @NoArgsConstructor
 public class AdditionOrdinal implements OperationOrdinal,
@@ -39,66 +37,64 @@ public class AdditionOrdinal implements OperationOrdinal,
 
     @SupportOptional(OptionalSuccessorOrdinal.class)
     public boolean isSuccessorOrdinal() {
-        return !ordinals.isEmpty() &&
-                ordinals.getLast()
-                        .flatMap(o -> o.optional(OptionalSuccessorOrdinal.class)
-                                .flatMap(OptionalSuccessorOrdinal::toSuccessorOrdinal)
-                                .map(Functions::alwaysTrue))
-                        .orElse(false);
+        if (ordinals.isEmpty())
+            return false;
+
+        return Ordinals.isSuccessorOrdinal(ordinals.getLast()
+                .orElseThrow(NullPointerException::new));
     }
 
     @SupportOptional(OptionalLimitOrdinal.class)
     public boolean isLimitOrdinal() {
-        return !ordinals.isEmpty() &&
-                ordinals.getLast()
-                        .flatMap(o -> o.optional(OptionalLimitOrdinal.class)
-                                .flatMap(OptionalLimitOrdinal::toLimitOrdinal)
-                                .map(Functions::alwaysTrue))
-                        .orElse(false);
+        if (ordinals.isEmpty())
+            return false;
+
+        return Ordinals.isLimitOrdinal(ordinals.getLast()
+                .orElseThrow(NullPointerException::new));
     }
 
     @SupportOptional(OptionalLongOrdinal.class)
-    public boolean isTooBig() {
+    @NonNull
+    public Optional<Long> calculateLong() {
+        var lst = new LinkedList<@NonNull Long>();
 
         for (var o : ordinals.toList()) {
-            var tmp = o.optional(OptionalLongOrdinal.class)
-                    .flatMap(OptionalLongOrdinal::toLongOrdinal);
-            if (tmp.isEmpty())
-                return true;
+            var opt = o.optional(OptionalLongOrdinal.class)
+                    .flatMap(OptionalLongOrdinal::toLongOrdinal)
+                    .map(LongOrdinal::getValue);
+
+            if (opt.isEmpty())
+                return Optional.empty();
+
+            lst.add(opt.get());
         }
 
-        return false;
+        return Longs.safeAddition(lst.toArray(Long[]::new));
     }
 
     @SupportOptional(OptionalTransfiniteOrdinal.class)
     public boolean isTransfiniteOrdinal() {
-        return ordinals.getLast()
-                .flatMap(o -> o.optional(OptionalTransfiniteOrdinal.class)
-                        .flatMap(OptionalTransfiniteOrdinal::toTransfiniteOrdinal)
-                        .map(Functions::alwaysTrue))
-                .orElse(false);
+        if (ordinals.isEmpty())
+            return false;
+
+        return Ordinals.isTransfiniteOrdinal(ordinals.getLast()
+                .orElseThrow(NullPointerException::new));
     }
 
-    @SupportOptional(OptionalFghOrdinal.class)
-    @Override
-    public @NonNull Optional<FghOrdinal> toFghOrdinal() {
-        if (ordinals.isEmpty())
-            return Optional.empty();
+    @SupportOptional(OptionalZeroOrdinal.class)
+    public boolean isZeroOrdinal() {
 
-        return ordinals.getFirst()
-                .flatMap(o -> o.optional(OptionalFghOrdinal.class)
-                        .flatMap(OptionalFghOrdinal::toFghOrdinal));
+        for (var o : ordinals.toList())
+            if (!Ordinals.isZeroOrdinal(o))
+                return false;
+
+        return true;
     }
 
     @SupportOptional(OptionalZeroOrdinal.class)
     @Override
     public @NonNull Optional<ZeroOrdinal> toZeroOrdinal() {
-        if (ordinals.isEmpty())
-            return Optional.empty();
-
-        return ordinals.getFirst()
-                .map(Ordinals::isZero)
-                .orElse(false) ?
+        return isZeroOrdinal() ?
                 Optional.of(new ImplZeroOrdinal()) :
                 Optional.empty();
     }
@@ -106,19 +102,7 @@ public class AdditionOrdinal implements OperationOrdinal,
     @SupportOptional(OptionalLongOrdinal.class)
     @Override
     public @NonNull Optional<LongOrdinal> toLongOrdinal() {
-
-        if (isTooBig())
-            return Optional.empty();
-
-        var lst = ordinals.toList()
-                .stream()
-                .map(o -> o.optional(OptionalLongOrdinal.class)
-                        .flatMap(OptionalLongOrdinal::toLongOrdinal)
-                        .map(LongOrdinal::getValue)
-                        .orElseThrow(NullPointerException::new))
-                .toArray(Long[]::new);
-
-        return Longs.safeAddition(lst)
+        return calculateLong()
                 .map(LongOrdinal::new);
     }
 
@@ -178,11 +162,6 @@ public class AdditionOrdinal implements OperationOrdinal,
         return Optional.of(this);
     }
 
-    @Override
-    public int compareTo(@NonNull Ordinal o) {
-        return 0;
-    }
-
     @NonNull
     @Override
     public String toString() {
@@ -201,6 +180,28 @@ public class AdditionOrdinal implements OperationOrdinal,
         return sb.toString();
     }
 
-    public void add(@NonNull Ordinal o) {
+    // TODO
+    @SupportOptional({OptionalZeroOrdinal.class,
+            OptionalLongOrdinal.class,
+            OptionalFghOrdinal.class,
+            OptionalLimitOrdinal.class,
+            OptionalTransfiniteOrdinal.class,
+            OptionalAdditionOrdinal.class})
+    @Override
+    public int compareTo(@NonNull Ordinal o) {
+
+        var res = o.optional(OptionalZeroOrdinal.class)
+                .flatMap(OptionalZeroOrdinal::toZeroOrdinal)
+                .map(zero -> isZeroOrdinal() ? 0 : 1);
+        if (res.isPresent())
+            return res.get();
+
+        var res2 = o.optional(OptionalLongOrdinal.class)
+                .flatMap(OptionalLongOrdinal::toLongOrdinal)
+                .map(LongOrdinal::getValue)
+                .flatMap(l -> calculateLong()
+                        .map(r -> Long.compare(r, l)));
+        return res2.orElseGet(() -> -o.compareTo(this));
     }
+
 }

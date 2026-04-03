@@ -57,7 +57,7 @@ public class VeblenOrdinal implements LimitOrdinal,
     @SupportOptional(OptionalOmegaOrdinal.class)
     @Override
     public @NonNull Optional<OmegaOrdinal> toOmegaOrdinal() {
-        if (Ordinals.isZero(a) && Ordinals.isZero(b))
+        if (Ordinals.isZeroOrdinal(a) && Ordinals.isZeroOrdinal(b))
             return Optional.of(new OmegaOrdinal());
         return Optional.empty();
     }

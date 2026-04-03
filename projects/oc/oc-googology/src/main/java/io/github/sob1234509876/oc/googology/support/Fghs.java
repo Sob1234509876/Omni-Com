@@ -168,10 +168,8 @@ public class Fghs {
 
                     return Long.compare(fgh.getValue(), f.getValue());
                 });
-        if (res4.isPresent())
-            return res4.get();
+        return res4.orElseGet(() -> -ordinal.compareTo(fgh));
 
-        throw new UnsupportedOperationException("Unknown ordinal " + ordinal);
     }
 
 }

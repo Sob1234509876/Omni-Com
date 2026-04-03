@@ -75,10 +75,8 @@ public class LongOrdinal implements FiniteOrdinal,
         var res5 = o.optional(OptionalZeroOrdinal.class)
                 .flatMap(OptionalZeroOrdinal::toZeroOrdinal)
                 .map(zero -> Long.compare(value, 0));
-        if (res5.isPresent())
-            return res5.get();
+        return res5.orElseGet(() -> -o.compareTo(this));
 
-        throw new UnsupportedOperationException("Unknown ordinal " + o);
     }
 
     @SupportOptional(OptionalSuccessorOrdinal.class)

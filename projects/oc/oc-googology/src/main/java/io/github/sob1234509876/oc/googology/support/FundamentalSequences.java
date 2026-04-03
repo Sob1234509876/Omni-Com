@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.googology.support;
 
 import io.github.sob1234509876.oc.engine.api.googology.FundamentalSequence;
 import io.github.sob1234509876.oc.engine.api.googology.Ordinal;
+import io.github.sob1234509876.oc.googology.impl.ImplZeroOrdinal;
 import io.github.sob1234509876.oc.googology.ordinal.finite.successor.LongOrdinal;
 import io.github.sob1234509876.oc.googology.ordinal.transfinite.VeblenOrdinal;
 import lombok.AccessLevel;
@@ -33,12 +34,8 @@ public class FundamentalSequences {
         return new FundamentalSequence() {
             @Override
             public @NonNull Ordinal apply(int value) {
-
-                var a = o.getA();
-                var b = o.getB();
-
+                return new ImplZeroOrdinal();
             }
-        }
+        };
     }
-
 }
