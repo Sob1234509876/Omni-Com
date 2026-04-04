@@ -95,7 +95,7 @@ public class Fghs {
 
                     var tmp = value;
                     for (var i = 0; i < value; i++)
-                        tmp = evaluate(new LongOrdinal(v - 1), value);
+                        tmp = evaluate(new LongOrdinal(v - 1), tmp);
 
                     return tmp;
                 });
@@ -151,9 +151,8 @@ public class Fghs {
 
         var res3 = ordinal.optional(OptionalLongOrdinal.class)
                 .flatMap(OptionalLongOrdinal::toLongOrdinal)
-                .map(l -> safeEvaluate(fgh)
-                        .map(r -> Long.compare(r, l.getValue()))
-                        .orElse(1));
+                .flatMap(l -> safeEvaluate(fgh)
+                        .map(r -> Long.compare(r, l.getValue())));
         if (res3.isPresent())
             return res3.get();
 

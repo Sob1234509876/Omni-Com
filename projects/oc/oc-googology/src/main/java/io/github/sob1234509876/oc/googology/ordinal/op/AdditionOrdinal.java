@@ -2,13 +2,13 @@ package io.github.sob1234509876.oc.googology.ordinal.op;
 
 import io.github.sob1234509876.oc.engine.api.googology.*;
 import io.github.sob1234509876.oc.googology.annotation.SupportOptional;
+import io.github.sob1234509876.oc.googology.collection.ListSortedSequence;
 import io.github.sob1234509876.oc.googology.collection.SortedSequence;
 import io.github.sob1234509876.oc.googology.impl.ImplLimitOrdinal;
 import io.github.sob1234509876.oc.googology.impl.ImplSuccessorOrdinal;
 import io.github.sob1234509876.oc.googology.impl.ImplTransfiniteOrdinal;
 import io.github.sob1234509876.oc.googology.impl.ImplZeroOrdinal;
 import io.github.sob1234509876.oc.googology.optional.OptionalSuccessorOrdinal;
-import io.github.sob1234509876.oc.googology.optional.finite.OptionalFghOrdinal;
 import io.github.sob1234509876.oc.googology.optional.finite.OptionalLongOrdinal;
 import io.github.sob1234509876.oc.googology.optional.finite.OptionalZeroOrdinal;
 import io.github.sob1234509876.oc.googology.optional.op.OptionalAdditionOrdinal;
@@ -33,7 +33,7 @@ public class AdditionOrdinal implements OperationOrdinal,
     public static final String CONNECTOR = " + ";
 
     @NonNull
-    SortedSequence<@NonNull Ordinal> ordinals;
+    SortedSequence<@NonNull Ordinal> ordinals = new ListSortedSequence<>();
 
     @SupportOptional(OptionalSuccessorOrdinal.class)
     public boolean isSuccessorOrdinal() {
@@ -79,6 +79,20 @@ public class AdditionOrdinal implements OperationOrdinal,
 
         return Ordinals.isTransfiniteOrdinal(ordinals.getLast()
                 .orElseThrow(NullPointerException::new));
+    }
+
+    @SupportOptional(OptionalZeroOrdinal.class)
+    public boolean isPrimitiveOrdinal() {
+        if (ordinals.size() < 2)
+            return true;
+
+        for (var i = 1; i < ordinals.size(); i++)
+            if (ordinals.get(i)
+                    .map(Ordinals::isZeroOrdinal)
+                    .orElse(false))
+                return false;
+
+        return true;
     }
 
     @SupportOptional(OptionalZeroOrdinal.class)
@@ -180,13 +194,10 @@ public class AdditionOrdinal implements OperationOrdinal,
         return sb.toString();
     }
 
-    // TODO
     @SupportOptional({OptionalZeroOrdinal.class,
             OptionalLongOrdinal.class,
-            OptionalFghOrdinal.class,
-            OptionalLimitOrdinal.class,
-            OptionalTransfiniteOrdinal.class,
-            OptionalAdditionOrdinal.class})
+            OptionalAdditionOrdinal.class,
+            OptionalOperationOrdinal.class})
     @Override
     public int compareTo(@NonNull Ordinal o) {
 
@@ -196,12 +207,38 @@ public class AdditionOrdinal implements OperationOrdinal,
         if (res.isPresent())
             return res.get();
 
+        if (isZeroOrdinal())
+            return -1;
+
         var res2 = o.optional(OptionalLongOrdinal.class)
                 .flatMap(OptionalLongOrdinal::toLongOrdinal)
                 .map(LongOrdinal::getValue)
                 .flatMap(l -> calculateLong()
                         .map(r -> Long.compare(r, l)));
-        return res2.orElseGet(() -> -o.compareTo(this));
+
+        if (res2.isPresent())
+            return res2.get();
+
+        var res3 = o.optional(OptionalAdditionOrdinal.class)
+                .flatMap(OptionalAdditionOrdinal::toAdditionOrdinal)
+                .map(a -> ordinals.compareTo(a.getOrdinals()));
+        if (res3.isPresent())
+            return res3.get();
+
+        var res4 = o.optional(OptionalOperationOrdinal.class)
+                .flatMap(OptionalOperationOrdinal::toOperationOrdinal)
+                .map(ord -> -ord.compareTo(this));
+        if (res4.isPresent())
+            return res4.get();
+
+        var res5 = ordinals.getFirst()
+                .map(ord -> ord.compareTo(o))
+                .orElseThrow(NullPointerException::new);
+        if (res5 < 0)
+            return -1;
+        if (res5 == 0)
+            return isPrimitiveOrdinal() ? 0 : 1;
+        return 1;
     }
 
 }

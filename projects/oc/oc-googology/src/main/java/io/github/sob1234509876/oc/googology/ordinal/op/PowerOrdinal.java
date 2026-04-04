@@ -2,12 +2,12 @@ package io.github.sob1234509876.oc.googology.ordinal.op;
 
 import io.github.sob1234509876.oc.engine.api.googology.*;
 import io.github.sob1234509876.oc.googology.annotation.SupportOptional;
+import io.github.sob1234509876.oc.googology.collection.ListSortedSequence;
 import io.github.sob1234509876.oc.googology.collection.SortedSequence;
 import io.github.sob1234509876.oc.googology.impl.ImplLimitOrdinal;
 import io.github.sob1234509876.oc.googology.impl.ImplTransfiniteOrdinal;
 import io.github.sob1234509876.oc.googology.impl.ImplZeroOrdinal;
 import io.github.sob1234509876.oc.googology.optional.OptionalSuccessorOrdinal;
-import io.github.sob1234509876.oc.googology.optional.finite.OptionalFghOrdinal;
 import io.github.sob1234509876.oc.googology.optional.finite.OptionalLongOrdinal;
 import io.github.sob1234509876.oc.googology.optional.finite.OptionalZeroOrdinal;
 import io.github.sob1234509876.oc.googology.optional.op.OptionalAdditionOrdinal;
@@ -22,21 +22,19 @@ import io.github.sob1234509876.oc.googology.support.Ordinals;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 
 import java.util.LinkedList;
 import java.util.Optional;
 
 @Data
 @NoArgsConstructor
-@RequiredArgsConstructor
 public class PowerOrdinal implements OperationOrdinal,
         OptionalPowerOrdinal {
 
     public static final String CONNECTOR = " ^ ";
 
     @NonNull
-    SortedSequence<@NonNull Ordinal> ordinals;
+    SortedSequence<@NonNull Ordinal> ordinals = new ListSortedSequence<>();
 
     @SupportOptional(OptionalZeroOrdinal.class)
     public boolean isZeroOrdinal() {
@@ -61,7 +59,7 @@ public class PowerOrdinal implements OperationOrdinal,
             tmp.add(opt.get());
         }
 
-        return Longs.safeMultiplication(tmp.toArray(Long[]::new));
+        return Longs.safePow(tmp.toArray(Long[]::new));
     }
 
     @SupportOptional(OptionalLimitOrdinal.class)
@@ -78,6 +76,16 @@ public class PowerOrdinal implements OperationOrdinal,
                 .flatMap(o -> o.optional(OptionalTransfiniteOrdinal.class)
                         .flatMap(OptionalTransfiniteOrdinal::toTransfiniteOrdinal))
                 .isPresent();
+    }
+
+    @SupportOptional(OptionalZeroOrdinal.class)
+    public boolean isPrimitiveOrdinal() {
+        if (ordinals.size() < 2)
+            return true;
+
+        return ordinals.get(1)
+                .map(o -> o.compareTo(new LongOrdinal(1)) == 0)
+                .orElse(false);
     }
 
     @SupportOptional(OptionalPowerOrdinal.class)
@@ -155,15 +163,12 @@ public class PowerOrdinal implements OperationOrdinal,
         return sb.toString();
     }
 
-    // TODO
     @SupportOptional({OptionalZeroOrdinal.class,
             OptionalLongOrdinal.class,
-            OptionalFghOrdinal.class,
-            OptionalLimitOrdinal.class,
-            OptionalTransfiniteOrdinal.class,
             OptionalAdditionOrdinal.class,
             OptionalMultiplicationOrdinal.class,
-            OptionalPowerOrdinal.class})
+            OptionalPowerOrdinal.class,
+            OptionalOperationOrdinal.class})
     @Override
     public int compareTo(@NonNull Ordinal o) {
 
@@ -173,12 +178,54 @@ public class PowerOrdinal implements OperationOrdinal,
         if (res.isPresent())
             return res.get();
 
+        if (isZeroOrdinal())
+            return -1;
+
         var res2 = o.optional(OptionalLongOrdinal.class)
                 .flatMap(OptionalLongOrdinal::toLongOrdinal)
                 .map(LongOrdinal::getValue)
                 .flatMap(l -> calculateLong()
                         .map(r -> Long.compare(r, l)));
-        return res2.orElseGet(() -> -o.compareTo(this));
+
+        if (res2.isPresent())
+            return res2.get();
+
+        var res3 = o.optional(OptionalAdditionOrdinal.class)
+                .flatMap(OptionalAdditionOrdinal::toAdditionOrdinal)
+                .flatMap(a -> ordinals.getFirst()
+                        .map(ord -> ord.compareTo(a)))
+                .map(i -> isPrimitiveOrdinal() && i == 0 ? 0 : 1);
+        if (res3.isPresent())
+            return res3.get();
+
+        var res4 = o.optional(OptionalMultiplicationOrdinal.class)
+                .flatMap(OptionalMultiplicationOrdinal::toMultiplicationOrdinal)
+                .flatMap(m -> ordinals.getFirst()
+                        .map(ord -> ord.compareTo(m)))
+                .map(i -> isPrimitiveOrdinal() && i == 0 ? 0 : 1);
+        if (res4.isPresent())
+            return res4.get();
+
+        var res5 = o.optional(OptionalPowerOrdinal.class)
+                .flatMap(OptionalPowerOrdinal::toPowerOrdinal)
+                .map(p -> ordinals.compareTo(p.getOrdinals()));
+        if (res5.isPresent())
+            return res5.get();
+
+        var res6 = o.optional(OptionalOperationOrdinal.class)
+                .flatMap(OptionalOperationOrdinal::toOperationOrdinal)
+                .map(ord -> -ord.compareTo(this));
+        if (res6.isPresent())
+            return res6.get();
+
+        var res7 = ordinals.getFirst()
+                .map(ord -> ord.compareTo(o))
+                .orElseThrow(NullPointerException::new);
+        if (res7 < 0)
+            return -1;
+        if (res7 == 0)
+            return isPrimitiveOrdinal() ? 0 : 1;
+        return 1;
     }
 
 }

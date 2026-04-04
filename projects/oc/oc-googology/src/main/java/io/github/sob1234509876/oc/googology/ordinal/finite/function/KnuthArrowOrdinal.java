@@ -42,6 +42,8 @@ public class KnuthArrowOrdinal implements FiniteOrdinal,
                 .map(LongOrdinal::new)
                 .forEach(fgh.getRecursiveOrdinals()::add);
 
+        fgh.setValue(value);
+
         return Optional.of(fgh);
     }
 
