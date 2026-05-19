@@ -5,7 +5,7 @@ import lombok.NonNull;
 
 import java.util.Optional;
 
-public interface OptionalZeroOrdinal extends OptionalLongOrdinal {
+public interface OptionalZeroOrdinal {
 
     @NonNull
     Optional<ZeroOrdinal> toZeroOrdinal();
