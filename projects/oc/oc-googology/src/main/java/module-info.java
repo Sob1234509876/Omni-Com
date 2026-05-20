@@ -4,8 +4,6 @@ module oc.projects.oc.googology {
     requires static lombok;
     requires spring.boot;
     requires oc.projects.oc.engine.api;
-    requires spring.expression;
-    requires org.slf4j;
 
     exports io.github.sob1234509876.oc.googology.ordinal.finite.hierarchy;
     exports io.github.sob1234509876.oc.googology.ordinal.transfinite;

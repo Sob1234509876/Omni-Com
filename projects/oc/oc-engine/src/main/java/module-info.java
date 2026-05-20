@@ -7,11 +7,9 @@ module oc.projects.oc.engine {
     requires spring.boot;
     requires spring.beans;
     requires jakarta.annotation;
-    requires org.slf4j;
     requires spring.data.commons;
     requires spring.data.mongodb;
     requires org.mongodb.driver.sync.client;
-    requires org.mongodb.driver.core;
 
     exports io.github.sob1234509876.oc.engine;
     exports io.github.sob1234509876.oc.engine.event;

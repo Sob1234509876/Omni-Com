@@ -286,13 +286,13 @@ public class MountainExpander {
                                   int y,
                                   boolean doCleanup,
                                   boolean trustData) {
-            if (doCleanup)
-                makeSureExistsAllNbrLegs(x, y);
-
             if (x == 0 || y == 0)
                 return;
 
-            makeSureExistsLegs(x, y);
+            if (doCleanup)
+                makeSureExistsAllNbrLegs(x, y);
+            else
+                makeSureExistsLegs(x, y);
 
             for (var ty = 1; ty <= y; ty++) {
                 for (var tx = 1; tx <= x; tx++) {
