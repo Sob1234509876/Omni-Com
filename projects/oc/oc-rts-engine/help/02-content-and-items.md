@@ -189,7 +189,7 @@ silo.accepts(ore);                        // true
 silo.accepts(content.item("iron_ingot")); // false，过滤器拒绝
 silo.insert(ore, 8);                      // 8，返回实际接受的数量
 silo.contents();                          // 8x oc:iron_ore
-silo.usedSlots();                         // 1（8 件只占半格）
+silo.usedSlots();                         // 1（8 件只占 1 格，格内还空 92）
 silo.capacityFor(ore);                    // 1192 = 11 个空格 × 100 + 半满那格剩下的 92
 silo.insertable(ore, 2000);               // 1192：与 insert 同一规则
 silo.canAcceptAll(ItemBundle.of(ore, 500)); // true，且不改变库存
