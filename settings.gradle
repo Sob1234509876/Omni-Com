@@ -1,6 +1,4 @@
 rootProject.name = 'oc'
 
-include 'projects:oc:oc-engine-api'
-include 'projects:oc:oc-engine'
-include 'projects:oc:oc-googology'
+include 'projects:oc:oc-rts-engine'
 

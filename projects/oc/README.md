@@ -1,4 +1,8 @@
-# Omni Com Library
+# Omni Com (project group)
 
-This is a library for the Omni Com game consisting of Omni Com Engine Api, Omni Com Engine Implementation, Omni Com
-Server (WIP), Omni Com Client (WIP) and the Omni Com Googology Library.
+Modules of the `projects:oc` group.
+
+## Modules
+
+- `oc-rts-engine` — engine for the Omni Com real-time strategy game. See
+  [its README](oc-rts-engine/README.md).

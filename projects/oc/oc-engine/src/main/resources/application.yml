@@ -1,8 +1,0 @@
-spring:
-  messages:
-    basename: assets/lang/engine
-
-oc:
-  pluginPath: plugins
-  engine:
-    msu: 50
