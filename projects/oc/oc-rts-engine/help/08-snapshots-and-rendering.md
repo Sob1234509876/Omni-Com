@@ -115,7 +115,7 @@ record 的 21 个分量，顺序即声明顺序：
 | 6 | `position` | `Vec2` | 实体中心的世界坐标（单位=格，可为小数） |
 | 7 | `anchorTile` | `GridPos` | 画在哪个格子：单位脚下那格，建筑是**footprint 原点** |
 | 8 | `radius` | `float` | 碰撞半径（格），选框与血条宽度用 |
-| 9 | `healthFraction` | `float` | 剩余血量比例 `[0, 1]` |
+| 9 | `healthFraction` | `float` | 剩余血量比例 `[0, 1]`。血量本身是 `Natural`（可以是天文数字），快照只携带比例，因为渲染要画的是条而不是数字 |
 | 10 | `selected` | `boolean` | 是否被选中；**纯表现层标志，模拟从不读** |
 | 11 | `unit` | `boolean` | true=单位，false=建筑 |
 | 12 | `role` | `UnitRole` | 单位角色（`COMBAT`/`WORKER`/`SUPPORT`），建筑为 null |

@@ -21,7 +21,7 @@
 | **确定性** | 固定步长、`DeterministicRandom`、稳定迭代顺序、无时钟无线程 | 不要用 `java.util.Random`、系统时间、并行流（见下面清单） |
 | **单线程** | 所有系统在调用 `tick()` 的线程上顺序执行 | 引擎对象不可跨线程共享；渲染可以在另一个线程用快照 |
 | **显式相位** | 系统按 `SimulationSystem.order()` 排序执行 | 一个系统不该依赖"某个同类系统已经跑过"之外的隐式顺序 |
-| **零依赖** | 模块只 `requires java.base` | 想用 JSON/数学库得自己加，且会破坏"离线可构建" |
+| **零第三方依赖** | 模块只 `requires oc.projects.oc.googology`，而那个模块只 `requires java.base`（同一仓库里的兄弟模块，不是外部坐标） | 想用 JSON/数学库得自己加；`oc-googology` 里的东西不算"外部依赖"，但也别把它当成通用数学库 |
 
 ## 包结构
 
@@ -43,6 +43,30 @@
 | `event` | 事件总线与事件定义 | `EventBus`、`SimpleEventBus`、`Events` |
 
 依赖方向大体是"值类型 ← 定义 ← 世界 ← 系统"：`core` 不依赖任何人，`content` 只依赖 `core`，`map` 依赖 `core`/`content`，系统包依赖根包与上面这些。允许出现包之间的相互引用（例如 `entity` 与 `order` 互相引用），Java 模块内不构成循环编译错误。
+
+在这张表之外还有一个**仓库内的兄弟模块**：
+
+| 模块 | Gradle 路径 | Java 模块 / 包 | 提供什么 |
+| --- | --- | --- | --- |
+| 大数库 | `:projects:oc:oc-googology` | `oc.projects.oc.googology` / `io.github.sob1234509876.oc.googology` | `Natural`（数量类型）、`HyperOperation`、`NaturalFormat` |
+
+引擎的 `module-info.java` 写的是 `requires oc.projects.oc.googology`，`build.gradle` 写的是 `api project(':projects:oc:oc-googology')`——`api` 而不是 `implementation`，因为 `Natural` 出现在 `ItemType.maxStack()`、`ItemBundle.amount()`、`Inventory.insert()`、`Health.damage()` 这些导出包的公开签名上，下游代码必须能看到它。方向是单向的：`oc-googology` 不认识引擎，也不认识任何别的东西（它只 `requires java.base`，零第三方依赖），所以"离线可构建"和"引擎层可替换"都没有被破坏。
+
+## 数值类型约定
+
+这是写引擎代码或自定义系统时必须先记住的一条：**离散的数量用 `Natural`，时间用 `int`/`long` tick，空间用 `float`**。
+
+| 类别 | 类型 | 为什么 |
+| --- | --- | --- |
+| 物品数量、容量、槽位、血量、伤害（`ItemType.maxStack()`、`ItemBundle.amount()/totalUnits()`、`Inventory` 的上下限与所有读写口、`UnitType.maxHealth()/attackDamage()/cargoCapacity()`、`BuildingType.maxHealth()/storageSlots()`、`Health.max()/current()/damage()/heal()`、`Events.DamageDealt.amount()`） | `Natural` | 数量可以挂机增长、可以被内容目录声明成任意大；`int` 会在 21 亿处回绕，`long` 会溢出，`double` 无法精确表示整数 |
+| 位置、速度、半径、射程、`EntitySnapshot.healthFraction` | `float` | 它们是**空间量或比例**，不是件数；渲染要的也是比例。降级成大数只会让每 tick 的分离/转向变慢 |
+| 区块与格坐标（`GridPos`、`ChunkPos`、`TileRect`） | `int` | 索引与算术，世界无界但单点坐标不需要大数 |
+| 一切 tick 时长：`buildTimeTicks`、`Recipe.durationTicks`、攻击冷却、`HaulOrder.TIMEOUT_TICKS`、各系统的超时与冷却 | `int` / `long` | 时间步数参与每 tick 的减法，用大数没有意义、还会拖慢模拟 |
+
+`Natural` 的语义（精确阈值、结构形算术、`BEYOND`）见 [12-numbers-and-googology.md](12-numbers-and-googology.md)，这里只保留与确定性有关的两点：
+
+- **确定性与数值类型的关系**：`Natural` 的所有运算都是纯函数——同样输入永远得到同样结果，没有随机、没有时钟、没有浮点舍入路径上的平台差异（`BigInteger` 与整数比较都是严格定义的）。所以引入它**不会**削弱下面的确定性规则；
+- 反过来，`float` 仍然是位置与速度的类型，而 Java 17 的 `float`/`double` 基本算术在所有平台上严格一致（见下面规则 5），这才让"同种子逐位一致"成立。两者各守一段，别互相替换：把坐标换成 `Natural` 不会提高精度（只是把 24 位有效位换成无界），把数量换成 `float` 则会直接丢件数。
 
 ## 一个 tick 做了什么
 
@@ -115,7 +139,7 @@ subscription.cancel();
 2. 不要读系统时间（`System.currentTimeMillis()`、`nanoTime`）；时间只能来自传入的 `Tick`。
 3. 不要开线程、线程池、`parallelStream()`。
 4. 遍历顺序要固定：用 `List`/`LinkedHashMap`/`TreeMap`；避免依赖 `HashSet`/`HashMap` 的迭代顺序（要排序时用实体 `id()` 或坐标做平局判定）。
-5. 浮点运算全用 `float`/`double` 基本算术；Java 17 的浮点是严格确定的，不要引入 `StrictMath` 与 `Math` 混用的差异写法。
+5. 浮点运算全用 `float`/`double` 基本算术；Java 17 的浮点是严格确定的，不要引入 `StrictMath` 与 `Math` 混用的差异写法。数量的算术用 `Natural`（它同样是严格确定的纯函数），不要把两者混着用：位置是 `float`，件数是 `Natural`。
 6. 集合的"谁先谁后"会影响结果（比如同时到达的两个人抢同一个阵位），平局必须显式打破——引擎里统一用 `EntityId`/坐标比较。
 7. 不要在系统里缓存跨越 tick 的派生状态而不跟着世界更新（例如自己缓存的仓库列表要订阅 `EntitySpawned`/`EntityDestroyed` 维护，像 `WarehouseLogistics` 那样）。
 
@@ -145,11 +169,14 @@ subscription.cancel();
 
 - 想让引擎替你送货而不写搬运逻辑 → [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)
 - 想知道每个门面方法 → [01-getting-started.md](01-getting-started.md)、[appendix-api-map.md](appendix-api-map.md)
+- 想知道数量为什么是 `Natural`、哪些字段仍然是 `float`/`int` → [12-numbers-and-googology.md](12-numbers-and-googology.md)
 - 想按任务查做法 → [10-cookbook.md](10-cookbook.md)
 
 ## 相关源码
 
 - 管线：[`SystemPipeline.java`](../src/main/java/io/github/sob1234509876/oc/rts/sim/SystemPipeline.java)、[`SimulationSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/sim/SimulationSystem.java)
+- 模块与依赖：[`module-info.java`](../src/main/java/module-info.java)、[`build.gradle`](../build.gradle)
 - 世界与实体生命周期：[`World.java`](../src/main/java/io/github/sob1234509876/oc/rts/World.java)
 - 接线（相位在此确定）：[`OcRtsEngineBuilder.java`](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)
 - 事件：[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)、[`SimpleEventBus.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/SimpleEventBus.java)
+- 数量类型：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`HyperOperation.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/HyperOperation.java)

@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.production;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
@@ -246,7 +247,7 @@ public final class ProductionSystem implements SimulationSystem {
         boolean arrived = true;
         for (ItemBundle.Amount component : expected.components()) {
             if (inventory.amount(component.item())
-                    < job.baseline().amount(component.item()) + component.amount()) {
+                    .compareTo(job.baseline().amount(component.item()).add(component.amount())) < 0) {
                 arrived = false;
                 break;
             }
@@ -396,11 +397,11 @@ public final class ProductionSystem implements SimulationSystem {
     }
 
     private static ItemBundle insertInto(Inventory inventory, ItemBundle bundle) {
-        Map<ItemType, Integer> left = new LinkedHashMap<>();
+        Map<ItemType, Natural> left = new LinkedHashMap<>();
         for (ItemBundle.Amount component : bundle.components()) {
-            int accepted = inventory.insert(component.item(), component.amount());
-            int rest = component.amount() - accepted;
-            if (rest > 0) {
+            Natural accepted = inventory.insert(component.item(), component.amount());
+            Natural rest = component.amount().subtractClamped(accepted);
+            if (!rest.isZero()) {
                 left.put(component.item(), rest);
             }
         }
@@ -410,8 +411,8 @@ public final class ProductionSystem implements SimulationSystem {
     private static ItemBundle presentIn(Inventory inventory, ItemBundle wanted) {
         ItemBundle.Builder present = ItemBundle.builder();
         for (ItemBundle.Amount component : wanted.components()) {
-            int amount = Math.min(inventory.amount(component.item()), component.amount());
-            if (amount > 0) {
+            Natural amount = inventory.amount(component.item()).min(component.amount());
+            if (!amount.isZero()) {
                 present.add(component.item(), amount);
             }
         }
@@ -421,8 +422,8 @@ public final class ProductionSystem implements SimulationSystem {
     private static ItemBundle missingFrom(Inventory inventory, ItemBundle wanted) {
         ItemBundle.Builder missing = ItemBundle.builder();
         for (ItemBundle.Amount component : wanted.components()) {
-            int rest = component.amount() - inventory.amount(component.item());
-            if (rest > 0) {
+            Natural rest = component.amount().subtractClamped(inventory.amount(component.item()));
+            if (!rest.isZero()) {
                 missing.add(component.item(), rest);
             }
         }

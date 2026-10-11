@@ -30,18 +30,19 @@
 
 `content.ItemBundle` 是不可变的有序多重集，同时用来表达配方输入（`Recipe.inputs()`）、配方产出（`Recipe.itemOutputs()`）、单位/建筑造价（`UnitType.cost()`、`BuildingType.cost()`）、库存快照（`Inventory.contents()`）与物流查询结果。要点：
 
-- 数量必须为正，`ItemBundle.Builder.add(item, amount)` 在 `amount < 0` 时抛 `IllegalArgumentException`，`amount == 0` 被静默丢弃，因此"空"只有一种表示：`ItemBundle.EMPTY`（`isEmpty()` 为真）。
+- 数量必须为正，`ItemBundle.Builder.add(item, amount)` 在 `amount < 0` 时抛 `IllegalArgumentException`（来自 `Natural` 的构造函数），`amount == 0` 被静默丢弃，因此"空"只有一种表示：`ItemBundle.EMPTY`（`isEmpty()` 为真）。数量是 `Natural` 而不是 `int`，所以负数、小数都不存在，见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
 - 相等性只比较内容，构造顺序不影响 `equals`，但 `items()` / `components()` / `toString()` 保持插入顺序。
 - `minus(ItemBundle)` 在不够减时抛 `IllegalArgumentException`；物流与生产代码一律用 `minusClamped(...)`，因为它把不够的部分直接丢掉而不抛。
-- 工厂：`amount(item)`、`totalUnits()`（所有数量之和，等于占用的单位数）、`containsAll(other)`、`multiplied(factor)`（负数抛异常）。
+- 工厂：`amount(item)`、`totalUnits()`（所有数量之和，等于占用的单位数），两者都返回 `Natural`；`containsAll(other)`、`multiplied(factor)`（负数抛异常）。
+- `ItemBundle` 的 `toString()` 与 `Amount.toString()` 把数量过一遍 `NaturalFormat.scientific`，所以超大数量在日志里是 `10^5000` / `10↑↑10` / `~1.00e200`，不会打印几千位数字。
 
 ### 槽位是怎么算的
 
-`economy.Inventory` 有两条**完全独立**的上限，各自可以取 `Inventory.UNLIMITED`（即 `Integer.MAX_VALUE`）：
+`economy.Inventory` 有两条**完全独立**的上限，两者都是 `Natural`，各自可以取 `Inventory.UNLIMITED`（即 `Natural.BEYOND`）：
 
 | 上限 | 含义 | 在哪里设置 |
 | --- | --- | --- |
-| `slotCount()` | 能装多少个**格子** | `Inventory(String name, int slotCount, int unitLimit, Predicate<ItemType> filter)`；建筑取 `BuildingType.storageSlots()` |
+| `slotCount()` | 能装多少个**格子** | `Inventory(String name, Natural slotCount, Natural unitLimit, Predicate<ItemType> filter)`，小字面量用 `(String, long, long, Predicate)` 重载；建筑取 `BuildingType.storageSlots()` |
 | `unitLimit()` | 能装多少**个单位**物品 | 建筑写死 `Inventory.UNLIMITED` |
 
 关键是**一个物品可以占多个格子**：每格最多装 `ItemType.maxStack()` 个单位，因此
@@ -54,7 +55,14 @@ usedSlots() = Σ_items ceil(数量 / maxStack)
 
 `insert` 与 `insertable` / `capacityFor` 共用同一条规则（私有方法 `headroomFor`）：**某物品还能收多少 = 它当前半满堆叠的剩余空间 + 每个空槽位一整叠**，再被 `unitHeadroom`（总量上限）截断。所以"先查询容量、再 insert"两者永远不会打架。
 
-单槽容量来自物品自身：`ItemType.maxStack()`。一个 24 槽位的仓库（`ScenarioContent` 的 `warehouse`）能装 24 格，每格最多 `maxStack()` 个，但总单位数**不受限制**——这是引擎里唯一"槽位数有限、总量不限"的容器。搬运工背包相反：`new Inventory("cargo of " + id, Inventory.UNLIMITED, type.cargoCapacity(), item -> true)`，槽位无限、单位数受 `UnitType.cargoCapacity()` 限制。
+**数量一旦离开精确区间（超过 `Natural.EXACT_BIT_LIMIT = 4096` 位，约 1233 位十进制），槽位与容量查询就进入近似区**：`usedSlots()` 按 `Σ ceil(数量 / maxStack)` 计算，某个数量不再是精确值时整个求和直接返回 `Natural.BEYOND`。接下来会发生什么，取决于对应的上限是不是**有限**：
+
+- `slotCount` 有限（普通仓库）：`slotCount.subtractClamped(BEYOND)` 被夹到 0，于是 `freeSlots()` 为 0、`isFull()` 为真；
+- `slotCount` 是 `Inventory.UNLIMITED`：`freeSlots()` 直接返回 `BEYOND`，**不会被判满**；`unitLimit` 与 `unitHeadroom` 同理。
+
+这是刻意的取舍（`RtsScenario` 第 10 节对两种情况都有断言：无上限的仓库 `!isFull()`，4 格仓库 `isFull()`），因为"装了 `10↑↑10` 件的仓库还剩几格"没有意义。同理，半满堆叠的剩余空间在这种数量上按 0 算。最后，插入时真正的余量仍然来自 `freeSlots × maxStack`：一个 4 格、每格 `10^5000` 的仓库接 `10↑↑10` 件的请求只收下 `10^5000` 件（`4 × 10^5000` 在结构形上被近似成 `10^5000`，再被请求量截断）。
+
+单槽容量来自物品自身：`ItemType.maxStack()`（也是 `Natural`，所以"每格 10^5000 件"是合法的目录声明）。一个 24 槽位的仓库（`ScenarioContent` 的 `warehouse`）能装 24 格，每格最多 `maxStack()` 个，但总单位数**不受限制**——这是引擎里唯一"槽位数有限、总量不限"的容器。搬运工背包相反：`new Inventory("cargo of " + id, Inventory.UNLIMITED, type.cargoCapacity(), item -> true)`，槽位无限、单位数受 `UnitType.cargoCapacity()` 限制。
 
 ```java
 // ItemBundle: 成本与产量的写法（对应 ScenarioContent 的 recipe 声明）
@@ -64,26 +72,26 @@ ItemBundle built = ItemBundle.builder().add(steel, 10).add(plank, 5).build();
 
 // Inventory: 一个 6 槽位、总量无限的工厂缓冲区
 Inventory buffer = new Inventory("buffer", 6, Inventory.UNLIMITED, item -> true);
-int accepted = buffer.insert(ironIngot, 400);   // 上限由 maxStack() 与空槽位共同决定
+Natural accepted = buffer.insert(ironIngot, 400);   // 上限由 maxStack() 与空槽位共同决定
 buffer.insertable(plank, 20);                   // 还能收下多少（不改变内容）
 buffer.canAcceptAll(recipeCost);                // 整包能不能放下（不改内容）
-int room = buffer.capacityFor(ironIngot);       // == insertable(ironIngot, UNLIMITED / 2)
-buffer.usedSlots();                             // Σ ceil(数量 / maxStack)
+Natural room = buffer.capacityFor(ironIngot);   // == insertable(ironIngot, Natural.BEYOND)
+buffer.usedSlots();                             // Σ ceil(数量 / maxStack)，量级过大时是 BEYOND
 boolean full = buffer.isFull();                 // 没有空槽位 或 单位上限到顶
 ```
 
 查询与修改方法的完整语义：
 
-- `accepts(ItemType)` 只跑过滤器；`insert(ItemType,int)` / `insert(ItemBundle)` 返回**真正收下的数量**，被过滤器拒绝或放不下都返回 0，且不改变任何状态。
-- `insertable(ItemType,int)` 是纯查询：`min(headroomFor(item), unitHeadroom, amount)`。物品数量上限与槽位上限都可以是"无限"（用 `Integer.MAX_VALUE` / `UNLIMITED / 2` 表示），所以返回 `Integer.MAX_VALUE` 或 `UNLIMITED / 2` 是正常结果，不是真实容量。
-- `capacityFor(item)` 只是 `insertable(item, UNLIMITED / 2)` 的便捷写法。
-- `usedSlots()` 是 `Σ ceil(数量 / maxStack)`；`freeSlots()` 是 `max(0, slotCount - usedSlots())`，`slotCount` 为 `UNLIMITED` 时直接返回 `UNLIMITED`。
-- `extract(ItemType,int)` 返回实际取出量；`extractUpTo(ItemBundle)` 返回实际取出的子包（逐项 clamp）；`extractAll()` 清空并返回全部内容。
-- `isFull()` 的定义是 `freeSlots() == 0 || unitHeadroom() == 0`，因此**"满"不等于"什么都放不进"**：24 个格子都被占满后 `isFull()` 为真，但只要某个堆叠还没到 `maxStack()`，就仍能往里面继续补——`RtsScenario` 第 4 节明确验证了这一点（也验证了新品类会被拒）。
+- `accepts(ItemType)` 只跑过滤器；`insert(ItemType,Natural|long)` / `insert(ItemBundle)` 返回**真正收下的数量**（`Natural`），被过滤器拒绝或放不下都返回 `Natural.ZERO`，且不改变任何状态。
+- `insertable(ItemType,Natural|long)` 是纯查询：`min(headroomFor(item), unitHeadroom, amount)`。物品数量上限与槽位上限都可以是"无限"（用 `Inventory.UNLIMITED` = `Natural.BEYOND` 表示），所以返回 `BEYOND` 是正常结果，不是真实容量。
+- `capacityFor(item)` 只是 `insertable(item, Natural.BEYOND)` 的便捷写法（以前那个 `Integer.MAX_VALUE / 2` 哨兵值已经不存在）。
+- `usedSlots()` 是 `Σ ceil(数量 / maxStack)`；任一数量或 `maxStack` 不是精确值就返回 `Natural.BEYOND`。`freeSlots()` 是 `slotCount.subtractClamped(usedSlots())`（下限 0），`slotCount` 为 `UNLIMITED` 时直接返回 `UNLIMITED`。
+- `extract(ItemType,Natural|long)` 返回实际取出量（`Natural`）；`extractUpTo(ItemBundle)` 返回实际取出的子包（逐项 clamp，用 `subtractClamped`/`min` 而不是减法）；`extractAll()` 清空并返回全部内容。
+- `isFull()` 的定义是 `freeSlots().isZero() || unitHeadroom().isZero()`，因此**"满"不等于"什么都放不进"**：24 个格子都被占满后 `isFull()` 为真，但只要某个堆叠还没到 `maxStack()`，就仍能往里面继续补——`RtsScenario` 第 4 节明确验证了这一点（也验证了新品类会被拒）。另外注意 `usedSlots()` 返回 `BEYOND` 时，**只有格数有限**的库存才会因此报告 `isFull()`；`slotCount` 为 `UNLIMITED` 的库存不会（见上一节）。
 - `usedSlots()` / `freeSlots()` / `totalUnits()` / `amount(item)` / `isEmpty()` / `contents()` / `describe()` 都是即时视图；`contents()` 返回的是新构造的不可变 `ItemBundle`，改它不会影响仓库。
 - `Inventory.empty(name)` 是一个**什么都不收**的空壳：两个上限都是 0，过滤器 `item -> false`，`insert` 永远返回 0。它不是"无限容量"，想要无限仓请显式传 `UNLIMITED`。
 
-建筑缓冲区的过滤器来自 `BuildingType.storageTags()`：`new Inventory("storage of " + id, type.storageSlots() > 0 ? type.storageSlots() : 0, Inventory.UNLIMITED, item -> item.hasAnyTag(type.storageTags()))`。`ItemType.hasAnyTag(∅)` 返回 `true`，所以**空 storageTags 等于全收**；`ScenarioContent` 的 `ore_silo` 声明了 `.storageTag("ore")`，于是它收 `iron_ore`（tag 含 `ore`）而拒绝 `plank`（tag 是 `refined`/`material`）——`RtsScenario` 第 4 节同样验证了这两条。
+建筑缓冲区的过滤器来自 `BuildingType.storageTags()`：构造时是 `new Inventory("storage of " + id, type.storageSlots(), Inventory.UNLIMITED, item -> item.hasAnyTag(type.storageTags()))`——两个上限都直接传 `Natural`，不需要再包一层 `> 0 ? : 0`。`ItemType.hasAnyTag(∅)` 返回 `true`，所以**空 storageTags 等于全收**；`ScenarioContent` 的 `ore_silo` 声明了 `.storageTag("ore")`，于是它收 `iron_ore`（tag 含 `ore`）而拒绝 `plank`（tag 是 `refined`/`material`）——`RtsScenario` 第 4 节同样验证了这两条。
 
 ## 玩家仓库网络：economy.Logistics
 
@@ -93,8 +101,8 @@ boolean full = buffer.isFull();                 // 没有空槽位 或 单位上
 | --- | --- | --- |
 | `player()` | 该网络的主人 | 否 |
 | `warehouses()` | 本方仓库，**创建顺序**，返回不可变副本 | 否 |
-| `stored()` | 所有仓库内容之和（不扣预订） | 否 |
-| `amount(item)` | 某物品总存量（不扣预订） | 传入 `null` 抛 NPE |
+| `stored()` | 所有仓库内容之和（不扣预订，`ItemBundle`，数量是 `Natural`） | 否 |
+| `amount(item)` | 某物品总存量（不扣预订，`Natural`） | 传入 `null` 抛 NPE |
 | `has(bundle)` | 逐项比较 `amount()`，**忽略预订** | `null` 抛 NPE |
 | `available()` | 扣掉已被他人预订的部分后剩下的量 | 否 |
 | `hasAvailable(bundle)` | 用 `available()` 做逐项比较 | `null` 抛 NPE |
@@ -143,7 +151,7 @@ logistics.amount(ironIngot); // 75
 
 预订计划由 `economy.ReservationPool.allocate(List<Building> warehouses, ItemBundle request, FreeAmount free)` 计算，它是**纯计算**：不移动物品、不记任何状态，凑不齐就返回 `null`，调用方必须**整体放弃**、不能应用部分计划。
 
-算法是确定性的两重循环：外层按 `bundle.components()` 的插入顺序遍历物品，内层按仓库**创建顺序**遍历，先榨干第一个仓库再看第二个。
+算法是确定性的两重循环：外层按 `bundle.components()` 的插入顺序遍历物品，内层按仓库**创建顺序**遍历，先榨干第一个仓库再看第二个。全程只用 `Natural.min` / `subtractClamped` / `compareTo` 做大数运算（`Allocation.reduce(Natural)` 同样是"只减不增、不越零"）。
 
 ```text
 仓库 A 有 30 铁，仓库 B 有 45 铁，请求 50 铁
@@ -153,7 +161,7 @@ allocate -> [ A owes 30, B owes 20 ]      // 这就是"单个仓库不够"能成
   -> 只剩 25 可用，请求 30 铁整体失败（返回 null）
 ```
 
-其中 `free(warehouse, item)` 由 `WarehouseLogistics` 用私有内部类 `Warehouse` 维护：`Math.max(0, inventory.amount(item) - promised(item))`，`promise` / `release` 成对增减。`WarehouseLogistics.reserve` 在 `allocate` 成功后逐条 `promise`，失败时**一个 promise 都不会写**——所以部分计划不会留下脏账。
+其中 `free(warehouse, item)` 由 `WarehouseLogistics` 用私有内部类 `Warehouse` 维护：`inventory.amount(item).subtractClamped(promised(item))`（`subtractClamped` 就是 `Math.max(0, ...)` 的大数版本，所以仓库永远不会"欠成负数"），`promise` / `release` 成对增减。`WarehouseLogistics.reserve` 在 `allocate` 成功后逐条 `promise`，失败时**一个 promise 都不会写**——所以部分计划不会留下脏账。
 
 ### WarehouseLogistics：索引与生命周期
 
@@ -184,7 +192,7 @@ private void index(Object candidate) {
 
 `pickupWarehouses(reservation)` 返回"还欠这次预订"的仓库，**按创建顺序**——两个搬运工处理两类 job 时走同一条路线。配套的还有 `pendingPickup(reservation)` / `pendingPickup(reservation, warehouse)`、`pickUp(reservation, warehouse, wanted)`（唯一会移动已预订货物的入口，并把欠量按实际离开货架的数量缩减）、`abandonWarehouse(...)`（货架空了，别再来了）、`ownsWarehouse(building)`、`attachHauling(...)` / `hauling()`。
 
-`LogisticsReservation` 是包内可见的内部实现（构造函数 `LogisticsReservation(WarehouseLogistics owner, ItemBundle bundle, List<ReservationPool.Allocation> plan, Building source)` 不带修饰符，外部拿不到）：它持有 `owner`、原始 `bundle`、分配计划 `plan` 与 `source`，`close()` 把自己从 `owner` 的列表里摘掉。`ReservationPool.Allocation` 记录"某仓库欠某物品多少"，`reduce(int)` 只减不增、不越零。
+`LogisticsReservation` 是包内可见的内部实现（构造函数 `LogisticsReservation(WarehouseLogistics owner, ItemBundle bundle, List<ReservationPool.Allocation> plan, Building source)` 不带修饰符，外部拿不到）：它持有 `owner`、原始 `bundle`、分配计划 `plan` 与 `source`，`close()` 把自己从 `owner` 的列表里摘掉。`ReservationPool.Allocation` 记录"某仓库欠某物品多少"（`Natural`），`reduce(Natural)` 用 `subtractClamped` 只减不增、不越零。
 
 ## 搬运：DeliveryJob、HaulingSystem、HaulOrder
 
@@ -378,7 +386,7 @@ queueOf(building).enqueue(recipe, count);   // count <= 0 时由 ProductionQueue
 
 只请求 `missing`（真正缺的那部分）是刻意设计：一次部分到货的 job 仍能补完，而不是把输入订两遍。
 
-`awaitDelivery` 的到达判定是 `inventory.amount(item) >= baseline.amount(item) + expected.amount(item)`，**baseline + claim** 而不是绝对值——这正是"部分填充的缓冲区"能正常工作的原因。到齐后：`inventory.extractUpTo(recipe.inputs())` 扣掉输入，再对预订 `commit()`；`commit()` 返回的"仍在货架上"的部分通过 `giveBack(...)` 先尝试塞回自己缓冲区、再 `deposit` 到网络、最后兜底塞回缓冲区。**这段代码保证：如果搬运工没能把货送到（但预订还留着），材料不会被凭空吞掉。**
+`awaitDelivery` 的到达判定是 `inventory.amount(item).compareTo(baseline.amount(item).add(expected.amount(item))) >= 0`（大数比较 + 大数加法），**baseline + claim** 而不是绝对值——这正是"部分填充的缓冲区"能正常工作的原因。到齐后：`inventory.extractUpTo(recipe.inputs())` 扣掉输入，再对预订 `commit()`；`commit()` 返回的"仍在货架上"的部分通过 `giveBack(...)` 先尝试塞回自己缓冲区、再 `deposit` 到网络、最后兜底塞回缓冲区。**这段代码保证：如果搬运工没能把货送到（但预订还留着），材料不会被凭空吞掉。**
 
 ### 结算：单位还是物品
 
@@ -533,7 +541,7 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | 类型 | 成员 | 说明 |
 | --- | --- | --- |
 | `content.ItemBundle` | `EMPTY`、`of(...)`、`builder()`、`isEmpty()`、`amount(item)`、`totalUnits()`、`containsAll(bundle)`、`plus`、`minus`（不够则抛）、`minusClamped`、`multiplied(factor)`、`components()`、`items()`、`asMap()` | 成本/产量/库存快照的通用载体 |
-| `economy.Inventory` | `UNLIMITED`、`empty(name)`（全拒空壳）、`slotCount()`、`unitLimit()`、`accepts(item)`、`usedSlots()`（Σ ceil(数量/maxStack)）、`freeSlots()`、`totalUnits()`、`amount(item)`、`isEmpty()`、`isFull()`、`contents()`、`capacityFor(item)`、`insertable(item, amount)`、`insert(item\|bundle)`、`canAcceptAll(bundle)`、`extract(item, amount)`、`extractUpTo(bundle)`、`extractAll()`、`describe()` | 仓库/缓冲区/背包共用 |
+| `economy.Inventory` | `UNLIMITED`（= `Natural.BEYOND`）、`empty(name)`（全拒空壳）、`slotCount()`、`unitLimit()`、`accepts(item)`、`usedSlots()`（Σ ceil(数量/maxStack)，量级过大时为 `BEYOND`）、`freeSlots()`、`totalUnits()`、`amount(item)`、`isEmpty()`、`isFull()`、`contents()`、`capacityFor(item)`、`insertable(item, amount)`、`insert(item\|bundle)`、`canAcceptAll(bundle)`、`extract(item, amount)`、`extractUpTo(bundle)`、`extractAll()`、`describe()` | 仓库/缓冲区/背包共用；数量与返回类型都是 `Natural` |
 | `economy.Logistics` | `player()`、`warehouses()`、`stored()`、`amount`、`has`、`available`、`hasAvailable`、`reserve`、`reserveOrThrow`、`deposit`、`nearestWarehouse`、`warehousesAccepting`、`requestDelivery`、`pendingDeliveries` | 见本篇方法表 |
 | `economy.Logistics.Reservation` | `bundle()`、`source()`、`active()`、`commit()`、`release()` | 预订只是记账 |
 | `economy.WarehouseLogistics` | 构造函数 `(World, Player)`、静态 `of(Player)`、`store(bundle)`、`attachHauling(system)`、`hauling()`、`ownsWarehouse(b)`、`requestDeliveryReservation(target, bundle)`、`pickupWarehouses(res)`、`pendingPickup(res[, wh])`、`pickUp(res, wh, wanted)`、`abandonWarehouse(res, wh)`、`close()` | 事件驱动的仓库索引 |
@@ -564,8 +572,10 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 11. **以为 `enqueue` 会检查建筑建成没有。** 不会，工地也能排产；`ProductionSystem.tick` 只跳过未建成建筑，job 会一直等到完工。校验只有"类型能生产"和"producer 标签有交集"。
 12. **在 `Player.hasLogistics()` 为假时调 `logistics()`。** 会抛 `IllegalStateException`；`WarehouseLogistics.of(player)` 才是返回 `null` 的安全版本（搬运系统用它）。
 13. **`directDeliveryTicks` 传 0。** builder 的 `directDeliveryTicks(int)` 在 `ticks <= 0` 时抛 `IllegalArgumentException`；`HaulingSystem` 的构造器反而会把负数 clamp 成 0。两处行为不同。
-14. **`Inventory.insertable` 返回 `Integer.MAX_VALUE` 就当成真实容量去乘。** 那是"无限"哨兵值（`UNLIMITED = Integer.MAX_VALUE`，槽位无限时 `headroomFor` 用 `UNLIMITED / 2`）。
-15. **`WarehouseLogistics.close()` / `ProductionSystem.close()` 会被引擎自动调用。** 不会：整个 `src/main/java` 里只有定义处、没有调用处，`OcRtsEngine` 也没有 `close()`。管线和系统连接在引擎生命周期里一直存在，需要"结束比赛"的语义时得自己调。
+14. **以为"无限"还是 `int` 哨兵值。** 现在是 `Inventory.UNLIMITED = Natural.BEYOND`：`insertable` / `capacityFor` 在无上限库存上返回的就是 `BEYOND`，要用 `isBeyond()` 判断，不能再和 `Integer.MAX_VALUE` 比较，更不能拿去当普通数字做加减乘。
+15. **数量一旦离开精确区间，容量查询就变成近似。** 某种物品的数量超过 `Natural.EXACT_BIT_LIMIT = 4096` 位（约 1233 位十进制）后，`usedSlots()` 返回 `BEYOND`，半满堆叠的剩余空间按 0 算；格数有限的库存因此 `freeSlots()` 为 0、`isFull()` 为真，而 `slotCount` 是 `Inventory.UNLIMITED` 的库存不会被判满（`freeSlots()` 本身是 `BEYOND`）。小量的 `insert` / `extract` 仍然精确。要区分"真的满了"和"大得算不清"，请显式判断 `usedSlots().isBeyond()`（见 [12](12-numbers-and-googology.md)）。
+16. **把数量当 `int` 用。** `amount(item)`、`insert(...)`、`extract(...)`、`totalUnits()` 都返回 `Natural`：不能写 `>`、`==`、`+`，要用 `compareTo`、`equals`、`add`；`long` 重载只是"小字面量"的便利写法（`insert(item, 50)` 仍然编译）。
+17. **`WarehouseLogistics.close()` / `ProductionSystem.close()` 会被引擎自动调用。** 不会：整个 `src/main/java` 里只有定义处、没有调用处，`OcRtsEngine` 也没有 `close()`。管线和系统连接在引擎生命周期里一直存在，需要"结束比赛"的语义时得自己调。
 
 ## 相关文档
 
@@ -575,6 +585,7 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 - [04-units-orders-and-movement.md](04-units-orders-and-movement.md) —— `OrderQueue`、`Motion`、`UnitDirector`、相位 200/300/400（搬运订单依赖它的 `Motion` 契约）
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位 100→800 的完整管线、实体生命周期、事件总线与确定性规则
 - [10-cookbook.md](10-cookbook.md) —— 按"怎么做到 X"组织的配方
+- [12-numbers-and-googology.md](12-numbers-and-googology.md) —— 数量类型 `Natural`：精确区间、近似区间与 `BEYOND`
 - [../README.md](../README.md) —— 模块总览、"引擎强制的规则"与自校验证据表
 
 本篇只讲相位 500/600/700；建筑几何与 footprint、快照与渲染分别见 04 与 09。

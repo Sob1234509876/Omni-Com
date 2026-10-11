@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.logistics;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
@@ -307,11 +308,11 @@ public final class HaulingSystem implements SimulationSystem {
             return false;
         }
         for (ItemBundle.Amount component : logistics.pendingPickup(job.reservation()).components()) {
-            if (unit.cargo().insertable(component.item(), 1) > 0) {
+            if (!unit.cargo().insertable(component.item(), 1).isZero()) {
                 return true;
             }
         }
-        return !unit.isCarryingItems() && unit.type().cargoCapacity() > 0;
+        return !unit.isCarryingItems() && unit.type().canHaul();
     }
 
     // ------------------------------------------------------------------ bookkeeping
@@ -336,8 +337,8 @@ public final class HaulingSystem implements SimulationSystem {
     private static ItemBundle insertInto(Inventory inventory, ItemBundle bundle) {
         ItemBundle.Builder accepted = ItemBundle.builder();
         for (ItemBundle.Amount component : bundle.components()) {
-            int stored = inventory.insert(component.item(), component.amount());
-            if (stored > 0) {
+            Natural stored = inventory.insert(component.item(), component.amount());
+            if (!stored.isZero()) {
                 accepted.add(component.item(), stored);
             }
         }

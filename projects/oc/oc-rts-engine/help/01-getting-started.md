@@ -29,10 +29,10 @@
 `scenario` 的末尾会打印一行结论：
 
 ```text
-RTS engine scenario: all 95 checks passed.
+RTS engine scenario: all 119 checks passed.
 ```
 
-它逐节覆盖：[区块地图与寻路](03-map-and-pathfinding.md)、[队形移动](05-formations.md)、[物品与仓库](06-economy-logistics-and-production.md)、[生产](06-economy-logistics-and-production.md)、[真实搬运](06-economy-logistics-and-production.md)、[贴图与动画](07-sprites-and-animation.md)、[确定性](09-architecture-and-tick-pipeline.md)。把它当活文档读，比读本文更快。
+它逐节覆盖：[区块地图与寻路](03-map-and-pathfinding.md)、[队形移动](05-formations.md)、[物品与仓库](06-economy-logistics-and-production.md)、[生产](06-economy-logistics-and-production.md)、[真实搬运](06-economy-logistics-and-production.md)、[贴图与动画](07-sprites-and-animation.md)、[确定性](09-architecture-and-tick-pipeline.md)，最后是[大数与 `Natural`](12-numbers-and-googology.md)（物品每格 `10^5000`、血量 `10↑↑10`）。把它当活文档读，比读本文更快。
 
 自校验不是框架测试，所以它位于独立的 `selfCheck` 源集（`src/selfcheck/java/.../scenario/`），由 `scenario` 任务以普通程序运行；`src/test/java` 因此保持为空，给以后的单元测试用。
 

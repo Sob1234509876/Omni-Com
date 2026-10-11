@@ -67,7 +67,7 @@ public abstract class Entity {
     /** Marks the entity dead; the world removes it from the simulation and the spatial index. */
     public void kill() {
         alive = false;
-        health.setCurrent(0f);
+        health.setCurrent(0L);
     }
 
     /**

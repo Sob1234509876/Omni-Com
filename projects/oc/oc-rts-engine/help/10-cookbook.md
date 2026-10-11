@@ -1,6 +1,6 @@
 # 10 · Cookbook：按任务查做法
 
-> 18 个常见任务的写法。每条只给关键代码，原理链接到对应子系统文档。
+> 19 个常见任务的写法。每条只给关键代码，原理链接到对应子系统文档。
 
 ## 这一篇讲什么
 
@@ -461,9 +461,38 @@ List<Vec2> second = runShortMatch(content, 99L);
 - 自定义系统里不要缓存跨 tick 的派生状态而不订阅实体增删事件去维护。
 - 寻路的启发式尺度也要来自内容目录而不是"当前加载了哪些区块"（引擎已经用 `AStarPathFinder.minimumMoveCost(ContentRegistry)` 这么做了）。
 
+## 19. 让数量、容量、血量变成任意大
+
+数量类型是 `Natural`（精确到 4096 位，再大就是超运算记号），所以内容目录里可以直接写天文数字：
+
+```java
+ContentRegistry content = ContentRegistry.builder("oc")
+        .item("relic").name("Relic").maxStack(Natural.arrow(Natural.TEN, 1, Natural.of(5000)))  // 每格 10^5000
+        .unit("titan").name("Titan").role(UnitRole.COMBAT)
+                .health(Natural.tetration(Natural.TEN, Natural.TEN))    // 血量 10↑↑10
+                .speed(1.5f).radius(0.4f)
+        .build();
+
+Inventory vault = new Inventory("vault", Inventory.UNLIMITED, Inventory.UNLIMITED, item -> true);
+vault.insert(content.item("relic"), Natural.tetration(Natural.TEN, Natural.TEN));   // 一次收下 10↑↑10 件
+titan.health().damage(Natural.of(1000));      // 在这个量级上打不动（近似）
+titan.health().damage(Natural.BEYOND);        // 一击必杀
+```
+
+要注意的三件事：
+
+- 所有 `int`/`long` 字面量照旧可用（`maxStack(100)`、`health(120)`、`insert(item, 5)`），但 `Natural` 不能用 `>`、
+  `<`、`==` 比较，要用 `compareTo` / `isZero` / `equals`。
+- 进入大数区间后算术是近似的：`10↑↑10 + 1` 还是 `10↑↑10`；`usedSlots()` 会返回 `Natural.BEYOND`，此时**格数有限**
+  的库存会报告 `isFull()`，无限格数的不会。
+- 时间与空间**不要**换成大数：tick 时长是 `int`，坐标/速度/射程是 `float`。
+
+完整的类型分界、近似规则与 10 条坑见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
+
 ## 相关文档
 
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位、生命周期、确定性规则、扩展点
 - [01-getting-started.md](01-getting-started.md) —— 门面与 Builder 速查
+- [12-numbers-and-googology.md](12-numbers-and-googology.md) —— 大数与 `Natural`：哪些精确、哪些近似
 - [11-limits-and-faq.md](11-limits-and-faq.md) —— 出问题时的排查清单
 - [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单

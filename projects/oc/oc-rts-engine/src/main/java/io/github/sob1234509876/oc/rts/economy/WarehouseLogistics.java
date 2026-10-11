@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.economy;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
@@ -38,6 +39,11 @@ import java.util.function.Predicate;
  * <p>Everything this class returns is ordered deterministically: warehouses in creation order, and
  * distance based queries with the entity id as the tie breaker, so a replay produces identical
  * bookkeeping on every machine.
+ *
+ * <p>All amounts are {@link Natural} values. The promise bookkeeping stays exact for ordinary
+ * quantities and simply keeps its order of magnitude for amounts past the exact range; the differences
+ * of promised and stored amounts use {@link Natural#subtractClamped(Natural)}, so a warehouse can never
+ * owe a negative amount.
  */
 public final class WarehouseLogistics implements Logistics {
 
@@ -139,11 +145,11 @@ public final class WarehouseLogistics implements Logistics {
     }
 
     @Override
-    public int amount(ItemType item) {
+    public Natural amount(ItemType item) {
         Objects.requireNonNull(item, "item");
-        int total = 0;
+        Natural total = Natural.ZERO;
         for (Warehouse warehouse : warehouses) {
-            total += warehouse.building.inventory().amount(item);
+            total = total.add(warehouse.building.inventory().amount(item));
         }
         return total;
     }
@@ -152,7 +158,7 @@ public final class WarehouseLogistics implements Logistics {
     public boolean has(ItemBundle bundle) {
         Objects.requireNonNull(bundle, "bundle");
         for (ItemBundle.Amount component : bundle.components()) {
-            if (amount(component.item()) < component.amount()) {
+            if (amount(component.item()).compareTo(component.amount()) < 0) {
                 return false;
             }
         }
@@ -164,8 +170,8 @@ public final class WarehouseLogistics implements Logistics {
         ItemBundle.Builder builder = ItemBundle.builder();
         for (Warehouse warehouse : warehouses) {
             for (ItemBundle.Amount component : warehouse.building.inventory().contents().components()) {
-                int free = warehouse.free(component.item());
-                if (free > 0) {
+                Natural free = warehouse.free(component.item());
+                if (!free.isZero()) {
                     builder.add(component.item(), free);
                 }
             }
@@ -178,7 +184,7 @@ public final class WarehouseLogistics implements Logistics {
         Objects.requireNonNull(bundle, "bundle");
         ItemBundle available = available();
         for (ItemBundle.Amount component : bundle.components()) {
-            if (available.amount(component.item()) < component.amount()) {
+            if (available.amount(component.item()).compareTo(component.amount()) < 0) {
                 return false;
             }
         }
@@ -214,23 +220,23 @@ public final class WarehouseLogistics implements Logistics {
                 "the warehouses of " + player + " cannot provide " + bundle));
     }
 
-    private int freeUnits(Building warehouse, ItemType item) {
+    private Natural freeUnits(Building warehouse, ItemType item) {
         Warehouse entry = byBuilding.get(warehouse);
-        return entry == null ? 0 : entry.free(item);
+        return entry == null ? Natural.ZERO : entry.free(item);
     }
 
     /** Moves the still promised goods of a closed reservation out of their warehouses. */
     ItemBundle extractRemaining(LogisticsReservation reservation) {
         ItemBundle.Builder taken = ItemBundle.builder();
         for (ReservationPool.Allocation allocation : reservation.allocations()) {
-            if (allocation.amount() <= 0) {
+            if (allocation.amount().isZero()) {
                 continue;
             }
             Warehouse warehouse = byBuilding.get(allocation.warehouse());
             if (warehouse != null) {
-                int extracted = warehouse.building.inventory().extract(allocation.item(), allocation.amount());
+                Natural extracted = warehouse.building.inventory().extract(allocation.item(), allocation.amount());
                 warehouse.release(allocation.item(), allocation.amount());
-                if (extracted > 0) {
+                if (!extracted.isZero()) {
                     taken.add(allocation.item(), extracted);
                 }
             }
@@ -242,7 +248,7 @@ public final class WarehouseLogistics implements Logistics {
     /** Gives the still promised goods of a closed reservation back to the pool without moving them. */
     void dropRemaining(LogisticsReservation reservation) {
         for (ReservationPool.Allocation allocation : reservation.allocations()) {
-            if (allocation.amount() <= 0) {
+            if (allocation.amount().isZero()) {
                 continue;
             }
             Warehouse warehouse = byBuilding.get(allocation.warehouse());
@@ -310,7 +316,7 @@ public final class WarehouseLogistics implements Logistics {
         if (bundle.isEmpty()) {
             return ItemBundle.EMPTY;
         }
-        Map<ItemType, Integer> wanted = new LinkedHashMap<>(bundle.asMap());
+        Map<ItemType, Natural> wanted = new LinkedHashMap<>(bundle.asMap());
         for (Building warehouse : sortedByDistance(at)) {
             if (wanted.isEmpty()) {
                 break;
@@ -333,7 +339,7 @@ public final class WarehouseLogistics implements Logistics {
         if (bundle.isEmpty()) {
             return ItemBundle.EMPTY;
         }
-        Map<ItemType, Integer> wanted = new LinkedHashMap<>(bundle.asMap());
+        Map<ItemType, Natural> wanted = new LinkedHashMap<>(bundle.asMap());
         for (Warehouse warehouse : warehouses) {
             if (wanted.isEmpty()) {
                 break;
@@ -343,12 +349,12 @@ public final class WarehouseLogistics implements Logistics {
         return ItemBundle.of(wanted);
     }
 
-    private static Map<ItemType, Integer> insertAll(Inventory inventory, Map<ItemType, Integer> wanted) {
-        Map<ItemType, Integer> left = new LinkedHashMap<>();
-        for (Map.Entry<ItemType, Integer> entry : wanted.entrySet()) {
-            int accepted = inventory.insert(entry.getKey(), entry.getValue());
-            int rest = entry.getValue() - accepted;
-            if (rest > 0) {
+    private static Map<ItemType, Natural> insertAll(Inventory inventory, Map<ItemType, Natural> wanted) {
+        Map<ItemType, Natural> left = new LinkedHashMap<>();
+        for (Map.Entry<ItemType, Natural> entry : wanted.entrySet()) {
+            Natural accepted = inventory.insert(entry.getKey(), entry.getValue());
+            Natural rest = entry.getValue().subtractClamped(accepted);
+            if (!rest.isZero()) {
                 left.put(entry.getKey(), rest);
             }
         }
@@ -380,7 +386,7 @@ public final class WarehouseLogistics implements Logistics {
         Objects.requireNonNull(item, "item");
         List<Building> result = new ArrayList<>();
         for (Warehouse warehouse : warehouses) {
-            if (warehouse.building.inventory().insertable(item, 1) > 0) {
+            if (!warehouse.building.inventory().insertable(item, 1).isZero()) {
                 result.add(warehouse.building);
             }
         }
@@ -468,12 +474,12 @@ public final class WarehouseLogistics implements Logistics {
         LogisticsReservation mine = (LogisticsReservation) reservation;
         ItemBundle.Builder taken = ItemBundle.builder();
         for (ItemBundle.Amount component : wanted.components()) {
-            int allowed = mine.plannedFrom(warehouse, component.item(), component.amount());
-            if (allowed <= 0) {
+            Natural allowed = mine.plannedFrom(warehouse, component.item(), component.amount());
+            if (allowed.isZero()) {
                 continue;
             }
-            int extracted = warehouse.inventory().extract(component.item(), allowed);
-            if (extracted <= 0) {
+            Natural extracted = warehouse.inventory().extract(component.item(), allowed);
+            if (extracted.isZero()) {
                 continue;
             }
             entry.release(component.item(), extracted);
@@ -494,7 +500,7 @@ public final class WarehouseLogistics implements Logistics {
         }
         LogisticsReservation mine = (LogisticsReservation) reservation;
         for (ReservationPool.Allocation allocation : mine.allocations()) {
-            if (allocation.warehouse() == warehouse && allocation.amount() > 0) {
+            if (allocation.warehouse() == warehouse && !allocation.amount().isZero()) {
                 Warehouse entry = byBuilding.get(warehouse);
                 if (entry != null) {
                     entry.release(allocation.item(), allocation.amount());
@@ -527,7 +533,7 @@ public final class WarehouseLogistics implements Logistics {
     private ItemBundle amountOwed(LogisticsReservation reservation, Building warehouse) {
         ItemBundle.Builder builder = ItemBundle.builder();
         for (ReservationPool.Allocation allocation : reservation.allocations()) {
-            if (allocation.warehouse() == warehouse && allocation.amount() > 0) {
+            if (allocation.warehouse() == warehouse && !allocation.amount().isZero()) {
                 builder.add(allocation.item(), allocation.amount());
             }
         }
@@ -555,31 +561,31 @@ public final class WarehouseLogistics implements Logistics {
     private static final class Warehouse {
 
         private final Building building;
-        private final Map<ItemType, Integer> promised = new LinkedHashMap<>();
+        private final Map<ItemType, Natural> promised = new LinkedHashMap<>();
 
         private Warehouse(Building building) {
             this.building = building;
         }
 
-        private int promised(ItemType item) {
-            return promised.getOrDefault(item, 0);
+        private Natural promised(ItemType item) {
+            return promised.getOrDefault(item, Natural.ZERO);
         }
 
         /** What this warehouse could still promise: stock minus what is already spoken for. */
-        private int free(ItemType item) {
-            return Math.max(0, building.inventory().amount(item) - promised(item));
+        private Natural free(ItemType item) {
+            return building.inventory().amount(item).subtractClamped(promised(item));
         }
 
-        private void promise(ItemType item, int amount) {
-            if (amount > 0) {
-                promised.merge(item, amount, Integer::sum);
+        private void promise(ItemType item, Natural amount) {
+            if (!amount.isZero()) {
+                promised.merge(item, amount, Natural::add);
             }
         }
 
         /** Gives a promise back, either because the goods were taken or because the claim was dropped. */
-        private void release(ItemType item, int amount) {
-            int left = promised(item) - Math.max(0, amount);
-            if (left > 0) {
+        private void release(ItemType item, Natural amount) {
+            Natural left = promised(item).subtractClamped(amount.max(Natural.ZERO));
+            if (!left.isZero()) {
                 promised.put(item, left);
             } else {
                 promised.remove(item);

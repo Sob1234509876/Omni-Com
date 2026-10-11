@@ -3,6 +3,7 @@
 > 面向使用者的分主题文档：怎么把引擎跑起来、每个子系统怎么用、有哪些坑。
 
 这套文档对应 `projects/oc/oc-rts-engine`（模块版本 `2.0a`，纯 Java 17 + JPMS，**零第三方依赖**，不含 GUI）。
+它唯一的依赖是同一仓库里的 `:projects:oc:oc-googology`（Java 模块 `oc.projects.oc.googology`），提供物品数量、容量、血量与伤害所用的 `Natural` 类型，见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
 文中所有类型名、方法名、默认值与相位号都取自该目录下的源码，不是示意；每篇末尾都给出「相关源码」的相对路径。
 特别标注为 `示意` 的代码片段是探索性写法，未经编译验证。
 
@@ -20,6 +21,7 @@
 - 单位、订单、移动与转向 → [04-units-orders-and-movement.md](04-units-orders-and-movement.md)
 - 队形与阵位 → [05-formations.md](05-formations.md)
 - 经济、物流与生产 → [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)
+- 数量类型 `Natural`（精确阈值、大数近似、`BEYOND`） → [12-numbers-and-googology.md](12-numbers-and-googology.md)
 
 **C. 要接渲染层，或想扩展引擎**
 
@@ -42,6 +44,7 @@
 | [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) | 包结构、相位 100→800 的管线、实体生命周期、事件总线、确定性规则、扩展点 | 想加系统或理解全局 |
 | [10-cookbook.md](10-cookbook.md) | 18 个「怎么做 X」配方，每步带代码 | 知道要做什么但不知道用哪个 API |
 | [11-limits-and-faq.md](11-limits-and-faq.md) | 未实现清单、预留但未接通的字段、已知取舍、按症状排查的 FAQ | 遇到怪现象，或者想知道边界 |
+| [12-numbers-and-googology.md](12-numbers-and-googology.md) | 数量类型 `Natural`：4096 位精确阈值、超运算记号、大数近似与 `BEYOND`、以及哪些字段仍是 `float`/`int` | 想放大数量，或结果和预期不一样 |
 | [appendix-api-map.md](appendix-api-map.md) | 全量 public 类型清单、常量与枚举速查、门面方法速查 | 当索引翻 |
 
 ## 30 秒了解这个引擎
@@ -70,7 +73,7 @@ System.out.println(engine.render(new GridPos(60, 40), 20));           // 文本�
 ./gradlew :projects:oc:oc-rts-engine:scenario   # 无框架自校验，含文本地图输出
 ```
 
-`scenario` 不需要网络也不需要测试框架。它逐条验证：区块流式加载与卸载、程序生成地形的多样性、跨区块寻路、五种队形的展开尺寸、仓库门禁与预订语义、生产与卡料、真实搬运工送货、搬运工死亡后的货物回收、动画帧推进、以及"同种子逐位一致"。
+`scenario` 不需要网络也不需要测试框架。它逐条验证：区块流式加载与卸载、程序生成地形的多样性、跨区块寻路、五种队形的展开尺寸、仓库门禁与预订语义、生产与卡料、真实搬运工送货、搬运工死亡后的货物回收、动画帧推进、"同种子逐位一致"，以及第 10 节的大数场景（每格 `10^5000` 的物品、血量 `10↑↑10` 的单位、`BEYOND` 伤害与结构性数量下的槽位报告）。
 
 自校验不是框架测试，所以它放在独立的 `selfCheck` 源集里（`src/selfcheck/java`），由上面的 `scenario` 任务以普通程序运行；`src/test/java` 留给以后的单元测试。想照它的样子写自己的场景，直接看 `../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java` 与 `ScenarioContent.java`，配方见 [10-cookbook.md](10-cookbook.md#17-写一个无框架自校验场景)。
 

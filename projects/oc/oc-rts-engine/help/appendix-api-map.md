@@ -4,11 +4,12 @@
 
 ## 这一篇讲什么
 
-- 这是一份**索引**，不是教程：讲解在 01~11 篇里，这里只回答"该看哪一篇、该碰哪个类型"。
+- 这是一份**索引**，不是教程：讲解在 01~12 篇里，这里只回答"该看哪一篇、该碰哪个类型"。
 - 类型清单是**扫描 `src/main/java` 下全部 95 个源文件**得到的，共 113 个 public 类型（含嵌套 public 类型）。包私有类型（如 `economy.ReservationPool`、`logistics.HaulOrder.Phase`、各类 `Draft`）不在清单里，因为它们不是导出 API。
+- 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，5 个源文件）的三个 public 类型：`Natural` / `HyperOperation` / `NaturalFormat`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上。
 - 每个包一节，逐行给出：类型 → 一句话作用 → 关键方法/字段 → 详见的文档。
 - 常量值全部从源码读出，包含默认参数与枚举成员；`throws` 列只写源码里真实存在的校验与异常。
-- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有类型都在模块 `oc.projects.oc.rts.engine` 的 14 个导出包里。
+- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 14 个导出包里；大数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
 
 ## 我想做 X → 看哪篇
 
@@ -52,6 +53,8 @@
 | 限制某个仓库只收矿石 | [02](02-content-and-items.md) / [06](06-economy-logistics-and-production.md) | `Inventory` 构造器的 `Predicate<ItemType>`、`BuildingType#storageTags` |
 | 让建筑像工厂一样能跑配方 | [06](06-economy-logistics-and-production.md) | `BuildingType#producerTags`、`Recipe#producerTags`、`ProductionSystem#availableRecipes` |
 | 让新生产的单位自动走到集结点 | [06](06-economy-logistics-and-production.md) | `Building#rallyPoint`、`Building#setRallyPoint` |
+| 把数量放大到 `int`/`long` 装不下（库存、血量、伤害） | [12](12-numbers-and-googology.md) | `Natural`、`Natural.arrow`、`Inventory.UNLIMITED`、`ItemType.maxStack` |
+| 排查"数量算不对 / 库存明明没满却报满" | [11](11-limits-and-faq.md) / [12](12-numbers-and-googology.md) | `Natural.EXACT_BIT_LIMIT`、`Natural#isStructural`、`Inventory#usedSlots`、`Natural.BEYOND` |
 
 ## 按包的类型清单
 
@@ -65,6 +68,14 @@
 | `PlayerId` | 玩家身份，全场比赛稳定 | `of(int)`、`value()` | [06](06-economy-logistics-and-production.md) |
 | `World` | 模拟状态本体：区块地形、实体、玩家与各服务 | `spawnUnit()`、`spawnBuilding()`、`canPlace()`、`destroy()`、`flush()`、`spatial()`、`events()` | [09](09-architecture-and-tick-pipeline.md) |
 
+### `io.github.sob1234509876.oc.googology`（兄弟模块 `oc.projects.oc.googology`）
+
+| 类型 | 一句话作用 | 关键方法/字段 | 详见 |
+| --- | --- | --- | --- |
+| `Natural` | 不可变自然数：4096 位以内精确，之上是超运算记号，另有顶元素 `BEYOND`；引擎的物品数量、容量、血量与伤害都用它 | `ZERO`/`ONE`/`TWO`/`TEN`/`BEYOND`、`EXACT_BIT_LIMIT = 4096`、`of(long)`、`of(BigInteger)`、`of(Natural)`、`power()`、`tetration()`、`arrow()`、`parse()`、`isZero()`/`isOne()`/`isExact()`/`isStructural()`/`isBeyond()`、`exactValue()`、`toBigInteger()`、`toLongSaturated()`、`toDoubleApprox()`、`log10Approx()`、`fractionOf(whole)`、`add`、`subtract`、`subtractClamped`、`multiply`、`min`、`max`、`compareTo`、`arrows()`、`towerBase()`、`towerHeight()`、`decimalDigits()`、`describe()`、`arrows(int)` | [12](12-numbers-and-googology.md) |
+| `HyperOperation` | 超运算级别枚举：级别 0 后继、1 加法、2 乘法、3 幂、4 四级运算（幂塔）…… 8 八级运算 | `SUCCESSION`/`ADDITION`/`MULTIPLICATION`/`EXPONENTIATION`/`TETRATION`/`PENTATION`/`HEXATION`/`HEPTATION`/`OCTATION`、`rank()`、`arrows()`（级别 ≥ 3 时为 `rank - 2`）、`label()`、`chineseLabel()`、`notation()`、`ofRank(int)`、`find(int)`、`apply(a, b)` | [12](12-numbers-and-googology.md) |
+| `NaturalFormat` | 把 `Natural` 变成给人看的文本（私有构造器，纯静态工具类） | `decimal(value)`、`scientific(value)`（小值是十进制、大值是 `~1.23e1233`、幂是 `10^1234`、塔是 `10↑↑10`、`BEYOND` 是 `beyond`）、`arrow(value)`、`describe(value)`、`operationOf(value)` | [12](12-numbers-and-googology.md) |
+
 ### `...oc.rts.content`
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
@@ -72,13 +83,13 @@
 | `ContentRegistry` | 一份游戏的全部定义目录，按 `ResourceKey` 寻址 | `namespace()`、`terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`recipesFor()`、`builder()` | [02](02-content-and-items.md) |
 | `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`storage()`、`warehouse()`、`producer()`、`build()` | [02](02-content-and-items.md) |
 | `TerrainType` | 一种地形的定义 | `passable()`、`buildable()`、`moveCost()`、`spriteId()`、`mapColor()` | [02](02-content-and-items.md) |
-| `ItemType` | 一种物品/资源的定义 | `key()`、`maxStack()`、`hasTag()`、`hasAnyTag()` | [02](02-content-and-items.md) |
+| `ItemType` | 一种物品/资源的定义 | `key()`、`maxStack()`（`Natural`）、`hasTag()`、`hasAnyTag()` | [02](02-content-and-items.md) |
 | `ItemBundle` | 不可变、有序的物品多重集（成本、产出、库存通用） | `EMPTY`、`of()`、`plus()`、`minus()`、`minusClamped()`、`components()`、`builder()` | [02](02-content-and-items.md) |
-| `ItemBundle.Amount` | 一条 (物品, 数量) 分量 | `item()`、`amount()` | [02](02-content-and-items.md) |
-| `ItemBundle.Builder` | 累加式构建 `ItemBundle` | `add()`、`addAll()`、`build()` | [02](02-content-and-items.md) |
-| `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`、`speed()`、`radius()`、`cost()`、`cargoCapacity()`、`canHaul()`、`canAttack()` | [02](02-content-and-items.md) |
+| `ItemBundle.Amount` | 一条 (物品, 数量) 分量，数量是 `Natural` | `item()`、`amount()` | [02](02-content-and-items.md) |
+| `ItemBundle.Builder` | 累加式构建 `ItemBundle`；拒绝负数与 `BEYOND` | `add()`、`addAll()`、`build()` | [02](02-content-and-items.md) |
+| `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`（`Natural`）、`speed()`、`radius()`、`cost()`、`cargoCapacity()`（`Natural`）、`canHaul()`、`attackDamage()`（`Natural`）、`attackRange()`、`canAttack()` | [02](02-content-and-items.md) |
 | `UnitRole` | 兵种大类，供生产和后勤判断用途 | `COMBAT`/`WORKER`/`SUPPORT`、`id()` | [02](02-content-and-items.md) |
-| `BuildingType` | 一种建筑的定义：占地、成本、血、仓储、生产标签 | `sizeX()`/`sizeY()`、`footprint()`、`storageSlots()`、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
+| `BuildingType` | 一种建筑的定义：占地、成本、血、仓储、生产标签 | `sizeX()`/`sizeY()`、`footprint()`、`maxHealth()`（`Natural`）、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
 | `Recipe` | 一条生产配方：消耗什么、产出什么、要多久 | `inputs()`、`itemOutputs()`、`unitOutput()`、`isUnitRecipe()`、`durationTicks()`、`producerTags()` | [06](06-economy-logistics-and-production.md) |
 | `ResourceKey` | 带命名空间的内容标识，如 `oc:iron_ore` | `namespace()`、`path()`、`of(String)`、`of(ns, path)` | [02](02-content-and-items.md) |
 
@@ -99,7 +110,7 @@
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
-| `Inventory` | 单个实体内部的物品存储；槽位数与总量两个独立上限，一格最多 `ItemType.maxStack()`（`usedSlots()` 按 `ceil(数量/maxStack)` 计） | `UNLIMITED`、`slotCount()`、`unitLimit()`、`accepts()`、`insert()`、`insertable()`、`capacityFor()`、`extractUpTo()`、`canAcceptAll()`、`usedSlots()`、`freeSlots()`、`isFull()` | [02](02-content-and-items.md) |
+| `Inventory` | 单个实体内部的物品存储；槽位数与总量两个独立上限（都是 `Natural`），一格最多 `ItemType.maxStack()`（`usedSlots()` 按 `ceil(数量/maxStack)` 计，量级过大时返回 `BEYOND`） | `UNLIMITED`、`slotCount()`、`unitLimit()`、`accepts()`、`insert()`、`insertable()`、`capacityFor()`、`extractUpTo()`、`canAcceptAll()`、`usedSlots()`、`freeSlots()`、`isFull()` | [02](02-content-and-items.md) |
 | `Logistics` | 一个玩家所有仓库合并成的可用库存 | `reserve()`、`requestDelivery()`、`deposit()`、`stored()`、`available()`、`warehousesAccepting()` | [06](06-economy-logistics-and-production.md) |
 | `Logistics.Reservation` | 对仓库中某批物品的占用凭证（先占后用或退回） | `bundle()`、`source()`、`active()`、`commit()`、`release()` | [06](06-economy-logistics-and-production.md) |
 | `LogisticsReservation` | `Reservation` 的默认实现，记录还没被搬走的余量 | `remaining()`、`allocationCount()`、`describe()` | [06](06-economy-logistics-and-production.md) |
@@ -112,7 +123,7 @@
 | `Entity` | 世界里的一切：身份、归属、位置、生命、动画状态 | `id()`、`owner()`、`position()`、`health()`、`isUnit()`、`asUnit()`、`visual()` | [09](09-architecture-and-tick-pipeline.md) |
 | `Unit` | 可移动实体：士兵、工人、载具 | `type()`、`role()`、`motion()`、`orders()`、`cargo()`、`tile()`、`setSelected()` | [04](04-units-orders-and-movement.md) |
 | `Building` | 带占地面积的静态实体：仓库、兵营、工厂 | `origin()`、`inventory()`、`entrance()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()` | [06](06-economy-logistics-and-production.md) |
-| `Health` | 生命值小值对象，承接伤害与治疗 | `max()`、`current()`、`fraction()`、`damage()`、`heal()`、`restore()` | [09](09-architecture-and-tick-pipeline.md) |
+| `Health` | 生命值小值对象，承接伤害与治疗；血量与伤害都是 `Natural`，`fraction()` 仍是 `float` 比例 | `max()`、`current()`、`fraction()`、`damage()`、`heal()`、`restore()`、`setCurrent()` | [09](09-architecture-and-tick-pipeline.md) |
 | `SpatialIndex` | 宽阶段空间查询接口（不是位置感知的） | `inRadius()`、`inRect()`、`nearest()`、`insert()`/`update()`/`remove()` | [04](04-units-orders-and-movement.md) |
 | `GridSpatialIndex` | 均匀网格实现，实体按小方格分桶 | `GridSpatialIndex(float cellSize)`（默认由 `World` 用 `4f` 构造）、`occupiedCellCount()` | [04](04-units-orders-and-movement.md) |
 
@@ -126,7 +137,7 @@
 | `Events` | 事件 record 的容器类（只有嵌套 record） | — | [09](09-architecture-and-tick-pipeline.md) |
 | `Events.EntitySpawned` | 实体被创建 | `entity`、`tick` | [09](09-architecture-and-tick-pipeline.md) |
 | `Events.EntityDestroyed` | 实体被标记死亡（`flush()` 前发布） | `entity`、`tick` | [09](09-architecture-and-tick-pipeline.md) |
-| `Events.DamageDealt` | 造成伤害 | `target`、`source`、`amount`、`tick` | [09](09-architecture-and-tick-pipeline.md) |
+| `Events.DamageDealt` | 造成伤害 | `target`、`source`、`amount`（`Natural`）、`tick` | [09](09-architecture-and-tick-pipeline.md) |
 | `Events.ConstructionCompleted` | 工地完工 | `building`、`tick` | [06](06-economy-logistics-and-production.md) |
 | `Events.ItemProduced` | 配方产出物品 | `player`、`building`、`items`、`recipe`、`tick` | [06](06-economy-logistics-and-production.md) |
 | `Events.UnitProduced` | 配方产出单位 | `player`、`building`、`unit`、`recipe`、`tick` | [06](06-economy-logistics-and-production.md) |
@@ -250,6 +261,7 @@
 | `UnitRole` | `COMBAT("combat")`、`WORKER("worker")`、`SUPPORT("support")` | `id()` |
 | `FormationShape` | `NONE("none","Free")`、`LINE("line","Line")`、`COLUMN("column","Column")`、`BOX("box","Box")`、`WEDGE("wedge","Wedge")`、`CIRCLE("circle","Circle")` | `id()`、`label()` |
 | `Direction` | `NORTH(0,1,"north")`、`NORTH_EAST(1,1,"north_east")`、`EAST(1,0,"east")`、`SOUTH_EAST(1,-1,"south_east")`、`SOUTH(0,-1,"south")`、`SOUTH_WEST(-1,-1,"south_west")`、`WEST(-1,0,"west")`、`NORTH_WEST(-1,1,"north_west")` | `dx()`、`dy()`、`id()`、`angle()`、`opposite()`、`fromAngle()`、`fromVector()` |
+| `HyperOperation` | `SUCCESSION(0)`、`ADDITION(1)`、`MULTIPLICATION(2)`、`EXPONENTIATION(3)`、`TETRATION(4)`、`PENTATION(5)`、`HEXATION(6)`、`HEPTATION(7)`、`OCTATION(8)` | `rank()`、`arrows()`（级别 ≥ 3 时为 `rank - 2`，否则 0）、`label()`、`chineseLabel()`、`notation()`、`ofRank(int)`、`find(int)`、`apply(a, b)` |
 
 ### 字符串与数值常量
 
@@ -258,7 +270,10 @@
 | `AnimationClips.IDLE` / `MOVE` / `ATTACK` / `DEATH` | `"idle"` / `"move"` / `"attack"` / `"death"` |
 | `AnimationClips.BUILD` / `GATHER` / `PRODUCE` | `"build"` / `"gather"` / `"produce"` |
 | `AnimationClips.CARRY_IDLE` / `CARRY_MOVE` | `"carry_idle"` / `"carry_move"` |
-| `Inventory.UNLIMITED` | `Integer.MAX_VALUE`（`slotCount` 与 `unitLimit` 共用） |
+| `Inventory.UNLIMITED` | `Natural.BEYOND`（`slotCount` 与 `unitLimit` 共用；不是数字，是比较时"比一切都大"的顶元素） |
+| `Natural.EXACT_BIT_LIMIT` | `4096`（约 1233 位十进制；阈值内是 `BigInteger`，超过就变成结构形 `base ↑^arrows height`） |
+| `Natural.ZERO` / `ONE` / `TWO` / `TEN` | `0` / `1` / `2` / `10`（都是精确值） |
+| `Natural.BEYOND` | 顶元素："比本记号能命名的都大"，吸收加减乘；`Inventory.UNLIMITED` 就是它 |
 | `ChunkStreamer.ORDER` / `DEFAULT_CHUNKS_PER_TICK` | `100` / `4` |
 | `PathOptions.DEFAULT` | `new PathOptions(20_000, true, false, 1.05f)` |
 | `PathOptions.FAST` | `new PathOptions(2_000, true, false, 1.5f)` |
@@ -357,3 +372,4 @@
 - [09 架构与 tick 管线](09-architecture-and-tick-pipeline.md) —— `SimulationSystem`、`World`、事件总线
 - [10 实战手册](10-cookbook.md) —— 常见任务的可复制代码
 - [11 限制与 FAQ](11-limits-and-faq.md) —— 已知取舍、性能与陷阱
+- [12 大数与 `Natural`](12-numbers-and-googology.md) —— 数量类型、4096 位阈值、结构形算术与 `BEYOND`

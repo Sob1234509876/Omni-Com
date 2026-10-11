@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.rts.content;
 
+import io.github.sob1234509876.oc.googology.Natural;
+
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -17,15 +19,15 @@ public final class UnitType implements Comparable<UnitType> {
     private final ResourceKey key;
     private final String displayName;
     private final UnitRole role;
-    private final float maxHealth;
+    private final Natural maxHealth;
     private final float speed;
     private final float radius;
     private final ItemBundle cost;
     private final int buildTimeTicks;
-    private final int cargoCapacity;
+    private final Natural cargoCapacity;
     private final String spriteSetId;
     private final Set<String> tags;
-    private final float attackDamage;
+    private final Natural attackDamage;
     private final float attackRange;
     private final int attackCooldownTicks;
 
@@ -33,15 +35,15 @@ public final class UnitType implements Comparable<UnitType> {
             ResourceKey key,
             String displayName,
             UnitRole role,
-            float maxHealth,
+            Natural maxHealth,
             float speed,
             float radius,
             ItemBundle cost,
             int buildTimeTicks,
-            int cargoCapacity,
+            Natural cargoCapacity,
             String spriteSetId,
             Set<String> tags,
-            float attackDamage,
+            Natural attackDamage,
             float attackRange,
             int attackCooldownTicks) {
         this.key = Objects.requireNonNull(key, "key");
@@ -72,7 +74,7 @@ public final class UnitType implements Comparable<UnitType> {
         return role;
     }
 
-    public float maxHealth() {
+    public Natural maxHealth() {
         return maxHealth;
     }
 
@@ -96,12 +98,12 @@ public final class UnitType implements Comparable<UnitType> {
     }
 
     /** How many item units this unit can carry; {@code 0} means it cannot haul. */
-    public int cargoCapacity() {
+    public Natural cargoCapacity() {
         return cargoCapacity;
     }
 
     public boolean canHaul() {
-        return cargoCapacity > 0;
+        return !cargoCapacity.isZero();
     }
 
     /** Identifier of the animation set a renderer should use for this unit. */
@@ -117,7 +119,7 @@ public final class UnitType implements Comparable<UnitType> {
         return tags.contains(tag);
     }
 
-    public float attackDamage() {
+    public Natural attackDamage() {
         return attackDamage;
     }
 
@@ -130,7 +132,7 @@ public final class UnitType implements Comparable<UnitType> {
     }
 
     public boolean canAttack() {
-        return attackDamage > 0f && attackRange > 0f;
+        return !attackDamage.isZero() && attackRange > 0f;
     }
 
     @Override

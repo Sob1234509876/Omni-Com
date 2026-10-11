@@ -1,5 +1,8 @@
 package io.github.sob1234509876.oc.rts.scenario;
 
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.NaturalFormat;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,6 +31,37 @@ public final class Check {
     public void equal(Object expected, Object actual, String description) {
         boolean same = expected == null ? actual == null : expected.equals(actual);
         that(same, description + " (expected " + expected + ", was " + actual + ")");
+    }
+
+    /** Compares a natural number against a small literal. */
+    public void equal(long expected, Natural actual, String description) {
+        equal(Natural.of(expected), actual, description);
+    }
+
+    /**
+     * Compares two natural numbers. The description shows both with a readable magnitude, so an amount
+     * that has left the exact range does not print thousands of digits.
+     */
+    public void equal(Natural expected, Natural actual, String description) {
+        that(expected.equals(actual), description + " (expected " + NaturalFormat.scientific(expected)
+                + ", was " + NaturalFormat.scientific(actual) + ")");
+    }
+
+    /** Asserts that a natural number is at least a small literal. */
+    public void atLeast(long minimum, Natural actual, String description) {
+        that(actual.compareTo(Natural.of(minimum)) >= 0, description + " (expected at least " + minimum
+                + ", was " + NaturalFormat.scientific(actual) + ")");
+    }
+
+    /** Asserts that a natural number is at most a small literal. */
+    public void atMost(long maximum, Natural actual, String description) {
+        that(actual.compareTo(Natural.of(maximum)) <= 0, description + " (expected at most " + maximum
+                + ", was " + NaturalFormat.scientific(actual) + ")");
+    }
+
+    /** Asserts that a natural number is zero. */
+    public void zero(Natural actual, String description) {
+        that(actual.isZero(), description + " (expected zero, was " + NaturalFormat.scientific(actual) + ")");
     }
 
     public void close(float expected, float actual, float tolerance, String description) {

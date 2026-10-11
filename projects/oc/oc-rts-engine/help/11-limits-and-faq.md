@@ -6,9 +6,26 @@
 
 - 完全没实现的能力（以及临时替代方案）。
 - 已经定义但**没有任何代码使用**的字段与事件——看到它们不要以为已经生效。
+- 数量类型的近似边界：`Natural` 从哪一位开始不再精确、`BEYOND` 是什么、为什么库存会"明明没满却报满"。
 - 已知的取舍与硬限制。
-- FAQ：18 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
+- FAQ：21 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
 - 性能调优的旋钮在哪。
+
+## 数量的精度边界（`Natural`）
+
+物品数量、容量、血量与伤害都是 `Natural`（见 [12-numbers-and-googology.md](12-numbers-and-googology.md)），它**在小数值上精确、在大数值上近似**。下面这几条是你能在运行中观察到的全部边界，也是"数字看起来不对"时最常被怀疑的地方。
+
+| 事实 | 具体表现 | 从哪里来 |
+| --- | --- | --- |
+| 精确阈值是 **4096 位**（`Natural.EXACT_BIT_LIMIT = 4096`，约 1233 位十进制） | 阈值内用 `BigInteger`，加减乘与比较全部无损；`2^4095` 仍然精确，`2^4096` 变成结构形 | `Natural.java` |
+| 超过阈值后是**结构形记号** `base ↑^arrows height` | `10^5000` 打印成 `10^5000`、四则幂塔打印成 `10↑↑10`、五级运算打印成 `10↑↑↑10`，更多箭头只是继续加箭头 | `Natural.arrow(...)` / `NaturalFormat.scientific(...)` |
+| 结构形上的加减乘**按设计是近似的**，和浮点在小数端一样 | 给塔加/减一个很小的数，表示不变；乘两个塔得较大的那个；`subtractClamped` 夹在 0 | `Natural.add` / `multiply` / `subtractClamped` |
+| `Natural.BEYOND` 是**文档化的顶元素，不是自然数** | 比一切都大，吸收加减乘（`BEYOND - 任何有限值 = BEYOND`，`任何有限值 - BEYOND = 0`）；引擎把 `Inventory.UNLIMITED` 定义成它 | `Natural.BEYOND`、`Inventory.UNLIMITED` |
+| **没有除法、没有取余、没有负数** | `Natural` 只提供 `add` / `subtractClamped` / `subtract` / `multiply` / `min` / `max`；要比例就用 `fractionOf(whole)`，它给 `float` | `Natural.java` |
+| 排序、比较、`min`/`max`、`equals`/`hashCode` 在两种表示上都**忠实于量级** | 结构形大于一切精确值，塔之间按（箭头数，底数，高度）比较，所以 `Collections.sort` 用它当键是可靠的 | `Natural.compareTo` |
+| 库的 `selfcheck` 任务有 80 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返 | `GoogologyCheck.java` |
+
+`float` 与 `int` 的领地没有被 `Natural` 取代，而且仍然各自带边界：位置/速度/半径/射程/`EntitySnapshot.healthFraction` 是 `float`，格坐标与一切 tick 时长（`buildTimeTicks`、`Recipe.durationTicks`、冷却、超时）是 `int`/`long`。位置与速度用的是 `float`，而 `Vec2` 只做 `float` 基本算术（这也是"同种子必然复现"的前提之一）：`float` 只有 24 位有效二进制位，**离原点越远分辨率越差**——原点附近相邻可表示值的间隔约 `1.2e-7` 格，到 10 万格处约 `0.0078` 格，到 100 万格处约 `0.0625` 格，此时"精确停在某个坐标"已没有意义（`UnitType.radius()` 通常在 0.35 格上下）。大数解决的是"数量"，不是"坐标"。
 
 ## 完全没有实现的能力
 
@@ -51,6 +68,8 @@
 8. **没有序列化**。`World`、订单、生产队列都没有 `Serializable` 或存档格式。
 9. **`Inventory` 的过滤器不可变**。要按配方动态改变可接受的物品，得自己构造新的 `Inventory`（或改 `Building` 的库存定义）。
 10. **文本地图的 y 轴向下**（第一行是最大的 y），字符是角色字母（`C` 战斗 / `W` 工人 / `S` 支援），不是单位名首字母。
+11. **超出 4096 位（`Natural.EXACT_BIT_LIMIT`）的数量一律近似**。这个阈值之上 `Natural` 只保留量级：加减乘都可能"抹掉"小操作数，`subtractClamped` 夹在 0，而且**没有除法**（要比例用 `fractionOf`，它给 `float`）。阈值之内完全没有这个问题，普通玩法也碰不到它。
+12. **`Natural.BEYOND` 不是数字，是顶元素**。它比一切都大、吸收运算，引擎用它表达"无上限"（`Inventory.UNLIMITED = Natural.BEYOND`）。因此它不能当作普通数量参与结算，也**不能放进 `ItemBundle`**（`ItemBundle.Builder.add` 会拒绝）。要表达"装得下无限多"请把它写在 `Inventory` 的上限上。
 
 ## FAQ
 
@@ -146,6 +165,25 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 
 不会（前提是死亡走 `World.destroy(...)`）。`HaulingSystem` 订阅了 `Events.EntityDestroyed`：背包里的货先退回仓库；还没装货的任务改派给别的搬运工；已经装货的任务直接失败并释放预订，生产端看到预订失效会立刻退回 `WAITING_MATERIALS` 重新预订刚收回的库存。唯一会真正丢货的情况是**所有仓库都满了**——那就确实无处可放。直接写血量把单位弄死不会触发这套兜底。
 
+### 20. 库存明明还能装，`isFull()` 却是 true
+
+先分清两种情况：
+
+- **格数或单位上限是有限的**，而某种物品的数量已经大到不再精确（超过 4096 位）：`usedSlots()` 返回 `Natural.BEYOND`，`freeSlots()` 是 `有限值 - BEYOND`，按 `subtractClamped` 的定义夹到 0，于是"满了"。这是刻意的近似，不是 bug；要写"真的满了"的判断，请额外检查 `usedSlots().isBeyond()`。
+- **格数与单位上限都是 `Inventory.UNLIMITED`**（也就是 `Natural.BEYOND`）：`freeSlots()` 本身就是 `BEYOND`，这种库存**不会**因为数量巨大而被判满（`RtsScenario` 第 10 节对这两种情况都有断言）。顺带一提，无上限库存上 `capacityFor(item)` 会返回 `BEYOND`（它问的是"还能收多少"，答案是"无限"），而 `insertable(item, n)` 如实返回 `n`——两者都不该被当成精确容量。
+
+如果并没有大数参与（所有数量都在 4096 位以内），那 `isFull()` 只说明**没有空槽**或**单位上限到顶**：半满的堆叠仍能继续补货，所以 `capacityFor` / `insert` 可能仍然给出正数。
+
+### 21. 数量算出来对不上（少了、没变、变成 0）
+
+按这个顺序排查：
+
+1. 数值是不是超过了 `Natural.EXACT_BIT_LIMIT = 4096` 位？超过就进入结构形，加减乘按设计会近似：给塔加一个很小的数不会改变它，两个塔相乘得较大的那个，`subtractClamped` 夹在 0。这是 [12](12-numbers-and-googology.md) 里说明的既定取舍。
+2. 有没有拿 `>`、`==`、`+` 直接比较/相加 `Natural`？它不是基本类型，要用 `compareTo`、`equals`、`add`（以及 `isZero()`、`isBeyond()` 这些谓词）。
+3. 有没有把巨大值先转成 `long` 再比较？`toLongSaturated()` 会把超出范围的值压成 `Long.MAX_VALUE`，两个不同的巨大值会显得相等。
+4. 有没有把比例当数量用？`Natural` **没有除法**，比例只有 `Natural.fractionOf(whole)` / `Health.fraction()` 这一条路，返回的是 `float`；大数之间差 300 个数量级以上时会直接给 0 或 1。
+5. 有没有混用 `Math.min` / `Math.max`？它们只接受基本类型，请用 `Natural.min` / `max`。
+
 ## 性能旋钮
 
 | 旋钮 | 默认 | 影响 |
@@ -164,9 +202,12 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位、事件、确定性规则、扩展点
 - [10-cookbook.md](10-cookbook.md) —— 具体任务的写法
 - [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— 生产状态机与超时细节
+- [12-numbers-and-googology.md](12-numbers-and-googology.md) —— 数量类型 `Natural` 的完整说明（阈值、近似算术、`BEYOND`）
 - [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单
 
 ## 相关源码
 
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
+- 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（80 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）

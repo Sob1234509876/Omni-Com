@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.production;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
@@ -167,11 +168,11 @@ public final class ProductionQueue {
     }
 
     private static ItemBundle insertInto(Inventory inventory, ItemBundle bundle) {
-        Map<ItemType, Integer> left = new LinkedHashMap<>();
+        Map<ItemType, Natural> left = new LinkedHashMap<>();
         for (ItemBundle.Amount component : bundle.components()) {
-            int accepted = inventory.insert(component.item(), component.amount());
-            int rest = component.amount() - accepted;
-            if (rest > 0) {
+            Natural accepted = inventory.insert(component.item(), component.amount());
+            Natural rest = component.amount().subtractClamped(accepted);
+            if (!rest.isZero()) {
                 left.put(component.item(), rest);
             }
         }

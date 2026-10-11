@@ -644,7 +644,9 @@ repositories {
 }
 
 dependencies {
-    // The RTS engine core is plain Java 17 (JPMS) and currently has no third-party dependencies.
+    // The engine itself is plain Java 17 (JPMS); its only dependency is the in-repo googology library,
+    // which supplies the Natural number type used for item amounts, capacities, health and damage.
+    api project(':projects:oc:oc-googology')
     // Uncomment together with the first framework based tests (needs the mirror above to be reachable):
 //    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
 //    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

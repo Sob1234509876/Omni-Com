@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.event;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.Recipe;
@@ -27,7 +28,7 @@ public final class Events {
     }
 
     /** An entity took damage; {@code source} may be {@code null} for environmental damage. */
-    public record DamageDealt(Entity target, Entity source, float amount, long tick) {
+    public record DamageDealt(Entity target, Entity source, Natural amount, long tick) {
     }
 
     /** A building was placed under construction and finished it. */

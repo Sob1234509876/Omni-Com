@@ -1,8 +1,11 @@
 package io.github.sob1234509876.oc.rts.economy;
 
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 
+import java.math.BigInteger;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -12,60 +15,65 @@ import java.util.function.Predicate;
  * Storage of items inside one entity: the shelves of a warehouse, the input and output buffers of a
  * factory, or the backpack of a hauler.
  *
+ * <p>All magnitudes are {@link Natural} values, so a stockpile can grow past what an {@code int} or a
+ * {@code long} could hold. Ordinary quantities behave exactly like plain integers; once an amount passes
+ * the googology exact threshold it keeps its order of magnitude instead of its digits, and the slot
+ * accounting of such an amount reports {@link Natural#BEYOND} rather than pretending to count slots.
+ *
  * <p>Capacity has two independent limits, both of which may be {@link #UNLIMITED}:
  * <ul>
- *   <li>{@link #slotCount()} is how many different item kinds fit, one slot per kind, and</li>
- *   <li>{@link #unitLimit()} is how many item units fit in total, where a slot of one kind holds at
- *       most {@link ItemType#maxStack()} units.</li>
+ *   <li>{@link #slotCount()} is how many slots fit, where one slot holds at most
+ *       {@link ItemType#maxStack()} units of a single kind, so a kind that needs more than one stack
+ *       occupies more than one slot, and</li>
+ *   <li>{@link #unitLimit()} is how many item units fit in total.</li>
  * </ul>
  *
- * <p>A {@link Predicate} filter restricts which item kinds may enter, which is how a warehouse that
- * only accepts ore and a factory buffer that only accepts its recipe inputs are expressed.
+ * <p>A {@link Predicate} filter restricts which item kinds may enter, which is how a warehouse that only
+ * accepts ore and a factory buffer that only accepts its recipe inputs are expressed.
  */
 public final class Inventory {
 
     /** Value for {@link #slotCount()} or {@link #unitLimit()} meaning "no limit". */
-    public static final int UNLIMITED = Integer.MAX_VALUE;
+    public static final Natural UNLIMITED = Natural.BEYOND;
 
     private final String name;
-    private final int slotCount;
-    private final int unitLimit;
+    private final Natural slotCount;
+    private final Natural unitLimit;
     private final Predicate<ItemType> filter;
-    private final Map<ItemType, Integer> contents = new LinkedHashMap<>();
+    private final Map<ItemType, Natural> contents = new LinkedHashMap<>();
 
-    public Inventory(String name, int slotCount, int unitLimit, Predicate<ItemType> filter) {
+    public Inventory(String name, Natural slotCount, Natural unitLimit, Predicate<ItemType> filter) {
         this.name = name;
-        this.slotCount = slotCount;
-        this.unitLimit = unitLimit;
+        this.slotCount = Objects.requireNonNull(slotCount, "slotCount");
+        this.unitLimit = Objects.requireNonNull(unitLimit, "unitLimit");
         this.filter = Objects.requireNonNull(filter, "filter");
-        if (slotCount < 0) {
-            throw new IllegalArgumentException("slot count must not be negative, was " + slotCount);
-        }
-        if (unitLimit < 0) {
-            throw new IllegalArgumentException("unit limit must not be negative, was " + unitLimit);
-        }
+    }
+
+    /** Convenience constructor for limits that fit a long. */
+    public Inventory(String name, long slotCount, long unitLimit, Predicate<ItemType> filter) {
+        this(name, Natural.of(slotCount), Natural.of(unitLimit), filter);
     }
 
     /**
      * An inventory that accepts nothing at all, as a null object for entities that store nothing.
      *
-     * <p>Both limits are zero and the filter rejects every item, so {@link #insert(ItemType, int)}
+     * <p>Both limits are zero and the filter rejects every item, so {@link #insert(ItemType, Natural)}
      * always returns zero. It is deliberately <em>not</em> an unlimited store: for that, construct an
      * inventory with {@link #UNLIMITED} slot count and unit limit.
      */
     public static Inventory empty(String name) {
-        return new Inventory(name, 0, 0, item -> false);
+        return new Inventory(name, Natural.ZERO, Natural.ZERO, item -> false);
     }
 
     public String name() {
         return name;
     }
 
-    public int slotCount() {
+    public Natural slotCount() {
         return slotCount;
     }
 
-    public int unitLimit() {
+    public Natural unitLimit() {
         return unitLimit;
     }
 
@@ -75,23 +83,24 @@ public final class Inventory {
     }
 
     /**
-     * Slots in use: one slot per {@link ItemType#maxStack()} units of a kind, so a kind holding more
-     * than one stack occupies more than one slot.
+     * Slots in use: one slot per {@link ItemType#maxStack()} units of a kind, so a kind holding more than
+     * one stack occupies more than one slot. Reports {@link Natural#BEYOND} when an amount is so large
+     * that even the slot count cannot be stated exactly.
      */
-    public int usedSlots() {
+    public Natural usedSlots() {
         return usedSlots(contents);
     }
 
-    public int freeSlots() {
+    public Natural freeSlots() {
         return freeSlots(contents);
     }
 
-    public int totalUnits() {
+    public Natural totalUnits() {
         return totalUnits(contents);
     }
 
-    public int amount(ItemType item) {
-        return contents.getOrDefault(item, 0);
+    public Natural amount(ItemType item) {
+        return contents.getOrDefault(item, Natural.ZERO);
     }
 
     public boolean isEmpty() {
@@ -100,7 +109,7 @@ public final class Inventory {
 
     /** True when nothing more fits: either every slot is taken or the unit limit is reached. */
     public boolean isFull() {
-        return freeSlots() == 0 || unitHeadroom(contents) == 0;
+        return freeSlots().isZero() || unitHeadroom(contents).isZero();
     }
 
     public ItemBundle contents() {
@@ -108,39 +117,48 @@ public final class Inventory {
     }
 
     /** How many units of the item could still be inserted right now. */
-    public int capacityFor(ItemType item) {
-        return insertable(item, UNLIMITED / 2);
+    public Natural capacityFor(ItemType item) {
+        return insertable(item, Natural.BEYOND);
     }
 
     /** How many of the offered units would be accepted right now. */
-    public int insertable(ItemType item, int amount) {
-        if (amount <= 0 || !accepts(item)) {
-            return 0;
+    public Natural insertable(ItemType item, Natural amount) {
+        if (amount.isZero() || !accepts(item)) {
+            return Natural.ZERO;
         }
-        long capacity = Math.min(headroomFor(contents, item), unitHeadroom(contents));
-        return (int) Math.min(capacity, amount);
+        return headroomFor(contents, item).min(unitHeadroom(contents)).min(amount);
+    }
+
+    /** Convenience for {@link #insertable(ItemType, Natural)} with a small literal. */
+    public Natural insertable(ItemType item, long amount) {
+        return insertable(item, Natural.of(amount));
     }
 
     /** Inserts as much of the item as fits and returns how much was accepted. */
-    public int insert(ItemType item, int amount) {
+    public Natural insert(ItemType item, Natural amount) {
         return insertInto(contents, item, amount);
     }
 
+    /** Convenience for {@link #insert(ItemType, Natural)} with a small literal. */
+    public Natural insert(ItemType item, long amount) {
+        return insert(item, Natural.of(amount));
+    }
+
     /** Inserts as much of the bundle as fits and returns how much was accepted in total. */
-    public int insert(ItemBundle bundle) {
-        int accepted = 0;
+    public Natural insert(ItemBundle bundle) {
+        Natural accepted = Natural.ZERO;
         for (ItemBundle.Amount component : bundle.components()) {
-            accepted += insert(component.item(), component.amount());
+            accepted = accepted.add(insert(component.item(), component.amount()));
         }
         return accepted;
     }
 
     /** Whether the whole bundle fits, without changing the inventory. */
     public boolean canAcceptAll(ItemBundle bundle) {
-        Map<ItemType, Integer> scratch = new LinkedHashMap<>(contents);
+        Map<ItemType, Natural> scratch = new LinkedHashMap<>(contents);
         for (ItemBundle.Amount component : bundle.components()) {
-            int accepted = insertInto(scratch, component.item(), component.amount());
-            if (accepted < component.amount()) {
+            Natural accepted = insertInto(scratch, component.item(), component.amount());
+            if (accepted.compareTo(component.amount()) < 0) {
                 return false;
             }
         }
@@ -148,14 +166,14 @@ public final class Inventory {
     }
 
     /** Removes up to the given amount and returns how much was actually taken out. */
-    public int extract(ItemType item, int amount) {
-        int available = amount(item);
-        int taken = Math.min(available, Math.max(0, amount));
-        if (taken <= 0) {
-            return 0;
+    public Natural extract(ItemType item, Natural amount) {
+        Natural available = amount(item);
+        Natural taken = available.min(amount);
+        if (taken.isZero()) {
+            return Natural.ZERO;
         }
-        int left = available - taken;
-        if (left == 0) {
+        Natural left = available.subtractClamped(taken);
+        if (left.isZero()) {
             contents.remove(item);
         } else {
             contents.put(item, left);
@@ -163,12 +181,17 @@ public final class Inventory {
         return taken;
     }
 
+    /** Convenience for {@link #extract(ItemType, Natural)} with a small literal. */
+    public Natural extract(ItemType item, long amount) {
+        return extract(item, Natural.of(amount));
+    }
+
     /** Removes as much of the bundle as is available and returns what was taken. */
     public ItemBundle extractUpTo(ItemBundle bundle) {
         ItemBundle.Builder taken = ItemBundle.builder();
         for (ItemBundle.Amount component : bundle.components()) {
-            int extracted = extract(component.item(), component.amount());
-            if (extracted > 0) {
+            Natural extracted = extract(component.item(), component.amount());
+            if (!extracted.isZero()) {
                 taken.add(component.item(), extracted);
             }
         }
@@ -183,8 +206,9 @@ public final class Inventory {
     }
 
     public String describe() {
-        return name + " [" + totalUnits() + " units in " + usedSlots() + "/"
-                + (slotCount == UNLIMITED ? "unlimited" : slotCount) + " slots] " + contents();
+        return name + " [" + NaturalFormat.scientific(totalUnits()) + " units in "
+                + NaturalFormat.scientific(usedSlots()) + "/"
+                + (slotCount.isBeyond() ? "unlimited" : NaturalFormat.scientific(slotCount)) + " slots] " + contents();
     }
 
     @Override
@@ -196,16 +220,20 @@ public final class Inventory {
      * Inserts as much of the item as fits into the given state and returns how much was accepted.
      *
      * <p>The room for an item is the free space in its partially filled stack plus one full stack per
-     * free slot, capped by the unit limit. Insert and {@link #insertable(ItemType, int)} share this rule
-     * so a capacity query and the insert that follows it always agree.
+     * free slot, capped by the unit limit. Insert and {@link #insertable(ItemType, Natural)} share this
+     * rule so a capacity query and the insert that follows it always agree.
      */
-    private int insertInto(Map<ItemType, Integer> state, ItemType item, int amount) {
-        if (amount <= 0 || !accepts(item)) {
-            return 0;
+    private Natural insertInto(Map<ItemType, Natural> state, ItemType item, Natural amount) {
+        if (amount.isBeyond()) {
+            throw new IllegalArgumentException("an inventory cannot hold BEYOND " + item.key()
+                    + "; insert a finite amount instead");
         }
-        int accepted = (int) Math.min(Math.min(headroomFor(state, item), unitHeadroom(state)), amount);
-        if (accepted > 0) {
-            state.merge(item, accepted, Integer::sum);
+        if (amount.isZero() || !accepts(item)) {
+            return Natural.ZERO;
+        }
+        Natural accepted = headroomFor(state, item).min(unitHeadroom(state)).min(amount);
+        if (!accepted.isZero()) {
+            state.merge(item, accepted, Natural::add);
         }
         return accepted;
     }
@@ -214,40 +242,61 @@ public final class Inventory {
      * Units of the item that still fit, counting the free space of its current stack and one full stack
      * for every free slot.
      */
-    private int headroomFor(Map<ItemType, Integer> state, ItemType item) {
-        int maxStack = item.maxStack();
-        int existing = state.getOrDefault(item, 0);
-        int headroom = freeSlots(state) == UNLIMITED
-                ? Integer.MAX_VALUE / 2
-                : freeSlots(state) * maxStack;
-        int inOpenStack = existing % maxStack;
-        if (inOpenStack > 0) {
-            headroom += maxStack - inOpenStack;
-        }
-        return headroom;
+    private Natural headroomFor(Map<ItemType, Natural> state, ItemType item) {
+        Natural maxStack = item.maxStack();
+        Natural free = freeSlots(state);
+        Natural headroom = free.isBeyond() ? Natural.BEYOND : free.multiply(maxStack);
+        return headroom.add(openStackHeadroom(state.getOrDefault(item, Natural.ZERO), maxStack));
     }
 
-    private int usedSlots(Map<ItemType, Integer> state) {
-        int used = 0;
-        for (Map.Entry<ItemType, Integer> entry : state.entrySet()) {
-            int maxStack = entry.getKey().maxStack();
-            used += (entry.getValue() + maxStack - 1) / maxStack;
+    /**
+     * Room left in the stack the item currently fills. Amounts beyond the exact range are treated as
+     * having no room left, because at that resolution the remainder is meaningless.
+     */
+    private static Natural openStackHeadroom(Natural existing, Natural maxStack) {
+        if (existing.isZero() || !existing.isExact() || !maxStack.isExact()) {
+            return Natural.ZERO;
+        }
+        BigInteger remainder = existing.toBigInteger().mod(maxStack.toBigInteger());
+        if (remainder.signum() == 0) {
+            return Natural.ZERO;
+        }
+        return maxStack.subtractClamped(Natural.of(remainder));
+    }
+
+    private static Natural usedSlots(Map<ItemType, Natural> state) {
+        Natural used = Natural.ZERO;
+        for (Map.Entry<ItemType, Natural> entry : state.entrySet()) {
+            Natural amount = entry.getValue();
+            Natural maxStack = entry.getKey().maxStack();
+            if (!amount.isExact() || !maxStack.isExact() || maxStack.isZero()) {
+                return Natural.BEYOND;
+            }
+            BigInteger stackSize = maxStack.toBigInteger();
+            BigInteger slots = amount.toBigInteger().add(stackSize).subtract(BigInteger.ONE).divide(stackSize);
+            used = used.add(Natural.of(slots));
         }
         return used;
     }
 
-    private int freeSlots(Map<ItemType, Integer> state) {
-        return slotCount == UNLIMITED ? UNLIMITED : Math.max(0, slotCount - usedSlots(state));
+    private Natural freeSlots(Map<ItemType, Natural> state) {
+        if (slotCount.isBeyond()) {
+            return Natural.BEYOND;
+        }
+        return slotCount.subtractClamped(usedSlots(state));
     }
 
-    private int unitHeadroom(Map<ItemType, Integer> state) {
-        return unitLimit == UNLIMITED ? UNLIMITED : unitLimit - totalUnits(state);
+    private Natural unitHeadroom(Map<ItemType, Natural> state) {
+        if (unitLimit.isBeyond()) {
+            return Natural.BEYOND;
+        }
+        return unitLimit.subtractClamped(totalUnits(state));
     }
 
-    private static int totalUnits(Map<ItemType, Integer> state) {
-        int total = 0;
-        for (int amount : state.values()) {
-            total += amount;
+    private static Natural totalUnits(Map<ItemType, Natural> state) {
+        Natural total = Natural.ZERO;
+        for (Natural amount : state.values()) {
+            total = total.add(amount);
         }
         return total;
     }

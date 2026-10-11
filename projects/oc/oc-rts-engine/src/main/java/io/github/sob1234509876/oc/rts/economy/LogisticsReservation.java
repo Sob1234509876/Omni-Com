@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.economy;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.entity.Building;
@@ -22,6 +23,10 @@ import java.util.Objects;
  * are idempotent: a job that finished through the hauler route calls {@code commit()} on an already
  * empty claim, and a job that lost its materials calls {@code release()} on a claim whose items are
  * already gone. Neither may throw, because both happen while other systems are iterating the world.
+ *
+ * <p>Every amount of the claim is a {@link Natural}, so a claim can cover arbitrarily large quantities.
+ * The bookkeeping only ever uses clamped subtraction and {@link Natural#min(Natural)}, because a
+ * warehouse must never owe a negative amount, no matter how much a hauler picked up.
  */
 public final class LogisticsReservation implements Logistics.Reservation {
 
@@ -84,10 +89,11 @@ public final class LogisticsReservation implements Logistics.Reservation {
         return ReservationPool.bundleOf(plan);
     }
 
+    /** Number of warehouses that still owe something for this claim. */
     public int allocationCount() {
         int count = 0;
         for (ReservationPool.Allocation allocation : plan) {
-            if (allocation.amount() > 0) {
+            if (!allocation.amount().isZero()) {
                 count++;
             }
         }
@@ -114,15 +120,15 @@ public final class LogisticsReservation implements Logistics.Reservation {
         return plan;
     }
 
-    /** How much of the claim is still attached to the given warehouse. */
-    int plannedFrom(Building warehouse, ItemType item, int upTo) {
-        int planned = 0;
+    /** How much of the claim is still attached to the given warehouse, capped at {@code upTo}. */
+    Natural plannedFrom(Building warehouse, ItemType item, Natural upTo) {
+        Natural planned = Natural.ZERO;
         for (ReservationPool.Allocation allocation : plan) {
             if (allocation.warehouse() == warehouse && allocation.item().equals(item)) {
-                planned += allocation.amount();
+                planned = planned.add(allocation.amount());
             }
         }
-        return Math.min(planned, Math.max(0, upTo));
+        return planned.min(upTo.max(Natural.ZERO));
     }
 
     /**
@@ -130,16 +136,16 @@ public final class LogisticsReservation implements Logistics.Reservation {
      * which means the warehouse has paid what it owed; the reservation itself stays active until the
      * goods reach their destination.
      */
-    void reducePlan(Building warehouse, ItemType item, int amount) {
-        int left = amount;
+    void reducePlan(Building warehouse, ItemType item, Natural amount) {
+        Natural left = amount;
         for (ReservationPool.Allocation allocation : plan) {
-            if (left <= 0) {
+            if (left.isZero()) {
                 return;
             }
             if (allocation.warehouse() == warehouse && allocation.item().equals(item)) {
-                int taken = Math.min(left, allocation.amount());
+                Natural taken = left.min(allocation.amount());
                 allocation.reduce(taken);
-                left -= taken;
+                left = left.subtractClamped(taken);
             }
         }
     }
@@ -154,7 +160,7 @@ public final class LogisticsReservation implements Logistics.Reservation {
             if (allocation.warehouse() == warehouse) {
                 allocation.clear();
             }
-            if (allocation.amount() > 0) {
+            if (!allocation.amount().isZero()) {
                 emptied = false;
             }
         }

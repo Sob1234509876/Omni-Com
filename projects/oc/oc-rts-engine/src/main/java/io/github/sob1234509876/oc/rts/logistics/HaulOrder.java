@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.logistics;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
@@ -220,8 +221,8 @@ public final class HaulOrder implements Order {
     private static ItemBundle capToCargo(Unit unit, ItemBundle bundle) {
         ItemBundle.Builder wanted = ItemBundle.builder();
         for (ItemBundle.Amount component : bundle.components()) {
-            int room = unit.cargo().insertable(component.item(), component.amount());
-            if (room > 0) {
+            Natural room = unit.cargo().insertable(component.item(), component.amount());
+            if (!room.isZero()) {
                 wanted.add(component.item(), room);
             }
         }
@@ -231,9 +232,9 @@ public final class HaulOrder implements Order {
     private static ItemBundle putIntoCargo(Unit unit, ItemBundle bundle) {
         ItemBundle.Builder refused = ItemBundle.builder();
         for (ItemBundle.Amount component : bundle.components()) {
-            int accepted = unit.cargo().insert(component.item(), component.amount());
-            if (accepted < component.amount()) {
-                refused.add(component.item(), component.amount() - accepted);
+            Natural accepted = unit.cargo().insert(component.item(), component.amount());
+            if (accepted.compareTo(component.amount()) < 0) {
+                refused.add(component.item(), component.amount().subtractClamped(accepted));
             }
         }
         return refused.build();
@@ -242,8 +243,8 @@ public final class HaulOrder implements Order {
     private static ItemBundle putInto(Inventory inventory, ItemBundle bundle) {
         ItemBundle.Builder accepted = ItemBundle.builder();
         for (ItemBundle.Amount component : bundle.components()) {
-            int stored = inventory.insert(component.item(), component.amount());
-            if (stored > 0) {
+            Natural stored = inventory.insert(component.item(), component.amount());
+            if (!stored.isZero()) {
                 accepted.add(component.item(), stored);
             }
         }

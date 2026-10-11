@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.content;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 
@@ -12,7 +13,7 @@ import java.util.Set;
  * Definition of one kind of building: its footprint, cost, health, whether it stores items and which
  * recipes it is allowed to run.
  *
- * <p>A building whose {@link #storageSlots()} is greater than zero is a warehouse: only inventories of
+ * <p>A building whose {@link #storageSlots()} is not zero is a warehouse: only inventories of
  * such buildings take part in a player's logistics network, which is what makes stored goods the only
  * usable goods.
  */
@@ -22,10 +23,10 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final String displayName;
     private final int sizeX;
     private final int sizeY;
-    private final float maxHealth;
+    private final Natural maxHealth;
     private final int buildTimeTicks;
     private final ItemBundle cost;
-    private final int storageSlots;
+    private final Natural storageSlots;
     private final Set<String> storageTags;
     private final boolean warehouse;
     private final Set<String> producerTags;
@@ -37,10 +38,10 @@ public final class BuildingType implements Comparable<BuildingType> {
             String displayName,
             int sizeX,
             int sizeY,
-            float maxHealth,
+            Natural maxHealth,
             int buildTimeTicks,
             ItemBundle cost,
-            int storageSlots,
+            Natural storageSlots,
             Set<String> storageTags,
             boolean warehouse,
             Set<String> producerTags,
@@ -77,7 +78,7 @@ public final class BuildingType implements Comparable<BuildingType> {
         return sizeY;
     }
 
-    public float maxHealth() {
+    public Natural maxHealth() {
         return maxHealth;
     }
 
@@ -90,7 +91,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     }
 
     /** Number of item slots of the storage this building provides; {@code 0} means it stores nothing. */
-    public int storageSlots() {
+    public Natural storageSlots() {
         return storageSlots;
     }
 
@@ -100,7 +101,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     }
 
     public boolean isStorage() {
-        return storageSlots > 0;
+        return !storageSlots.isZero();
     }
 
     /**

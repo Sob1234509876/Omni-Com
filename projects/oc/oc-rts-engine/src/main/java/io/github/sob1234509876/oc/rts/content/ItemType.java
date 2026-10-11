@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.rts.content;
 
+import io.github.sob1234509876.oc.googology.Natural;
+
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -15,12 +17,15 @@ public final class ItemType implements Comparable<ItemType> {
 
     private final ResourceKey key;
     private final String displayName;
-    private final int maxStack;
+    private final Natural maxStack;
     private final Set<String> tags;
 
-    ItemType(ResourceKey key, String displayName, int maxStack, Set<String> tags) {
+    ItemType(ResourceKey key, String displayName, Natural maxStack, Set<String> tags) {
         this.key = Objects.requireNonNull(key, "key");
         this.displayName = displayName == null ? key.path() : displayName;
+        if (maxStack.isZero()) {
+            throw new IllegalArgumentException("max stack of " + key + " must be at least one unit");
+        }
         this.maxStack = maxStack;
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(tags));
     }
@@ -34,7 +39,7 @@ public final class ItemType implements Comparable<ItemType> {
     }
 
     /** Maximum amount of this item that fits into a single inventory slot. */
-    public int maxStack() {
+    public Natural maxStack() {
         return maxStack;
     }
 

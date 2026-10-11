@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.rts.scenario;
 
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
@@ -66,6 +68,7 @@ public final class RtsScenario {
         checkHaulerDelivery(check, content);
         checkAnimationAndSnapshot(check, content);
         checkDeterminism(check, content);
+        checkHugeNumbers(check);
 
         check.summary("RTS engine scenario");
     }
@@ -369,16 +372,16 @@ public final class RtsScenario {
                 world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player, new GridPos(40, 10));
         int acceptedKinds = 0;
         for (ItemType item : content.items()) {
-            if (secondWarehouse.inventory().insert(item, 1) > 0) {
+            if (!secondWarehouse.inventory().insert(item, 1).isZero()) {
                 acceptedKinds++;
             }
         }
-        check.atMost(24f, secondWarehouse.inventory().usedSlots(), "a warehouse never exceeds its 24 slots");
+        check.atMost(24, secondWarehouse.inventory().usedSlots(), "a warehouse never exceeds its 24 slots");
         check.that(secondWarehouse.inventory().isFull(), "the warehouse reports itself full once all slots are taken");
         check.note("a 24 slot warehouse accepted " + acceptedKinds + " of the " + content.items().size() + " item kinds");
         ItemType rejected = null;
         for (ItemType item : content.items()) {
-            if (secondWarehouse.inventory().amount(item) == 0) {
+            if (secondWarehouse.inventory().amount(item).isZero()) {
                 rejected = item;
                 break;
             }
@@ -387,12 +390,12 @@ public final class RtsScenario {
             check.equal(0, secondWarehouse.inventory().insert(rejected, 10),
                     "a full warehouse refuses a kind it does not hold yet (" + rejected.key() + ")");
         }
-        check.that(secondWarehouse.inventory().insert(iron, 10) > 0,
+        check.that(!secondWarehouse.inventory().insert(iron, 10).isZero(),
                 "a full warehouse can still top up a stack of an item it already holds");
 
         // Regression guard: a slot must hold at most ItemType.maxStack(), and a kind that needs more than
         // one stack must occupy more than one slot. Insert and the capacity query have to agree.
-        Inventory probe = new Inventory("probe", 2, Inventory.UNLIMITED, item -> true);
+        Inventory probe = new Inventory("probe", Natural.of(2), Inventory.UNLIMITED, item -> true);
         check.equal(120, probe.insert(iron, 500), "two slots hold two stacks of the 60 unit item");
         check.equal(2, probe.usedSlots(), "a kind spanning two stacks occupies two slots");
         check.equal(0, probe.insert(iron, 10), "a full inventory refuses more of the same item");
@@ -430,12 +433,13 @@ public final class RtsScenario {
                 "the barracks can run its recruiting recipe");
 
         int unitsBefore = world.unitsOf(player).size();
-        int ironBefore = logistics.amount(iron);
+        Natural ironBefore = logistics.amount(iron);
         production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 3);
         boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 3, 3000);
         check.that(trained, "the barracks trains three soldiers from warehouse materials");
         check.equal(unitsBefore + 3, world.unitsOf(player).size(), "exactly three new units exist");
-        check.equal(ironBefore - 150, logistics.amount(iron), "each soldier consumed 50 iron from the warehouse");
+        check.equal(ironBefore.subtractClamped(150), logistics.amount(iron),
+                "each soldier consumed 50 iron from the warehouse");
         check.that(production.queueOf(barracks).isEmpty(), "the production queue drains when the work is done");
 
         List<Unit> soldiers = world.unitsOf(player);
@@ -456,17 +460,17 @@ public final class RtsScenario {
         production.cancel(workshop, 0);
 
         production.enqueue(workshop, content.recipe(ScenarioContent.SMELT_STEEL), 6);
-        boolean smelted = engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
+        boolean smelted = engine.tickUntil(e -> totalHeld(world, steel).compareTo(Natural.of(60)) >= 0, 3000);
         check.that(smelted, "the workshop smelts steel from warehouse ore and coal");
         check.equal(60, totalHeld(world, steel), "six batches yield 60 steel ingots");
         check.note("steel in the workshop buffer: " + workshop.inventory().amount(steel)
                 + ", in warehouses: " + warehouse.inventory().amount(steel));
 
-        int riflesBefore = totalHeld(world, rifle);
+        Natural riflesBefore = totalHeld(world, rifle);
         production.enqueue(workshop, content.recipe(ScenarioContent.CRAFT_RIFLE), 3);
-        boolean crafted = engine.tickUntil(e -> totalHeld(world, rifle) >= riflesBefore + 3, 3000);
+        boolean crafted = engine.tickUntil(e -> totalHeld(world, rifle).compareTo(riflesBefore.add(3)) >= 0, 3000);
         check.that(crafted, "the workshop crafts rifles out of stored steel and planks");
-        check.equal(riflesBefore + 3, totalHeld(world, rifle), "three rifles exist");
+        check.equal(riflesBefore.add(3), totalHeld(world, rifle), "three rifles exist");
         check.note("rifles in the workshop buffer: " + workshop.inventory().amount(rifle)
                 + ", in warehouses: " + warehouse.inventory().amount(rifle));
         check.note(engine.describe());
@@ -500,16 +504,17 @@ public final class RtsScenario {
         check.that(trained, "the barracks is supplied by a hauler and trains its soldier");
         check.note("pending deliveries after training: " + logistics.pendingDeliveries()
                 + ", hauler travelled " + round(hauler.motion().travelledDistance()) + " tiles");
-        check.that(warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)) < 200,
+        check.that(warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT))
+                        .compareTo(Natural.of(200)) < 0,
                 "the materials really left the warehouse");
 
         // A hauler that dies with goods on board must not take them out of the economy.
         Unit doomed = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(12, 17).center());
         doomed.cargo().insert(content.item(ScenarioContent.IRON_INGOT), 20);
-        int stocked = warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT));
+        Natural stocked = warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT));
         world.destroy(doomed);
         engine.tick(2);
-        check.equal(stocked + 20, warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)),
+        check.equal(stocked.add(20), warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)),
                 "goods carried by a destroyed hauler go back into storage instead of vanishing");
     }
 
@@ -662,10 +667,61 @@ public final class RtsScenario {
                 .build();
     }
 
-    private static int totalHeld(World world, ItemType item) {
-        int total = 0;
+    // ------------------------------------------------------------------ 10) arbitrarily large numbers
+
+    /**
+     * Shows what the googology number type buys the simulation: amounts, capacities, hit points and
+     * damage are {@link Natural} values, so a scenario may declare sizes no primitive could hold while
+     * ordinary gameplay stays exact integer arithmetic.
+     */
+    private static void checkHugeNumbers(Check check) {
+        check.section("10) arbitrarily large numbers for amounts, capacity, health and damage");
+        Natural hugeStack = Natural.arrow(Natural.TEN, 1, Natural.of(5000));
+        Natural titanHealth = Natural.tetration(Natural.TEN, Natural.TEN);
+        ContentRegistry content = ContentRegistry.builder("big")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .item("relic").name("Relic").maxStack(hugeStack)
+                .unit("titan").name("Titan").health(titanHealth).speed(1.5f).radius(0.4f)
+                        .cargo(0).spriteSet("titan")
+                .build();
+        check.equal("10^5000", NaturalFormat.scientific(hugeStack), "one slot of an item can hold 10^5000 units");
+        check.equal("10↑↑10", titanHealth.toString(), "the hit point ceiling can be a power tower");
+
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 4242L);
+        Player player = engine.players().get(0);
+        Unit titan = engine.spawnUnit("titan", player, new GridPos(8, 8));
+        check.equal(titanHealth, titan.health().max(), "the unit spawns with 10↑↑10 hit points");
+        check.close(1f, titan.health().fraction(), 1.0e-6f, "a full health bar is a ratio of one");
+
+        Natural dealt = titan.health().damage(Natural.of(1000));
+        check.equal(1000, dealt, "all 1000 damage is dealt");
+        check.that(!titan.health().isDead() && titan.health().current().equals(titanHealth),
+                "at that magnitude losing 1000 changes nothing, so the unit is still at full health");
+        titan.health().damage(Natural.BEYOND);
+        check.that(titan.health().isDead(), "BEYOND damage kills outright, because damage is min(health, amount)");
+
+        ItemType relic = content.item("relic");
+        Inventory vault = new Inventory("vault of titans", Inventory.UNLIMITED, Inventory.UNLIMITED, item -> true);
+        check.equal(titanHealth, vault.insert(relic, titanHealth), "a vault takes 10↑↑10 units in one call");
+        check.equal(titanHealth, vault.amount(relic), "and reports exactly that amount back");
+        check.that(vault.usedSlots().isBeyond(),
+                "the slot count itself is out of exact range, so it reports BEYOND instead of pretending");
+        check.that(!vault.isFull(),
+                "an unlimited vault is still not full: with both limits unlimited the free count is BEYOND too");
+        Inventory fourSlotVault = new Inventory("four slot vault", Natural.of(4), Inventory.UNLIMITED, item -> true);
+        check.equal(hugeStack, fourSlotVault.insert(relic, titanHealth),
+                "a four slot vault accepts four stacks of 10^5000, capped by its headroom");
+        check.that(fourSlotVault.isFull(),
+                "with a finite slot count the same structural amount does report the inventory as full");
+        check.equal("10↑↑10x big:relic", ItemBundle.of(relic, titanHealth).toString(),
+                "an item bundle still prints readably");
+        check.equal(0, vault.extract(relic, 5).compareTo(Natural.of(5)), "taking 5 units out stays exact");
+    }
+
+    private static Natural totalHeld(World world, ItemType item) {
+        Natural total = Natural.ZERO;
         for (Building building : world.buildings()) {
-            total += building.inventory().amount(item);
+            total = total.add(building.inventory().amount(item));
         }
         return total;
     }

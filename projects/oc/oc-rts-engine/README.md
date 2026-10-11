@@ -19,8 +19,9 @@ Task oriented guides (written in Chinese, API names in English) live in [`help/`
 | [07 sprites and animation](help/07-sprites-and-animation.md) | sheets, clips, animation sets, animator |
 | [08 snapshots and rendering](help/08-snapshots-and-rendering.md) | read only snapshot, render loop, camera/streaming |
 | [09 architecture and tick pipeline](help/09-architecture-and-tick-pipeline.md) | packages, phases, event bus, determinism, extension points |
-| [10 cookbook](help/10-cookbook.md) | 18 recipes for common tasks |
+| [10 cookbook](help/10-cookbook.md) | 19 recipes for common tasks |
 | [11 limits and FAQ](help/11-limits-and-faq.md) | what is not implemented, trade-offs, symptom based answers |
+| [12 numbers and googology](help/12-numbers-and-googology.md) | the `Natural` quantity type: exact range, arrow notation, approximation, `BEYOND` |
 | [appendix: API map](help/appendix-api-map.md) | every public type, constants, facade method tables |
 
 ## Coordinates
@@ -32,6 +33,7 @@ Task oriented guides (written in Chinese, API names in English) live in [`help/`
 | Base package | `io.github.sob1234509876.oc.rts` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
+| Dependencies | `api project(':projects:oc:oc-googology')` — the in-repo big number library, which supplies the `Natural` type used for quantities |
 
 ## Try it
 
@@ -45,7 +47,7 @@ items, a barracks training soldiers, animation frames advancing and an ASCII pic
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 95 checks passed.
+RTS engine scenario: all 119 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -63,6 +65,7 @@ What the scenario actually proves, section by section:
 | 5b hauling | with hauling enabled a worker really walks to the warehouse, loads ore and planks and delivers them before the barracks can train |
 | 6 sprites and animation | a spawned unit plays `idle`, switches to `move` when ordered, advances frames, faces its direction of travel, and the snapshot resolves a concrete sprite frame with sheet and pixel rectangle |
 | 7 determinism | two runs with the same seed and the same commands produce bit identical unit positions |
+| 10 huge numbers | an item with a `10^5000` stack and a unit with `10↑↑10` hit points: 1000 damage does not dent it, `Natural.BEYOND` damage kills it, a vault reports `BEYOND` slots while an unlimited vault is still not full, and a four slot vault with the same structural amount is |
 
 A real preview of the generated world, terrain only, one character per tile
 (`~` water, `:` sand, `.` grass, `f` forest, `^` hill, `#` rock; units are drawn as `C`, `W`, `S`):
@@ -108,6 +111,10 @@ visual    sprite sheets, animation clips, animators, world snapshots
 sim       the simulation system interface and the tick pipeline
 event     the synchronous event bus and the facts systems publish
 ```
+
+The engine module (`oc.projects.oc.rts.engine`) requires one sibling module, `oc.projects.oc.googology`
+(`projects/oc/oc-googology`): `Natural` is the quantity type of items, capacities, health and damage,
+and `NaturalFormat` renders it for logs and control bars.
 
 ### The tick pipeline
 
@@ -171,6 +178,12 @@ System.out.println(engine.render(new GridPos(60, 40), 20));
   the factory, consumes them and only then produces; item output that does not fit stays in the buffer.
 * **The engine never names an item.** All content is data in a `ContentRegistry`, so a scenario may
   define thirty items or three hundred without touching engine code.
+* **Quantities are arbitrary precision naturals.** Amounts, stack sizes, capacities, hit points and
+  damage are `Natural` values (`io.github.sob1234509876.oc.googology`): exact integers while a value
+  needs at most 4096 bits, and a hyperoperation tower such as `10^5000` or `10↑↑10` beyond that.
+  Arithmetic up there is approximate by design, exactly like floating point is approximate for tiny
+  fractions; ordering stays faithful, so comparisons and sorting are still sound. Positions, speeds
+  and tick durations deliberately stay `float`/`int`.
 * **The simulation is deterministic.** Fixed timestep, no wall clock, no threads, seeded
   `DeterministicRandom`, stable iteration orders: the same seed and the same commands replay exactly.
 * **Clients drive it tick by tick.** `tick()`, `tick(n)` and `tickUntil(condition, maxTicks)`; there is

@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.rts.economy;
 
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.entity.Building;
@@ -18,6 +20,11 @@ import java.util.Objects;
  * is even looked at. That is what makes "not enough in one place" work: a request for fifty units can
  * be answered with thirty from the first warehouse and twenty from the second.
  *
+ * <p>All quantities are {@link Natural} values, so a plan can split an arbitrarily large request
+ * between warehouses without overflowing. The loop that walks the warehouses uses
+ * {@link Natural#min(Natural)} instead of a numeric comparison, because the amount an unlimited
+ * warehouse could promise is {@link Natural#BEYOND}.
+ *
  * <p>The pool is a pure computation. It neither moves items nor remembers anything, so it can also be
  * used for a dry run such as "could this bundle be reserved at all"; the caller applies the plan to its
  * own bookkeeping.
@@ -28,20 +35,20 @@ final class ReservationPool {
     @FunctionalInterface
     interface FreeAmount {
 
-        int free(Building warehouse, ItemType item);
+        Natural free(Building warehouse, ItemType item);
     }
 
-    /** One promise: this many units of this item are to be taken out of this warehouse. */
+    /** One promise: this much of this item is to be taken out of this warehouse. */
     static final class Allocation {
 
         private final Building warehouse;
         private final ItemType item;
-        private int amount;
+        private Natural amount;
 
-        Allocation(Building warehouse, ItemType item, int amount) {
+        Allocation(Building warehouse, ItemType item, Natural amount) {
             this.warehouse = Objects.requireNonNull(warehouse, "warehouse");
             this.item = Objects.requireNonNull(item, "item");
-            this.amount = Math.max(0, amount);
+            this.amount = Objects.requireNonNull(amount, "amount").max(Natural.ZERO);
         }
 
         Building warehouse() {
@@ -52,22 +59,22 @@ final class ReservationPool {
             return item;
         }
 
-        int amount() {
+        Natural amount() {
             return amount;
         }
 
         /** Shrinks the promise after items were picked up; never goes below zero. */
-        void reduce(int units) {
-            amount = Math.max(0, amount - Math.max(0, units));
+        void reduce(Natural units) {
+            amount = amount.subtractClamped(Objects.requireNonNull(units, "units").max(Natural.ZERO));
         }
 
         void clear() {
-            amount = 0;
+            amount = Natural.ZERO;
         }
 
         @Override
         public String toString() {
-            return amount + "x " + item.key() + " from " + warehouse.id();
+            return NaturalFormat.scientific(amount) + "x " + item.key() + " from " + warehouse.id();
         }
     }
 
@@ -86,18 +93,18 @@ final class ReservationPool {
         Objects.requireNonNull(free, "free");
         List<Allocation> plan = new ArrayList<>();
         for (ItemBundle.Amount component : request.components()) {
-            int missing = component.amount();
+            Natural missing = component.amount();
             for (Building warehouse : warehouses) {
-                if (missing <= 0) {
+                if (missing.isZero()) {
                     break;
                 }
-                int take = Math.min(missing, Math.max(0, free.free(warehouse, component.item())));
-                if (take > 0) {
+                Natural take = missing.min(free.free(warehouse, component.item()).max(Natural.ZERO));
+                if (!take.isZero()) {
                     plan.add(new Allocation(warehouse, component.item(), take));
-                    missing -= take;
+                    missing = missing.subtractClamped(take);
                 }
             }
-            if (missing > 0) {
+            if (!missing.isZero()) {
                 return null;
             }
         }
@@ -108,7 +115,7 @@ final class ReservationPool {
     static ItemBundle bundleOf(List<Allocation> plan) {
         ItemBundle.Builder builder = ItemBundle.builder();
         for (Allocation allocation : plan) {
-            if (allocation.amount() > 0) {
+            if (!allocation.amount().isZero()) {
                 builder.add(allocation.item(), allocation.amount());
             }
         }
@@ -124,15 +131,16 @@ final class ReservationPool {
      */
     static Building primaryOf(List<Allocation> plan, List<Building> order) {
         Building best = null;
-        int bestAmount = 0;
+        Natural bestAmount = Natural.ZERO;
         int bestIndex = Integer.MAX_VALUE;
         for (Allocation allocation : plan) {
-            if (allocation.amount() <= 0) {
+            if (allocation.amount().isZero()) {
                 continue;
             }
-            int total = totalFor(plan, allocation.warehouse());
+            Natural total = totalFor(plan, allocation.warehouse());
             int index = order.indexOf(allocation.warehouse());
-            if (best == null || total > bestAmount || (total == bestAmount && index < bestIndex)) {
+            if (best == null || total.compareTo(bestAmount) > 0
+                    || (total.compareTo(bestAmount) == 0 && index < bestIndex)) {
                 best = allocation.warehouse();
                 bestAmount = total;
                 bestIndex = index;
@@ -144,11 +152,11 @@ final class ReservationPool {
         return order.isEmpty() ? null : order.get(0);
     }
 
-    private static int totalFor(List<Allocation> plan, Building warehouse) {
-        int total = 0;
+    private static Natural totalFor(List<Allocation> plan, Building warehouse) {
+        Natural total = Natural.ZERO;
         for (Allocation allocation : plan) {
             if (allocation.warehouse() == warehouse) {
-                total += allocation.amount();
+                total = total.add(allocation.amount());
             }
         }
         return total;

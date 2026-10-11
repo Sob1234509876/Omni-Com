@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.economy;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
@@ -25,6 +26,10 @@ import java.util.function.Predicate;
  *   <li>{@link #requestDelivery(Building, ItemBundle)} schedules the transport of reserved goods into
  *       the buffer of a factory.</li>
  * </ul>
+ *
+ * <p>Quantities are {@link Natural} values, so a stockpile may hold arbitrarily large amounts; the
+ * {@code long} convenience overloads of {@link ItemBundle} and {@link Inventory} keep ordinary call
+ * sites reading like plain integers.
  */
 public interface Logistics {
 
@@ -36,7 +41,8 @@ public interface Logistics {
     /** Everything stored in the warehouses of this player. */
     ItemBundle stored();
 
-    int amount(ItemType item);
+    /** How much of the item the warehouses hold in total, ignoring reservations. */
+    Natural amount(ItemType item);
 
     /** Whether the warehouses together hold at least the given bundle, ignoring reservations. */
     boolean has(ItemBundle bundle);
@@ -69,7 +75,7 @@ public interface Logistics {
      */
     boolean requestDelivery(Building target, ItemBundle bundle);
 
-    /** Deliveries that are still on their way. */
+    /** Number of deliveries that are still on their way; a count of jobs, not an item amount. */
     int pendingDeliveries();
 
     /** Reserves a bundle in a single warehouse; implemented by the logistics system. */

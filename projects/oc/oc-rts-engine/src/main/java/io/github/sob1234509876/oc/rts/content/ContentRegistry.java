@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.rts.content;
 
+import io.github.sob1234509876.oc.googology.Natural;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -286,9 +288,15 @@ public final class ContentRegistry {
 
         // ---------------------------------------------------------------- item properties
 
-        public Builder maxStack(int value) {
+        /** Maximum units of the item in one inventory slot; may be astronomically large. */
+        public Builder maxStack(Natural value) {
             draft(ItemDraft.class, "item").maxStack = value;
             return this;
+        }
+
+        /** Convenience for {@link #maxStack(Natural)} with a small literal. */
+        public Builder maxStack(long value) {
+            return maxStack(Natural.of(value));
         }
 
         // ---------------------------------------------------------------- unit properties
@@ -298,13 +306,27 @@ public final class ContentRegistry {
             return this;
         }
 
-        public Builder health(float value) {
+        /** Hit points as a natural number, so an absurdly tough entity is expressible. */
+        public Builder health(Natural value) {
             if (current instanceof BuildingDraft building) {
                 building.maxHealth = value;
             } else {
                 draft(UnitDraft.class, "unit").maxHealth = value;
             }
             return this;
+        }
+
+        /** Convenience for {@link #health(Natural)} with a small literal. */
+        public Builder health(long value) {
+            return health(Natural.of(value));
+        }
+
+        /**
+         * Convenience for integral hit points; hit points are natural numbers, so a fractional value is
+         * rejected here instead of being silently truncated.
+         */
+        public Builder health(float value) {
+            return health(whole(value, "health"));
         }
 
         /** Movement speed in tiles per second. */
@@ -319,13 +341,18 @@ public final class ContentRegistry {
         }
 
         /** Adds an item to the cost of the current unit or building. */
-        public Builder cost(String itemPath, int amount) {
+        public Builder cost(String itemPath, Natural amount) {
             if (current instanceof BuildingDraft building) {
                 building.cost.add(new ItemRef(itemPath, amount));
             } else {
                 draft(UnitDraft.class, "unit").cost.add(new ItemRef(itemPath, amount));
             }
             return this;
+        }
+
+        /** Convenience for {@link #cost(String, Natural)} with a small literal. */
+        public Builder cost(String itemPath, long amount) {
+            return cost(itemPath, Natural.of(amount));
         }
 
         public Builder buildTime(int ticks) {
@@ -337,9 +364,15 @@ public final class ContentRegistry {
             return this;
         }
 
-        public Builder cargo(int capacity) {
+        /** How many item units the unit can carry; {@code 0} means it cannot haul. */
+        public Builder cargo(Natural capacity) {
             draft(UnitDraft.class, "unit").cargoCapacity = capacity;
             return this;
+        }
+
+        /** Convenience for {@link #cargo(Natural)} with a small literal. */
+        public Builder cargo(long capacity) {
+            return cargo(Natural.of(capacity));
         }
 
         public Builder spriteSet(String spriteSetId) {
@@ -351,11 +384,32 @@ public final class ContentRegistry {
             return this;
         }
 
-        public Builder attack(float damage, float range) {
+        /** Damage per hit as a natural number; the range stays a distance in tiles. */
+        public Builder attack(Natural damage, float range) {
             UnitDraft unit = draft(UnitDraft.class, "unit");
             unit.attackDamage = damage;
             unit.attackRange = range;
             return this;
+        }
+
+        /**
+         * Convenience for integral damage; damage is a natural number, so a fractional value is rejected
+         * here instead of being silently truncated.
+         */
+        public Builder attack(float damage, float range) {
+            return attack(whole(damage, "damage"), range);
+        }
+
+        /** Converts a floating point literal to an exact natural number, refusing fractions. */
+        private static Natural whole(float value, String property) {
+            if (value < 0f) {
+                throw new IllegalArgumentException(property + " must not be negative, was " + value);
+            }
+            if (value != Math.floor(value)) {
+                throw new IllegalArgumentException(property + " is a natural number, so " + value
+                        + " has to be written with Natural instead of as a fraction");
+            }
+            return Natural.of((long) value);
         }
 
         public Builder attackCooldown(int ticks) {
@@ -372,10 +426,15 @@ public final class ContentRegistry {
             return this;
         }
 
-        /** Number of item slots of storage; a positive value turns the building into a warehouse. */
-        public Builder storage(int slots) {
+        /** Number of item slots of storage; a non zero value turns the building into a warehouse. */
+        public Builder storage(Natural slots) {
             draft(BuildingDraft.class, "building").storageSlots = slots;
             return this;
+        }
+
+        /** Convenience for {@link #storage(Natural)} with a small literal. */
+        public Builder storage(long slots) {
+            return storage(Natural.of(slots));
         }
 
         /** Restricts the storage to items carrying the given tag. */
@@ -408,14 +467,26 @@ public final class ContentRegistry {
 
         // ---------------------------------------------------------------- recipe properties
 
-        public Builder input(String itemPath, int amount) {
+        /** Adds an ingredient to the recipe; the amount is a natural number. */
+        public Builder input(String itemPath, Natural amount) {
             draft(RecipeDraft.class, "recipe").inputs.add(new ItemRef(itemPath, amount));
             return this;
         }
 
-        public Builder itemOutput(String itemPath, int amount) {
+        /** Convenience for {@link #input(String, Natural)} with a small literal. */
+        public Builder input(String itemPath, long amount) {
+            return input(itemPath, Natural.of(amount));
+        }
+
+        /** Adds a produced good to the recipe; the amount is a natural number. */
+        public Builder itemOutput(String itemPath, Natural amount) {
             draft(RecipeDraft.class, "recipe").itemOutputs.add(new ItemRef(itemPath, amount));
             return this;
+        }
+
+        /** Convenience for {@link #itemOutput(String, Natural)} with a small literal. */
+        public Builder itemOutput(String itemPath, long amount) {
+            return itemOutput(itemPath, Natural.of(amount));
         }
 
         public Builder unitOutput(String unitPath) {
@@ -483,7 +554,7 @@ public final class ContentRegistry {
                     if (type.radius() <= 0f) {
                         throw new IllegalStateException("unit " + type.key() + " must have a positive radius");
                     }
-                    if (type.maxHealth() <= 0f) {
+                    if (type.maxHealth().isZero()) {
                         throw new IllegalStateException("unit " + type.key() + " must have positive health");
                     }
                     put(units, type.key(), type);
@@ -491,10 +562,7 @@ public final class ContentRegistry {
                     if (building.sizeX < 1 || building.sizeY < 1) {
                         throw new IllegalStateException("building " + building.key + " must be at least one tile large");
                     }
-                    if (building.storageSlots < 0) {
-                        throw new IllegalStateException("building " + building.key + " must not have negative storage");
-                    }
-                    if (building.warehouse && building.storageSlots <= 0) {
+                    if (building.warehouse && building.storageSlots.isZero()) {
                         throw new IllegalStateException("building " + building.key
                                 + " is a warehouse and therefore needs storage slots");
                     }
@@ -605,7 +673,7 @@ public final class ContentRegistry {
         }
     }
 
-    private record ItemRef(String path, int amount) {
+    private record ItemRef(String path, Natural amount) {
     }
 
     private abstract static class Draft {
@@ -623,7 +691,7 @@ public final class ContentRegistry {
 
     private static final class ItemDraft extends Draft {
 
-        int maxStack = 100;
+        Natural maxStack = Natural.of(100);
 
         ItemDraft(ResourceKey key) {
             super(key);
@@ -656,14 +724,14 @@ public final class ContentRegistry {
     private static final class UnitDraft extends Draft {
 
         UnitRole role = UnitRole.COMBAT;
-        float maxHealth = 100f;
+        Natural maxHealth = Natural.of(100);
         float speed = 2f;
         float radius = 0.4f;
-        float attackDamage;
+        Natural attackDamage = Natural.ZERO;
         float attackRange;
         int attackCooldownTicks = 60;
         int buildTimeTicks = 100;
-        int cargoCapacity;
+        Natural cargoCapacity = Natural.ZERO;
         String spriteSet = "unit/unknown";
         final List<ItemRef> cost = new ArrayList<>();
 
@@ -681,9 +749,9 @@ public final class ContentRegistry {
 
         int sizeX = 1;
         int sizeY = 1;
-        float maxHealth = 500f;
+        Natural maxHealth = Natural.of(500);
         int buildTimeTicks = 200;
-        int storageSlots;
+        Natural storageSlots = Natural.ZERO;
         boolean warehouse;
         String spriteSet = "building/unknown";
         final Set<String> storageTags = new LinkedHashSet<>();

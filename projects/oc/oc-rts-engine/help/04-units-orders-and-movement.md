@@ -17,8 +17,8 @@
 `Entity` 是所有东西的公共部分：`id()`、`owner()`、`position()`、`health()`、`spawnTick()`、`isAlive()`、`visual()`。位置是权威的仿真状态，由移动系统写入。
 ```java
 Unit unit = engine.world().spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new GridPos(8, 40));
-unit.health().damage(30f);   // 返回实际造成的伤害
-unit.health().fraction();    // 0..1
+unit.health().damage(30);    // 返回实际造成的伤害（Natural）；也有 damage(Natural) 重载
+unit.health().fraction();    // 0..1（float 比例，渲染要的就是它）
 unit.tile();                 // 当前所在格：GridPos
 unit.occupiedTiles();        // 单位恒为 1x1；建筑是 footprint
 unit.distance(otherEntity);  // 中心到中心
@@ -39,7 +39,7 @@ b.restartConstruction();       // 回到施工中
 
 `entranceTile()` 是 `(origin.x + sizeX, origin.y + sizeY / 2)`，`entrance()` 是它的中心点——搬运工的目标点就是这个，见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
 
-`Health` 只有 `damage(amount)` / `heal(amount)` / `setCurrent(value)` / `restore()`，`max <= 0` 会在构造时抛 `IllegalArgumentException`。
+`Health` 只有 `damage(amount)` / `heal(amount)` / `setCurrent(value)` / `restore()`，`max` 为零会在构造时抛 `IllegalArgumentException`。血量与伤害都是 `Natural`（`Health(long)` 是便捷构造器，`damage(long)` / `heal(long)` 是小字面量重载），所以 `damage(Natural.BEYOND)` 能一击打死任何有限血量的实体：伤害的语义是 `min(当前血量, 伤害)`。`fraction()` 仍然是 `float`——渲染要的是比例，不是数量；完整的数值约定见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
 
 ### 空间索引：必须 `update()`
 
@@ -326,6 +326,7 @@ if (position.distance(goal) <= motion.arrivalRadius() + radius) {
 - [05-formations.md](05-formations.md) —— 队形规划与 `moveGroup` 的连接
 - [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— `cargo()`、搬运与 `HaulOrder`
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位 100→800 与实体生命周期
+- [12-numbers-and-googology.md](12-numbers-and-googology.md) —— 血量与伤害的 `Natural` 类型：精确区间与近似区间
 ## 相关源码
 
 - [Entity.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Entity.java)

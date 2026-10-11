@@ -1,5 +1,9 @@
 module oc.projects.oc.rts.engine {
 
+    // Transitive because the engine's own API exposes Natural: item amounts, capacities and hit points
+    // are part of the public surface, so a consumer must be able to read the googology module.
+    requires transitive oc.projects.oc.googology;
+
     exports io.github.sob1234509876.oc.rts;
     exports io.github.sob1234509876.oc.rts.core;
     exports io.github.sob1234509876.oc.rts.content;

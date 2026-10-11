@@ -36,7 +36,7 @@ public final class Building extends Entity {
         this.origin = Objects.requireNonNull(origin, "origin");
         this.inventory = new Inventory(
                 "storage of " + id,
-                type.storageSlots() > 0 ? type.storageSlots() : 0,
+                type.storageSlots(),
                 Inventory.UNLIMITED,
                 item -> item.hasAnyTag(type.storageTags()));
         this.rallyPoint = footprintCenter(type, origin).plus(type.sizeX() / 2f + 1.5f, 0f);
