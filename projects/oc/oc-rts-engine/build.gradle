@@ -639,13 +639,13 @@ java {
 repositories {
 //    mavenCentral()
     maven {
-        url = 'https://maven.aliyun.com/repository/public'
+        url = uri('https://maven.aliyun.com/repository/public')
     }
 }
 
 dependencies {
     // The RTS engine core is plain Java 17 (JPMS) and currently has no third-party dependencies.
-    // Uncomment together with the first tests (needs the mirror above to be reachable):
+    // Uncomment together with the first framework based tests (needs the mirror above to be reachable):
 //    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
 //    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
@@ -653,3 +653,13 @@ dependencies {
 // test {
 //     useJUnitPlatform()
 // }
+
+// Self check of the engine: a headless scenario that exercises the chunked map, formation movement,
+// storage and production, animation and the snapshot API. It needs no test framework and no network,
+// so it runs with: ./gradlew :projects:oc:oc-rts-engine:scenario
+tasks.register('scenario', JavaExec) {
+    group = 'verification'
+    description = 'Runs the headless RTS engine self check scenario.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.rts.scenario.RtsScenario'
+}
