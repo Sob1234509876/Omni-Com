@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.map;
 
+import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -44,14 +45,44 @@ public final class AStarPathFinder implements PathFinder {
     private static final int MAX_NODES = 1 << 20;
 
     private final TerrainMap map;
+    private final float minimumStep;
 
+    /**
+     * Creates a finder that works out the cheapest terrain step by sampling the loaded chunks.
+     *
+     * <p>That sample depends on which chunks happen to be in memory, so the heuristic scale - and with
+     * it the exact expansion order - can differ between two runs of the same seed. The engine therefore
+     * uses the two argument constructor with {@link #minimumMoveCost(ContentRegistry)}, and this one is
+     * for standalone use and tests.
+     */
     public AStarPathFinder(TerrainMap map) {
+        this(map, 0f);
+    }
+
+    /** Creates a finder whose heuristic is scaled by a known cheapest step; {@code 0} means "sample". */
+    public AStarPathFinder(TerrainMap map, float minimumStep) {
         this.map = Objects.requireNonNull(map, "map");
+        if (minimumStep < 0f) {
+            throw new IllegalArgumentException("minimum step must not be negative, was " + minimumStep);
+        }
+        this.minimumStep = minimumStep;
     }
 
     /** The terrain this finder searches. */
     public TerrainMap map() {
         return map;
+    }
+
+    /** Cheapest passable terrain step of the catalogue; deterministic for a given content registry. */
+    public static float minimumMoveCost(ContentRegistry content) {
+        Objects.requireNonNull(content, "content");
+        float cheapest = Float.MAX_VALUE;
+        for (TerrainType terrain : content.terrains()) {
+            if (terrain.passable() && terrain.moveCost() > 0f) {
+                cheapest = Math.min(cheapest, terrain.moveCost());
+            }
+        }
+        return cheapest == Float.MAX_VALUE ? 1f : cheapest;
     }
 
     @Override
@@ -83,7 +114,7 @@ public final class AStarPathFinder implements PathFinder {
             return Optional.empty();
         }
         List<GridPos> tiles = search.reconstruct();
-        return Optional.of(new Path(start, goal, waypoints(smooth(tiles), goal)));
+        return Optional.of(new Path(start, goal, waypoints(smooth(tiles))));
     }
 
     /**
@@ -109,8 +140,14 @@ public final class AStarPathFinder implements PathFinder {
         return best;
     }
 
-    /** Cheapest step any terrain allows; the scale of the distance heuristic. */
+    /**
+     * Cheapest step any terrain allows; the scale of the distance heuristic. Uses the value the finder
+     * was created with, and only samples the map when the caller did not provide one.
+     */
     private float minimumMoveCost() {
+        if (minimumStep > 0f) {
+            return minimumStep;
+        }
         if (map instanceof ChunkedMap chunked) {
             return minimumMoveCost(distinctTerrains(chunked));
         }
@@ -173,13 +210,17 @@ public final class AStarPathFinder implements PathFinder {
         return kept;
     }
 
-    private static List<Vec2> waypoints(List<GridPos> tiles, GridPos goal) {
+    /**
+     * Turns the reconstructed tile route into waypoints.
+     *
+     * <p>The start tile is dropped because the unit already stands on it. When the requested goal was
+     * impassable the route ends on the reachable neighbour that was chosen instead, which the loop below
+     * already includes; adding it a second time would leave a zero length leg at the end of the path.
+     */
+    private static List<Vec2> waypoints(List<GridPos> tiles) {
         List<Vec2> waypoints = new ArrayList<>(Math.max(1, tiles.size()));
         for (int index = 1; index < tiles.size(); index++) {
             waypoints.add(tiles.get(index).center());
-        }
-        if (!tiles.get(tiles.size() - 1).equals(goal)) {
-            waypoints.add(tiles.get(tiles.size() - 1).center());
         }
         return waypoints;
     }
@@ -287,7 +328,7 @@ public final class AStarPathFinder implements PathFinder {
             this.end = end;
             this.weight = options.heuristicWeight();
             this.cheapestStep = minimumMoveCost();
-            long reachable = Math.min((long) options.maxExpansions() * 4L + 16L, MAX_NODES);
+            long reachable = Math.min((long) options.maxExpansions() * 8L + 16L, MAX_NODES);
             this.heap = new int[(int) reachable];
         }
 
@@ -370,6 +411,10 @@ public final class AStarPathFinder implements PathFinder {
             node.g = tentative;
             node.f = tentative + heuristic(x, y);
             node.parent = current.id;
+            // The entry pushed here carries the new cost, so the staleness check in expandToGoal must
+            // compare against it. Forgetting this line made every entry of an improved node look stale,
+            // which silently dropped reachable targets from the search.
+            node.queuedG = tentative;
             push(node.id);
         }
 

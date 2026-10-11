@@ -650,9 +650,28 @@ dependencies {
 //    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Scenario catalogues and user code may contain non-ASCII text (item display names, comments), so the
+// build must not fall back to the platform encoding, which is GBK on a Chinese Windows install.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 // test {
 //     useJUnitPlatform()
 // }
+
+// The headless self check is a runnable program, not a framework based test suite, so it lives in its
+// own source set. That keeps the standard test task completely source free (Gradle 9 fails a test task
+// that discovers sources but executes no tests, and there is no test framework on the classpath here),
+// while 'scenario' below runs the program against the main classes. When real unit tests arrive,
+// uncomment the JUnit block above and put them in src/test/java as usual.
+sourceSets {
+    selfCheck {
+        java.srcDir 'src/selfcheck/java'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
 
 // Self check of the engine: a headless scenario that exercises the chunked map, formation movement,
 // storage and production, animation and the snapshot API. It needs no test framework and no network,
@@ -660,6 +679,6 @@ dependencies {
 tasks.register('scenario', JavaExec) {
     group = 'verification'
     description = 'Runs the headless RTS engine self check scenario.'
-    classpath = sourceSets.test.runtimeClasspath
+    classpath = sourceSets.selfCheck.runtimeClasspath
     mainClass = 'io.github.sob1234509876.oc.rts.scenario.RtsScenario'
 }

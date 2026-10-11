@@ -1,0 +1,172 @@
+# 11 · 限制、取舍与 FAQ
+
+> 这个引擎现在**不能**做什么、哪些字段是预留的、以及按症状排查的清单。
+
+## 这一篇讲什么
+
+- 完全没实现的能力（以及临时替代方案）。
+- 已经定义但**没有任何代码使用**的字段与事件——看到它们不要以为已经生效。
+- 已知的取舍与硬限制。
+- FAQ：18 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
+- 性能调优的旋钮在哪。
+
+## 完全没有实现的能力
+
+| 能力 | 现状 | 你可以怎么做 |
+| --- | --- | --- |
+| 渲染、窗口、输入、选中 UI | 引擎零图形依赖 | 用[只读快照](08-snapshots-and-rendering.md)自己写渲染层；`AsciiMapRenderer` 是一个完整的消费示例 |
+| 战斗 | 没有伤害、攻击、死亡结算 | `Events.DamageDealt`、`Health.damage(...)`、`UnitType.attackDamage/attackRange/canAttack()` 都已就位，写一个 CombatSystem 即可（订阅/发布这些事件） |
+| 死亡与尸体 | 实体只有 `alive` 标记，没有"死亡动画播完再消失"的流程 | 自己写系统：血量归零 → 播 `AnimationClips.DEATH` → 若干 tick 后 `world.destroy(entity)` |
+| AI | 没有 | 它本质上就是"按 tick 读快照/世界，然后调 `UnitDirector` 与 `ProductionSystem`"，不需要引擎改动 |
+| 战争迷雾 | 没有可见性/探索状态 | 自己按玩家维护一张已探索区块集合，订阅 `Events.ChunkLoaded` 更新 |
+| 网络同步 | 没有 | 引擎是确定性的，理论上可以做 lockstep：同步种子 + 每 tick 的命令序列 |
+| 完整存档 | 只有区块持久化的接缝（`ChunkStore`） | 实体、订单、生产队列都需要你自己序列化；`ChunkStore` 只覆盖地形 |
+| 群体寻路 / 流场 | 每个单位各自跑一次 A*（受 `PathService` 预算约束） | 大队形移动时观察 `pendingRequests()`；预算调大或改成共享路径/流场 |
+| 建筑碰撞 | **建筑不阻挡单位移动**：`MovementSystem` 只检查地形是否可通行 | 见下面的 [FAQ 第 13 条](#13-单位会穿过建筑) |
+| 单位体积碰撞的严格解 | 用的是分离力（软避让），不是物理求解 | 调 `SteeringSettings`；需要硬碰撞就自己写一个系统 |
+| 多线程 | 单线程，没有同步 | 渲染可以用快照在别的线程画，模拟本身不行 |
+
+## 预留但未接通的字段
+
+这些名字出现在 API 里，但引擎内部**没有任何代码读写它们**（我用源码全局搜索确认过）：看到它们别以为已经生效。
+
+| 类型 / 成员 | 状态 |
+| --- | --- |
+| `UnitType.attackDamage()` / `attackRange()` / `attackCooldownTicks()` / `canAttack()` | 只是数据，等战斗系统 |
+| `Events.DamageDealt` | 已定义，**无人发布** |
+| `Health.damage(...)` / `heal(...)` | 已实现，**无调用方**（`kill()` 会把血量直接置零） |
+| `Player.team()` / `isAlliedWith(...)` | 已实现，无调用方 |
+| `TerrainMap.setTerrain(...)` | 已实现（`ChunkedMap` 里真的会改地形并标脏），但**没有游戏逻辑调用**它——改地形/修路/炸桥都得你自己调 |
+| `Direction` / `AnimationSet` 的方向变体 | 引擎会设置朝向，方向变体的选择发生在 `UnitAnimator` 里（需要你在动画集里提供对应方向） |
+
+## 已知取舍与硬限制
+
+1. **出生地地形单调**。`NoiseSettings` 会把原点附近混合到 `originElevation`，保证一开局有可建造的陆地（默认半径 36 格内逐渐过渡）。代价是出生点周围相对平坦；把 `originRadius` 调小会更"野"，但可建造区也变小。
+2. **区块流式有每 tick 预算**。`ChunkStreamer` 默认每 tick 最多 4 次区块进出，而且**卸载与加载都算一次**：焦点从原点跳到另一处（半径 4）要卸掉 81 个再装上 81 个，约 41 tick 才能铺满；半径 2 实测是 25 卸 + 25 载 ≈ 13 tick。想更快就调大 `setChunksPerTick(...)`。
+3. **空间索引格固定 4 格**。`World` 内部用 `new GridSpatialIndex(4f)`；包围盒查询成本大致随半径平方增长。
+4. **库存没有重量/体积概念**，容量只有"格数"与"总件数"两个上限，也不区分货架类型。
+5. **物流没有优先级与公平性**。`Logistics` 按订单注册顺序与距离处理；两个工厂抢同一批料时先到先得。
+6. **每单位一次寻路**。队形移动时每个单位都会走 `PathService` 请求一次；12 个单位的编队就是 12 次搜索（同 tick 内受预算约束）。
+7. **异常直接冒泡**。事件监听器抛异常会中断 `tick()`；自己订阅时记得兜住。
+8. **没有序列化**。`World`、订单、生产队列都没有 `Serializable` 或存档格式。
+9. **`Inventory` 的过滤器不可变**。要按配方动态改变可接受的物品，得自己构造新的 `Inventory`（或改 `Building` 的库存定义）。
+10. **文本地图的 y 轴向下**（第一行是最大的 y），字符是角色字母（`C` 战斗 / `W` 工人 / `S` 支援），不是单位名首字母。
+
+## FAQ
+
+### 1. 单位完全不动
+
+依次检查：① `unit.orders().isEmpty()` 为 true（没人下命令，或订单已经结束）；② `unit.motion().hasGoal()` 为 false（订单没设目标）；③ `engine.pathService().pendingRequests()` 长期不为 0（预算被占满）；④ 目标不可达（水中央），此时 A* 会退回最近的可通行邻格，若四周都是水则无路；⑤ 你忘了调 `tick()`。
+
+### 2. 「等全部单位到达」在第 0 tick 就返回 true
+
+`Motion.isArrived()` 在单位从未接过目标时**默认就是 true**。等待条件必须同时判断"没有进行中的订单"或位置距离，见 [01](01-getting-started.md#三个立刻会遇到的坑)。
+
+### 3. 单位挤在一起或原地抖动
+
+① 移动过实体却没调 `world.spatial().update(unit)`，分离力用的是旧邻居；② 分离参数过小（`SteeringSettings` 的分离半径/强度）；③ 大量单位同时要求同一个阵位时会有推挤，这是软避让的正常现象——把队形间距调大，或减少同 tick 的编队规模。
+
+### 4. 生产卡在 `WAITING_MATERIALS`
+
+① 材料在**工厂自己的缓冲区**或**搬运工背包**里——这些都不算"可用"；② 玩家根本没有仓库（建筑类型没写 `.warehouse()`）；③ 仓库未建成（`isConstructed()` 为 false）；④ 仓库的 `storageTag` 把该物品过滤掉了；⑤ 配方里的物品路径拼错（`ContentRegistry` 构建时就会报错，所以一般不会走到这里）。
+
+### 5. 生产卡在 `DELIVERING`
+
+`directDelivery(false)` 且没有任何能搬运的单位（`UnitType.canHaul()` 为 false 的工人不行）。派一个 `cargo > 0` 的工人即可；超时（3000 tick）后任务会退回 `WAITING_MATERIALS` 并释放预订。
+
+### 6. 生产卡在 `WAITING_OUTPUT`
+
+产出的物品放不下：给建筑更多 `storage(n)` 格，或建一个仓库（`ProductionSystem` 会把非仓库建筑的产出转入玩家的物流网络；仓库也满时就会停在这里，物品留在缓冲区，不会被销毁）。
+
+### 7. 仓库不认物品 / `logistics().amount(item)` 一直是 0
+
+① 建筑类型没标 `.warehouse()`；② 建筑还是未建成状态；③ `Inventory.insert(...)` 的返回值被忽略（可能只塞进去一部分，甚至 0，因为槽位满了或过滤器拒绝）；④ 你以为在建筑缓冲区里的东西其实进的是工厂自己的库存。
+
+### 8. 地图全是草地，看不出地形变化
+
+先看是不是出生地附近：默认 `originRadius` 内会被混合成可建造陆地。要看自然地貌就往远处看（例如 `engine.render(new GridPos(96, 64), 24)`）。想整体更丰富就调大 `NoiseSettings.frequency()` 或换阈值；直接用 `FlatChunkGenerator` 则永远只有一种地形。
+
+### 9. 64×64 范围内完全没有水或岩石
+
+海平面与各阈值相对噪声分布偏极端。把 `seaThreshold` 调高（更多水）或把 `rockThreshold` 调低（更多岩石）；也可以增加 `octaves` 让起伏更剧烈。模块自校验里用的默认值是频率 `1/32`、`sea=0.38 / sand=0.42 / hill=0.56 / rock=0.74`。
+
+### 10. 快照里看不到单位
+
+① 单位在 `snapshot.bounds()` 之外（`capture(center, radius)` 只取半径内的实体）；② 单位已经 `world.destroy(...)` 并在 tick 末 `flush()` 掉；③ 你取快照的是另一个引擎实例。
+
+### 11. 文本地图上的位置和我想的不一样
+
+`AsciiMapRenderer` 的 y 轴**向下**：第一行是 `bounds().maxY()`。所以 `row = tile.y() - bounds().minY()`。字符含义见图例行（`C/W/S` 是角色字母，建筑用类型路径首字母大写）。
+
+### 12. 两次运行结果不一致
+
+逐条对照[确定性规则](09-architecture-and-tick-pipeline.md#确定性规则清单)：有没有用 `java.util.Random`、读系统时间、开线程、依赖 `HashMap` 迭代顺序、或者在自定义系统里缓存了跨 tick 的状态？另外确认两次的命令序列完全一致（包括调用的 tick 位置）。
+
+### 13. 单位会穿过建筑
+
+这是**当前的设计状态**：`MovementSystem` 只用 `TerrainMap.isPassable(...)` 判断能否通行，建筑不改变地形，所以不构成障碍。两种做法：
+
+```java
+// 做法 A：把建筑占地改成不可通行地形（记得保存原地形，拆除时恢复）
+world.events().subscribe(Events.ConstructionCompleted.class, event -> {
+    for (GridPos tile : event.building().occupiedTiles().tiles()) {
+        world.map().setTerrain(tile, content.terrain("rock"));   // 或者一个专门的"建筑"地形
+    }
+});
+```
+
+做法 B：自己写一个系统维护"被建筑占用的格集合"，并让你的自定义 `PathFinder`/`TerrainMap` 包装层把那些格视为不可通行。
+
+### 14. `player.logistics()` 抛 `IllegalStateException`
+
+引擎没有替这个玩家接上物流网络。正常路径是通过 `OcRtsEngine.builder(...).build()`（`build()` 会给每个玩家创建 `WarehouseLogistics`）；如果你手写 `new World(...)`，需要自己 `player.attachLogistics(...)`。
+
+### 15. 中文输出在控制台是乱码
+
+Java 17 的 `System.out` 用平台编码（中文 Windows 上是 GBK）。源码编码已经由构建脚本设为 UTF-8，但**打印中文**还需要终端配合，例如 `java -Dstdout.encoding=UTF-8 ...` 或用支持 UTF-8 的终端。
+
+### 16. 手工 `javac` 报 `unmappable character`
+
+源码里有中文时加 `-encoding UTF-8`（Gradle 构建已经配好，只有手工编译需要）。
+
+### 17. 地形和生成器对不上（错位/串行）
+
+自定义 `ChunkGenerator.chunkSize()` 与 builder 的 `chunkSize(n)` 不一致。地图按自己的 `chunkSize` 取格，生成器按自己的尺寸填格，两者必须相等。
+
+### 18. 内存里的区块越来越多
+
+`ChunkedMap` 默认不限制常驻区块数。要么把 `viewRadiusChunks` 调小，要么给地图设置上限：
+
+```java
+ChunkedMap map = (ChunkedMap) engine.map();
+map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先卸载离焦点最远的区块
+```
+
+### 19. 搬运工在路上被打死了，货会不会没了？
+
+不会（前提是死亡走 `World.destroy(...)`）。`HaulingSystem` 订阅了 `Events.EntityDestroyed`：背包里的货先退回仓库；还没装货的任务改派给别的搬运工；已经装货的任务直接失败并释放预订，生产端看到预订失效会立刻退回 `WAITING_MATERIALS` 重新预订刚收回的库存。唯一会真正丢货的情况是**所有仓库都满了**——那就确实无处可放。直接写血量把单位弄死不会触发这套兜底。
+
+## 性能旋钮
+
+| 旋钮 | 默认 | 影响 |
+| --- | --- | --- |
+| `viewRadiusChunks(n)` | `4` | 常驻区块数约为 `(2n+1)²`；半径每加 1，内存与每 tick 加载量都明显上升 |
+| `chunkSize(n)` | `16` | 每区块 `n²` 格；越小越细粒度、区块数越多 |
+| `pathBudget(requests, nodes)` | `32 / 200000` | 每 tick 的寻路上限；配合 `PathService` 的统计观察 |
+| `directDelivery(boolean)` | `false` | 打开可省掉搬运工的移动与订单开销（用延迟模拟运输） |
+| `ticksPerSecond(n)` | `20` | 只改推进频率；移动按"格/秒"积分，所以世界速度不变 |
+| `ChunkStreamer.setChunksPerTick(n)` | `4` | 焦点跳转后的铺满速度；通过 `engine.pipeline().systems()` 找到 `ChunkStreamer` 实例调整 |
+| `map.setMaxLoadedChunks(n)` | `0`（不限） | 内存上限；超限时按"离焦点最远"驱逐，被驱逐的脏区块会先写回 `ChunkStore` |
+| `SteeringSettings` | `defaults()` | 分离强度、到达减速、速度平滑、卡住判定等的集中参数 |
+
+## 相关文档
+
+- [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位、事件、确定性规则、扩展点
+- [10-cookbook.md](10-cookbook.md) —— 具体任务的写法
+- [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— 生产状态机与超时细节
+- [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单
+
+## 相关源码
+
+- 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
+- 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)

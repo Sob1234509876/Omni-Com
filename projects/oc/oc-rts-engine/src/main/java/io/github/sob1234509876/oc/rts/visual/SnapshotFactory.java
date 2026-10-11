@@ -32,20 +32,37 @@ import java.util.Objects;
 public final class SnapshotFactory {
 
     /**
-     * Simulation rate used for {@link WorldSnapshot#elapsedSeconds()}.
+     * Simulation rate assumed when the caller does not name one.
      *
-     * <p>A snapshot is taken between ticks, where only the tick counter is authoritative; the engine's
-     * clock owns the real rate. Thirty ticks per second is the engine's default and is declared here so
-     * that tools and tests taking snapshots do not have to invent their own conversion.
+     * <p>A snapshot is taken between ticks, where only the tick counter is authoritative, so the rate has
+     * to come from outside. The default matches {@code OcRtsEngineBuilder}'s default, and the engine
+     * passes its own rate in, so {@link WorldSnapshot#elapsedSeconds()} agrees with
+     * {@code OcRtsEngine.elapsedSeconds()}.
      */
-    public static final int TICKS_PER_SECOND = 30;
+    public static final int DEFAULT_TICKS_PER_SECOND = 20;
 
     private final World world;
     private final VisualLibrary library;
+    private final int ticksPerSecond;
 
+    /** Creates a factory that assumes {@link #DEFAULT_TICKS_PER_SECOND}. */
     public SnapshotFactory(World world, VisualLibrary library) {
+        this(world, library, DEFAULT_TICKS_PER_SECOND);
+    }
+
+    /** Creates a factory that converts ticks to seconds with the rate of the engine it captures. */
+    public SnapshotFactory(World world, VisualLibrary library, int ticksPerSecond) {
         this.world = Objects.requireNonNull(world, "world");
         this.library = Objects.requireNonNull(library, "library");
+        if (ticksPerSecond <= 0) {
+            throw new IllegalArgumentException("ticks per second must be positive, was " + ticksPerSecond);
+        }
+        this.ticksPerSecond = ticksPerSecond;
+    }
+
+    /** Simulation rate used for elapsed time in the snapshots this factory produces. */
+    public int ticksPerSecond() {
+        return ticksPerSecond;
     }
 
     /** The world this factory reads; it is only ever read, never modified. */
@@ -83,7 +100,7 @@ public final class SnapshotFactory {
         entities.sort((left, right) -> left.id().compareTo(right.id()));
         return new WorldSnapshot(
                 world.tickNumber(),
-                TICKS_PER_SECOND,
+                ticksPerSecond,
                 bounds,
                 terrain,
                 fallback,

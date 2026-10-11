@@ -4,6 +4,25 @@
 units, economy and production, with no rendering, no window and no input handling. A GUI builds on top
 of the read only snapshot API described below.
 
+## Documentation
+
+Task oriented guides (written in Chinese, API names in English) live in [`help/`](help/README.md):
+
+| Guide | Topic |
+| --- | --- |
+| [01 getting started](help/01-getting-started.md) | build, self check, minimal example, facade reference |
+| [02 content and items](help/02-content-and-items.md) | catalogue DSL, item bundles, inventories, warehouses |
+| [03 map and path finding](help/03-map-and-pathfinding.md) | chunk streaming, terrain generation, A*, path budget |
+| [04 units, orders and movement](help/04-units-orders-and-movement.md) | entities, the `Motion` contract, orders, steering |
+| [05 formations](help/05-formations.md) | formation shapes, slot assignment, spacing |
+| [06 economy, logistics, production](help/06-economy-logistics-and-production.md) | stockpile rules, reservations, hauling, queues |
+| [07 sprites and animation](help/07-sprites-and-animation.md) | sheets, clips, animation sets, animator |
+| [08 snapshots and rendering](help/08-snapshots-and-rendering.md) | read only snapshot, render loop, camera/streaming |
+| [09 architecture and tick pipeline](help/09-architecture-and-tick-pipeline.md) | packages, phases, event bus, determinism, extension points |
+| [10 cookbook](help/10-cookbook.md) | 18 recipes for common tasks |
+| [11 limits and FAQ](help/11-limits-and-faq.md) | what is not implemented, trade-offs, symptom based answers |
+| [appendix: API map](help/appendix-api-map.md) | every public type, constants, facade method tables |
+
 ## Coordinates
 
 | | |
@@ -26,8 +45,11 @@ items, a barracks training soldiers, animation frames advancing and an ASCII pic
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 94 checks passed.
+RTS engine scenario: all 95 checks passed.
 ```
+
+The self check is a program rather than a framework based test suite, so it lives in its own
+`selfCheck` source set (`src/selfcheck/java`); `src/test/java` stays empty for real unit tests later.
 
 What the scenario actually proves, section by section:
 
@@ -177,5 +199,5 @@ third-party dependencies on purpose; `map.ChunkStore` is the seam where persiste
 ```text
 src/main/java/module-info.java                    module descriptor
 src/main/java/io/github/sob1234509876/oc/rts/     engine sources (packages listed above)
-src/test/java/io/github/sob1234509876/oc/rts/scenario/   scenario catalogue, checks, self check
+src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/   scenario catalogue, checks, self check
 ```

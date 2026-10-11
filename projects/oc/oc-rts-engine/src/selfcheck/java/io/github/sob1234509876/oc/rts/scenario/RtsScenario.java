@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
@@ -28,7 +29,9 @@ import io.github.sob1234509876.oc.rts.visual.UnitAnimator;
 import io.github.sob1234509876.oc.rts.visual.VisualLibrary;
 import io.github.sob1234509876.oc.rts.visual.WorldSnapshot;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -184,6 +187,52 @@ public final class RtsScenario {
             check.note("deep water target " + deepWater + " -> "
                     + (blocked.isEmpty() ? "no route" : blocked.get().destination()));
         }
+
+        // Regression guard: the search used to mark the heap entries of an improved node as stale, which
+        // made it report "no route" for targets a breadth first walk reaches easily. Compare the two.
+        int pairs = 0;
+        int missed = 0;
+        GridPos origin = start;
+        for (int dy = -6; dy <= 6; dy += 3) {
+            for (int dx = -6; dx <= 6; dx += 3) {
+                GridPos from = findWalkable(map, origin.plus(dx, dy), 4);
+                GridPos to = findWalkable(map, origin.plus(dx * 3 + 4, dy * 3 - 4), 4);
+                if (from == null || to == null || from.equals(to) || !reachableByWalking(map, from, to, 400)) {
+                    continue;
+                }
+                pairs++;
+                if (engine.pathFinder().findPath(from, to, PathOptions.DEFAULT).isEmpty()) {
+                    missed++;
+                    check.note("no route found from " + from + " to " + to + " although a plain walk reaches it");
+                }
+            }
+        }
+        check.atLeast(8f, pairs, "enough land pairs could be sampled for the agreement test");
+        check.equal(0, missed, "the search finds every target a breadth first walk can reach (" + pairs + " pairs)");
+    }
+
+    /**
+     * Plain breadth first reachability over tiles, used only to cross check the path finder. It walks the
+     * same eight directions and the same passability rule but ignores terrain cost, so it is a lower bar
+     * than A* and any target it reaches must also be found by the search.
+     */
+    private static boolean reachableByWalking(TerrainMap map, GridPos from, GridPos to, int maxVisited) {
+        Set<GridPos> seen = new LinkedHashSet<>();
+        Deque<GridPos> queue = new ArrayDeque<>();
+        queue.add(from);
+        seen.add(from);
+        while (!queue.isEmpty() && seen.size() <= maxVisited) {
+            GridPos current = queue.poll();
+            if (current.equals(to)) {
+                return true;
+            }
+            for (GridPos next : current.neighbors8()) {
+                if (map.isPassable(next) && seen.add(next)) {
+                    queue.add(next);
+                }
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ 3) formations
@@ -340,6 +389,18 @@ public final class RtsScenario {
         }
         check.that(secondWarehouse.inventory().insert(iron, 10) > 0,
                 "a full warehouse can still top up a stack of an item it already holds");
+
+        // Regression guard: a slot must hold at most ItemType.maxStack(), and a kind that needs more than
+        // one stack must occupy more than one slot. Insert and the capacity query have to agree.
+        Inventory probe = new Inventory("probe", 2, Inventory.UNLIMITED, item -> true);
+        check.equal(120, probe.insert(iron, 500), "two slots hold two stacks of the 60 unit item");
+        check.equal(2, probe.usedSlots(), "a kind spanning two stacks occupies two slots");
+        check.equal(0, probe.insert(iron, 10), "a full inventory refuses more of the same item");
+        check.equal(0, probe.capacityFor(iron), "the capacity query agrees with the insert");
+        probe.extract(iron, 30);
+        check.equal(30, probe.capacityFor(iron), "the capacity query follows the partial stack");
+        check.equal(30, probe.insert(iron, 100), "a partially filled stack can still be topped up");
+        check.equal(0, probe.capacityFor(iron), "the top up filled the stack again");
     }
 
     // ------------------------------------------------------------------ 5) production
@@ -441,6 +502,15 @@ public final class RtsScenario {
                 + ", hauler travelled " + round(hauler.motion().travelledDistance()) + " tiles");
         check.that(warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)) < 200,
                 "the materials really left the warehouse");
+
+        // A hauler that dies with goods on board must not take them out of the economy.
+        Unit doomed = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(12, 17).center());
+        doomed.cargo().insert(content.item(ScenarioContent.IRON_INGOT), 20);
+        int stocked = warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT));
+        world.destroy(doomed);
+        engine.tick(2);
+        check.equal(stocked + 20, warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)),
+                "goods carried by a destroyed hauler go back into storage instead of vanishing");
     }
 
     // ------------------------------------------------------------------ 6) sprites and animation

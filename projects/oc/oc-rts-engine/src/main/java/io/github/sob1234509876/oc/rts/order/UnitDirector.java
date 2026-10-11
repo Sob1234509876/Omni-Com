@@ -22,14 +22,21 @@ public interface UnitDirector {
     /** Sends the unit to an exact world position, replacing whatever it was doing. */
     void move(Unit unit, Vec2 destination);
 
-    /** Sends a group to the tile and arranges it in the default formation. */
-    void moveGroup(Collection<Unit> units, GridPos destination);
+    /**
+     * Sends a group to the tile and arranges it in the default formation.
+     *
+     * @return the identifier of the formation, or {@code 0} when no unit could take the order; pass it
+     *         to {@code CommandService.updateFormationAnchor(...)} to steer the group while it marches
+     */
+    int moveGroup(Collection<Unit> units, GridPos destination);
 
     /**
      * Sends a group to the tile, spreading the units over the slots of the given formation. The unit
      * closest to a slot gets it, so the group does not walk through itself when it sets off.
+     *
+     * @return the identifier of the formation, or {@code 0} when no unit could take the order
      */
-    void moveGroup(Collection<Unit> units, GridPos destination, FormationShape shape);
+    int moveGroup(Collection<Unit> units, GridPos destination, FormationShape shape);
 
     /** Cancels the current order of the unit and tells it to stand still. */
     void stop(Unit unit);

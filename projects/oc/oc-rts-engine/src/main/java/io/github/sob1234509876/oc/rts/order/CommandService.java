@@ -123,17 +123,17 @@ public final class CommandService implements UnitDirector {
     // ------------------------------------------------------------------ groups
 
     @Override
-    public void moveGroup(Collection<Unit> units, GridPos destination) {
-        moveGroup(units, destination, FormationShape.BOX);
+    public int moveGroup(Collection<Unit> units, GridPos destination) {
+        return moveGroup(units, destination, FormationShape.BOX);
     }
 
     @Override
-    public void moveGroup(Collection<Unit> units, GridPos destination, FormationShape shape) {
+    public int moveGroup(Collection<Unit> units, GridPos destination, FormationShape shape) {
         Objects.requireNonNull(destination, "destination");
         Objects.requireNonNull(shape, "shape");
         List<Unit> group = commandable(units);
         if (group.isEmpty()) {
-            return;
+            return 0;
         }
         Vec2 anchor = destination.center();
         // Marching towards the anchor from where the group stands gives every shape its natural
@@ -150,6 +150,7 @@ public final class CommandService implements UnitDirector {
             orders.add(order);
         }
         formations.put(formationId, orders);
+        return formationId;
     }
 
     /**

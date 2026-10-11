@@ -9,9 +9,10 @@ import java.util.Set;
 /**
  * A production recipe: what a building consumes, what it turns that into, and how long it takes.
  *
- * <p>A recipe either yields items, which are placed into the producing building's output storage and
- * must be hauled to a warehouse to be usable, or it yields units, which are spawned at the building's
- * rally point.
+ * <p>A recipe either yields items or units. Items are placed into the producing building's output
+ * storage and pushed into the owner's logistics network right away, so they become usable as soon as a
+ * warehouse can take them; whatever does not fit stays in the buffer. Units are spawned at the
+ * building's entrance and sent to its rally point.
  */
 public final class Recipe implements Comparable<Recipe> {
 

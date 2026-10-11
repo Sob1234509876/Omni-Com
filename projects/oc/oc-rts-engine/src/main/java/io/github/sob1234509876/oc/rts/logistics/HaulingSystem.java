@@ -9,7 +9,9 @@ import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.sim.SimulationSystem;
 
@@ -60,6 +62,9 @@ public final class HaulingSystem implements SimulationSystem {
         this.directDelivery = directDelivery;
         this.directDeliveryTicks = Math.max(0, directDeliveryTicks);
         attachToPlayers();
+        // A hauler that dies mid delivery still carries goods that already left their warehouse, so the
+        // destruction has to be observed or those items would disappear from the economy for good.
+        world.events().subscribe(Events.EntityDestroyed.class, event -> recoverFromLostHauler(event.entity()));
     }
 
     /** Creates a hauling system that uses worker units, which is the default of the engine. */
@@ -84,6 +89,50 @@ public final class HaulingSystem implements SimulationSystem {
         Objects.requireNonNull(job, "job");
         jobs.add(job);
         return job;
+    }
+
+    /**
+     * Keeps a hauler that dies mid delivery from destroying goods: its cargo goes back into storage and
+     * its job is either handed to another hauler or closed so production reserves the recovered stock
+     * again.
+     *
+     * <p>Two cases have to be told apart. A hauler that dies before picking anything up is simply
+     * replaced, because its reservation still covers the goods where they stand. A hauler that already
+     * loaded its cargo has consumed its reservation plan, so the job can no longer be completed as
+     * planned: the cargo is stored back and the job fails, which releases the claim - production then
+     * sees the claim is gone, returns to {@code WAITING_MATERIALS} and reserves the stock it can now see
+     * in the warehouse again. Whatever fits into no warehouse at all (every store full) stays on the
+     * dead unit, because there is nowhere else to put it.
+     *
+     * <p>Only deaths that go through {@link World#destroy} publish {@code Events.EntityDestroyed}; a unit
+     * whose health is written directly is not observed here.
+     */
+    private void recoverFromLostHauler(Entity entity) {
+        if (!(entity instanceof Unit unit)) {
+            return;
+        }
+        boolean carriedGoods = unit.isCarryingItems();
+        if (carriedGoods) {
+            WarehouseLogistics logistics = WarehouseLogistics.of(unit.owner());
+            if (logistics != null) {
+                ItemBundle carried = unit.cargo().contents();
+                ItemBundle leftover = logistics.store(carried);
+                ItemBundle stored = carried.minusClamped(leftover);
+                if (!stored.isEmpty()) {
+                    unit.cargo().extractUpTo(stored);
+                }
+            }
+        }
+        for (DeliveryJob job : jobs) {
+            if (!job.isPending() || job.hauler().filter(id -> id.equals(unit.id())).isEmpty()) {
+                continue;
+            }
+            if (carriedGoods) {
+                job.fail(world.tickNumber());
+            } else {
+                job.unassign();
+            }
+        }
     }
 
     @Override

@@ -169,7 +169,7 @@ public final class OcRtsEngineBuilder {
         map.focus(Vec2.ZERO, viewRadiusChunks);
         world.setMap(map);
 
-        AStarPathFinder pathFinder = new AStarPathFinder(map);
+        AStarPathFinder pathFinder = new AStarPathFinder(map, AStarPathFinder.minimumMoveCost(content));
         world.setPathFinder(pathFinder);
 
         for (Player player : players) {
@@ -193,7 +193,7 @@ public final class OcRtsEngineBuilder {
         pipeline.add(new HaulingSystem(world, directDelivery, directDeliveryTicks));
         pipeline.add(new AnimationSystem(world, visuals));
 
-        SnapshotFactory snapshots = new SnapshotFactory(world, visuals);
+        SnapshotFactory snapshots = new SnapshotFactory(world, visuals, ticksPerSecond);
         return new OcRtsEngine(
                 world, pipeline, ticksPerSecond, map, pathFinder, pathService, commands, production, visuals, snapshots);
     }

@@ -46,7 +46,13 @@ public final class Inventory {
         }
     }
 
-    /** Empty inventory with unlimited capacity, for entities that store nothing by default. */
+    /**
+     * An inventory that accepts nothing at all, as a null object for entities that store nothing.
+     *
+     * <p>Both limits are zero and the filter rejects every item, so {@link #insert(ItemType, int)}
+     * always returns zero. It is deliberately <em>not</em> an unlimited store: for that, construct an
+     * inventory with {@link #UNLIMITED} slot count and unit limit.
+     */
     public static Inventory empty(String name) {
         return new Inventory(name, 0, 0, item -> false);
     }
@@ -68,8 +74,12 @@ public final class Inventory {
         return filter.test(item);
     }
 
+    /**
+     * Slots in use: one slot per {@link ItemType#maxStack()} units of a kind, so a kind holding more
+     * than one stack occupies more than one slot.
+     */
     public int usedSlots() {
-        return contents.size();
+        return usedSlots(contents);
     }
 
     public int freeSlots() {
@@ -107,14 +117,8 @@ public final class Inventory {
         if (amount <= 0 || !accepts(item)) {
             return 0;
         }
-        long capacity = 0;
-        int existing = amount(item);
-        if (existing > 0) {
-            capacity += Math.max(0, item.maxStack() - existing);
-        }
-        int free = freeSlots();
-        capacity += free == UNLIMITED ? Integer.MAX_VALUE : (long) free * item.maxStack();
-        return (int) Math.min(Math.min(capacity, unitHeadroom(contents)), amount);
+        long capacity = Math.min(headroomFor(contents, item), unitHeadroom(contents));
+        return (int) Math.min(capacity, amount);
     }
 
     /** Inserts as much of the item as fits and returns how much was accepted. */
@@ -188,39 +192,52 @@ public final class Inventory {
         return describe();
     }
 
+    /**
+     * Inserts as much of the item as fits into the given state and returns how much was accepted.
+     *
+     * <p>The room for an item is the free space in its partially filled stack plus one full stack per
+     * free slot, capped by the unit limit. Insert and {@link #insertable(ItemType, int)} share this rule
+     * so a capacity query and the insert that follows it always agree.
+     */
     private int insertInto(Map<ItemType, Integer> state, ItemType item, int amount) {
         if (amount <= 0 || !accepts(item)) {
             return 0;
         }
-        int remaining = amount;
-        int existing = state.getOrDefault(item, 0);
-        if (existing > 0) {
-            remaining -= addToState(state, item, existing, remaining);
+        int accepted = (int) Math.min(Math.min(headroomFor(state, item), unitHeadroom(state)), amount);
+        if (accepted > 0) {
+            state.merge(item, accepted, Integer::sum);
         }
-        while (remaining > 0 && freeSlots(state) > 0) {
-            int added = addToState(state, item, 0, remaining);
-            if (added <= 0) {
-                break;
-            }
-            remaining -= added;
-        }
-        return amount - remaining;
+        return accepted;
     }
 
-    private int addToState(Map<ItemType, Integer> state, ItemType item, int existing, int wanted) {
-        int headroom = Math.min(item.maxStack() - existing, wanted);
-        if (headroom <= 0) {
-            return 0;
+    /**
+     * Units of the item that still fit, counting the free space of its current stack and one full stack
+     * for every free slot.
+     */
+    private int headroomFor(Map<ItemType, Integer> state, ItemType item) {
+        int maxStack = item.maxStack();
+        int existing = state.getOrDefault(item, 0);
+        int headroom = freeSlots(state) == UNLIMITED
+                ? Integer.MAX_VALUE / 2
+                : freeSlots(state) * maxStack;
+        int inOpenStack = existing % maxStack;
+        if (inOpenStack > 0) {
+            headroom += maxStack - inOpenStack;
         }
-        int added = Math.min(headroom, unitHeadroom(state));
-        if (added > 0) {
-            state.merge(item, added, Integer::sum);
+        return headroom;
+    }
+
+    private int usedSlots(Map<ItemType, Integer> state) {
+        int used = 0;
+        for (Map.Entry<ItemType, Integer> entry : state.entrySet()) {
+            int maxStack = entry.getKey().maxStack();
+            used += (entry.getValue() + maxStack - 1) / maxStack;
         }
-        return added;
+        return used;
     }
 
     private int freeSlots(Map<ItemType, Integer> state) {
-        return slotCount == UNLIMITED ? UNLIMITED : slotCount - state.size();
+        return slotCount == UNLIMITED ? UNLIMITED : Math.max(0, slotCount - usedSlots(state));
     }
 
     private int unitHeadroom(Map<ItemType, Integer> state) {

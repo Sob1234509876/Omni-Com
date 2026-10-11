@@ -90,7 +90,14 @@ public record EntitySnapshot(
         return spriteFrame != null;
     }
 
-    /** Whether the entity is dead; dead entities are still snapshotted so a death animation can play. */
+    /**
+     * Whether the captured entity had run out of health.
+     *
+     * <p>In practice this reads {@code false} for every snapshot {@code SnapshotFactory} produces: it
+     * captures living entities only, because a corpse would show up at a stale position and inflate the
+     * "on screen" counts. A renderer that wants to show a death pose has to keep its own short lived
+     * effect list and drive it from {@code Events.EntityDestroyed}.
+     */
     public boolean isDead() {
         return healthFraction <= 0f;
     }

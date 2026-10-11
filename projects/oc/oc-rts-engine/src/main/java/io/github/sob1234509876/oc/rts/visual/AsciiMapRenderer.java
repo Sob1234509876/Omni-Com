@@ -38,9 +38,10 @@ import java.util.StringJoiner;
  *       {@code S} support - and buildings show the first letter of their type key path, upper case;</li>
  *   <li>a selected entity is lower case, an unselected one upper case, so a selection is visible
  *       without colour;</li>
- *   <li>an entity whose animation has finished (a corpse in its death pose) and a loaded hauler keep
- *       their letter but are placed on the map the same way, because the point of the letter is
- *       identity, not pose; use the legend and the snapshot API for the rest.</li>
+ *   <li>a loaded hauler and a unit whose animation has finished keep their letter but are placed on the
+ *       map the same way, because the point of the letter is identity, not pose; use the legend and the
+ *       snapshot API for the rest. Note that the snapshots this renderer consumes only contain living
+ *       entities, so a corpse is never drawn.</li>
  * </ul>
  *
  * <p>A building occupies its footprint, so its letter is drawn at the origin tile of the footprint and
