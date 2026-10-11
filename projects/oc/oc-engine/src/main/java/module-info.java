@@ -10,18 +10,10 @@ module oc.projects.oc.engine {
     requires spring.data.commons;
     requires spring.data.mongodb;
     requires org.mongodb.driver.sync.client;
+    requires org.slf4j;
 
     exports io.github.sob1234509876.oc.engine;
     exports io.github.sob1234509876.oc.engine.event;
-    exports io.github.sob1234509876.oc.engine.rm;
-    exports io.github.sob1234509876.oc.engine.rm.util;
     exports io.github.sob1234509876.oc.engine.configuration;
-    exports io.github.sob1234509876.oc.engine.event.collection;
-    exports io.github.sob1234509876.oc.engine.event.bus;
-    exports io.github.sob1234509876.oc.engine.bean;
-    exports io.github.sob1234509876.oc.engine.misc;
-    exports io.github.sob1234509876.oc.engine.rm.collection;
-    exports io.github.sob1234509876.oc.engine.dao.collection;
-    exports io.github.sob1234509876.oc.engine.dao.repository;
-    exports io.github.sob1234509876.oc.engine.dao.mongo;
+    exports io.github.sob1234509876.oc.engine.resource;
 }

@@ -1,6 +1,9 @@
 package io.github.sob1234509876.oc.engine.api;
 
-import io.github.sob1234509876.oc.engine.api.event.InitializeEventListener;
+import org.springframework.context.ApplicationContextAware;
 
-public interface Plugin extends InitializeEventListener {
+public interface Plugin extends ApplicationContextAware {
+
+    void initialize();
+
 }

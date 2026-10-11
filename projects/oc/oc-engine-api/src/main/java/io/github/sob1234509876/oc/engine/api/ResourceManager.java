@@ -1,20 +1,16 @@
 package io.github.sob1234509876.oc.engine.api;
 
-import io.github.sob1234509876.oc.engine.api.collection.BusList;
-import io.github.sob1234509876.oc.engine.api.collection.BusMap;
 import lombok.NonNull;
 
 import java.io.File;
+import java.util.List;
 
-public interface ResourceManager extends Parent {
-
-    @NonNull
-    BusList<@NonNull File> getFiles();
+public interface ResourceManager {
 
     @NonNull
-    BusMap<@NonNull String, @NonNull Class<?>> getClasses();
+    List<@NonNull File> getFiles();
 
     @NonNull
-    BusList<@NonNull Plugin> getPlugins();
+    List<@NonNull Plugin> getPlugins();
 
 }
