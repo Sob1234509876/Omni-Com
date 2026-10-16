@@ -262,7 +262,7 @@ public final class HaulingSystem implements SimulationSystem {
                 job.fail(now);
                 continue;
             }
-            if (job.pendingTicks() < directDeliveryTicks) {
+            if (job.pendingTicks() < shippingDelay(Math.max(1, shippingHops(job)))) {
                 continue;
             }
             if (expired(job)) {
