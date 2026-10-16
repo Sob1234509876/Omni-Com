@@ -257,13 +257,15 @@ public final class GoogologyCheck {
                 tetration.compareMagnitude(tallerTetration) == ComparisonResult.LESS);
         check("高层用高度支付差值：10↑↑↑11 > 10↑↑10",
                 pentationEleven.compareMagnitude(tetration) == ComparisonResult.GREATER);
-        check("两个都巨大且没有证书时，截断不判方向：10↑↑10 与 10^100000 → UNKNOWN",
-                tetration.compareMagnitude(hugePower) == ComparisonResult.UNKNOWN);
+        check("两个都巨大时截断绝不判等：10↑↑10 与 10^100000 由递归下降判开",
+                tetration.compareMagnitude(hugePower) == ComparisonResult.GREATER
+                        && tetration.compareMagnitude(hugePower) != ComparisonResult.EQUAL);
 
         Natural deepA = Natural.tower(Natural.TEN, notation.limit(), Natural.of(5));
         Natural deepB = Natural.tower(Natural.TEN, notation.omegaTower(6), Natural.of(5));
-        check("两个展不开的极限层塔 → UNKNOWN，绝不猜",
-                deepA.compareMagnitude(deepB) == ComparisonResult.UNKNOWN);
+        check("两侧都没归约完时按序数级别判定：10{ε₀}5 > 10{ω塔6层}5",
+                deepA.compareMagnitude(deepB) == ComparisonResult.GREATER
+                        && deepB.compareMagnitude(deepA) == ComparisonResult.LESS);
         check("但排序仍有全序兜底（compareTo 可用）", deepA.compareTo(deepB) != 0);
 
         Natural walkedOmega = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
@@ -280,6 +282,57 @@ public final class GoogologyCheck {
         check("缓存不改变结果：同一对连续比较一致（" + first + "）", first == second);
         check("反对称：反向比较是相反结果",
                 cached.compareMagnitude(Natural.of(7)) == Natural.of(7).compareMagnitude(cached).reversed());
+
+        Natural twoTower = Natural.arrow(Natural.TWO, 2, Natural.of(10));
+        Natural threeTower = Natural.arrow(Natural.of(3), 2, Natural.of(4));
+        check("跨底数由 10 底对数距离判定：2↑↑10 > 3↑↑4",
+                twoTower.compareMagnitude(threeTower) == ComparisonResult.GREATER);
+        Natural powerTower = Natural.arrow(Natural.TEN, 1, Natural.of(100_000));
+        Natural longTower = Natural.tetration(Natural.TEN, Natural.of(10));
+        check("同底递归下降：10↑↑10 > 10^100000",
+                longTower.compareMagnitude(powerTower) == ComparisonResult.GREATER);
+        check("同底同层仍然只比高度：10^100000 < 10^200000",
+                powerTower.compareMagnitude(Natural.arrow(Natural.TEN, 1, Natural.of(200_000)))
+                        == ComparisonResult.LESS);
+
+        Ordinal deepTower = notation.omegaTower(3);
+        Natural deepValue = Natural.tower(Natural.TEN, deepTower, Natural.TEN);
+        Natural deeperValue = Natural.tower(Natural.TEN, notation.limit(), Natural.TEN);
+        check("两侧都展不开时按序数级别判定：10{ω^ω^ω}10 < 10{ε₀}10",
+                deepValue.compareMagnitude(deeperValue) == ComparisonResult.LESS);
+        check("反过来也一致：10{ε₀}10 > 10{ω^ω^ω}10",
+                deeperValue.compareMagnitude(deepValue) == ComparisonResult.GREATER);
+        check("极限层对小精确值可由下界引理判掉：10{ω^ω^ω}10 > 1000",
+                deepValue.compareMagnitude(Natural.of(1000)) == ComparisonResult.GREATER);
+        Natural transfiniteSuccessor = Natural.tower(Natural.TEN, omega.successor(), Natural.TEN);
+        Natural wideFinite = Natural.arrow(Natural.TEN, 98, Natural.of(10));
+        check("极限层对大有限级别仍为 UNKNOWN（要展开才能判）",
+                transfiniteSuccessor.compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN);
+
+        List<Ordinal> levelSample = List.of(omega, omega.times(2), notation.omegaPower(notation.of(2)),
+                notation.omegaPower(omega));
+        boolean agreed = true;
+        int comparablePairs = 0;
+        for (Ordinal lower : levelSample) {
+            for (Ordinal upper : levelSample) {
+                if (lower.compareTo(upper) >= 0) {
+                    continue;
+                }
+                Natural small = Natural.tower(Natural.TEN, lower, Natural.of(5));
+                Natural large = Natural.tower(Natural.TEN, upper, Natural.of(5));
+                ComparisonResult cheap = small.compareMagnitude(large, 2);
+                ComparisonResult thorough = small.compareMagnitude(large, 4096);
+                if (thorough.isDecided()) {
+                    comparablePairs++;
+                    if (cheap.isDecided() && cheap != thorough) {
+                        agreed = false;
+                        check("级别规则与大预算结果不一致：" + lower + " vs " + upper
+                                + " 给 " + cheap + " 而大预算是 " + thorough, false);
+                    }
+                }
+            }
+        }
+        check("级别规则与更大预算的结果一致（" + comparablePairs + " 对可比）", agreed);
     }
 
     // ------------------------------------------------------------------ 14) comparing towers

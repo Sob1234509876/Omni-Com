@@ -14,7 +14,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (180 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (188 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
@@ -123,14 +123,31 @@ proof. `compareMagnitude` reports what is actually known:
 ComparisonResult result = a.compareMagnitude(b);   // LESS, EQUAL, GREATER or UNKNOWN
 ```
 
-`LESS`, `EQUAL` and `GREATER` are proofs: identical reduced forms, two exact values, a truncated bound (an
-exact value is always below `2^EXACT_BIT_LIMIT`, so proving that the other side is at least that large
-decides the pair; a tower of level three or more is at least `base^height` by the floor lemma), or a
-monotonicity certificate for two towers over the same base whose levels are both finite (equal levels
-compare heights, and a higher level wins when it can pay for the difference out of its own height, because
-`n↑^(k+1)h >= n↑^k(h-1)`). `UNKNOWN` means no available rule settled the pair, and it is deliberately
-distinct from `EQUAL`: a truncated evaluation that reaches the threshold on both sides only says that both
-are huge.
+`LESS`, `EQUAL` and `GREATER` are proofs, from these certificates in order:
+
+- exact degenerate forms, including `2{α}2 = 4` for every level `α >= 1` (which survives levels no budget can
+  walk: `2{ε₀}2` is `4`);
+- two exact values, compared as integers;
+- a lower bound: an exact value is always below `2^EXACT_BIT_LIMIT`, and a tower of level three or more is at
+  least `base^height` (level two `base·height`, lower levels their base), so "provably at least the other
+  side" decides the pair. The estimate is a lower bound in log space and must clear the bound by a margin;
+- base ten logarithms: both values are put on the one scale every base shares, and a gap of more than a factor
+  of ten decides. Ten is large enough that the estimate's own error cannot flip a decision, so bases stop
+  mattering - `2↑↑10 > 3↑↑4`;
+- monotonicity for two towers over the same base with finite levels: the same level compares heights, a higher
+  level that is also at least as tall dominates, and a higher level that is shorter descends logarithmically
+  (`b↑^a h > b↑^k h'` follows from `b↑^a (h-1) > h'`), which is how `10↑↑10 > 10^100000` is decided;
+- two transfinite levels that neither budget could walk to a successor: the level order decides, because for a
+  fixed base and height the hierarchy is monotone in the level and the fundamental sequences are monotone in
+  their ordinal. This is the one rule that rests on the notation's own well-behavedness, and the self check
+  cross checks it against a much larger budget.
+
+`UNKNOWN` means no available rule settled the pair, and it is deliberately distinct from `EQUAL`: a truncated
+evaluation that reaches the threshold on both sides only says that both are huge. What still lands there is a
+pair of towers whose logarithms are within a factor of ten with no other certificate, a transfinite level
+against a *large* finite level once neither could be reduced (level order alone is not enough there, since a
+limit level can collapse below a big finite one), and a notation that cannot supply the next fundamental
+sequence element.
 
 Both the reduction and the comparison rank are memoised per value (`comparisonValue`, `comparisonRankCache`):
 pure functions of the value, so caching cannot change an answer, but sorting a collection of towers pays the
@@ -182,7 +199,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 180 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 188 check self check program
 ```
 
 ## Related

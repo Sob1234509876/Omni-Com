@@ -106,6 +106,23 @@ public final class Natural implements Comparable<Natural> {
      */
     public static final int COMPARISON_REDUCTION_BUDGET = 32;
 
+    /**
+     * How deep the logarithmic descent of a comparison may go. One step turns
+     * "compare {@code b↑^a h} with {@code b↑^k h'}" into "compare {@code b↑^a (h-1)} with {@code h'}",
+     * so the depth is the number of levels of height it may peel; reaching it means the pair stays
+     * undetermined rather than costing unbounded work.
+     */
+    public static final int COMPARISON_DESCENT_DEPTH = 24;
+
+    /** How far two base ten logarithms must differ before the distance certificate decides: a factor of ten. */
+    private static final double COMPARISON_LOG_MARGIN = 1d;
+
+    /** Relative margin the floor lemma must clear a bound by, to keep double rounding out of the proof. */
+    private static final double COMPARISON_BOUND_MARGIN = 1.05d;
+
+    /** Absolute margin in bits the floor lemma must additionally clear a bound by. */
+    private static final double COMPARISON_BOUND_SLACK = 4d;
+
     private enum Kind {
         /** Exact {@link BigInteger} value. */
         EXACT,
@@ -599,6 +616,14 @@ public final class Natural implements Comparable<Natural> {
      * steps the two values may spend being reduced before the rules above are tried.
      */
     public ComparisonResult compareMagnitude(Natural other, int budget) {
+        return compareMagnitude(other, budget, COMPARISON_DESCENT_DEPTH);
+    }
+
+    /**
+     * The comparison itself, with both budgets: {@code budget} for the fundamental sequence reduction and
+     * {@code depth} for the logarithmic descent below.
+     */
+    private ComparisonResult compareMagnitude(Natural other, int budget, int depth) {
         Objects.requireNonNull(other, "other");
         Natural left = reduceWithBudget(budget);
         Natural right = other.reduceWithBudget(budget);
@@ -614,15 +639,30 @@ public final class Natural implements Comparable<Natural> {
         if (left.kind == Kind.EXACT && right.kind == Kind.EXACT) {
             return ComparisonResult.of(left.value.compareTo(right.value));
         }
-        boolean leftExact = left.kind == Kind.EXACT;
-        boolean rightExact = right.kind == Kind.EXACT;
-        if (leftExact && right.provablyAtLeastExactThreshold()) {
+        if (left.kind == Kind.EXACT && right.provablyAtLeastLog2(log2OfExact(left.value))) {
             return ComparisonResult.LESS;
         }
-        if (rightExact && left.provablyAtLeastExactThreshold()) {
+        if (right.kind == Kind.EXACT && left.provablyAtLeastLog2(log2OfExact(right.value))) {
             return ComparisonResult.GREATER;
         }
-        return compareFiniteLevelTowers(left, right);
+        ComparisonResult byDistance = compareByLogDistance(left, right);
+        if (byDistance.isDecided()) {
+            return byDistance;
+        }
+        ComparisonResult byLevels = compareSameBaseFiniteLevels(left, right, budget, depth);
+        if (byLevels.isDecided()) {
+            return byLevels;
+        }
+        if (left.level != null && right.level != null
+                && left.reducedLevel(budget).isEmpty() && right.reducedLevel(budget).isEmpty()) {
+            // Neither level could be walked to a successor inside the budget, so no value was computed for
+            // either side. For a fixed base and height the hierarchy is monotone in the level, and the
+            // fundamental sequences are monotone in their ordinal, so the level order decides the values.
+            // This is the one rule here that rests on the notation's own well-behavedness rather than on
+            // arithmetic alone; the self check cross checks it against a much larger budget.
+            return ComparisonResult.of(left.level.compareTo(right.level));
+        }
+        return ComparisonResult.UNKNOWN;
     }
 
     /** The reduced form with an explicit budget; only the default budget is memoised. */
@@ -641,22 +681,44 @@ public final class Natural implements Comparable<Natural> {
     }
 
     /**
-     * Whether this value is provably at least {@code 2^EXACT_BIT_LIMIT}, the threshold the truncated
-     * comparison uses. Exact values never are. A structural value is when its base already is, or when the
-     * floor lemma clears the threshold: a tower of level three or more is at least {@code base^height}, a
-     * level two tower is {@code base·height} and a lower one at least its base. The comparison carries a
-     * safety margin, so the answer is a proof and never a guess.
+     * Distance certificate: both values are put on the one scale every base shares, the base ten logarithm,
+     * and a difference larger than a factor of ten decides the pair. Ten is large enough that the estimate's
+     * own error - the logarithm of an exact value is worked out from its bit length - can never flip a
+     * decision, and bases therefore stop mattering. Values whose logarithms are too close, or clamped at the
+     * top of the double range, stay undetermined.
      */
-    private boolean provablyAtLeastExactThreshold() {
-        if (kind == Kind.EXACT) {
-            return false;
+    private static ComparisonResult compareByLogDistance(Natural left, Natural right) {
+        double leftLog = left.log10Approx();
+        double rightLog = right.log10Approx();
+        if (Double.isNaN(leftLog) || Double.isNaN(rightLog)) {
+            return ComparisonResult.UNKNOWN;
         }
+        if (leftLog - rightLog > COMPARISON_LOG_MARGIN) {
+            return ComparisonResult.GREATER;
+        }
+        if (rightLog - leftLog > COMPARISON_LOG_MARGIN) {
+            return ComparisonResult.LESS;
+        }
+        return ComparisonResult.UNKNOWN;
+    }
+
+    /**
+     * Whether this value is provably at least {@code 2^log2Bound}. Exact values are compared directly when
+     * the bound is exact too. A structural value is when its base already clears the bound, or when the
+     * floor lemma does: a tower of level three or more is at least {@code base^height}, a level two tower
+     * {@code base·height} and a lower one at least its base. The estimate is a lower bound in log space and
+     * is required to clear the bound by a relative margin, so the answer is a proof and never a guess.
+     */
+    private boolean provablyAtLeastLog2(double log2Bound) {
         if (kind == Kind.BEYOND) {
             return true;
         }
+        if (kind == Kind.EXACT) {
+            return value.bitLength() - 1 >= log2Bound;
+        }
         double baseLog2 = base.log2Approx();
-        if (baseLog2 >= EXACT_BIT_LIMIT) {
-            // a{α}m >= a for every level and height, so a huge base is enough
+        if (baseLog2 >= log2Bound) {
+            // a{α}m >= a for every level and height, so a big enough base is enough
             return true;
         }
         double heightValue = height.toDoubleApprox();
@@ -665,13 +727,18 @@ public final class Natural implements Comparable<Natural> {
         }
         double floorLog2;
         if (level != null || finiteLevel.compareTo(ONE) >= 0) {
-            floorLog2 = baseLog2 * heightValue;             // log2(base^height), the floor for level >= 3
+            floorLog2 = baseLog2 * heightValue;                     // log2(base^height), the floor for level >= 3
         } else if (finiteLevel.equals(TWO)) {
-            floorLog2 = baseLog2 + log2Of(heightValue);     // log2(base·height) for multiplication
+            floorLog2 = baseLog2 + log2Of(heightValue);             // log2(base·height) for multiplication
         } else {
-            floorLog2 = Math.max(baseLog2, log2Of(heightValue));   // addition and succession
+            floorLog2 = Math.max(baseLog2, log2Of(heightValue));     // addition and succession
         }
-        return floorLog2 >= EXACT_BIT_LIMIT + 64d;
+        return floorLog2 >= log2Bound * COMPARISON_BOUND_MARGIN + COMPARISON_BOUND_SLACK;
+    }
+
+    /** {@code log2} of an exact value, which is small enough for a double. */
+    private static double log2OfExact(BigInteger value) {
+        return value.signum() <= 0 ? 0d : log2Of(value.doubleValue());
     }
 
     /** {@code log2} of a positive double; zero stays zero. */
@@ -680,12 +747,20 @@ public final class Natural implements Comparable<Natural> {
     }
 
     /**
-     * Decides two towers whose levels are both finite and whose bases agree, using only monotonicity:
-     * for a fixed base and level the value grows with the height, and a level that is higher by
-     * {@code j} can pay for the difference out of its own height, because
-     * {@code n↑^(k+1)h >= n↑^k(h-1)}. Anything else, transfinite levels included, stays undetermined.
+     * Decides two towers over the same base whose levels are both finite, using monotonicity only:
+     *
+     * <ul>
+     *   <li>the same level: the taller one is larger;</li>
+     *   <li>a higher level that is also at least as tall: it dominates;</li>
+     *   <li>otherwise the higher level may pay for one step out of its own height, because
+     *       {@code b↑^a h = b↑^(a-1) (b↑^a (h-1))} and {@code b↑^k} is increasing, so
+     *       {@code b↑^a h > b↑^k h'} follows from {@code b↑^a (h-1) > h'}. That is the logarithmic
+     *       descent: the same comparison one height lower, which is how {@code 10↑↑10 > 10^100000} is
+     *       decided even though its excess height cannot cover the level difference directly.</li>
+     * </ul>
      */
-    private static ComparisonResult compareFiniteLevelTowers(Natural left, Natural right) {
+    private static ComparisonResult compareSameBaseFiniteLevels(Natural left, Natural right, int budget,
+            int depth) {
         int leftArrows = left.finiteArrowCount();
         int rightArrows = right.finiteArrowCount();
         if (leftArrows < 0 || rightArrows < 0 || !left.base.equals(right.base)) {
@@ -694,11 +769,17 @@ public final class Natural implements Comparable<Natural> {
         if (leftArrows == rightArrows) {
             return ComparisonResult.of(left.height.compareTo(right.height));
         }
-        Natural tallerLevel = leftArrows > rightArrows ? left : right;
-        Natural shorterLevel = leftArrows > rightArrows ? right : left;
-        Natural difference = Natural.of(Math.abs(leftArrows - rightArrows));
-        if (tallerLevel.height.compareTo(difference) >= 0
-                && tallerLevel.height.subtractClamped(difference).compareTo(shorterLevel.height) >= 0) {
+        Natural higher = leftArrows > rightArrows ? left : right;
+        Natural lower = leftArrows > rightArrows ? right : left;
+        if (higher.height.compareTo(lower.height) >= 0) {
+            return leftArrows > rightArrows ? ComparisonResult.GREATER : ComparisonResult.LESS;
+        }
+        if (depth <= 0 || higher.height.compareTo(ONE) <= 0) {
+            return ComparisonResult.UNKNOWN;
+        }
+        Natural inner = arrow(higher.base, leftArrows > rightArrows ? leftArrows : rightArrows,
+                higher.height.subtractClamped(ONE));
+        if (inner.compareMagnitude(lower.height, budget, depth - 1) == ComparisonResult.GREATER) {
             return leftArrows > rightArrows ? ComparisonResult.GREATER : ComparisonResult.LESS;
         }
         return ComparisonResult.UNKNOWN;

@@ -288,7 +288,8 @@
 | `CantorNormalForm.standard().limit()` / `epsilonZero()` | `ε₀`（康托尔标准式的上界，即 `sup(1, ω, ω^ω, ω^ω^ω, …)`；`contains()` 对它返回 `false`，`ε₀ + 1` 与 `ε₀·2` 会抛 `UnsupportedOperationException`） |
 | `TransfiniteHyperoperation.DEFAULT_REDUCTION_BUDGET` | `64`（一次 `apply` 最多走多少步基本列归约） |
 | `TransfiniteHyperoperation.DEFAULT_SUCCESSOR_RECURSION_LIMIT` | `8`（超限后继级别最多按高度递归多深，超过就保持结构形） |
-| `Natural.COMPARISON_REDUCTION_BUDGET` | `32`（比较时把超限级别按自身高度归约到后继级别最多走多少步；`ω` 1 步、`ω²` 2 步、`ω^ω` 12 步，`ω^ω^ω` 与 `ε₀` 远超预算，于是回落到级别字典序） |
+| `Natural.COMPARISON_REDUCTION_BUDGET` | `32`（比较时把超限级别按自身高度归约到后继级别最多走多少步；`ω` 1 步、`ω²` 2 步、`ω^ω` 12 步，`ω^ω^ω` 与 `ε₀` 远超预算，于是两侧都没归约完时按序数级别判、其余情况才落到 `UNKNOWN` 或排序兜底） |
+| `Natural.COMPARISON_DESCENT_DEPTH` | `24`（同底有限级别的"递归下降"证书最多剥多少层高度：`b↑^a h > b↑^k h'` 由 `b↑^a(h-1) > h'` 推出，`10↑↑10 > 10^100000` 就是这么判的） |
 | `ChunkStreamer.ORDER` / `DEFAULT_CHUNKS_PER_TICK` | `100` / `4` |
 | `PathOptions.DEFAULT` | `new PathOptions(20_000, true, false, 1.05f)` |
 | `PathOptions.FAST` | `new PathOptions(2_000, true, false, 1.5f)` |
