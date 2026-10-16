@@ -322,7 +322,36 @@ public final class Natural implements Comparable<Natural> {
                 return canonicalExact(exact.get());
             }
         }
+        if (arrowCount.equals(ONE)) {
+            Optional<Natural> inBaseTen = powerInBaseTen(base, height);
+            if (inBaseTen.isPresent()) {
+                return inBaseTen.get();
+            }
+        }
         return new Natural(Kind.TOWER, null, base, arrowCount, null, height);
+    }
+
+    /**
+     * Rewrites {@code base^height} as a power of ten, so that large values share one base. The exponent is
+     * {@code height · log10(base)}, rounded, which puts the value within a factor of ten of the truth - the
+     * same scale {@link #approximate(BigInteger)} already accepts once a value leaves the exact range.
+     *
+     * <p>The rewrite is only attempted when both operands are exact and the exponent stays inside a
+     * {@code long}. With an astronomical exponent the constant factor must not be dropped, because it is
+     * exactly what tells {@code 2^x} and {@code 3^x} apart; and above exponentiation there is no closed form
+     * for a change of base at all (tetration base conversion needs fractional heights), so those towers keep
+     * their own base and rely on the comparison's base ten logarithms instead.
+     */
+    private static Optional<Natural> powerInBaseTen(Natural base, Natural height) {
+        if (base.equals(TEN) || !base.isExact() || !height.isExact()) {
+            return Optional.empty();
+        }
+        double exponent = Math.log10(base.value.doubleValue()) * height.value.doubleValue();
+        if (!(exponent >= 1d) || exponent > 4.0e18d) {
+            return Optional.empty();
+        }
+        long rounded = Math.round(exponent);
+        return rounded < 1L ? Optional.empty() : Optional.of(towerWithArrowCount(TEN, ONE, of(rounded), false));
     }
 
     // ------------------------------------------------------------------ parsing

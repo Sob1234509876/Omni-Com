@@ -45,12 +45,15 @@ public final class GoogologyCheck {
         check("2^4095 精确（4096 位，正好在阈值上）", Natural.power(two, Natural.of(4095)).isExact());
         Natural promoted = Natural.power(two, Natural.of(4096));
         check("2^4096 转为结构形（4097 位，超出阈值）", !promoted.isExact() && promoted.isStructural());
-        check("被拒的求值保留原来的底数与高度（2^4096 比 10 的幂更精确）",
-                promoted.arrows() == 1 && promoted.towerBase().orElseThrow().equals(two)
-                        && promoted.towerHeight().orElseThrow().equals(Natural.of(4096)));
-        equal("结构形的文本是箭头记号", "2↑4096", promoted.toString());
-        check("巨大的精确值会被提升为 10 的幂近似", Natural.of(BigInteger.TWO.pow(4096)).arrows() == 1
-                && Natural.of(BigInteger.TWO.pow(4096)).towerBase().orElseThrow().equals(ten));
+        check("被拒的求值改写成 10 底：2^4096 → 10^1233（大自然数同底、不要求精确）",
+                promoted.arrows() == 1 && promoted.towerBase().orElseThrow().equals(ten)
+                        && promoted.towerHeight().orElseThrow().equals(Natural.of(1233)));
+        equal("结构形的文本是 10 的幂（箭头记号）", "10↑1233", promoted.toString());
+        check("从精确值提升的那条路径同样给 10 底，只是数量级精度不同（真值 10^1233.02）",
+                Natural.of(BigInteger.TWO.pow(4096)).arrows() == 1
+                        && Natural.of(BigInteger.TWO.pow(4096)).towerBase().orElseThrow().equals(ten)
+                        && Natural.of(BigInteger.TWO.pow(4096)).towerHeight().orElseThrow()
+                                .equals(Natural.of(1234)));
         section("2) 阈值附近的算术");
         check("5 + 7 = 12", Natural.of(5).add(7).equals(Natural.of(12)));
         check("20 - 5 = 15", Natural.of(20).subtract(Natural.of(5)).equals(Natural.of(15)));
@@ -331,10 +334,20 @@ public final class GoogologyCheck {
                 promoted.isStructural() && promoted.towerBase().orElseThrow().equals(Natural.TEN)
                         && promoted.arrows() == 1);
         Natural callerBase = Natural.arrow(Natural.TWO, 2, Natural.of(10));
-        check("调用方显式构造的塔保留自己的底（无法精确改写成 10 底）",
+        check("幂以上的层保留自己的底（tetration 底数换算没有封闭形式，只能靠比较时的 10 底对数）",
                 callerBase.towerBase().orElseThrow().equals(Natural.TWO)
                         && callerBase.compareMagnitude(Natural.tower(Natural.TEN, notation.omegaTower(3),
                                 Natural.TEN)) == ComparisonResult.UNKNOWN);
+        Natural callerPower = Natural.arrow(Natural.TWO, 1, Natural.of(100_000));
+        check("幂（level 3）会改写成 10 底：2^100000 → 10^30103（相对误差在一个数量级内）",
+                callerPower.towerBase().orElseThrow().equals(Natural.TEN)
+                        && callerPower.towerHeight().orElseThrow().equals(Natural.of(30103)));
+        check("同底之后幂之间的比较走同底路径：2^100000 < 3^100000（10^30103 < 10^47712）",
+                callerPower.compareMagnitude(Natural.arrow(Natural.of(3), 1, Natural.of(100_000)))
+                        == ComparisonResult.LESS);
+        check("小自然数仍然精确：2^10 = 1024 是精确值，没有被改写",
+                Natural.arrow(Natural.TWO, 1, Natural.of(10)).isExact()
+                        && Natural.arrow(Natural.TWO, 1, Natural.of(10)).equals(Natural.of(1024)));
         Natural tallTower = Natural.tetration(Natural.TEN, Natural.of(10));
         check("结构形高度减一不再精确（subtractClamped 保留较大者），所以后继递归必须停在高度 ≤ 8",
                 tallTower.subtractClamped(Natural.ONE).equals(tallTower));

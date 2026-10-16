@@ -14,7 +14,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (197 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (200 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
@@ -153,6 +153,18 @@ Both the reduction and the comparison rank are memoised per value (`comparisonVa
 pure functions of the value, so caching cannot change an answer, but sorting a collection of towers pays the
 budget once per value instead of once per comparison.
 
+### One base for large values, exactness for small ones
+
+The rule the library follows is "small naturals exact, large naturals fast", not "large naturals exact". So a
+value that has to stay structural and is a power is rewritten to base ten: `powerInBaseTen` turns `b^h` into
+`10^round(h · log10 b)`, which lands within a factor of ten of the truth - the same tolerance
+`approximate(BigInteger)` already has. `2^4096` becomes `10↑1233` (the promotion path says `10↑1234`; the true
+value is `10^1233.02`, so both are inside one order of magnitude), `2^100000` becomes `10↑30103`, and powers of
+any base now compare on the same base. The rewrite needs both operands exact and the exponent inside a `long`:
+with an astronomical exponent the constant factor cannot be dropped, because it is what tells `2^x` and `3^x`
+apart. Anything above a power keeps its own base - there is no closed form for changing base at tetration, only
+asymptotics with fractional heights - and the comparison's base ten logarithms cover those instead.
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
@@ -199,7 +211,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 197 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 200 check self check program
 ```
 
 ## Related
