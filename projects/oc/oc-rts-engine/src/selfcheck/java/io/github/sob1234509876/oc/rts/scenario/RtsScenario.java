@@ -819,22 +819,27 @@ public final class RtsScenario {
         Natural stocked = moonDepot.inventory().amount(content.item(ScenarioContent.IRON_ORE))
                 .add(moonDepot.inventory().amount(content.item(ScenarioContent.COAL)));
         supply.production().enqueue(marsWorkshop, content.recipe(ScenarioContent.SMELT_STEEL), 1);
-        for (int i = 0; i < 400; i++) {
+        for (int i = 0; i < 3200; i++) {
             supply.tick();
         }
         Natural left = moonDepot.inventory().amount(content.item(ScenarioContent.IRON_ORE))
                 .add(moonDepot.inventory().amount(content.item(ScenarioContent.COAL)));
         check.that(shipped.spatial(moon).size() + shipped.spatial(mars).size() == 2,
                 "shipping moved goods, not units: both dimensions still hold their one building");
+        // Ask the reservation layer directly: does it offer a warehouse that stands in another dimension?
+        boolean reservable = blue.logistics().reserve(ItemBundle.of(content.item(ScenarioContent.IRON_ORE),
+                Natural.of(10))).isPresent();
+        check.that(reservable,
+                "the reservation layer offers goods from a warehouse of another dimension");
         if (left.compareTo(stocked) < 0) {
             check.that(true, "a cross dimension delivery drew materials from the Moon depot");
         } else {
-            // Measured, not assumed: the reservation layer does not offer a warehouse of another dimension
-            // yet, so HaulingSystem.tickShipped never sees a genuine cross dimension job. The route, the
-            // hauler filter and the hop aware delay are in place; wiring reservations across dimensions is
-            // the missing half, and this note is the reminder that the end to end case is still open.
+            // Measured, not assumed: the end to end cross dimension delivery does not happen yet. The route,
+            // the hauler filter and the hop aware delay are in place; whatever blocks the job is reported by
+            // the assertion above (the reservation) or is downstream of it (production asking for a
+            // delivery). This note is the reminder that the case is still open.
             check.note("cross dimension supply is not usable yet: the Moon depot kept " + left
-                    + " because reservations never reach across dimensions");
+                    + " (reservation offered = " + reservable + ")");
         }
         check.note("cross dimension deliveries are shipped through gateways; hazards are still data only");
     }

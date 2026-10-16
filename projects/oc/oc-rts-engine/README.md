@@ -49,7 +49,7 @@ side, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 152 checks passed.
+RTS engine scenario: all 153 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own

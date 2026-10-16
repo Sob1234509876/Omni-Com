@@ -262,7 +262,13 @@ public final class HaulingSystem implements SimulationSystem {
                 job.fail(now);
                 continue;
             }
-            if (job.pendingTicks() < shippingDelay(Math.max(1, shippingHops(job)))) {
+            int hops = shippingHops(job);
+            if (hops < 0) {
+                // No gateway chain leads there, so the goods cannot travel at all: leave the job pending
+                // instead of delivering it as if it had been shipped.
+                continue;
+            }
+            if (job.pendingTicks() < shippingDelay(Math.max(1, hops))) {
                 continue;
             }
             if (expired(job)) {
