@@ -6,11 +6,12 @@ import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.DeterministicRandom;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
-import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.Dimension;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
-import io.github.sob1234509876.oc.rts.entity.GridSpatialIndex;
 import io.github.sob1234509876.oc.rts.entity.SpatialIndex;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.EventBus;
@@ -29,17 +30,32 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The simulation state: the chunked terrain, every entity, the players and the services the systems
- * use to talk to each other.
+ * The simulation state: the dimensions, the players and the services the systems use to talk to each other.
  *
- * <p>{@code World} is deliberately a plain mutable object without threading. Systems mutate it in
- * pipeline order, and a few rules keep that safe:
+ * <p>A world holds one or more {@link Dimension}s - independent maps with their own terrain, entities and
+ * spatial index. The first one is the <em>default</em> dimension, and the single map API of this class
+ * ({@link #map()}, {@link #spatial()}, {@link #units()}, {@link #spawnUnit(UnitType, Player, Vec2)} and
+ * friends) talks to it, so code written before dimensions existed keeps working unchanged. Everything that
+ * needs a specific map asks for it by {@link DimensionId}.
+ *
+ * <p>Two rules follow from coordinates being local to a dimension:
+ * <ul>
+ *   <li>{@link #spatial()} is the default dimension's index. Asking the wrong index about neighbourhoods
+ *       returns entities of the wrong map, so positional code should use {@link #spatial(DimensionId)} (or
+ *       {@link Entity#dimensionId()}) rather than the default.</li>
+ *   <li>Aggregate queries - {@link #entities()}, {@link #units()}, {@link #buildings()} - span <em>all</em>
+ *       dimensions, which is what non positional systems (production, construction, animation) want. Those
+ *       that compare positions must iterate one dimension at a time, see {@link #dimensions()}.</li>
+ * </ul>
+ *
+ * <p>{@code World} is deliberately a plain mutable object without threading. Systems mutate it in pipeline
+ * order, and a few rules keep that safe:
  * <ul>
  *   <li>Spawning is allowed at any time; a system must not spawn while it iterates {@link #units()}.</li>
  *   <li>{@link #destroy(Entity)} only marks entities dead; they disappear from the collections during
  *       {@link #flush()}, which the engine runs at the end of the tick.</li>
- *   <li>{@link #spatial()} is authoritative for neighbourhood queries and must be told about moved
- *       entities through {@link SpatialIndex#update(Entity)}.</li>
+ *   <li>{@link #spatial()} is authoritative for neighbourhood queries and must be told about moved entities
+ *       through {@link SpatialIndex#update(Entity)}.</li>
  * </ul>
  */
 public final class World {
@@ -48,17 +64,12 @@ public final class World {
     private final ContentRegistry content;
     private final DeterministicRandom random;
     private final EventBus events = new SimpleEventBus();
-    private final SpatialIndex spatial = new GridSpatialIndex(4f);
-
-    private final Map<EntityId, Entity> entitiesById = new LinkedHashMap<>();
-    private final List<Entity> entities = new ArrayList<>();
-    private final List<Unit> units = new ArrayList<>();
-    private final List<Building> buildings = new ArrayList<>();
     private final List<Player> players = new ArrayList<>();
-    private final List<Entity> pendingRemoval = new ArrayList<>();
 
-    private TerrainMap map;
-    private PathFinder pathFinder;
+    /** Dimensions in creation order, which is also the order systems iterate them in. */
+    private final Map<DimensionId, Dimension> dimensions = new LinkedHashMap<>();
+
+    private DimensionId defaultDimensionId = DimensionId.overworld();
     private UnitDirector director;
     private long nextEntityId = 1L;
     private long tickNumber;
@@ -88,30 +99,25 @@ public final class World {
         return events;
     }
 
-    public SpatialIndex spatial() {
-        return spatial;
-    }
-
-    public TerrainMap map() {
-        if (map == null) {
-            throw new IllegalStateException("the world has no terrain map; pass one to the engine builder");
-        }
-        return map;
-    }
-
-    public void setMap(TerrainMap map) {
-        this.map = Objects.requireNonNull(map, "map");
-    }
-
+    /** The default dimension's path finder. */
     public PathFinder pathFinder() {
-        if (pathFinder == null) {
-            throw new IllegalStateException("the world has no path finder; pass one to the engine builder");
-        }
-        return pathFinder;
+        return defaultDimension().pathFinder();
     }
 
     public void setPathFinder(PathFinder pathFinder) {
-        this.pathFinder = Objects.requireNonNull(pathFinder, "pathFinder");
+        defaultDimension().setPathFinder(pathFinder);
+    }
+
+    /**
+     * The path finder of one dimension. Positional code should prefer this over {@link #pathFinder()}: a
+     * search must run on the terrain of the map the entity actually stands on.
+     */
+    public PathFinder pathFinder(DimensionId id) {
+        return dimension(id).pathFinder();
+    }
+
+    public void setPathFinder(DimensionId id, PathFinder pathFinder) {
+        dimension(id).setPathFinder(pathFinder);
     }
 
     public UnitDirector director() {
@@ -123,6 +129,110 @@ public final class World {
 
     public void setDirector(UnitDirector director) {
         this.director = Objects.requireNonNull(director, "director");
+    }
+
+    // ------------------------------------------------------------------ dimensions
+
+    /** The dimension the single map API of this world talks to. */
+    public DimensionId defaultDimensionId() {
+        return defaultDimensionId;
+    }
+
+    /** Points the single map API at another dimension; it must already exist. */
+    public void setDefaultDimension(DimensionId id) {
+        Objects.requireNonNull(id, "id");
+        if (!dimensions.containsKey(id)) {
+            throw new IllegalArgumentException("no such dimension: " + id);
+        }
+        this.defaultDimensionId = id;
+    }
+
+    /** The default dimension; fails when the world has no map yet. */
+    public Dimension defaultDimension() {
+        return dimension(defaultDimensionId);
+    }
+
+    /**
+     * Registers a dimension. The first one registered becomes the default, so a world built the old way
+     * (one map) behaves exactly as before.
+     *
+     * @return the new dimension, for spawning its first entities
+     */
+    public Dimension addDimension(DimensionId id, DimensionProfile profile, TerrainMap map) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(profile, "profile");
+        Objects.requireNonNull(map, "map");
+        if (dimensions.containsKey(id)) {
+            throw new IllegalArgumentException("dimension " + id + " already exists");
+        }
+        Dimension dimension = new Dimension(id, profile, map, this::nextId, this::tickNumber, events);
+        dimensions.put(id, dimension);
+        return dimension;
+    }
+
+    public Optional<Dimension> findDimension(DimensionId id) {
+        return Optional.ofNullable(dimensions.get(Objects.requireNonNull(id, "id")));
+    }
+
+    public boolean hasDimension(DimensionId id) {
+        return dimensions.containsKey(Objects.requireNonNull(id, "id"));
+    }
+
+    public Dimension dimension(DimensionId id) {
+        Dimension dimension = dimensions.get(Objects.requireNonNull(id, "id"));
+        if (dimension == null) {
+            throw new IllegalArgumentException("no such dimension: " + id
+                    + " (known: " + dimensions.keySet() + ")");
+        }
+        return dimension;
+    }
+
+    /** Every dimension, in creation order. */
+    public List<Dimension> dimensions() {
+        return List.copyOf(dimensions.values());
+    }
+
+    public int dimensionCount() {
+        return dimensions.size();
+    }
+
+    /** The dimension an entity stands in; fails when it is not registered anywhere. */
+    public Dimension dimensionOf(Entity entity) {
+        Objects.requireNonNull(entity, "entity");
+        return dimension(entity.dimensionId());
+    }
+
+    /** The index of the default dimension; see the class comment about which index to use. */
+    public SpatialIndex spatial() {
+        return defaultDimension().spatial();
+    }
+
+    public SpatialIndex spatial(DimensionId id) {
+        return dimension(id).spatial();
+    }
+
+    public TerrainMap map() {
+        return defaultDimension().map();
+    }
+
+    public TerrainMap map(DimensionId id) {
+        return dimension(id).map();
+    }
+
+    /**
+     * Sets the map of the default dimension, creating it on first use. This is the construction time entry
+     * point of the engine builder; a dimension that already holds entities cannot have its map swapped.
+     */
+    public void setMap(TerrainMap map) {
+        Objects.requireNonNull(map, "map");
+        Dimension existing = dimensions.get(defaultDimensionId);
+        if (existing != null && existing.entityCount() > 0) {
+            throw new IllegalStateException(
+                    "the default dimension already holds entities; register another dimension instead");
+        }
+        DimensionProfile profile = existing != null ? existing.profile() : DimensionProfile.earth();
+        dimensions.put(defaultDimensionId,
+                new Dimension(defaultDimensionId, profile, map, this::nextId, this::tickNumber, events));
     }
 
     // ------------------------------------------------------------------ clock
@@ -152,124 +262,164 @@ public final class World {
 
     // ------------------------------------------------------------------ entities
 
+    /** Every entity of every dimension; positional code should iterate {@link #dimensions()} instead. */
     public Collection<Entity> entities() {
-        return List.copyOf(entities);
+        List<Entity> all = new ArrayList<>();
+        for (Dimension dimension : dimensions.values()) {
+            all.addAll(dimension.entities());
+        }
+        return List.copyOf(all);
     }
 
+    public Collection<Entity> entities(DimensionId id) {
+        return dimension(id).entities();
+    }
+
+    /** Units of every dimension, as a view; see {@link #units(DimensionId)} for one map. */
     public List<Unit> units() {
-        return units;
+        if (dimensions.size() == 1) {
+            return defaultDimension().units();
+        }
+        List<Unit> all = new ArrayList<>();
+        for (Dimension dimension : dimensions.values()) {
+            all.addAll(dimension.units());
+        }
+        return all;
+    }
+
+    public List<Unit> units(DimensionId id) {
+        return dimension(id).units();
     }
 
     public List<Building> buildings() {
-        return buildings;
+        if (dimensions.size() == 1) {
+            return defaultDimension().buildings();
+        }
+        List<Building> all = new ArrayList<>();
+        for (Dimension dimension : dimensions.values()) {
+            all.addAll(dimension.buildings());
+        }
+        return all;
     }
 
+    public List<Building> buildings(DimensionId id) {
+        return dimension(id).buildings();
+    }
+
+    /** Finds an entity by id across every dimension; ids are unique world wide. */
     public Optional<Entity> findEntity(EntityId id) {
-        return Optional.ofNullable(entitiesById.get(id));
+        for (Dimension dimension : dimensions.values()) {
+            Optional<Entity> found = dimension.findEntity(id);
+            if (found.isPresent()) {
+                return found;
+            }
+        }
+        return Optional.empty();
     }
 
     public Entity entity(EntityId id) {
-        Entity entity = entitiesById.get(id);
-        if (entity == null) {
-            throw new IllegalArgumentException("no entity with id " + id);
-        }
-        return entity;
+        return findEntity(id).orElseThrow(() -> new IllegalArgumentException("no entity with id " + id));
     }
 
     public List<Unit> unitsOf(Player player) {
-        return units.stream().filter(unit -> unit.owner().equals(player)).toList();
+        return units().stream().filter(unit -> unit.owner().equals(player)).toList();
+    }
+
+    public List<Unit> unitsOf(Player player, DimensionId id) {
+        return units(id).stream().filter(unit -> unit.owner().equals(player)).toList();
     }
 
     public List<Building> buildingsOf(Player player) {
-        return buildings.stream().filter(building -> building.owner().equals(player)).toList();
+        return buildings().stream().filter(building -> building.owner().equals(player)).toList();
     }
 
+    public List<Building> buildingsOf(Player player, DimensionId id) {
+        return buildings(id).stream().filter(building -> building.owner().equals(player)).toList();
+    }
+
+    /** Entities of every dimension. */
     public int entityCount() {
-        return entities.size();
+        int count = 0;
+        for (Dimension dimension : dimensions.values()) {
+            count += dimension.entityCount();
+        }
+        return count;
     }
 
     // ------------------------------------------------------------------ spawning
 
+    /** Spawns in the default dimension. */
     public Unit spawnUnit(UnitType type, Player owner, GridPos tile) {
-        return spawnUnit(type, owner, tile.center());
+        return defaultDimension().spawnUnit(type, owner, tile);
     }
 
-    /** Creates a unit immediately; systems call this when production finishes. */
+    /** Spawns in the default dimension. */
     public Unit spawnUnit(UnitType type, Player owner, Vec2 position) {
-        Unit unit = new Unit(nextId(), owner, type, position, tickNumber);
-        register(unit);
-        return unit;
+        return defaultDimension().spawnUnit(type, owner, position);
     }
 
-    /** Creates a finished building, as if it had been constructed beforehand. */
+    public Unit spawnUnit(DimensionId id, UnitType type, Player owner, GridPos tile) {
+        return dimension(id).spawnUnit(type, owner, tile);
+    }
+
+    public Unit spawnUnit(DimensionId id, UnitType type, Player owner, Vec2 position) {
+        return dimension(id).spawnUnit(type, owner, position);
+    }
+
+    /** Creates a finished building in the default dimension. */
     public Building spawnBuilding(BuildingType type, Player owner, GridPos origin) {
-        Building building = new Building(nextId(), owner, type, origin, tickNumber);
-        building.completeConstruction();
-        register(building);
-        return building;
+        return defaultDimension().spawnBuilding(type, owner, origin);
     }
 
-    /** Places a building that still has to be constructed. */
+    public Building spawnBuilding(DimensionId id, BuildingType type, Player owner, GridPos origin) {
+        return dimension(id).spawnBuilding(type, owner, origin);
+    }
+
+    /** Places a building that still has to be constructed, in the default dimension. */
     public Building placeBuilding(BuildingType type, Player owner, GridPos origin) {
-        Building building = new Building(nextId(), owner, type, origin, tickNumber);
-        register(building);
-        return building;
+        return defaultDimension().placeBuilding(type, owner, origin);
     }
 
-    /** Whether a building of that type fits on the terrain at that position without overlapping. */
+    public Building placeBuilding(DimensionId id, BuildingType type, Player owner, GridPos origin) {
+        return dimension(id).placeBuilding(type, owner, origin);
+    }
+
+    /** Whether a building fits on the terrain of the default dimension at that position. */
     public boolean canPlace(BuildingType type, GridPos origin) {
-        TileRect footprint = type.footprint(origin.x(), origin.y());
-        for (GridPos tile : footprint.tiles()) {
-            if (!map().isBuildable(tile)) {
-                return false;
-            }
-        }
-        for (Entity entity : spatial.inRect(footprint)) {
-            if (entity.isAlive() && entity instanceof Building) {
-                return false;
-            }
-        }
-        return true;
+        return defaultDimension().canPlace(type, origin);
     }
 
-    /** Marks an entity dead; it is removed from the world during the next {@link #flush()}. */
+    public boolean canPlace(DimensionId id, BuildingType type, GridPos origin) {
+        return dimension(id).canPlace(type, origin);
+    }
+
+    /** Marks an entity dead; it is removed from its dimension during the next {@link #flush()}. */
     public void destroy(Entity entity) {
         if (entity == null || !entity.isAlive()) {
             return;
         }
         entity.kill();
-        spatial.remove(entity);
-        pendingRemoval.add(entity);
+        Optional<DimensionId> id = entity.dimensionIfAny();
+        if (id.isPresent()) {
+            dimension(id.get()).markDestroyed(entity);
+        }
         events.publish(new Events.EntityDestroyed(entity, tickNumber));
     }
 
-    /** Removes dead entities from the collections; the engine calls this once per tick. */
+    /** Removes dead entities from every dimension; the engine calls this once per tick. */
     public void flush() {
-        if (pendingRemoval.isEmpty()) {
-            return;
+        for (Dimension dimension : dimensions.values()) {
+            dimension.flush();
         }
-        for (Entity entity : pendingRemoval) {
-            entitiesById.remove(entity.id());
-            entities.remove(entity);
-            units.remove(entity);
-            buildings.remove(entity);
-        }
-        pendingRemoval.clear();
-    }
-
-    private void register(Entity entity) {
-        entitiesById.put(entity.id(), entity);
-        entities.add(entity);
-        if (entity instanceof Unit unit) {
-            units.add(unit);
-        } else if (entity instanceof Building building) {
-            buildings.add(building);
-        }
-        spatial.insert(entity);
-        events.publish(new Events.EntitySpawned(entity, tickNumber));
     }
 
     private EntityId nextId() {
         return EntityId.of(nextEntityId++);
+    }
+
+    @Override
+    public String toString() {
+        return "World{dimensions=" + dimensions.keySet() + ", default=" + defaultDimensionId
+                + ", entities=" + entityCount() + ", tick=" + tickNumber + "}";
     }
 }

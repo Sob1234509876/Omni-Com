@@ -2,6 +2,8 @@ package io.github.sob1234509876.oc.rts;
 
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.AStarPathFinder;
@@ -23,7 +25,9 @@ import io.github.sob1234509876.oc.rts.visual.SnapshotFactory;
 import io.github.sob1234509876.oc.rts.visual.VisualLibrary;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -57,6 +61,8 @@ public final class OcRtsEngineBuilder {
     private int viewRadiusChunks = 4;
     private ChunkGenerator generator;
     private ChunkStore chunkStore = new InMemoryChunkStore();
+    private DimensionProfile profile = DimensionProfile.earth();
+    private final List<DimensionSpec> extraDimensions = new ArrayList<>();
     private VisualLibrary visuals = VisualLibrary.empty();
     private boolean directDelivery;
     private int directDeliveryTicks = 60;
@@ -112,6 +118,39 @@ public final class OcRtsEngineBuilder {
         return this;
     }
 
+    /** Environment of the default dimension; Earth like (breathable, normal speed) unless changed. */
+    public OcRtsEngineBuilder profile(DimensionProfile profile) {
+        this.profile = Objects.requireNonNull(profile, "profile");
+        return this;
+    }
+
+    /**
+     * Registers another dimension with terrain of its own: a separate noise generator derived from the
+     * dimension key, so the Moon and Mars do not look like the overworld.
+     */
+    public OcRtsEngineBuilder dimension(DimensionId id, DimensionProfile profile) {
+        return dimension(id, profile, null, null);
+    }
+
+    /** Registers another dimension with an explicit terrain generator. */
+    public OcRtsEngineBuilder dimension(DimensionId id, DimensionProfile profile, ChunkGenerator generator) {
+        return dimension(id, profile, generator, null);
+    }
+
+    /** Registers another dimension with its own generator and chunk storage. */
+    public OcRtsEngineBuilder dimension(DimensionId id, DimensionProfile profile, ChunkGenerator generator,
+            ChunkStore store) {
+        extraDimensions.add(new DimensionSpec(Objects.requireNonNull(id, "id"),
+                Objects.requireNonNull(profile, "profile"), generator, store));
+        return this;
+    }
+
+    /** Convenience for the two maps a Moon and Mars scenario usually wants. */
+    public OcRtsEngineBuilder moonAndMars() {
+        return dimension(DimensionId.of("moon"), DimensionProfile.moon())
+                .dimension(DimensionId.of("mars"), DimensionProfile.mars());
+    }
+
     /** Animation catalogue used to give spawned units their sprites; empty means "no animation". */
     public OcRtsEngineBuilder visuals(VisualLibrary visuals) {
         this.visuals = Objects.requireNonNull(visuals, "visuals");
@@ -164,20 +203,37 @@ public final class OcRtsEngineBuilder {
         World world = new World(seed, content);
         players.forEach(world::addPlayer);
 
-        ChunkGenerator chunkGenerator = generator != null ? generator : new NoiseChunkGenerator(seed, content);
-        ChunkedMap map = new ChunkedMap(chunkGenerator, chunkStore, chunkSize);
-        map.focus(Vec2.ZERO, viewRadiusChunks);
-        world.setMap(map);
+        // One map per dimension, each with its own chunk store: a store is keyed by chunk position only,
+        // so sharing one between dimensions would make them overwrite each other's terrain.
+        Map<DimensionId, ChunkedMap> maps = new LinkedHashMap<>();
+        ChunkGenerator defaultGenerator = generator != null ? generator : new NoiseChunkGenerator(seed, content);
+        ChunkedMap defaultMap = new ChunkedMap(defaultGenerator, chunkStore, chunkSize);
+        defaultMap.focus(Vec2.ZERO, viewRadiusChunks);
+        world.addDimension(DimensionId.overworld(), profile, defaultMap);
+        maps.put(DimensionId.overworld(), defaultMap);
 
-        AStarPathFinder pathFinder = new AStarPathFinder(map, AStarPathFinder.minimumMoveCost(content));
-        world.setPathFinder(pathFinder);
+        for (DimensionSpec spec : extraDimensions) {
+            ChunkGenerator dimensionGenerator =
+                    spec.generator() != null ? spec.generator() : new NoiseChunkGenerator(seedFor(spec.id()), content);
+            ChunkStore dimensionStore = spec.store() != null ? spec.store() : new InMemoryChunkStore();
+            ChunkedMap dimensionMap = new ChunkedMap(dimensionGenerator, dimensionStore, chunkSize);
+            dimensionMap.focus(Vec2.ZERO, viewRadiusChunks);
+            world.addDimension(spec.id(), spec.profile(), dimensionMap);
+            maps.put(spec.id(), dimensionMap);
+        }
+
+        for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+            world.setPathFinder(entry.getKey(),
+                    new AStarPathFinder(entry.getValue(), AStarPathFinder.minimumMoveCost(content)));
+        }
+        AStarPathFinder pathFinder = (AStarPathFinder) world.pathFinder();
 
         for (Player player : players) {
             player.attachLogistics(new WarehouseLogistics(world, player));
         }
 
         SystemPipeline pipeline = new SystemPipeline("simulation");
-        pipeline.add(new ChunkStreamer(map, viewRadiusChunks));
+        pipeline.add(new ChunkStreamer(maps, viewRadiusChunks));
         pipeline.add(new OrderSystem(world));
 
         PathService pathService = new PathService(world, pathRequestsPerTick, pathNodeBudgetPerTick);
@@ -194,7 +250,24 @@ public final class OcRtsEngineBuilder {
         pipeline.add(new AnimationSystem(world, visuals));
 
         SnapshotFactory snapshots = new SnapshotFactory(world, visuals, ticksPerSecond);
-        return new OcRtsEngine(
-                world, pipeline, ticksPerSecond, map, pathFinder, pathService, commands, production, visuals, snapshots);
+        return new OcRtsEngine(world, pipeline, ticksPerSecond, defaultMap, pathFinder, pathService, commands,
+                production, visuals, snapshots);
+    }
+
+    /**
+     * A seed derived from the world seed and the dimension key, so extra dimensions do not generate the
+     * same landscape as the overworld while still being reproducible from the world seed alone.
+     */
+    private long seedFor(DimensionId id) {
+        long mixed = seed ^ 0x9E3779B97F4A7C15L;
+        for (int i = 0; i < id.key().length(); i++) {
+            mixed = (mixed ^ id.key().charAt(i)) * 1099511628211L;
+        }
+        return mixed;
+    }
+
+    /** One registered dimension: its identity, environment and optional terrain plumbing. */
+    private record DimensionSpec(DimensionId id, DimensionProfile profile, ChunkGenerator generator,
+            ChunkStore store) {
     }
 }

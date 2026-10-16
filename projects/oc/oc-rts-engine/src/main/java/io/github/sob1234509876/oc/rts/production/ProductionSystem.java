@@ -293,7 +293,9 @@ public final class ProductionSystem implements SimulationSystem {
         Recipe recipe = job.recipe();
         if (recipe.isUnitRecipe()) {
             UnitType type = recipe.unitOutput().orElseThrow();
-            Unit unit = world.spawnUnit(type, building.owner(), building.entrance());
+            // The unit is born where its factory stands: entrances are map local coordinates, so spawning in
+            // the default dimension would drop a Moon factory's output onto the overworld.
+            Unit unit = world.spawnUnit(building.dimensionId(), type, building.owner(), building.entrance());
             sendToRallyPoint(unit, building);
             world.events().publish(new Events.UnitProduced(building.owner(), building, unit, recipe,
                     tick.number()));

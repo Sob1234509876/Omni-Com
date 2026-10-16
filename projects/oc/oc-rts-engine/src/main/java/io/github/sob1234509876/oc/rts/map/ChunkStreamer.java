@@ -3,24 +3,31 @@ package io.github.sob1234509876.oc.rts.map;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.sim.SimulationSystem;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
- * Keeps the chunks around the focus of interest in memory and drops the rest.
+ * Keeps the chunks around the focus of interest in memory and drops the rest, for every dimension at once.
  *
- * <p>Streaming runs as the first system of the tick. Loading a whole square of chunks in one tick
- * would stall the simulation whenever the focus jumps, so the streamer spreads the work over ticks
- * with a budget and always unloads before it loads: dropping a chunk is cheap and frees exactly the
- * memory the new chunks need.
+ * <p>Each map streams around its own focus, so the Moon can be watched while Mars is idle: a dimension whose
+ * focus never moves simply stays loaded where it was. The per tick budget is shared between dimensions
+ * instead of being multiplied by their number, so adding maps cannot make a tick arbitrarily expensive; the
+ * remainder goes to the dimensions in registration order, which keeps the split deterministic.
  *
- * <p>Load and unload facts are published on the world event bus so that rendering, analysis and
- * scenario scripts can react to terrain appearing and disappearing without the streamer knowing
- * anything about them.
+ * <p>Streaming runs as the first system of the tick. Loading a whole square of chunks in one tick would
+ * stall the simulation whenever a focus jumps, so the streamer spreads the work over ticks with a budget and
+ * always unloads before it loads: dropping a chunk is cheap and frees exactly the memory the new chunks need.
+ *
+ * <p>Load and unload facts are published on the world event bus, tagged with their dimension, so that
+ * rendering, analysis and scenario scripts can react to terrain appearing and disappearing without the
+ * streamer knowing anything about them.
  */
 public final class ChunkStreamer implements SimulationSystem {
 
@@ -30,16 +37,31 @@ public final class ChunkStreamer implements SimulationSystem {
     /** Chunks loaded or unloaded per tick when the caller does not ask for something else. */
     public static final int DEFAULT_CHUNKS_PER_TICK = 4;
 
-    private final ChunkedMap map;
+    /** Dimensions and their maps, in registration order. */
+    private final Map<DimensionId, ChunkedMap> maps = new LinkedHashMap<>();
     private final int radiusChunks;
 
     private int chunksPerTick = DEFAULT_CHUNKS_PER_TICK;
 
+    /**
+     * A streamer for a single map, registered under {@link DimensionId#overworld()}. Prefer
+     * {@link #ChunkStreamer(Map, int)} when the world has several dimensions.
+     */
     public ChunkStreamer(ChunkedMap map, int radiusChunks) {
+        this(Map.of(DimensionId.overworld(), Objects.requireNonNull(map, "map")), radiusChunks);
+    }
+
+    /** A streamer over one map per dimension; insertion order is the order budgets are handed out in. */
+    public ChunkStreamer(Map<DimensionId, ChunkedMap> maps, int radiusChunks) {
         if (radiusChunks < 0) {
             throw new IllegalArgumentException("radius in chunks must not be negative, was " + radiusChunks);
         }
-        this.map = Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(maps, "maps");
+        if (maps.isEmpty()) {
+            throw new IllegalArgumentException("a streamer needs at least one dimension");
+        }
+        maps.forEach((id, map) -> this.maps.put(Objects.requireNonNull(id, "dimension id"),
+                Objects.requireNonNull(map, "map")));
         this.radiusChunks = radiusChunks;
     }
 
@@ -53,12 +75,12 @@ public final class ChunkStreamer implements SimulationSystem {
         return ORDER;
     }
 
-    /** Radius in chunks the streamer keeps loaded around the focus. */
+    /** Radius in chunks the streamer keeps loaded around each focus. */
     public int radiusChunks() {
         return radiusChunks;
     }
 
-    /** Upper bound of chunk transitions per tick; a larger value fills the radius faster. */
+    /** Upper bound of chunk transitions per tick across all dimensions. */
     public int chunksPerTick() {
         return chunksPerTick;
     }
@@ -70,7 +92,20 @@ public final class ChunkStreamer implements SimulationSystem {
         this.chunksPerTick = chunksPerTick;
     }
 
-    /** Loads the whole radius at once, ignoring the per tick budget. */
+    /** Dimensions this streamer serves, in registration order. */
+    public List<DimensionId> dimensions() {
+        return List.copyOf(maps.keySet());
+    }
+
+    /**
+     * Adds a dimension that was registered after the engine was built, or replaces the map of a known one.
+     * Without this a late {@code world.addDimension(...)} would stay unstreamed.
+     */
+    public void streamDimension(DimensionId id, ChunkedMap map) {
+        maps.put(Objects.requireNonNull(id, "id"), Objects.requireNonNull(map, "map"));
+    }
+
+    /** Loads the whole radius of every dimension at once, ignoring the per tick budget. */
     public void loadNow(World world, Tick tick) {
         sync(world, tick, Integer.MAX_VALUE);
     }
@@ -81,19 +116,39 @@ public final class ChunkStreamer implements SimulationSystem {
     }
 
     private void sync(World world, Tick tick, int budget) {
+        if (budget == Integer.MAX_VALUE) {
+            for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+                syncOne(world, tick, entry.getKey(), entry.getValue(), Integer.MAX_VALUE);
+            }
+            return;
+        }
+        int perDimension = Math.max(1, budget / maps.size());
+        int remaining = budget;
+        for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+            if (remaining <= 0) {
+                break;
+            }
+            int share = Math.min(perDimension, remaining);
+            int left = syncOne(world, tick, entry.getKey(), entry.getValue(), share);
+            remaining -= share - left;
+        }
+    }
+
+    private int syncOne(World world, Tick tick, DimensionId id, ChunkedMap map, int budget) {
         ChunkPos center = ChunkPos.of(map.focus().tile(), map.chunkSize());
         // Clamp the offsets so that a focus near the coordinate limit cannot overflow the int range.
         int headroom = Integer.MAX_VALUE - Math.max(Math.abs(center.x()), Math.abs(center.y())) - 2;
         int maxOffset = Math.min(radiusChunks, Math.max(0, headroom));
         int remaining = budget;
-
-        remaining = unloadOutside(world, tick, center, maxOffset, remaining);
+        remaining = unloadOutside(world, tick, id, map, center, maxOffset, remaining);
         if (remaining > 0) {
-            loadMissing(world, tick, center, maxOffset, remaining);
+            loadMissing(world, tick, id, map, center, maxOffset, remaining);
         }
+        return budget - remaining;
     }
 
-    private int unloadOutside(World world, Tick tick, ChunkPos center, int maxOffset, int budget) {
+    private int unloadOutside(World world, Tick tick, DimensionId id, ChunkedMap map, ChunkPos center,
+            int maxOffset, int budget) {
         // A chunk that leaves the radius loses its in-memory copy; if it was edited it is saved first.
         List<ChunkPos> dropping = new ArrayList<>();
         for (ChunkPos pos : map.loadedChunks()) {
@@ -108,13 +163,14 @@ public final class ChunkStreamer implements SimulationSystem {
                 break;
             }
             map.unload(pos);
-            world.events().publish(new Events.ChunkUnloaded(pos, tick.number()));
+            world.events().publish(new Events.ChunkUnloaded(id, pos, tick.number()));
             remaining--;
         }
         return remaining;
     }
 
-    private int loadMissing(World world, Tick tick, ChunkPos center, int maxOffset, int budget) {
+    private int loadMissing(World world, Tick tick, DimensionId id, ChunkedMap map, ChunkPos center,
+            int maxOffset, int budget) {
         int remaining = budget;
         int minX = center.x() - maxOffset;
         int maxX = center.x() + maxOffset;
@@ -127,7 +183,7 @@ public final class ChunkStreamer implements SimulationSystem {
                     continue;
                 }
                 map.chunk(pos);
-                world.events().publish(new Events.ChunkLoaded(pos, tick.number()));
+                world.events().publish(new Events.ChunkLoaded(id, pos, tick.number()));
                 remaining--;
             }
         }
@@ -140,6 +196,7 @@ public final class ChunkStreamer implements SimulationSystem {
 
     @Override
     public String toString() {
-        return "ChunkStreamer{radiusChunks=" + radiusChunks + ", chunksPerTick=" + chunksPerTick + "}";
+        return "ChunkStreamer{dimensions=" + maps.keySet() + ", radiusChunks=" + radiusChunks
+                + ", chunksPerTick=" + chunksPerTick + "}";
     }
 }

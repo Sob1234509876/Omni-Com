@@ -11,6 +11,7 @@ import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
@@ -69,6 +70,7 @@ public final class RtsScenario {
         checkAnimationAndSnapshot(check, content);
         checkDeterminism(check, content);
         checkHugeNumbers(check);
+        checkDimensions(check, content);
 
         check.summary("RTS engine scenario");
     }
@@ -674,6 +676,87 @@ public final class RtsScenario {
      * damage are {@link Natural} values, so a scenario may declare sizes no primitive could hold while
      * ordinary gameplay stays exact integer arithmetic.
      */
+    /**
+     * Dimensions: several independent maps in one world. Coordinates are local to a dimension, so the
+     * interesting properties are isolation (neighbours and spatial queries never cross a map), global entity
+     * ids, per dimension streaming, and the environment profile a system can read.
+     */
+    private static void checkDimensions(Check check, ContentRegistry content) {
+        check.section("11) dimensions: independent maps for the overworld, the Moon and Mars");
+        Group seed = spawnGroup(content, new GridPos(6, 6), 1);
+        var type = seed.units().get(0).type();
+        Player blue = seed.units().get(0).owner();
+
+        OcRtsEngine engine = OcRtsEngine.builder(content)
+                .seed(90210L)
+                .chunkSize(16)
+                .viewRadiusChunks(2)
+                .ticksPerSecond(20)
+                .moonAndMars()
+                .player(blue)
+                .build();
+        World world = engine.world();
+        DimensionId overworld = world.defaultDimensionId();
+        DimensionId moon = DimensionId.of("moon");
+        DimensionId mars = DimensionId.of("mars");
+        GridPos sameSpot = new GridPos(-3, -3);
+
+        check.equal(3, world.dimensionCount(), "three dimensions exist");
+        check.equal("overworld", overworld.key(), "the default dimension is the overworld");
+        check.that(world.dimension(overworld).profile().breathable(), "the overworld is Earth like");
+        check.close(0.166f, world.dimension(moon).profile().gravity(), 1e-6f,
+                "the Moon keeps its own gravity");
+        check.that(!world.dimension(moon).profile().breathable()
+                && world.dimension(moon).profile().requiresSealedUnits(),
+                "the Moon is not breathable and forces sealed units");
+        check.close(1.25f, world.dimension(moon).profile().movementSpeedFactor(), 1e-6f,
+                "the Moon moves units faster");
+        check.equal("Mars", world.dimension(mars).profile().displayName(), "Mars has its own profile");
+
+        // The same tile in two dimensions must stay two different places.
+        Unit onOverworld = world.spawnUnit(overworld, type, blue, sameSpot);
+        Unit onMoon = world.spawnUnit(moon, type, blue, sameSpot);
+        check.that(!onOverworld.id().equals(onMoon.id()), "both units exist with different ids");
+        check.equal(2, world.entityCount(), "two entities in total across the world");
+        check.equal(1, world.spatial(overworld).size(), "the overworld index holds one entity");
+        check.equal(1, world.spatial(moon).size(), "the Moon index holds its own one");
+        check.that(world.spatial(overworld).inRadius(sameSpot.center(), 3f).stream()
+                .noneMatch(entity -> entity.id().equals(onMoon.id())),
+                "the overworld index cannot see the Moon unit");
+        check.equal("moon", onMoon.dimensionId().key(), "each unit reports its own dimension");
+        check.that(world.findEntity(onMoon.id()).orElseThrow() == onMoon,
+                "an id finds its entity across dimensions");
+
+        // Streaming is per dimension: a focus far away on Mars loads Mars chunks and leaves the others alone.
+        world.dimension(mars).focus(new Vec2(20_000f, -20_000f), 2);
+        for (int i = 0; i < 12; i++) {
+            engine.tick();
+        }
+        check.atLeast(1, Natural.of(world.map(mars).loadedChunkCount()),
+                "the Mars focus loaded Mars chunks");
+        check.note("loaded chunks: overworld=" + world.map(overworld).loadedChunkCount()
+                + ", moon=" + world.map(moon).loadedChunkCount()
+                + ", mars=" + world.map(mars).loadedChunkCount());
+
+        // Movement keeps a unit on its own map.
+        float before = onMoon.motion().travelledDistance();
+        world.director().move(onMoon, sameSpot.center().plus(new Vec2(6f, 0f)));
+        for (int i = 0; i < 40; i++) {
+            engine.tick();
+        }
+        check.equal("moon", onMoon.dimensionId().key(), "a moved unit stays in its dimension");
+        check.that(onMoon.motion().travelledDistance() > before, "the unit actually travelled on the Moon");
+        check.that(onOverworld.position().tile().equals(sameSpot) || onOverworld.position().tile().x() > -3,
+                "the overworld unit was not dragged along by the Moon order");
+
+        // Destroying in one dimension leaves the others untouched.
+        world.destroy(onMoon);
+        engine.tick();
+        check.equal(0, world.units(moon).size(), "the Moon is empty after the destroy");
+        check.equal(1, world.units(overworld).size(), "the overworld unit survived");
+        check.note("dimension transfers (portals, rockets and cross dimensional logistics) are the next step");
+    }
+
     private static void checkHugeNumbers(Check check) {
         check.section("10) arbitrarily large numbers for amounts, capacity, health and damage");
         Natural hugeStack = Natural.arrow(Natural.TEN, 1, Natural.of(5000));

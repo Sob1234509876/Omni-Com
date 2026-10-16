@@ -162,8 +162,6 @@ public final class PathService implements SimulationSystem {
         if (requests.isEmpty()) {
             return;
         }
-        PathFinder pathFinder = world.pathFinder();
-        TerrainMap map = world.map();
         int budget = nodeBudgetPerTick;
         Iterator<Map.Entry<EntityId, Request>> iterator = requests.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -191,9 +189,11 @@ public final class PathService implements SimulationSystem {
             budget -= allowance;
             spentNodesLastTick += allowance;
             GridPos start = unit.position().tile();
-            GridPos target = walkableTarget(map, goal.tile());
-            Optional<Path> found =
-                    pathFinder.findPath(start, target, request.options().withMaxExpansions(allowance));
+            // A search never crosses dimensions: the unit's own map and its own path finder are used, so a
+            // goal that happens to share coordinates with another dimension cannot be walked to by mistake.
+            GridPos target = walkableTarget(world.map(unit.dimensionId()), goal.tile());
+            Optional<Path> found = world.pathFinder(unit.dimensionId())
+                    .findPath(start, target, request.options().withMaxExpansions(allowance));
             if (found.isPresent() && !found.get().waypoints().isEmpty()) {
                 motion.setPath(found.get().waypoints());
             } else {

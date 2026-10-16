@@ -5,6 +5,7 @@ import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
@@ -47,12 +48,12 @@ public final class Events {
     public record ProductionStateChanged(Building building, Recipe recipe, String state, long tick) {
     }
 
-    /** A chunk was generated or loaded into memory. */
-    public record ChunkLoaded(ChunkPos pos, long tick) {
+    /** A chunk of a dimension was generated or loaded into memory. */
+    public record ChunkLoaded(DimensionId dimension, ChunkPos pos, long tick) {
     }
 
-    /** A chunk was dropped from memory, either because it was unloaded or evicted. */
-    public record ChunkUnloaded(ChunkPos pos, long tick) {
+    /** A chunk of a dimension was dropped from memory, either because it was unloaded or evicted. */
+    public record ChunkUnloaded(DimensionId dimension, ChunkPos pos, long tick) {
     }
 
     /** A unit was given a new order. */

@@ -103,14 +103,19 @@ public final class MovementSystem implements SimulationSystem {
         Motion motion = unit.motion();
         motion.tickRepathCooldown();
         Vec2 position = unit.position();
-        List<Entity> neighbours = world.spatial().inRadius(position, steering.neighbourQueryRadius(unit));
+        // Neighbours come from the unit's own dimension: coordinates are local to a map, so the default
+        // dimension's index would report entities that merely happen to stand at the same place elsewhere.
+        List<Entity> neighbours =
+                world.spatial(unit.dimensionId()).inRadius(position, steering.neighbourQueryRadius(unit));
 
         Vec2 target = updateTargetAndArrival(motion, position, unit.radius());
         if (motion.isMoving()) {
             requestPathIfNeeded(motion, unit, position);
         }
 
-        float maxSpeed = unit.speed() * settings.maxSpeedMultiplier();
+        // The environment scales movement: the Moon's lower gravity means faster legs, Earth stays neutral.
+        float maxSpeed = unit.speed() * settings.maxSpeedMultiplier()
+                * world.dimension(unit.dimensionId()).profile().movementSpeedFactor();
         Vec2 separation = steering.separation(unit, neighbours);
         Vec2 velocity;
         if (target != null) {
@@ -127,7 +132,7 @@ public final class MovementSystem implements SimulationSystem {
         }
 
         Vec2 step = velocity.scaled(deltaSeconds);
-        Vec2 resolved = resolveStep(world.map(), position, step);
+        Vec2 resolved = resolveStep(world.map(unit.dimensionId()), position, step);
         float travelled = position.distance(resolved);
         if (travelled > MOVEMENT_EPSILON) {
             unit.setPosition(resolved);
@@ -146,7 +151,7 @@ public final class MovementSystem implements SimulationSystem {
         if (visual != null) {
             visual.setFacing(facing);
         }
-        world.spatial().update(unit);
+        world.spatial(unit.dimensionId()).update(unit);
 
         updateStuck(motion, travelled);
     }

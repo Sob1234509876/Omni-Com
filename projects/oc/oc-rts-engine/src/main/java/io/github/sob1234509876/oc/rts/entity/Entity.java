@@ -5,10 +5,12 @@ import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.visual.NullVisualState;
 import io.github.sob1234509876.oc.rts.visual.VisualState;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Anything that exists in the world: units and buildings share identity, ownership, position, health
@@ -25,6 +27,7 @@ public abstract class Entity {
     private final Health health;
     private final long spawnTick;
     private Vec2 position;
+    private DimensionId dimensionId;
     private boolean alive = true;
     private VisualState visual;
 
@@ -50,6 +53,30 @@ public abstract class Entity {
 
     public long spawnTick() {
         return spawnTick;
+    }
+
+    /**
+     * The dimension this entity stands in. Coordinates are local to a dimension, so this is what tells two
+     * entities on the same tile of different maps apart.
+     *
+     * @throws IllegalStateException when the entity is not registered with a dimension yet
+     */
+    public DimensionId dimensionId() {
+        if (dimensionId == null) {
+            throw new IllegalStateException(displayName() + "#" + id.value()
+                    + " does not stand in a dimension yet");
+        }
+        return dimensionId;
+    }
+
+    /** The dimension, or empty while the entity has not been registered with one. */
+    public Optional<DimensionId> dimensionIfAny() {
+        return Optional.ofNullable(dimensionId);
+    }
+
+    /** Set by the dimension that takes ownership of this entity; not meant for callers. */
+    public void setDimension(DimensionId dimensionId) {
+        this.dimensionId = Objects.requireNonNull(dimensionId, "dimensionId");
     }
 
     public Vec2 position() {
