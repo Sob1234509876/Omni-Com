@@ -295,6 +295,33 @@ public final class GoogologyCheck {
                 powerTower.compareMagnitude(Natural.arrow(Natural.TEN, 1, Natural.of(200_000)))
                         == ComparisonResult.LESS);
 
+        // Collapse law: n{w}m = n{m+1}m, because w[m] = m + 1. This is why "a bigger ordinal level means a
+        // bigger value" is false at small heights, and these four assertions pin the correct answers so the
+        // false rule cannot be reintroduced.
+        Natural three = Natural.of(3);
+        Natural threeAtOmegaTwo = Natural.tower(three, omega, Natural.TWO);
+        Natural threeAtOmegaThree = Natural.tower(three, omega, Natural.of(3));
+        check("3{ω}2 = 3{3}2 = 9 < 3{5}2 = 3↑↑3（超限级别并不自动更大）",
+                threeAtOmegaTwo.compareMagnitude(Natural.arrow(three, 3, Natural.TWO)) == ComparisonResult.LESS);
+        check("3{ω}3 = 3↑↑3 < 3{100}3（同高度，有限级别 100 完胜 ω）",
+                threeAtOmegaThree.compareMagnitude(Natural.arrow(three, 98, Natural.of(3)))
+                        == ComparisonResult.LESS);
+        check("10{ω}10 = 10{11}10 < 10{100}10",
+                Natural.tower(Natural.TEN, omega, Natural.TEN)
+                        .compareMagnitude(Natural.arrow(Natural.TEN, 98, Natural.TEN)) == ComparisonResult.LESS);
+        check("ω+1 且高度 2：3{ω+1}2 = 3{ω}3 = 3↑↑3 < 3{100}2",
+                Natural.tower(three, omega.successor(), Natural.TWO)
+                        .compareMagnitude(Natural.arrow(three, 98, Natural.TWO)) == ComparisonResult.LESS);
+        check("ω+k（k ≥ 2）对大有限级别仍是 UNKNOWN（4096 预算也判不出）",
+                Natural.tower(three, omega.plus(10), Natural.TWO)
+                        .compareMagnitude(Natural.arrow(three, 98, Natural.TWO)) == ComparisonResult.UNKNOWN
+                        && Natural.tower(three, omega.plus(10), Natural.TWO)
+                                .compareMagnitude(Natural.arrow(three, 98, Natural.TWO), 4096)
+                                == ComparisonResult.UNKNOWN);
+        check("但极限层对小有限级别判得开（下界证书）：10{ω^ω^ω}10 > 10{3}10",
+                Natural.tower(Natural.TEN, notation.omegaTower(3), Natural.TEN)
+                        .compareMagnitude(Natural.arrow(Natural.TEN, 1, Natural.TEN)) == ComparisonResult.GREATER);
+
         Ordinal deepTower = notation.omegaTower(3);
         Natural deepValue = Natural.tower(Natural.TEN, deepTower, Natural.TEN);
         Natural deeperValue = Natural.tower(Natural.TEN, notation.limit(), Natural.TEN);
@@ -310,8 +337,7 @@ public final class GoogologyCheck {
                 transfiniteSuccessor.compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN);
 
         List<Ordinal> levelSample = List.of(omega, omega.times(2), notation.omegaPower(notation.of(2)),
-                notation.omegaPower(omega));
-        boolean agreed = true;
+                notation.omegaPower(omega));        boolean agreed = true;
         int comparablePairs = 0;
         for (Ordinal lower : levelSample) {
             for (Ordinal upper : levelSample) {
