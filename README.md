@@ -14,7 +14,12 @@ Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, mad
   has its own terrain, spatial index, path finder and streaming focus, while entity ids stay global and the
   single map API keeps pointing at the default dimension. Gateways link the maps, so units can travel
   between them, and deliveries that have to change map are shipped through the gateway chain.
-
+- `projects:oc:oc-game-server` — the Omni Com game server: a dependency free Java 17 program (JPMS) that
+  keeps user records in a local file store with PBKDF2-HMAC-SHA256 hashing, serves an encrypted TCP channel
+  (X25519 key exchange, HKDF-SHA256, AES-256-GCM frames), loads plugins from `plugins/*.jar` with one
+  `URLClassLoader` per plugin whose search path is that jar plus every other jar in the folder (so
+  dependencies are installed by dropping them there), and writes the user records on a timer and at shutdown.
+  The vanilla game is meant to be one plugin among others.
 ## Build
 
 ```shell
@@ -24,5 +29,5 @@ Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, mad
 Self checks (no test framework, no network):
 
 ```shell
-./gradlew :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario
+./gradlew :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck
 ```

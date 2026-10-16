@@ -1,0 +1,56 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.sob1234509876.oc'
+version = '2.0a'
+description = 'Omni Com Game Server'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    maven {
+        url = uri('https://maven.aliyun.com/repository/public')
+    }
+}
+
+dependencies {
+    // Pure Java 17 on the module path, with no third-party dependencies.
+}
+
+// Comments and descriptions may contain non-ASCII text, so the build must not fall back to the
+// platform encoding, which is GBK on a Chinese Windows install.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// The self check is a runnable program rather than a framework based test suite, so it lives in its own
+// source set and the standard test task stays source free. Runs with:
+// ./gradlew :projects:oc:oc-game-server:selfcheck
+sourceSets {
+    selfCheck {
+        java.srcDir 'src/selfcheck/java'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+tasks.register('selfcheck', JavaExec) {
+    group = 'verification'
+    description = 'Runs the game server self check.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.server.check.ServerCheck'
+}
+
+// Starts the server: ./gradlew :projects:oc:oc-game-server:server --args="--port 25566 --plugins plugins"
+tasks.register('server', JavaExec) {
+    group = 'application'
+    description = 'Starts the Omni Com game server.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.server.OcGameServer'
+    standardInput = System.in
+}
