@@ -649,6 +649,22 @@ public final class Natural implements Comparable<Natural> {
     }
 
     /**
+     * {@link #compareMagnitude(Natural)} with a documented lean instead of {@link ComparisonResult#UNKNOWN}:
+     * when no proof is available, the sign of {@link #compareTo(Natural)} - the total order the library sorts
+     * by - is reported as {@link ComparisonResult#PROBABLE_LESS} or
+     * {@link ComparisonResult#PROBABLE_GREATER}.
+     *
+     * <p>Use it for display, logging or tie breaking. It is not a {@link java.util.Comparator}: mixing proofs
+     * with leans, or leans gathered at different budgets, is not guaranteed to be transitive, while
+     * {@link #compareTo(Natural)} is a total order by construction. A pair whose keys are equal still reports
+     * {@link ComparisonResult#EQUAL}, because equal keys come from exact reductions of the same value.
+     */
+    public ComparisonResult compareWithLean(Natural other) {
+        ComparisonResult proof = compareMagnitude(other);
+        return proof.isProof() ? proof : ComparisonResult.leanOf(compareTo(other));
+    }
+
+    /**
      * The comparison itself, with both budgets: {@code budget} for the fundamental sequence reduction and
      * {@code depth} for the logarithmic descent below.
      */

@@ -416,6 +416,37 @@ public final class GoogologyCheck {
             }
         }
         check("级别规则与更大预算的结果一致（" + comparablePairs + " 对可比）", agreed);
+
+        // Probable results: the documented total order's lean, kept strictly apart from proofs.
+        check("证明通道不变：深层极限对 10{100}10 仍是 UNKNOWN",
+                deepValue.compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN);
+        check("带倾向的通道给 PROBABLE_GREATER：10{ω^ω^ω}10 倾向大于 10{100}10",
+                deepValue.compareWithLean(wideFinite) == ComparisonResult.PROBABLE_GREATER);
+        check("反向得到 PROBABLE_LESS",
+                wideFinite.compareWithLean(deepValue) == ComparisonResult.PROBABLE_LESS);
+        check("有证明时 compareWithLean 直接给证明而不是倾向：10{ω}10 < 10{100}10",
+                Natural.tower(Natural.TEN, omega, Natural.TEN).compareWithLean(wideFinite)
+                        == ComparisonResult.LESS);
+        check("倾向永远不会写成 EQUAL：没有 PROBABLE_EQUAL，键相等仍然是证明",
+                ComparisonResult.leanOf(1) == ComparisonResult.PROBABLE_GREATER
+                        && ComparisonResult.leanOf(-1) == ComparisonResult.PROBABLE_LESS
+                        && ComparisonResult.leanOf(0) == ComparisonResult.EQUAL);
+        check("证明 / 倾向 / 未判定三组标记分明",
+                ComparisonResult.GREATER.isProof() && !ComparisonResult.GREATER.isProbable()
+                        && ComparisonResult.PROBABLE_GREATER.isProbable()
+                        && !ComparisonResult.PROBABLE_GREATER.isProof()
+                        && ComparisonResult.UNKNOWN.isUnknown() && !ComparisonResult.UNKNOWN.isDecided()
+                        && ComparisonResult.PROBABLE_GREATER.isDecided()
+                        && ComparisonResult.EQUAL.isProof());
+        check("倾向的反向与符号：PROBABLE_GREATER ↔ PROBABLE_LESS，符号 ±1",
+                ComparisonResult.PROBABLE_GREATER.reversed() == ComparisonResult.PROBABLE_LESS
+                        && ComparisonResult.PROBABLE_LESS.reversed() == ComparisonResult.PROBABLE_GREATER
+                        && ComparisonResult.PROBABLE_GREATER.signum() == 1
+                        && ComparisonResult.PROBABLE_LESS.signum() == -1);
+        check("同一个值的两种写法在带倾向的通道里也是 EQUAL（归约是精确的）",
+                Natural.tower(Natural.TEN, omega, Natural.TEN)
+                                .compareWithLean(Natural.tower(Natural.TEN, notation.of(11), Natural.TEN))
+                        == ComparisonResult.EQUAL);
     }
 
     // ------------------------------------------------------------------ 14) comparing towers

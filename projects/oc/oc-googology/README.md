@@ -14,7 +14,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (207 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (215 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
@@ -144,10 +144,19 @@ ComparisonResult result = a.compareMagnitude(b);   // LESS, EQUAL, GREATER or UN
 
 `UNKNOWN` means no available rule settled the pair, and it is deliberately distinct from `EQUAL`: a truncated
 evaluation that reaches the threshold on both sides only says that both are huge. What still lands there is a
-pair of towers whose logarithms are within a factor of ten with no other certificate, a transfinite level
-against a *large* finite level once neither could be reduced (level order alone is not enough there, since a
-limit level can collapse below a big finite one), and a notation that cannot supply the next fundamental
+pair of towers whose logarithms are within a factor of ten with no other certificate, a *deep* transfinite
+limit against a large finite level (walking the fundamental sequence of `w^w^w` for 4096 steps still leaves a
+limit, where `w^w` reaches a successor in twelve), and a notation that cannot supply the next fundamental
 sequence element.
+
+### Proofs, leans, and never a guessed equality
+
+When you want *an* answer rather than a proof - for display, logging or tie breaking - `compareWithLean` fills
+`UNKNOWN` with the lean of the documented total order that `compareTo` sorts by, as `PROBABLE_LESS` or
+`PROBABLE_GREATER`. Three rules keep that honest: there is no `PROBABLE_EQUAL` (equality only ever comes from
+exact reasoning); a lean is not a `Comparator`, because mixing proofs with leans is not transitive while
+`compareTo` is a total order by construction; and `isProof()` asks for a proof where `isDecided()` is happy
+with a lean.
 
 Both the reduction and the comparison rank are memoised per value (`comparisonValue`, `comparisonRankCache`):
 pure functions of the value, so caching cannot change an answer, but sorting a collection of towers pays the
@@ -211,7 +220,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 207 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 215 check self check program
 ```
 
 ## Related

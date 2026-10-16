@@ -317,6 +317,27 @@ n{β+1}2 = n{β}n                     ← 高度 2 时更高的层也一路塌�
 这就是 `3{ω+10}2` 在 4096 预算下仍是 `UNKNOWN` 的真因。要做到"再判一次"而不失真，需要把高度换成"只知道下界"的
 表示（记录 `X ≥ Y` 而不是 `X`），这正是"同底同高、一侧是超限后继 → 按级别判"那条受控规则的依据。
 
+### 想要"倾向"就用 `compareWithLean`
+
+`compareMagnitude` 判不了时给 `UNKNOWN`（**证明通道，永远不猜**）。如果你要的是"总得有个说法"——显示、日志、平局打破——用：
+
+```java
+ComparisonResult lean = a.compareWithLean(b);   // 有证明就是证明，没证明就是倾向
+switch (lean) {
+    case LESS, EQUAL, GREATER -> { /* 证明 */ }
+    case PROBABLE_LESS, PROBABLE_GREATER -> { /* 倾向：来自 compareTo 的全序 */ }
+    case UNKNOWN -> { /* 连倾向都没有（理论上不该出现，因为全序总是给符号） */ }
+}
+```
+
+三条硬规则：
+
+- **倾向永远不是 `EQUAL`**：没有 `PROBABLE_EQUAL`。两边"都很大"只说明都大；只有精确推理（相同归约形式、两个精确值、退化恒等式、证书）才给 `EQUAL` ✓
+- **倾向不是 `Comparator`**：`compareWithLean` 把证明和倾向混在一起，**不保证传递**（会出现 `A<B`、`B<C`、`C<A`）；排序请继续用 `compareTo`（构造上就是全序）✓
+- **要证明就测 `isProof()`**，不要测 `isDecided()`——后者对倾向也为 `true` ✓
+
+分组：`isProof()`（`LESS`/`EQUAL`/`GREATER`）、`isProbable()`（`PROBABLE_*`）、`isUnknown()`（`UNKNOWN`）、`isDecided()`（前两组都算"有答案"）✓
+
 ### 缓存：把一个值的归约结果记住
 
 归约与比较键都是**值的纯函数**，所以库把它们记在值自己身上（`comparisonValue`、`comparisonRankCache`，懒计算、`volatile` 写一次）：
@@ -372,8 +393,8 @@ n{β+1}2 = n{β}n                     ← 高度 2 时更高的层也一路塌�
 | `CantorOrdinal` | 范式值：`ω^α₁·c₁ + …` | `terms()`、`leadingTerm()`、`lastTerm()`、`Term(exponent, coefficient)` |
 | `EpsilonZero` | 记号上界 `ε₀`，基本列是 ω 塔 | `fundamentalSequence(n)`、`omegaPower()`、`add()`（吸收） |
 | `TransfiniteHyperoperation` | 序数级别的超运算 | `apply(base, level, height)`、`apply(..., budget)`、`applyFinite(base, rank, height)`、`DEFAULT_REDUCTION_BUDGET = 64`、`DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8` |
-| `ComparisonResult` | 四值比较结果：`LESS`/`EQUAL`/`GREATER` 是**证明**，`UNKNOWN` 是"没有可用规则" | `LESS`、`EQUAL`、`GREATER`、`UNKNOWN`、`isDecided()`、`signum()`、`reversed()`、`of(int)` |
-| `Natural`（比较相关） | 排序用全序（按值归约后的键），真相用四值比较 | `compareTo(other)`（全序兜底）、`compareMagnitude(other)`、`compareMagnitude(other, budget)`、`reducedLevel()`、`reducedLevel(budget)`、`log10Approx()`、`log2Approx()`、`COMPARISON_REDUCTION_BUDGET = 32`、`COMPARISON_DESCENT_DEPTH = 24` |
+| `ComparisonResult` | 六值比较结果：`LESS`/`EQUAL`/`GREATER` 是**证明**，`PROBABLE_LESS`/`PROBABLE_GREATER` 是**倾向**（来自全序），`UNKNOWN` 是"连倾向都没有" | `LESS`、`EQUAL`、`GREATER`、`PROBABLE_LESS`、`PROBABLE_GREATER`、`UNKNOWN`、`isProof()`、`isProbable()`、`isUnknown()`、`isDecided()`、`signum()`、`reversed()`、`of(int)`、`leanOf(int)` |
+| `Natural`（比较相关） | 排序用全序（按值归约后的键），真相用四值比较，要"说法"用带倾向的六值比较 | `compareTo(other)`（全序兜底）、`compareMagnitude(other)`、`compareMagnitude(other, budget)`、`compareWithLean(other)`、`reducedLevel()`、`reducedLevel(budget)`、`log10Approx()`、`log2Approx()`、`COMPARISON_REDUCTION_BUDGET = 32`、`COMPARISON_DESCENT_DEPTH = 24` |
 
 ## 九、常见坑
 
@@ -412,7 +433,7 @@ n{β+1}2 = n{β}n                     ← 高度 2 时更高的层也一路塌�
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **207 项**，其中第 11–15 节是序数层：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **215 项**，其中第 11–15 节是序数层：
 
 - **11) 序数**：`0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀` 严格递增；`1 + ω = ω`、`ω + ω = ω·2`、
   `ω + ω^2 = ω^2`、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、`ε₀[1] = ω^ω`、`ε₀[2] = ω^ω^ω`；
@@ -438,6 +459,8 @@ n{β+1}2 = n{β}n                     ← 高度 2 时更高的层也一路塌�
   **底数与保真**：`2^4096` 被拒的求值改写成 `10↑1233`（提升路径给 `10↑1234`，两者都只在一个数量级精度内）、
   `2^100000 → 10↑30103` 且因此 `2^100000 < 3^100000` 走同底路径、`2^10 = 1024` 仍是精确值、
   `2↑↑10` 保留底 2（幂以上无封闭换算）、结构形高度 `subtractClamped(1)` 保留原值（因此后继递归必须停在高度 ≤ 8）；
+  **倾向通道**：证明通道对深层极限仍是 `UNKNOWN`、`compareWithLean` 给 `PROBABLE_GREATER`（反向 `PROBABLE_LESS`）、
+  有证明时直接给证明、`leanOf(0)` 仍是证明性的 `EQUAL`（没有 `PROBABLE_EQUAL`）、三组标记与反向符号正确；
   级别规则与更大预算的结果**交叉检验一致**（`ω`/`ω·2`/`ω²`/`ω^ω` 各对）；
   两个都巨大时截断绝不判等；缓存不改变结果、正反比较互为反向。
 
