@@ -20,7 +20,11 @@ Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, mad
   `URLClassLoader` per plugin whose search path is that jar plus every other jar in the folder (so
   dependencies are installed by dropping them there), and writes the user records on a timer and at shutdown.
   The vanilla game is meant to be one plugin among others.
-## Build
+- `projects:oc:oc-game-server-debug` — a read-only debug plugin for that server plus the CLI that queries
+  it: the plugin registers a single `engine-info` request over a small server seam that only relays opaque
+  bytes, seals its answers with AES-256-GCM under `debug.key` (a second layer on top of the encrypted
+  channel, 60 s anti-replay window) and reports server, JVM and engine facts from a throwaway `World`. It
+  cannot reach a live game or change anything, and only a logged-in client may ask.## Build
 
 ```shell
 ./gradlew build
@@ -29,5 +33,5 @@ Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, mad
 Self checks (no test framework, no network):
 
 ```shell
-./gradlew :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck
+./gradlew :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck :projects:oc:oc-game-server-debug:selfcheck
 ```

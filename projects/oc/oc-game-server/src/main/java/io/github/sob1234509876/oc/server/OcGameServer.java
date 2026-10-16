@@ -6,6 +6,7 @@ import io.github.sob1234509876.oc.server.net.GameServer;
 import io.github.sob1234509876.oc.server.net.ServerConfig;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginLoader;
+import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -50,6 +51,10 @@ public final class OcGameServer {
     private final Path pluginsDirectory;
     private final Path dataDirectory;
     private final AuthService auth;
+
+    /** The request surface plugins publish into and the socket relaying to; see the constructor. */
+    private final RequestRegistry requests;
+
     private final PluginLoader pluginLoader;
     private final GameServer server;
 
@@ -70,13 +75,29 @@ public final class OcGameServer {
         }
         this.saveIntervalSeconds = saveIntervalSeconds;
         this.auth = new AuthService(LocalUserStore.inDirectory(this.dataDirectory));
-        this.pluginLoader = new PluginLoader(this.pluginsDirectory, VERSION, this.dataDirectory);
-        this.server = new GameServer(config, auth);
+        // One registry, two owners: the loader hands it to every plugin through the PluginContext, and the
+        // socket consults it for REQ. A plugin loaded here is therefore reachable the moment a client logs
+        // in, without the server needing to know which plugin registered what.
+        this.requests = new RequestRegistry();
+        this.pluginLoader = new PluginLoader(this.pluginsDirectory, VERSION, this.dataDirectory, this.requests);
+        this.server = new GameServer(config, auth, this.requests);
     }
 
     /** The authentication service; plugins may reach it through a context of their own later. */
     public AuthService auth() {
         return auth;
+    }
+
+    /**
+     * The request surface plugins register into and the socket relays to.
+     *
+     * <p>Exposed so a diagnostic tool can report what a running server answers under {@code REQ} without
+     * having to ask a client: the CLI of the debug plugin uses it that way.
+     *
+     * @return the live registry, never {@code null}
+     */
+    public RequestRegistry requests() {
+        return requests;
     }
 
     public GameServer server() {

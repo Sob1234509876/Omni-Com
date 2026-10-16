@@ -3,7 +3,6 @@ package io.github.sob1234509876.oc.server.check;
 import io.github.sob1234509876.oc.server.auth.AuthResult;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.auth.LocalUserStore;
-import io.github.sob1234509876.oc.server.auth.PasswordHasher;
 import io.github.sob1234509876.oc.server.net.ChannelTestSupport;
 import io.github.sob1234509876.oc.server.net.GameClient;
 import io.github.sob1234509876.oc.server.net.GameServer;
@@ -13,7 +12,6 @@ import io.github.sob1234509876.oc.server.net.ServerConfig;
 import java.io.ByteArrayOutputStream;
 import java.io.FilterOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.InetAddress;
@@ -23,12 +21,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -80,7 +74,7 @@ public final class NetworkCheck {
     }
 
     private static void runAll(Check check, Path store) throws IOException {
-        AuthService auth = new AuthService(LocalUserStore.at(store), new FastHasher());
+        AuthService auth = new AuthService(LocalUserStore.at(store), CheckHashers.fast());
 
         check.section("Server startup on port 0");
         GameServer server = null;
@@ -556,45 +550,6 @@ public final class NetworkCheck {
             text.append(Character.forDigit(bytes[index] & 0xF, 16));
         }
         return text.length() == 0 ? "<empty>" : text.toString();
-    }
-
-    /**
-     * A deliberately cheap hasher for this check.
-     *
-     * <p>The production hasher is PBKDF2 with a high iteration count, which is exactly right for accounts
-     * and exactly wrong for a self check that registers a handful of users on every run: it would add
-     * seconds for no extra coverage, because password stretching is the auth module's subject, not this
-     * one's. The iteration count still satisfies the record's own floor, so what this check exercises is
-     * the wire protocol, not the hashing.
-     */
-    private static final class FastHasher implements PasswordHasher {
-
-        private static final int ITERATIONS = 10_000;
-
-        private final SecureRandom random = new SecureRandom();
-
-        @Override
-        public String newSalt() {
-            byte[] salt = new byte[16];
-            random.nextBytes(salt);
-            return HexFormat.of().formatHex(salt);
-        }
-
-        @Override
-        public String hash(String password, String salt, int iterations) {
-            try {
-                byte[] digest = MessageDigest.getInstance("SHA-256")
-                        .digest((salt + ':' + password).getBytes(StandardCharsets.UTF_8));
-                return HexFormat.of().formatHex(digest);
-            } catch (NoSuchAlgorithmException failure) {
-                throw new IllegalStateException("SHA-256 is unavailable in this JVM", failure);
-            }
-        }
-
-        @Override
-        public int defaultIterations() {
-            return ITERATIONS;
-        }
     }
 
     /**

@@ -85,6 +85,17 @@ public final class PluginLoader {
     /** The root of the per plugin data directories; never the plugin folder unless it was asked for. */
     private final Path dataDirectory;
 
+    /**
+     * The request surface every plugin of this loader may publish into.
+     *
+     * <p>It is owned by whoever also owns the server (the game server passes the same instance to its
+     * socket), because that is the only object both sides must agree on: a plugin registers here, and the
+     * running server looks names up here. A loader that was not given one keeps an empty registry of its
+     * own, so a plugin loaded by a test still gets a working, if unreachable, surface instead of a
+     * {@code null}.
+     */
+    private final RequestRegistry requests;
+
     private final System.Logger logger;
 
     /**
@@ -125,11 +136,29 @@ public final class PluginLoader {
      *     holds the server's own state
      */
     public PluginLoader(Path pluginsDirectory, String serverVersion, Path dataDirectory) {
+        this(pluginsDirectory, serverVersion, dataDirectory, new RequestRegistry());
+    }
+
+    /**
+     * Creates a loader whose plugins publish their requests into the given registry.
+     *
+     * <p>This is the constructor a server uses, because the server must hand the very same registry to the
+     * socket that serves clients; see {@link PluginContext#requests()}. The four argument form keeps the
+     * registry private to the loader, which is what a test wants.
+     *
+     * @param pluginsDirectory where the plugin jars live, together with the dependency jars they need
+     * @param serverVersion the version reported to plugins through {@link PluginContext#serverVersion()}
+     * @param dataDirectory the root of the per plugin data directories
+     * @param requests the registry {@link PluginContext#requests()} exposes to every plugin
+     */
+    public PluginLoader(Path pluginsDirectory, String serverVersion, Path dataDirectory,
+            RequestRegistry requests) {
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory")
                 .toAbsolutePath().normalize();
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
         this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory")
                 .toAbsolutePath().normalize();
+        this.requests = Objects.requireNonNull(requests, "requests");
         this.logger = System.getLogger(PluginLoader.class.getName());
     }
 
@@ -162,7 +191,8 @@ public final class PluginLoader {
      */
     public List<Plugin> loadAll() {
         List<Path> jars = pluginJars();
-        PluginContext context = new PluginContext(pluginsDirectory, dataDirectory, serverVersion, logger);
+        PluginContext context = new PluginContext(pluginsDirectory, dataDirectory, serverVersion, logger,
+                requests);
         for (Path jar : jars) {
             DiscoveryResult result = loadJar(jar, jars, context);
             discoveries.add(result);
@@ -447,6 +477,16 @@ public final class PluginLoader {
      */
     public List<URLClassLoader> classLoaders() {
         return List.copyOf(classLoaders);
+    }
+
+    /**
+     * The request surface this loader handed to its plugins, which is the registry a server must give to the
+     * component that serves clients.
+     *
+     * @return the registry, never {@code null} and never a copy
+     */
+    public RequestRegistry requests() {
+        return requests;
     }
 
     /**

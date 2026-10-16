@@ -1,0 +1,70 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.sob1234509876.oc'
+version = '2.0a'
+description = 'Omni Com Game Server Debug Plugin'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    maven {
+        url = uri('https://maven.aliyun.com/repository/public')
+    }
+}
+
+dependencies {
+    // The debug plugin is a plugin like any other: it compiles against the server's passive plugin API and
+    // against the engine whose facts it reports, and it brings no third-party library of its own. Everything
+    // it can do at runtime it does through those two modules and the JDK.
+    implementation project(':projects:oc:oc-game-server')
+    implementation project(':projects:oc:oc-rts-engine')
+}
+
+// Text in this module - the report's labels, this file, the check's descriptions - is UTF-8, so the build
+// must not fall back to the platform encoding, which is GBK on a Chinese Windows install.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// The self check is a runnable program rather than a framework based test suite, matching the other modules,
+// so it lives in its own source set and the standard test task stays source free.
+//
+// Its compile and runtime class path additionally carry the game server module's selfCheck output, because
+// the assertion reporter (io.github.sob1234509876.oc.server.check.Check) lives there: one reporter for the
+// whole repository, and no copy of it in this module.
+sourceSets {
+    selfCheck {
+        java.srcDir 'src/selfcheck/java'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+def serverSelfCheck = project(':projects:oc:oc-game-server').sourceSets.selfCheck
+
+dependencies {
+    selfCheckImplementation serverSelfCheck.output
+}
+
+// Runs with: ./gradlew :projects:oc:oc-game-server-debug:selfcheck
+tasks.register('selfcheck', JavaExec) {
+    group = 'verification'
+    description = 'Runs the debug plugin self check, including a real socket round trip.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.server.debug.check.DebugPluginCheck'
+}
+
+// Runs the CLI against a running server, for example:
+// ./gradlew :projects:oc:oc-game-server-debug:debugCli --args="--user admin --password secret --key data/oc-debug/debug.key"
+tasks.register('debugCli', JavaExec) {
+    group = 'application'
+    description = 'Runs the debug CLI that asks a running server for the engine-info report.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.server.debug.cli.DebugCli'
+}
