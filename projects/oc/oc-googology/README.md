@@ -14,7 +14,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (194 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (197 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
@@ -199,7 +199,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 194 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 197 check self check program
 ```
 
 ## Related

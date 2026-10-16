@@ -322,6 +322,23 @@ public final class GoogologyCheck {
                 Natural.tower(Natural.TEN, notation.omegaTower(3), Natural.TEN)
                         .compareMagnitude(Natural.arrow(Natural.TEN, 1, Natural.TEN)) == ComparisonResult.GREATER);
 
+        // Same base: everything the library promotes on its own is base ten (approximate() builds 10^digits),
+        // and a tower the caller wrote keeps its own base, because 2↑↑10 cannot be rewritten as a base ten
+        // tower exactly - 10^X would need X = 2↑↑9 · log10 2, which is not an integer. The comparison still
+        // puts both on the base ten logarithm scale, so the same base is what the answers use.
+        Natural promoted = Natural.of(java.math.BigInteger.TEN.pow(5000));
+        check("库自产的提升结构形是 10 底：" + promoted + " 的底是 10",
+                promoted.isStructural() && promoted.towerBase().orElseThrow().equals(Natural.TEN)
+                        && promoted.arrows() == 1);
+        Natural callerBase = Natural.arrow(Natural.TWO, 2, Natural.of(10));
+        check("调用方显式构造的塔保留自己的底（无法精确改写成 10 底）",
+                callerBase.towerBase().orElseThrow().equals(Natural.TWO)
+                        && callerBase.compareMagnitude(Natural.tower(Natural.TEN, notation.omegaTower(3),
+                                Natural.TEN)) == ComparisonResult.UNKNOWN);
+        Natural tallTower = Natural.tetration(Natural.TEN, Natural.of(10));
+        check("结构形高度减一不再精确（subtractClamped 保留较大者），所以后继递归必须停在高度 ≤ 8",
+                tallTower.subtractClamped(Natural.ONE).equals(tallTower));
+
         Ordinal deepTower = notation.omegaTower(3);
         Natural deepValue = Natural.tower(Natural.TEN, deepTower, Natural.TEN);
         Natural deeperValue = Natural.tower(Natural.TEN, notation.limit(), Natural.TEN);
