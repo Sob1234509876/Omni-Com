@@ -824,6 +824,11 @@ public final class RtsScenario {
         }
         Natural left = moonDepot.inventory().amount(content.item(ScenarioContent.IRON_ORE))
                 .add(moonDepot.inventory().amount(content.item(ScenarioContent.COAL)));
+        Natural freeOre = blue.logistics().available().amount(content.item(ScenarioContent.IRON_ORE));
+        check.note("probe: depot stock ore+coal = " + left + ", free ore = " + freeOre
+                + ", pending deliveries = " + blue.logistics().pendingDeliveries()
+                + ", workshop buffer ore = "
+                + marsWorkshop.inventory().amount(content.item(ScenarioContent.IRON_ORE)));
         check.that(shipped.spatial(moon).size() + shipped.spatial(mars).size() == 2,
                 "shipping moved goods, not units: both dimensions still hold their one building");
         // Ask the reservation layer directly: does it offer a warehouse that stands in another dimension?
