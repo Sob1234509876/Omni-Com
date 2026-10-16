@@ -274,7 +274,7 @@ OcRtsEngine engine = OcRtsEngine.builder(content)
 
   等够之后仍要过一遍"目标 `canAcceptAll(...)` 装得下吗"、`isViable(job)`、`expired(job)`（3000 tick 超时）这些门，再 `reservation().commit()` 取货、`insertInto` 进目标缓冲区、塞不下的 `storeBack(...)`、最后 `complete`。
 
-后果：**跨维度送货是"模拟货运"，不是"走路的人"**。没有任何代码会给一个走路单位规划跨图路线；`UnitDirector.travel(...)` 是显式命令（见 [13-dimensions.md](13-dimensions.md)），搬运工只在本图内短驳。没有路线时 job **保持 pending**，直到自己的超时把它判失败，不会被静默丢掉。
+后果：**跨维度送货是"模拟货运"，不是"走路的人"**。注意：预约层（`WarehouseLogistics`）目前只在**同一维度**里找供货仓库，所以跨维度 job 实际上还建不起来，这条链路端到端尚未打通 ✗。没有任何代码会给一个走路单位规划跨图路线；`UnitDirector.travel(...)` 是显式命令（见 [13-dimensions.md](13-dimensions.md)），搬运工只在本图内短驳。没有路线时 job **保持 pending**，直到自己的超时把它判失败，不会被静默丢掉。
 
 ### HaulOrder：取货→送货→卸货
 

@@ -46,7 +46,7 @@
 | 群体寻路 / 流场 | 每个单位各自跑一次 A*（受 `PathService` 预算约束） | 大队形移动时观察 `pendingRequests()`；预算调大或改成共享路径/流场 |
 | 建筑碰撞 | **建筑不阻挡单位移动**：`MovementSystem` 只检查地形是否可通行 | 见下面的 [FAQ 第 13 条](#13-单位会穿过建筑) |
 | 维度之间的旅行 | **已经实现**：`Gateway` + `World.route(...)` + `UnitDirector.travel(...)` | 见 [13-dimensions.md](13-dimensions.md)；没有门就是订单失败，不会瞬移 |
-| 跨维度送货 | **已经实现，但是"模拟货运"**：`HaulingSystem` 只挑同维度的搬运工，跨图的货按"直送延迟 × 门链跳数"发运 | 见 [13-dimensions.md](13-dimensions.md) 与 [06](06-economy-logistics-and-production.md)；走路单位永远不会被派去另一张图 |
+| 跨维度送货 | **代码就位（"模拟货运"），但预约层目前只在同维度里找仓库，端到端还不可用（自校验把这一点记为待办）**：`HaulingSystem` 只挑同维度的搬运工，跨图的货按"直送延迟 × 门链跳数"发运 | 见 [13-dimensions.md](13-dimensions.md) 与 [06](06-economy-logistics-and-production.md)；走路单位永远不会被派去另一张图 |
 | 按维度的快照 | **已经实现**：`SnapshotFactory.capture(DimensionId, ...)`、`WorldSnapshot.dimension()` / `dimensionName()`、图例带维度 | 见 [08-snapshots-and-rendering.md](08-snapshots-and-rendering.md) |
 | 环境危害（不可呼吸、重力、辐射） | **没有**：`hazardDamagePerTick` / `gravity` / `breathable` / `requiresSealedUnits()` 无人读取 | 自己写一个按 `dimensionId()` 分组的危害系统；见 [13-dimensions.md](13-dimensions.md) |
 | 维度进存档 | **没有**：没有整体存档格式，`ChunkStore` 只覆盖地形，门列表与维度注册表没人序列化 | 存档格式自己带上维度键、各维度的地形 store 与 `world.gateways()` |
@@ -244,4 +244,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11 节，整份 147 项）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11 节，整份 152 项）

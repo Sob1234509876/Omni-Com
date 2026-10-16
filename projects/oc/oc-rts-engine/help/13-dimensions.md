@@ -10,7 +10,7 @@
 - 一张"哪些东西按维度分开、哪些是世界级"的对照表，以及系统作者该用哪个访问器。
 - 环境档案里**已经生效的**只有移动速度倍率，其余字段是数据（含 `hazardDamagePerTick`）。
 - 传送门与旅行：`Gateway` 数据、`World.route(...)` 的 BFS、`UnitDirector.travel(...)`、`TransferOrder` 的半径与超时、转移保留什么、`Events.EntityTransferred`。
-- 跨维度送货：搬运工是"每张图"的，跨图的货走传送门链路，等待时间 = 直送延迟 × 跳数。
+- 跨维度送货：搬运工是"每张图"的，跨图的货走传送门链路，等待时间 = 直送延迟 × 跳数；**但预约层目前只在同维度里找仓库，所以这条链路端到端还没打通**（第 11 节把它记为待办）。
 - 按维度的快照：`SnapshotFactory.capture(DimensionId, ...)`、`WorldSnapshot.dimension()` / `dimensionName()`、文本地图的图例行。
 - 跨维度的区块流式：预算共享、余数怎么分、焦点互不影响。
 - 事件现在带着维度；自校验第 11 节的 28 条断言；以及一份诚实的"还没有实现"清单（只剩环境危害）。
@@ -417,10 +417,10 @@ engine.events().subscribe(Events.ChunkUnloaded.class, event ->
   [ok] the traveller left the overworld, which keeps its original unit
 ```
 
-整份场景目前是 **147 项断言**（引入维度前是 119 项；维度本身带来 20 项，旅行再带来 8 项）：
+整份场景目前是 **152 项断言**（引入维度前是 119 项；维度本身带来 20 项，旅行再带来 8 项）：
 
 ```text
-RTS engine scenario: all 147 checks passed.
+RTS engine scenario: all 152 checks passed.
 ```
 
 断言覆盖五件事：三张图确实存在且档案正确；同一格上的两个单位互不干扰（id 不同、全世界 2 个、各自索引各 1 个、地球索引看不到月球单位）；`findEntity` 能跨维度按 id 找到实体；给月球单位下移动命令后它留在月球、地球单位没被拖走，销毁月球单位也不影响地球的那个；**两跳路线 + 单向性 + 踩门判定 + 旅行后 id 不变 + 两次转移各一条事件 + 出发图少一个、火星多一个**。
