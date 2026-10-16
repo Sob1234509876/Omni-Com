@@ -48,7 +48,7 @@
 
 | 模块 | Gradle 路径 | Java 模块 / 包 | 提供什么 |
 | --- | --- | --- | --- |
-| 大数库 | `:projects:oc:oc-googology` | `oc.projects.oc.googology` / `io.github.sob1234509876.oc.googology` | `Natural`（数量类型）、`HyperOperation`、`NaturalFormat` |
+| 大数库 | `:projects:oc:oc-googology` | `oc.projects.oc.googology` / `io.github.sob1234509876.oc.googology` | `Natural`（数量类型）、`HyperOperation`、`NaturalFormat`，以及序数层 `Ordinal` / `OrdinalNotation` / `CantorNormalForm` / `CantorOrdinal` / `EpsilonZero` / `TransfiniteHyperoperation`（引擎的模拟代码并不使用序数，它只为库的用户准备） |
 
 引擎的 `module-info.java` 写的是 `requires oc.projects.oc.googology`，`build.gradle` 写的是 `api project(':projects:oc:oc-googology')`——`api` 而不是 `implementation`，因为 `Natural` 出现在 `ItemType.maxStack()`、`ItemBundle.amount()`、`Inventory.insert()`、`Health.damage()` 这些导出包的公开签名上，下游代码必须能看到它。方向是单向的：`oc-googology` 不认识引擎，也不认识任何别的东西（它只 `requires java.base`，零第三方依赖），所以"离线可构建"和"引擎层可替换"都没有被破坏。
 

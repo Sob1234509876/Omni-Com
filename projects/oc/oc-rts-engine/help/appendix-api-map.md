@@ -6,10 +6,10 @@
 
 - 这是一份**索引**，不是教程：讲解在 01~12 篇里，这里只回答"该看哪一篇、该碰哪个类型"。
 - 类型清单是**扫描 `src/main/java` 下全部 95 个源文件**得到的，共 113 个 public 类型（含嵌套 public 类型）。包私有类型（如 `economy.ReservationPool`、`logistics.HaulOrder.Phase`、各类 `Draft`）不在清单里，因为它们不是导出 API。
-- 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，5 个源文件）的三个 public 类型：`Natural` / `HyperOperation` / `NaturalFormat`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上。
+- 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，11 个源文件）的 10 个 public 类型：`Natural` / `HyperOperation` / `NaturalFormat`，以及库新增的序数层 `Ordinal` / `OrdinalNotation` / `CantorNormalForm` / `CantorOrdinal`（含嵌套 public 类型 `CantorOrdinal.Term`）/ `EpsilonZero` / `TransfiniteHyperoperation`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上；引擎本身不使用序数层。
 - 每个包一节，逐行给出：类型 → 一句话作用 → 关键方法/字段 → 详见的文档。
 - 常量值全部从源码读出，包含默认参数与枚举成员；`throws` 列只写源码里真实存在的校验与异常。
-- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 14 个导出包里；大数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
+- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 14 个导出包里；大数与序数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
 
 ## 我想做 X → 看哪篇
 
@@ -55,6 +55,7 @@
 | 让新生产的单位自动走到集结点 | [06](06-economy-logistics-and-production.md) | `Building#rallyPoint`、`Building#setRallyPoint` |
 | 把数量放大到 `int`/`long` 装不下（库存、血量、伤害） | [12](12-numbers-and-googology.md) | `Natural`、`Natural.arrow`、`Inventory.UNLIMITED`、`ItemType.maxStack` |
 | 排查"数量算不对 / 库存明明没满却报满" | [11](11-limits-and-faq.md) / [12](12-numbers-and-googology.md) | `Natural.EXACT_BIT_LIMIT`、`Natural#isStructural`、`Inventory#usedSlots`、`Natural.BEYOND` |
+| 把超运算推到超限序数级别 / 自定义序数记号 | [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) / [12](12-numbers-and-googology.md) | `TransfiniteHyperoperation`、`Ordinal`、`OrdinalNotation`、`CantorNormalForm`、`Natural.tower` |
 
 ## 按包的类型清单
 
@@ -72,9 +73,16 @@
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
-| `Natural` | 不可变自然数：4096 位以内精确，之上是超运算记号，另有顶元素 `BEYOND`；引擎的物品数量、容量、血量与伤害都用它 | `ZERO`/`ONE`/`TWO`/`TEN`/`BEYOND`、`EXACT_BIT_LIMIT = 4096`、`of(long)`、`of(BigInteger)`、`of(Natural)`、`power()`、`tetration()`、`arrow()`、`parse()`、`isZero()`/`isOne()`/`isExact()`/`isStructural()`/`isBeyond()`、`exactValue()`、`toBigInteger()`、`toLongSaturated()`、`toDoubleApprox()`、`log10Approx()`、`fractionOf(whole)`、`add`、`subtract`、`subtractClamped`、`multiply`、`min`、`max`、`compareTo`、`arrows()`、`towerBase()`、`towerHeight()`、`decimalDigits()`、`describe()`、`arrows(int)` | [12](12-numbers-and-googology.md) |
+| `Natural` | 不可变自然数：4096 位以内精确，之上是超运算记号，另有顶元素 `BEYOND`；结构形既可以是 `base ↑^arrows height`，也可以是带序数级别的 `base{level}height`（箭头数超过 10000，或级别是超限序数时这样打印）；引擎的物品数量、容量、血量与伤害都用它 | `ZERO`/`ONE`/`TWO`/`TEN`/`BEYOND`、`EXACT_BIT_LIMIT = 4096`、`of(long)`、`of(BigInteger)`、`of(Natural)`、`power()`、`tetration()`、`arrow()`、`tower(base, level, height)`、`parse()`、`isZero()`/`isOne()`/`isExact()`/`isStructural()`/`isBeyond()`、`exactValue()`、`toBigInteger()`、`toLongSaturated()`、`toDoubleApprox()`、`log10Approx()`、`fractionOf(whole)`、`add`、`subtract`、`subtractClamped`、`multiply`、`min`、`max`、`compareTo`、`arrows()`（有限级别给箭头数，装不进 `int` 时饱和为 `Integer.MAX_VALUE`，超限级别为 0）、`level()`、`finiteLevel()`、`rank()`、`towerBase()`、`towerHeight()`、`decimalDigits()`、`describe()`、`arrows(int)` | [12](12-numbers-and-googology.md) |
 | `HyperOperation` | 超运算级别枚举：级别 0 后继、1 加法、2 乘法、3 幂、4 四级运算（幂塔）…… 8 八级运算 | `SUCCESSION`/`ADDITION`/`MULTIPLICATION`/`EXPONENTIATION`/`TETRATION`/`PENTATION`/`HEXATION`/`HEPTATION`/`OCTATION`、`rank()`、`arrows()`（级别 ≥ 3 时为 `rank - 2`）、`label()`、`chineseLabel()`、`notation()`、`ofRank(int)`、`find(int)`、`apply(a, b)` | [12](12-numbers-and-googology.md) |
 | `NaturalFormat` | 把 `Natural` 变成给人看的文本（私有构造器，纯静态工具类） | `decimal(value)`、`scientific(value)`（小值是十进制、大值是 `~1.23e1233`、幂是 `10^1234`、塔是 `10↑↑10`、`BEYOND` 是 `beyond`）、`arrow(value)`、`describe(value)`、`operationOf(value)` | [12](12-numbers-and-googology.md) |
+| `Ordinal` | 某个序数记号里的序数值：可比较，带后继与基本列（基本列让极限序数能当计算级别用） | `notation()`、`isZero()`、`isLimit()`、`isSuccessor()`、`isFinite()`、`successor()`、`predecessor()`、`fundamentalSequence(Natural)`、`finiteValue()`、`add(Ordinal)`、`times(Natural)`、`omegaPower()`，默认 `fundamentalSequence(long)`、`times(long)`、`plus(long)`、`omegaPowerTimes(Natural)`、`min`/`max`、`finiteOrThrow()`、`asNaturalOrBeyond()`、`isOne()` | [序数层](../../oc-googology/help/ordinals.md) |
+| `OrdinalNotation` | 序数记号的插拔接缝：自带一套序数名字就能当超运算的级别来源 | `name()`、`zero()`、`one()`、`finite(Natural)`、`omega()`、`omegaPower(Ordinal)`、`sum(List<Ordinal>)`、`contains(Ordinal)`、`limit()`，默认 `of(long)`、`term(Ordinal, Natural)`、`sum(a, b)`、`sum(a, b, c)`、`sameAs(OrdinalNotation)` | [序数层](../../oc-googology/help/ordinals.md) |
+| `CantorNormalForm` | 默认序数记号：康托尔标准式，上界是 ε₀ | `NAME = "cantor-normal-form"`、`standard()`、`zero()`、`one()`、`finite()`、`omega()`、`omegaPower()`、`sum()`、`contains()`、`limit()`（即 ε₀）、`epsilonZero()`、`omegaTower(int)` | [序数层](../../oc-googology/help/ordinals.md) |
+| `CantorOrdinal` | 序数值类型：`ω^α₁·c₁ + … + ω^αₖ·cₖ`，指数严格递减，规范形式唯一 | `terms()`、`leadingTerm()`、`lastTerm()` | [序数层](../../oc-googology/help/ordinals.md) |
+| `CantorOrdinal.Term` | 一个标准式项的 record：`ω^exponent·coefficient`，系数必须为正 | `exponent()`、`coefficient()` | [序数层](../../oc-googology/help/ordinals.md) |
+| `EpsilonZero` | ε₀ = `sup(1, ω, ω^ω, ω^ω^ω, …)`：康托尔标准式的天花板；吸收更小的加法，`ε₀ + 1` 与 `ε₀·2` 写不出来 | `isLimit()`、`fundamentalSequence(n)`（n+1 个 ω 的塔，索引超过 256 时放弃）、`add(Ordinal)`、`successor()`、`times(Natural)`（后两者在标准式之外，抛 `UnsupportedOperationException`） | [序数层](../../oc-googology/help/ordinals.md) |
+| `TransfiniteHyperoperation` | 把超运算推到超限序数级别：极限级别 `n{λ}m = n{λ[m]}m`，超限后继级别沿用有限级别的递归 | `apply(Natural, Ordinal, Natural)`、`apply(..., int reductionBudget)`、`applyFinite(Natural, int, Natural)`、`DEFAULT_REDUCTION_BUDGET = 64`、`DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8` | [序数层](../../oc-googology/help/ordinals.md) |
 
 ### `...oc.rts.content`
 
@@ -271,9 +279,14 @@
 | `AnimationClips.BUILD` / `GATHER` / `PRODUCE` | `"build"` / `"gather"` / `"produce"` |
 | `AnimationClips.CARRY_IDLE` / `CARRY_MOVE` | `"carry_idle"` / `"carry_move"` |
 | `Inventory.UNLIMITED` | `Natural.BEYOND`（`slotCount` 与 `unitLimit` 共用；不是数字，是比较时"比一切都大"的顶元素） |
-| `Natural.EXACT_BIT_LIMIT` | `4096`（约 1233 位十进制；阈值内是 `BigInteger`，超过就变成结构形 `base ↑^arrows height`） |
+| `Natural.EXACT_BIT_LIMIT` | `4096`（约 1233 位十进制；阈值内是 `BigInteger`，超过就变成结构形 `base{level}height`，级别有限时也写作 `base ↑^arrows height`） |
 | `Natural.ZERO` / `ONE` / `TWO` / `TEN` | `0` / `1` / `2` / `10`（都是精确值） |
 | `Natural.BEYOND` | 顶元素："比本记号能命名的都大"，吸收加减乘；`Inventory.UNLIMITED` 就是它 |
+| `Natural` 的私有常量 `MAX_ARROW_RUN` | `10_000`（箭头数超过它，或级别是超限序数时，结构形改印 `base{level}height`，不再是箭头串） |
+| `CantorNormalForm.NAME` | `"cantor-normal-form"` |
+| `CantorNormalForm.standard().limit()` / `epsilonZero()` | `ε₀`（康托尔标准式的上界，即 `sup(1, ω, ω^ω, ω^ω^ω, …)`；`contains()` 对它返回 `false`，`ε₀ + 1` 与 `ε₀·2` 会抛 `UnsupportedOperationException`） |
+| `TransfiniteHyperoperation.DEFAULT_REDUCTION_BUDGET` | `64`（一次 `apply` 最多走多少步基本列归约） |
+| `TransfiniteHyperoperation.DEFAULT_SUCCESSOR_RECURSION_LIMIT` | `8`（超限后继级别最多按高度递归多深，超过就保持结构形） |
 | `ChunkStreamer.ORDER` / `DEFAULT_CHUNKS_PER_TICK` | `100` / `4` |
 | `PathOptions.DEFAULT` | `new PathOptions(20_000, true, false, 1.05f)` |
 | `PathOptions.FAST` | `new PathOptions(2_000, true, false, 1.5f)` |
@@ -373,3 +386,4 @@
 - [10 实战手册](10-cookbook.md) —— 常见任务的可复制代码
 - [11 限制与 FAQ](11-limits-and-faq.md) —— 已知取舍、性能与陷阱
 - [12 大数与 `Natural`](12-numbers-and-googology.md) —— 数量类型、4096 位阈值、结构形算术与 `BEYOND`
+- [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) —— 大数库的序数层：`Ordinal`、`OrdinalNotation`、康托尔标准式与超限超运算

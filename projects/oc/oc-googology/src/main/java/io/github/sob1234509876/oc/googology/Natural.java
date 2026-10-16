@@ -49,26 +49,32 @@ public final class Natural implements Comparable<Natural> {
     public static final int EXACT_BIT_LIMIT = 4096;
 
     /** Zero. */
-    public static final Natural ZERO = new Natural(Kind.EXACT, BigInteger.ZERO, null, 0, null);
+    public static final Natural ZERO = new Natural(Kind.EXACT, BigInteger.ZERO, null, null, null, null);
 
     /** One. */
-    public static final Natural ONE = new Natural(Kind.EXACT, BigInteger.ONE, null, 0, null);
+    public static final Natural ONE = new Natural(Kind.EXACT, BigInteger.ONE, null, null, null, null);
 
     /** Two. */
-    public static final Natural TWO = new Natural(Kind.EXACT, BigInteger.TWO, null, 0, null);
+    public static final Natural TWO = new Natural(Kind.EXACT, BigInteger.TWO, null, null, null, null);
 
     /** Ten, the base the structural notation prefers because it reads like scientific notation. */
-    public static final Natural TEN = new Natural(Kind.EXACT, BigInteger.TEN, null, 0, null);
+    public static final Natural TEN = new Natural(Kind.EXACT, BigInteger.TEN, null, null, null, null);
 
     /**
      * Top element meaning "larger than any value this type can name", used for saturating arithmetic and
      * for unbounded limits. It is greater than everything, adding or multiplying with it yields itself,
      * and subtracting anything from it yields itself.
      */
-    public static final Natural BEYOND = new Natural(Kind.BEYOND, null, null, 0, null);
+    public static final Natural BEYOND = new Natural(Kind.BEYOND, null, null, null, null, null);
 
     /** Upper bound on how many level applications an exact evaluation may perform. */
     private static final int EVALUATION_STEP_LIMIT = 64;
+
+    /**
+     * Largest number of arrows an exact evaluation attempts. A tower with more arrows is structural from
+     * the start, which also keeps the recursive evaluator from running out of stack.
+     */
+    private static final int EVALUATION_ARROW_LIMIT = 64;
 
     /** log10(2), used to turn a bit length into a decimal magnitude. */
     private static final double LOG10_OF_TWO = 0.3010299956639812d;
@@ -79,10 +85,18 @@ public final class Natural implements Comparable<Natural> {
     /** Largest height an exact evaluation attempts; a taller tower is structural from the start. */
     private static final int EVALUATION_HEIGHT_LIMIT = 256;
 
+    /**
+     * Arrow counts above this are rendered as {@code base{level}height} instead of as a run of arrows:
+     * with ordinal levels an arrow count can be an astronomically large number, and a run of that many
+     * arrows is not text anybody wants. {@link NaturalFormat#scientific(Natural)} prints a single arrow as
+     * {@code base^height} for readability.
+     */
+    private static final int MAX_ARROW_RUN = 10_000;
+
     private enum Kind {
         /** Exact {@link BigInteger} value. */
         EXACT,
-        /** Structural {@code base ↑^arrows height}. */
+        /** Structural {@code base {level} height}, i.e. {@code base ↑^arrows height} for a finite level. */
         TOWER,
         /** Saturation top element. */
         BEYOND
@@ -91,14 +105,18 @@ public final class Natural implements Comparable<Natural> {
     private final Kind kind;
     private final BigInteger value;
     private final Natural base;
-    private final int arrows;
+    /** Arrow count of a tower whose level is finite; may itself be an astronomically large number. */
+    private final Natural finiteLevel;
+    /** Level of a tower whose level is a transfinite ordinal, taken from an {@link OrdinalNotation}. */
+    private final Ordinal level;
     private final Natural height;
 
-    private Natural(Kind kind, BigInteger value, Natural base, int arrows, Natural height) {
+    private Natural(Kind kind, BigInteger value, Natural base, Natural finiteLevel, Ordinal level, Natural height) {
         this.kind = kind;
         this.value = value;
         this.base = base;
-        this.arrows = arrows;
+        this.finiteLevel = finiteLevel;
+        this.level = level;
         this.height = height;
     }
 
@@ -147,13 +165,96 @@ public final class Natural implements Comparable<Natural> {
      * @throws IllegalArgumentException when the arrow count is not positive
      */
     public static Natural arrow(Natural base, int arrows, Natural height) {
-        Objects.requireNonNull(base, "base");
-        Objects.requireNonNull(height, "height");
         if (arrows < 1) {
             throw new IllegalArgumentException("at least one arrow is required, was " + arrows);
         }
+        return towerWithArrowCount(base, canonicalExact(BigInteger.valueOf(arrows)), height, true);
+    }
+
+    /**
+     * The hyperoperation tower {@code base {level} height}: the value written with the hyperoperation of
+     * the given ordinal level, where level {@code 0} is succession, {@code 1} addition, {@code 2}
+     * multiplication, {@code 3} exponentiation, {@code 4} tetration, and any transfinite level is the
+     * corresponding transfinite hyperoperation (see {@link TransfiniteHyperoperation}).
+     *
+     * <p>This is the <em>constructor</em>: for a limit ordinal it does not walk the fundamental sequence
+     * of the level, it builds the structural value {@code base {level} height} directly. Use
+     * {@link TransfiniteHyperoperation#apply(Natural, Ordinal, Natural)} when you want the level reduced
+     * with the rule {@code n {λ} m = n {λ[m]} m}.
+     *
+     * <p>Finite levels are evaluated exactly whenever that is affordable, so
+     * {@code tower(TWO, finite(4), 3)} is exactly 16 and {@code tower(TEN, finite(4), 10)} stays the
+     * symbolic {@code 10↑↑10}. A level that is a finite {@link Ordinal} is treated exactly like the arrow
+     * count {@code level - 2} of {@link #arrow(Natural, int, Natural)}; a level that is already
+     * {@link Natural#BEYOND} yields {@link Natural#BEYOND}.
+     *
+     * @throws IllegalArgumentException when the level is a finite ordinal below {@code 1}
+     */
+    public static Natural tower(Natural base, Ordinal level, Natural height) {
+        Objects.requireNonNull(level, "level");
+        Optional<Natural> finite = level.finiteValue();
+        if (finite.isPresent()) {
+            Natural rank = finite.get();
+            if (rank.isBeyond()) {
+                return BEYOND;
+            }
+            if (rank.isZero()) {
+                return Objects.requireNonNull(base, "base").add(ONE);
+            }
+            if (rank.isOne()) {
+                return Objects.requireNonNull(base, "base").add(Objects.requireNonNull(height, "height"));
+            }
+            if (rank.equals(TWO)) {
+                return base.multiply(height);
+            }
+            return towerWithArrowCount(base, rank.subtractClamped(TWO), height, true);
+        }
+        return towerAtTransfiniteLevel(base, level, height);
+    }
+
+    /**
+     * The structural value {@code base {level} height} for a transfinite level, with the degenerate cases
+     * folded away and no fundamental sequence walking. Package visible so that
+     * {@link TransfiniteHyperoperation} can build its intermediate results.
+     */
+    static Natural towerAtTransfiniteLevel(Natural base, Ordinal level, Natural height) {
+        Objects.requireNonNull(base, "base");
+        Objects.requireNonNull(height, "height");
         if (base.isBeyond() || height.isBeyond()) {
             return BEYOND;
+        }
+        if (level.isFinite()) {
+            return tower(base, level, height);
+        }
+        if (height.isZero()) {
+            // a {α} 0 is 1 for every level α >= 1.
+            return ONE;
+        }
+        if (base.isZero()) {
+            return ZERO;
+        }
+        if (base.isOne()) {
+            return ONE;
+        }
+        if (height.isOne()) {
+            return base;
+        }
+        return new Natural(Kind.TOWER, null, base, null, level, height);
+    }
+
+    /**
+     * The common implementation of both arrow counts and finite levels: nothing is evaluated unless the
+     * arrow count is small enough for the bounded evaluator.
+     */
+    private static Natural towerWithArrowCount(Natural base, Natural arrowCount, Natural height, boolean evaluable) {
+        Objects.requireNonNull(base, "base");
+        Objects.requireNonNull(arrowCount, "arrowCount");
+        Objects.requireNonNull(height, "height");
+        if (base.isBeyond() || height.isBeyond() || arrowCount.isBeyond()) {
+            return BEYOND;
+        }
+        if (arrowCount.isZero()) {
+            throw new IllegalArgumentException("at least one arrow is required, was 0");
         }
         if (height.isZero()) {
             // a ↑^k 0 is 1 for every k, the way a^0 is 1.
@@ -168,16 +269,20 @@ public final class Natural implements Comparable<Natural> {
         if (height.isOne()) {
             return base;
         }
-        if (arrows > 2 && height.equals(TWO)) {
+        if (arrowCount.compareTo(TWO) > 0 && height.equals(TWO)) {
             // a ↑^k 2 is a ↑^(k-1) a by definition, so pentation of height two folds back into tetration
             // instead of pretending to be a larger number.
-            return arrow(base, arrows - 1, base);
+            return arrowCount.isExact() && arrowCount.subtractClamped(ONE).isExact()
+                    ? towerWithArrowCount(base, arrowCount.subtractClamped(ONE), base, evaluable)
+                    : new Natural(Kind.TOWER, null, base, arrowCount, null, height);
         }
-        Optional<BigInteger> exact = evaluateExactly(base, arrows, height);
-        if (exact.isPresent()) {
-            return canonicalExact(exact.get());
+        if (evaluable && arrowCount.isExact() && arrowCount.toLongSaturated() <= EVALUATION_ARROW_LIMIT) {
+            Optional<BigInteger> exact = evaluateExactly(base, (int) arrowCount.toLongSaturated(), height);
+            if (exact.isPresent()) {
+                return canonicalExact(exact.get());
+            }
         }
-        return new Natural(Kind.TOWER, null, base, arrows, height);
+        return new Natural(Kind.TOWER, null, base, arrowCount, null, height);
     }
 
     // ------------------------------------------------------------------ parsing
@@ -313,9 +418,49 @@ public final class Natural implements Comparable<Natural> {
         return Long.MAX_VALUE;
     }
 
-    /** Number of arrows of a structural value; zero for exact values and {@link #BEYOND}. */
+    /**
+     * Number of arrows of a structural value whose level is finite, zero for exact values, {@link #BEYOND}
+     * and values whose level is a transfinite ordinal. Since an arrow count may itself be an
+     * astronomically large number, a count that does not fit an {@code int} saturates to
+     * {@link Integer#MAX_VALUE}; use {@link #finiteLevel()} or {@link #level()} for the exact value.
+     */
     public int arrows() {
-        return kind == Kind.TOWER ? arrows : 0;
+        if (kind != Kind.TOWER || finiteLevel == null) {
+            return 0;
+        }
+        long fit = finiteLevel.toLongSaturated();
+        return fit > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) fit;
+    }
+
+    /**
+     * The arrow count of a structural value whose level is finite, i.e. how many up arrows Knuth notation
+     * would write. Empty for exact values, {@link #BEYOND} and transfinite levels.
+     */
+    public Optional<Natural> finiteLevel() {
+        return kind == Kind.TOWER && finiteLevel != null ? Optional.of(finiteLevel) : Optional.empty();
+    }
+
+    /**
+     * The hyperoperation level of a structural value whose level is a transfinite ordinal, i.e. the
+     * {@code α} in {@code base {α} height}. Empty for exact values, {@link #BEYOND} and finite levels.
+     */
+    public Optional<Ordinal> level() {
+        return kind == Kind.TOWER && level != null ? Optional.of(level) : Optional.empty();
+    }
+
+    /**
+     * The hyperoperation rank of a structural value: the ordinal level as used by
+     * {@link HyperOperation} and {@link TransfiniteHyperoperation}, where {@code 3} is exponentiation and
+     * {@code 4} tetration. Empty for exact values and {@link #BEYOND}.
+     */
+    public Optional<Ordinal> rank() {
+        if (kind != Kind.TOWER) {
+            return Optional.empty();
+        }
+        if (level != null) {
+            return Optional.of(level);
+        }
+        return Optional.of(CantorNormalForm.standard().finite(finiteLevel.add(TWO)));
     }
 
     /** Base of a structural value, empty for exact values and {@link #BEYOND}. */
@@ -333,7 +478,8 @@ public final class Natural implements Comparable<Natural> {
         if (kind == Kind.EXACT) {
             return Optional.of(BigInteger.valueOf(value.toString().length()));
         }
-        if (kind == Kind.TOWER && arrows == 1 && base.equals(TEN) && height.isExact()) {
+        if (kind == Kind.TOWER && finiteLevel != null && finiteLevel.isOne() && base.equals(TEN)
+                && height.isExact()) {
             return Optional.of(height.value.add(BigInteger.ONE));
         }
         return Optional.empty();
@@ -356,16 +502,20 @@ public final class Natural implements Comparable<Natural> {
                 }
                 return Math.min(1.0e300, (value.bitLength() - 1) * LOG10_OF_TWO);
             case TOWER:
-                if (arrows == 1) {
+                if (level != null) {
+                    // A transfinite level dwarfs every double, so the clamp is the honest answer.
+                    return 1.0e300;
+                }
+                if (finiteLevel.isOne()) {
                     return clamp(height.toDoubleApprox() * log10OfBase());
                 }
-                if (arrows == 2) {
+                if (finiteLevel.equals(TWO)) {
                     // Only walk the tower down while its height is a small exact number; a height that is
                     // itself structural would make the walk never finish.
                     if (!height.isExact() || height.toLongSaturated() > 64L) {
                         return 1.0e300;
                     }
-                    Natural lower = arrow(base, arrows, height.subtractClamped(ONE));
+                    Natural lower = arrow(base, 2, height.subtractClamped(ONE));
                     return clamp(lower.toDoubleApprox() * log10OfBase());
                 }
                 // Three arrows and up dwarf every double, so the clamp is the honest answer.
@@ -521,8 +671,11 @@ public final class Natural implements Comparable<Natural> {
 
     /**
      * Ordering by magnitude. Exact values are compared as integers; a structural value is greater than
-     * every exact value (it can only exist above the exact range) and towers are compared by arrow count
-     * first, then base, then height, which follows the order of magnitude faithfully.
+     * every exact value (it can only exist above the exact range) and towers are compared by level first,
+     * then base, then height, which follows the order of magnitude faithfully.
+     *
+     * <p>Levels follow the ordinals: a finite level is below every transfinite level, and among transfinite
+     * levels the ordinals decide. Two towers of the same level compare by base, then by height.
      */
     @Override
     public int compareTo(Natural other) {
@@ -539,15 +692,29 @@ public final class Natural implements Comparable<Natural> {
         if (other.kind == Kind.EXACT) {
             return 1;
         }
-        int byArrows = Integer.compare(arrows, other.arrows);
-        if (byArrows != 0) {
-            return byArrows;
+        int byLevel = compareLevels(other);
+        if (byLevel != 0) {
+            return byLevel;
         }
         int byBase = base.compareTo(other.base);
         if (byBase != 0) {
             return byBase;
         }
         return height.compareTo(other.height);
+    }
+
+    /** Finite levels are compared as numbers, transfinite levels as ordinals, and finite &lt; transfinite. */
+    private int compareLevels(Natural other) {
+        if (finiteLevel != null && other.finiteLevel != null) {
+            return finiteLevel.compareTo(other.finiteLevel);
+        }
+        if (finiteLevel != null) {
+            return -1;
+        }
+        if (other.finiteLevel != null) {
+            return 1;
+        }
+        return level.compareTo(other.level);
     }
 
     @Override
@@ -565,7 +732,8 @@ public final class Natural implements Comparable<Natural> {
             case EXACT:
                 return value.equals(natural.value);
             case TOWER:
-                return arrows == natural.arrows && base.equals(natural.base) && height.equals(natural.height);
+                return Objects.equals(finiteLevel, natural.finiteLevel) && Objects.equals(level, natural.level)
+                        && base.equals(natural.base) && height.equals(natural.height);
             default:
                 return true;
         }
@@ -577,23 +745,40 @@ public final class Natural implements Comparable<Natural> {
             case EXACT:
                 return value.hashCode();
             case TOWER:
-                return Objects.hash(arrows, base, height);
+                return Objects.hash(finiteLevel, level, base, height);
             default:
                 return 31;
         }
     }
 
-    /** Exact values print as decimal digits; towers print in arrow notation; {@link #BEYOND} prints itself. */
+    /**
+     * Exact values print as decimal digits; a tower with a finite level prints in arrow notation
+     * ({@code 10↑↑10}, {@code 2↑4096}); a tower whose level is transfinite, or whose arrow count is too
+     * long to be useful, prints in hyperoperation form ({@code 10{ω^ω}10}); {@link #BEYOND} prints itself.
+     * {@link NaturalFormat#scientific(Natural)} is the variant that shortens a single arrow to a caret.
+     */
     @Override
     public String toString() {
         switch (kind) {
             case EXACT:
                 return value.toString();
             case TOWER:
-                return base + arrows(arrows) + height;
+                if (level != null) {
+                    return hyperoperationForm(level.toString());
+                }
+                long count = finiteLevel.toLongSaturated();
+                if (count > MAX_ARROW_RUN) {
+                    return hyperoperationForm(finiteLevel.add(TWO).toString());
+                }
+                return base + arrows((int) count) + height;
             default:
                 return "BEYOND";
         }
+    }
+
+    /** {@code base{level}height}, the hyperoperation form the level index is written in. */
+    private String hyperoperationForm(String levelText) {
+        return base + "{" + levelText + "}" + height;
     }
 
     /** A sentence describing the value, its representation and, when possible, its decimal size. */
@@ -604,7 +789,15 @@ public final class Natural implements Comparable<Natural> {
             case TOWER:
                 StringBuilder text = new StringBuilder();
                 text.append(this).append(" (structural ");
-                text.append(arrows == 1 ? "exponentiation" : arrows == 2 ? "tetration" : arrows + " arrows");
+                if (level != null) {
+                    text.append("hyperoperation of level ").append(level);
+                } else if (finiteLevel.isOne()) {
+                    text.append("exponentiation");
+                } else if (finiteLevel.equals(TWO)) {
+                    text.append("tetration");
+                } else {
+                    text.append(finiteLevel).append(" arrows");
+                }
                 decimalDigits().ifPresent(digits -> text.append(", ").append(digits).append(" decimal digits"));
                 text.append(")");
                 return text.toString();
@@ -629,7 +822,7 @@ public final class Natural implements Comparable<Natural> {
             throw new IllegalArgumentException("a natural number must not be negative, was " + value);
         }
         if (value.bitLength() <= EXACT_BIT_LIMIT) {
-            return new Natural(Kind.EXACT, value, null, 0, null);
+            return new Natural(Kind.EXACT, value, null, null, null, null);
         }
         return approximate(value);
     }
@@ -641,7 +834,7 @@ public final class Natural implements Comparable<Natural> {
     private static Natural approximate(BigInteger value) {
         long bits = value.bitLength();
         long digits = (long) (bits * LOG10_OF_TWO) + 1L;
-        return new Natural(Kind.TOWER, null, TEN, 1, canonicalExact(BigInteger.valueOf(digits)));
+        return new Natural(Kind.TOWER, null, TEN, Natural.ONE, null, canonicalExact(BigInteger.valueOf(digits)));
     }
 
     private static Natural multiplyExactOrTower(Natural left, Natural right) {
@@ -684,7 +877,7 @@ public final class Natural implements Comparable<Natural> {
                 return Optional.empty();
             }
             Optional<BigInteger> next = evaluateExactly(
-                    new Natural(Kind.EXACT, base.value, null, 0, null), arrows - 1, of(level));
+                    new Natural(Kind.EXACT, base.value, null, null, null, null), arrows - 1, of(level));
             if (next.isEmpty()) {
                 return Optional.empty();
             }

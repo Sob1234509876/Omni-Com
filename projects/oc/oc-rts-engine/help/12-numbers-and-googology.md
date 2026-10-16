@@ -8,6 +8,7 @@
 - `Natural` 的三种表示、4096 位阈值，以及大数区间里**哪些运算是精确的、哪些是近似的**。
 - 引擎里哪些字段换成了 `Natural`，哪些故意没换（时间、坐标、速度、射程）。
 - 写内容目录、库存、血量代码时的实际用法与常见坑。
+- 结构形还能带**序数级别**（`base{level}height`）：超限级别的超运算与可插拔的序数记号（第十节，完整说明见库文档）。
 
 大数库本身住在独立模块 `:projects:oc:oc-googology`（Java 模块 `oc.projects.oc.googology`，包
 `io.github.sob1234509876.oc.googology`，零第三方依赖），本文只讲你在这个引擎里会碰到的部分。
@@ -175,9 +176,31 @@ titan.health().isDead();                               // true
   [ok] the slot count itself is out of exact range, so it reports BEYOND instead of pretending
 ```
 
-库自身还有 86 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
-超运算求值、排序、格式化与解析往返，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
+库自身还有 151 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
+超运算求值、排序、格式化与解析往返、序数与超限超运算，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
 `Natural` 的加减乘、`min`/`max`、比较与解析往返必须与 `BigInteger` 完全一致（阈值下方不允许有任何精度差异）。
+
+## 十、超限序数级别（库的序数层）
+
+结构形的级别那一格本来只能是有限箭头数；大数库新增的**序数层**让它也可以是序数，于是同一个值能写成
+`base{level}height`，例如 `10{ω^ω}10`。构造器是 `Natural.tower(base, level, height)`：对极限级别它只建
+结构值，不展开基本列。要归约级别就用 `TransfiniteHyperoperation.apply(base, level, height)`，它的极限级别规则是
+`n{λ}m = n{λ[m]}m`（`λ[m]` 是 λ 的基本列第 m 项），超限后继级别则沿用与有限级别相同的递归。
+
+序数层默认用**康托尔标准式**（`CantorNormalForm.NAME = "cantor-normal-form"`）：值是 `CantorOrdinal` 的
+规范形式 `ω^α₁·c₁ + … + ω^αₖ·cₖ`，上界是 `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, …)`（`CantorNormalForm.limit()`，
+由 `EpsilonZero` 表示）。正因为 ε₀ 写不进标准式，`ε₀ + 1` 与 `ε₀·2` 会抛 `UnsupportedOperationException`。
+几个可核对的例子：`apply(2, ω, 3) = 16`；`apply(10, ω, 10)` 折叠成 9 个箭头（`ω[10] = 11`，级别 11）；
+`apply(10, ω^2, 10)` 走两步后停在完全相等的级别 `ω·10 + 11`；`(ω^2)[n] = ω·(n+1)`；`ε₀[1] = ω^ω`、
+`ε₀[2] = ω^ω^ω`。
+
+`OrdinalNotation` 是给使用者的插拔接缝：实现 `name`/`zero`/`finite`/`omega`/`omegaPower`/`sum`/`contains`/`limit`
+就能用自己的一套序数名字驱动超运算（库的自校验里有一个只认到 `ω^ω` 的记号示例）。归约是有预算的：
+`TransfiniteHyperoperation.DEFAULT_REDUCTION_BUDGET = 64`，预算用尽或记号写不出下一项时，结果就是结构值本身
+（每一步展开都是恒等式，不是近似）；超限后继规则另有 `DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8`。
+
+引擎的模拟代码不使用序数，这一层只影响 `Natural` 的结构形、排序与打印。完整说明见库文档
+[`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md)。
 
 ## 相关文档
 
@@ -186,12 +209,16 @@ titan.health().isDead();                               // true
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 数值类型约定与确定性规则
 - [11-limits-and-faq.md](11-limits-and-faq.md) —— 大数区间的取舍与排查
 - [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单
+- [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) —— 库的序数层：`Ordinal`、`OrdinalNotation`、康托尔标准式与超限超运算
 
 ## 相关源码
 
 - [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)
 - [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/HyperOperation.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/HyperOperation.java)
 - [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)
+- [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Ordinal.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Ordinal.java)
+- [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/CantorNormalForm.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/CantorNormalForm.java)
+- [`../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/TransfiniteHyperoperation.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/TransfiniteHyperoperation.java)
 - [`../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
 - [`../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)

@@ -1,8 +1,9 @@
 # Omni Com Googology
 
-`projects:oc:oc-googology` — a small library of very large natural numbers: exact integers for as long
-as exactness is affordable, and hyperoperation (up arrow) notation for everything beyond that. It is the
-number type the RTS engine uses for item amounts, capacities, hit points and damage.
+`projects:oc:oc-googology` — a small library of very large natural numbers, and of the ordinals used as
+their hyperoperation levels: exact integers for as long as exactness is affordable, hyperoperation (up
+arrow) notation beyond that, and transfinite levels such as `ω`, `ω^ω` and `ε₀` on top. It is the number
+type the RTS engine uses for item amounts, capacities, hit points and damage.
 
 ## Coordinates
 
@@ -13,7 +14,8 @@ number type the RTS engine uses for item amounts, capacities, hit points and dam
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (86 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (151 checks, no test framework, no network) |
+| Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences and the transfinite hyperoperation |
 
 ## What it gives you
 
@@ -22,12 +24,13 @@ One value type, three representations behind it:
 | Range | Representation | Example |
 | --- | --- | --- |
 | exact, up to `Natural.EXACT_BIT_LIMIT = 4096` bits (about 1233 decimal digits) | `BigInteger` | `123456789` |
-| beyond that | normalised hyperoperation tower `base ↑^arrows height` | `10^5000`, `10↑↑10`, `10↑↑↑3` |
+| beyond that | normalised hyperoperation tower `base {level} height` | `10^5000`, `10↑↑10`, `10{ω^ω}10` |
 | "more than anything this type can name" | the `BEYOND` top element | `Natural.BEYOND` |
 
 Because the structural form keeps the operation that produced a value, the library reaches well past
 exponentiation: one arrow is a power, two are tetration (a power tower), three pentation, and a higher
-arrow count is just more arrows.
+arrow count is just more arrows. The level may itself be a transfinite ordinal, in which case the
+hyperoperation is reduced by the fundamental sequence rule `n {λ} m = n {λ[m]} m`.
 
 ```java
 import io.github.sob1234509876.oc.googology.Natural;
@@ -40,9 +43,9 @@ Natural tower = Natural.tetration(Natural.TEN, Natural.TEN);    // 10↑↑10, a
 Natural arrows = Natural.arrow(Natural.TEN, 3, Natural.of(3));  // 10↑↑↑3, pentation
 
 power.isExact();                    // false, it left the exact range
-power.toString();                   // "10^5000"
+power.toString();                   // "10↑5000"
+NaturalFormat.scientific(power);    // "10^5000"
 tower.toString();                   // "10↑↑10"
-NaturalFormat.scientific(tower);    // "10↑↑10"
 NaturalFormat.describe(power);      // "10^5000 (structural, exponentiation, 5001 decimal digits)"
 HyperOperation.TETRATION.apply(Natural.TEN, Natural.TEN).equals(tower);   // true
 
@@ -56,6 +59,42 @@ Small arguments are still computed exactly: `Natural.arrow(Natural.TWO, 2, Natur
 range does the value become structural, and the library never spends unbounded time or memory getting
 there.
 
+## Transfinite levels
+
+`Ordinal` is a comparable ordinal with a successor and fundamental sequences, `OrdinalNotation` is the
+seam for plugging in a notation of your own, and `CantorNormalForm` is the default notation: Cantor
+normal form, whose values are the ordinals below `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, ...)`.
+
+```java
+import io.github.sob1234509876.oc.googology.CantorNormalForm;
+import io.github.sob1234509876.oc.googology.Ordinal;
+import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
+
+CantorNormalForm notation = CantorNormalForm.standard();
+Ordinal omega = notation.omega();                          // ω
+Ordinal omegaSquared = notation.omegaPower(notation.of(2)); // ω^2
+Ordinal epsilonZero = notation.limit();                     // ε₀, the notation's ceiling
+
+epsilonZero.fundamentalSequence(1);            // ω^ω
+omegaSquared.fundamentalSequence(5);           // ω·6, because (ω^2)[n] = ω·(n+1)
+omega.add(omega);                              // ω·2
+omega.successor();                             // ω + 1
+
+TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3));   // 2{ω}3 = 2{4}3 = 16
+TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);     // 10{ω}10 → a tower with 9 arrows
+Natural huge = TransfiniteHyperoperation.apply(Natural.TEN, notation.omegaPower(omega), Natural.TEN);
+huge.toString();                                                      // "10{ω^ω}10", or a reduced level
+```
+
+A limit level is walked with `n {λ} m = n {λ[m]} m`, which is an identity at every step, never an
+approximation. When the descent finishes inside the budget the result keeps the reduced level; when the
+budget cuts the descent short (a walk from `ω^ω` upwards cannot finish, since `(ω^ω)[n] = ω^n` is again a
+limit) the result keeps the level you asked for, so the same call always produces the same value:
+`Natural.tower(base, level, height)` and `apply(base, level, height, 0)` agree with it. The degenerate
+cases are conventions of the classic hierarchy: `n {α} 0` is `1` and `n {α} 1` is `n` for every transfinite
+level `α`, the way `a ↑^k 0 = 1` and `a ↑^k 1 = a` are for finite arrow counts.
+
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
@@ -66,8 +105,10 @@ there.
   display and for ratios such as a health bar; `Natural.fractionOf(whole)` returns that ratio as a float.
 - **Negative numbers.** `subtract` throws when the result would go below zero; `subtractClamped` stops at
   zero instead, which is what a game wants for damage and stock.
-- **Ordinals or the fast growing hierarchy.** This is a library of *numbers* with a notation for naming
-  huge ones, not a library of ordinal notations.
+- **Ordinals above the notation's ceiling, or the fast growing hierarchy.** Ordinals are supported as
+  hyperoperation *levels* up to the notation's limit (`ε₀` for the default notation), and a custom
+  notation can name its own; what the library still does not offer is the fast growing hierarchy, ordinal
+  collapsing functions, or ordinals past `ε₀`.
 
 ## Semantics in one table
 
@@ -76,8 +117,8 @@ there.
 | `add` | exact sum (promoted if it passes the threshold) | the larger operand |
 | `subtractClamped` | exact difference, clamped at zero | the larger operand, or zero when equal |
 | `multiply` | exact product (promoted if needed) | the larger operand, zero when one is zero |
-| `min`, `max`, `compareTo` | integer comparison | arrow count, then base, then height |
-| `toString` | decimal digits | arrow notation (`10↑↑10`) |
+| `min`, `max`, `compareTo` | integer comparison | level, then base, then height |
+| `toString` | decimal digits | arrow notation (`10↑↑10`), or `base{level}height` for a transfinite level |
 | capacity checks (`isFull` style) | ordinary comparisons | an unlimited limit stays unlimited, a finite one saturates to full |
 
 `BEYOND` absorbs arithmetic (`BEYOND.add(x)` and `BEYOND.multiply(x)` are `BEYOND`,
@@ -88,15 +129,24 @@ keep the same code path for a finite limit and for `BEYOND`.
 
 ```
 src/main/java/io/github/sob1234509876/oc/googology/
-    Natural.java           the value type: factories, arithmetic, ordering, parsing, notation
-    HyperOperation.java    the hyperoperation levels (succession .. octation) with apply(a, b)
-    NaturalFormat.java     decimal / scientific / arrow / descriptive text
-    package-info.java      package documentation
-src/selfcheck/java/.../check/GoogologyCheck.java    the 80 check self check program
+    Natural.java                  the value type: factories, arithmetic, ordering, parsing, notation
+    HyperOperation.java           the classic finite levels (succession .. octation)
+    NaturalFormat.java            decimal / scientific / arrow / descriptive text
+    Ordinal.java                  a comparable ordinal with a successor and fundamental sequences
+    OrdinalNotation.java          the seam for plugging in a notation of your own
+    CantorNormalForm.java         the default notation: Cantor normal form, ceiling ε₀
+    CantorOrdinal.java            its values: ω^α₁·c₁ + ω^α₂·c₂ + ... with Term(exponent, coefficient)
+    EpsilonZero.java              the ceiling ε₀, whose fundamental sequence is the ω tower
+    TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
+    package-info.java             package documentation
+help/ordinals.md                  the Chinese guide to the ordinal layer
+src/selfcheck/java/.../check/GoogologyCheck.java    the 151 check self check program
 ```
 
 ## Related
 
+- [`help/ordinals.md`](help/ordinals.md) — the ordinals, fundamental sequences and the transfinite
+  hyperoperation, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

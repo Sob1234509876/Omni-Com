@@ -3,7 +3,7 @@
 > 面向使用者的分主题文档：怎么把引擎跑起来、每个子系统怎么用、有哪些坑。
 
 这套文档对应 `projects/oc/oc-rts-engine`（模块版本 `2.0a`，纯 Java 17 + JPMS，**零第三方依赖**，不含 GUI）。
-它唯一的依赖是同一仓库里的 `:projects:oc:oc-googology`（Java 模块 `oc.projects.oc.googology`），提供物品数量、容量、血量与伤害所用的 `Natural` 类型，见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
+它唯一的依赖是同一仓库里的 `:projects:oc:oc-googology`（Java 模块 `oc.projects.oc.googology`），提供物品数量、容量、血量与伤害所用的 `Natural` 类型，见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。大数库的序数层（超限超运算与自定义序数记号）见 [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md)。
 文中所有类型名、方法名、默认值与相位号都取自该目录下的源码，不是示意；每篇末尾都给出「相关源码」的相对路径。
 特别标注为 `示意` 的代码片段是探索性写法，未经编译验证。
 
@@ -45,6 +45,7 @@
 | [10-cookbook.md](10-cookbook.md) | 18 个「怎么做 X」配方，每步带代码 | 知道要做什么但不知道用哪个 API |
 | [11-limits-and-faq.md](11-limits-and-faq.md) | 未实现清单、预留但未接通的字段、已知取舍、按症状排查的 FAQ | 遇到怪现象，或者想知道边界 |
 | [12-numbers-and-googology.md](12-numbers-and-googology.md) | 数量类型 `Natural`：4096 位精确阈值、超运算记号、大数近似与 `BEYOND`、以及哪些字段仍是 `float`/`int` | 想放大数量，或结果和预期不一样 |
+| [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) | 大数库的序数层：`Ordinal`、`OrdinalNotation`、康托尔标准式（上界 ε₀）与超限超运算 `n{λ}m = n{λ[m]}m` | 想把超运算推到超限级别，或自定义序数记号 |
 | [appendix-api-map.md](appendix-api-map.md) | 全量 public 类型清单、常量与枚举速查、门面方法速查 | 当索引翻 |
 
 ## 30 秒了解这个引擎

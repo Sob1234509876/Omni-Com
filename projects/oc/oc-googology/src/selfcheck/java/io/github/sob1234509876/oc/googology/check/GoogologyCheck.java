@@ -1,8 +1,13 @@
 package io.github.sob1234509876.oc.googology.check;
 
+import io.github.sob1234509876.oc.googology.CantorNormalForm;
+import io.github.sob1234509876.oc.googology.CantorOrdinal;
 import io.github.sob1234509876.oc.googology.HyperOperation;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.NaturalFormat;
+import io.github.sob1234509876.oc.googology.Ordinal;
+import io.github.sob1234509876.oc.googology.OrdinalNotation;
+import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -12,8 +17,9 @@ import java.util.Random;
 
 /**
  * Self check of the googology library: the exact range, the switch to structural values, ordering,
- * arithmetic closure, the hyperoperation levels, formatting, parsing and the semantics the engine relies
- * on. Run with {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
+ * arithmetic closure, the hyperoperation levels, formatting, parsing, the semantics the engine relies on,
+ * and the ordinal layer that extends the hyperoperation to transfinite levels. Run with
+ * {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
  */
 public final class GoogologyCheck {
 
@@ -200,7 +206,231 @@ public final class GoogologyCheck {
         long millis = (System.nanoTime() - start) / 1_000_000L;
         check("高度一百万的幂塔只保留记号且立刻返回（" + millis + " ms）", tall.isStructural() && tall.arrows() == 2);
 
+        ordinals();
+        transfiniteHyperoperation();
+        customOrdinalNotation();
+
         summary();
+    }
+
+    // ------------------------------------------------------------------ 11) ordinals
+
+    /**
+     * Cantor normal form: the default notation, its arithmetic, its rendering and the fundamental
+     * sequences that the transfinite hyperoperation walks.
+     */
+    private static void ordinals() {
+        section("11) 序数：康托尔标准式（极限 ε₀）");
+        CantorNormalForm notation = CantorNormalForm.standard();
+        Ordinal zero = notation.zero();
+        Ordinal one = notation.one();
+        Ordinal two = notation.finite(Natural.TWO);
+        Ordinal omega = notation.omega();
+        Ordinal omegaSquared = notation.omegaPower(two);
+        Ordinal omegaOmega = notation.omegaPower(omega);
+        Ordinal epsilon = notation.limit();
+
+        check("零是零，且不是极限序数", zero.isZero() && !zero.isLimit());
+        equal("一的后继是二", two, one.successor());
+        check("ω 是极限序数，没有前驱", omega.isLimit() && omega.predecessor().isEmpty());
+        equal("ω 的后继是 ω + 1", "ω + 1", omega.successor().toString());
+        equal("ω + 1 的前驱是 ω", omega, omega.successor().predecessor().orElseThrow());
+        equal("ω + 1 是后继序数", "true", String.valueOf(omega.successor().isSuccessor()));
+
+        equal("1 + ω = ω（左加被吸收）", omega, one.add(omega));
+        equal("ω + ω = ω·2（系数合并）", omega.times(2), omega.add(omega));
+        equal("ω + ω^2 = ω^2", omegaSquared, omega.add(omegaSquared));
+        equal("ω^2 + ω 不被吸收", "ω^2 + ω", omegaSquared.add(omega).toString());
+        equal("(ω + 1)·2 = ω·2 + 1（乘系数作用于首项）", notation.sum(omega.times(2), one),
+                omega.successor().times(2));
+        equal("(ω·5 + 3)·2 = ω·10 + 3", notation.sum(omega.times(10), notation.of(3)),
+                notation.sum(omega.times(5), notation.of(3)).times(2));
+        equal("ω^(ω+1) 的指数带括号", "ω^(ω + 1)", notation.omegaPower(omega.successor()).toString());
+
+        List<Ordinal> chain = List.of(zero, one, two, omega, omega.successor(), omega.times(2), omegaSquared,
+                omegaOmega, notation.omegaPower(omegaOmega), epsilon);
+        boolean increasing = true;
+        for (int i = 1; i < chain.size(); i++) {
+            if (chain.get(i - 1).compareTo(chain.get(i)) >= 0) {
+                increasing = false;
+                check("序数链在第 " + i + " 项失序: " + chain.get(i - 1) + " !< " + chain.get(i), false);
+                break;
+            }
+        }
+        check("0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀ 严格递增", increasing);
+
+        equal("(ω^2)[0] = ω", omega, omegaSquared.fundamentalSequence(0).orElseThrow());
+        equal("(ω^2)[1] = ω·2", omega.times(2), omegaSquared.fundamentalSequence(1).orElseThrow());
+        equal("(ω^2)[5] = ω·6", omega.times(6), omegaSquared.fundamentalSequence(5).orElseThrow());
+        equal("(ω^ω)[0] = ω", omega, omegaOmega.fundamentalSequence(0).orElseThrow());
+        equal("(ω^ω)[2] = ω^3", notation.omegaPower(notation.of(3)),
+                omegaOmega.fundamentalSequence(2).orElseThrow());
+        equal("(ω^2·3)[1] = ω^2·2 + ω·2", notation.sum(omegaSquared.times(2), omega.times(2)),
+                omegaSquared.times(3).fundamentalSequence(1).orElseThrow());
+        Ordinal omegaTimesTwoPlusFive = notation.sum(omega.times(2), notation.of(5));
+        check("ω·2 + 5 是后继序数，没有基本列",
+                !omegaTimesTwoPlusFive.isLimit() && omegaTimesTwoPlusFive.fundamentalSequence(1).isEmpty());
+
+        equal("ε₀[0] = ω", omega, epsilon.fundamentalSequence(0).orElseThrow());
+        equal("ε₀[1] = ω^ω", omegaOmega, epsilon.fundamentalSequence(1).orElseThrow());
+        equal("ε₀[2] = ω^ω^ω", notation.omegaPower(omegaOmega), epsilon.fundamentalSequence(2).orElseThrow());
+        check("ε₀ 比任何 ω 塔都大", epsilon.compareTo(notation.omegaTower(20)) > 0);
+        check("记号包含 ω^ω 但不包含 ε₀ 本身", notation.contains(omegaOmega) && !notation.contains(epsilon));
+        equal("ε₀ 吸收加法", epsilon, epsilon.add(omega));
+        equal("α + ε₀ = ε₀", epsilon, omega.add(epsilon));
+        equal("ω^ε₀ = ε₀", epsilon, notation.omegaPower(epsilon));
+        equal("ε₀·1 = ε₀", epsilon, epsilon.times(1));
+        equal("ε₀ 的文本", "ε₀", epsilon.toString());
+        check("ε₀ + 1 超出记号范围", throwsUnsupported(epsilon::successor));
+        check("ε₀·2 超出记号范围", throwsUnsupported(() -> epsilon.times(2)));
+        check("ε₀ 的基本列索引过大时放弃（记号的边界）", epsilon.fundamentalSequence(300).isEmpty());
+    }
+
+    // ------------------------------------------------------------------ 12) transfinite hyperoperation
+
+    /** The hyperoperation at ordinal levels, including the rule {@code n {λ} m = n {λ[m]} m}. */
+    private static void transfiniteHyperoperation() {
+        section("12) 超限级别的超运算：n{λ}m = n{λ[m]}m");
+        CantorNormalForm notation = CantorNormalForm.standard();
+        Ordinal omega = notation.omega();
+        Ordinal omegaSquared = notation.omegaPower(notation.finite(Natural.TWO));
+        Ordinal omegaOmega = notation.omegaPower(omega);
+
+        equal("2{ω}3 = 2{4}3 = 2↑↑3 = 16", Natural.of(16),
+                TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3)));
+        Natural nineArrows = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
+        equal("10{ω}10 折叠成 9 个箭头（ω[10] = 11，级别 11）", Natural.arrow(Natural.TEN, 9, Natural.TEN),
+                nineArrows);
+        equal("它的文本就是 9 个箭头", "10" + "↑".repeat(9) + "10", nineArrows.toString());
+        equal("2{ω+1}2 = 2{ω}2 = 2{3}2 = 2^2 = 4（超限后继规则）", Natural.of(4),
+                TransfiniteHyperoperation.apply(Natural.TWO, omega.successor(), Natural.TWO));
+
+        Natural atOmegaSquared = TransfiniteHyperoperation.apply(Natural.TEN, omegaSquared, Natural.TEN);
+        check("10{ω^2}10 归约两步后保持结构形", atOmegaSquared.isStructural() && atOmegaSquared.level().isPresent());
+        equal("它停在按规则完全相等的级别 ω·10 + 11 上", notation.sum(omega.times(10), notation.of(11)),
+                atOmegaSquared.level().orElseThrow());
+        check("已经降完的链，级别严格低于入口（ω^2 → ω·10 + 11）",
+                atOmegaSquared.level().orElseThrow().compareTo(omegaSquared) < 0);
+        Natural untouched = TransfiniteHyperoperation.apply(Natural.TEN, omegaSquared, Natural.TEN, 0);
+        equal("预算为 0 时不展开极限级别，级别仍是 ω^2", omegaSquared, untouched.level().orElseThrow());
+
+        Natural atOmega = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
+        Natural atOmegaOmega = TransfiniteHyperoperation.apply(Natural.TEN, omegaOmega, Natural.TEN);
+        check("10{ω^ω}10 的降链在预算内降到一个后继级别，于是停在那里",
+                atOmegaOmega.level().isPresent() && atOmegaOmega.level().orElseThrow().isSuccessor()
+                        && atOmegaOmega.level().orElseThrow().compareTo(omegaOmega) < 0);
+        check("超限级别的退化约定：n{λ}0 = 1、n{λ}1 = n（与 a↑^k0 = 1 一致）",
+                TransfiniteHyperoperation.apply(Natural.TEN, omegaOmega, Natural.ZERO).equals(Natural.ONE)
+                        && TransfiniteHyperoperation.apply(Natural.TEN, omegaOmega, Natural.ONE).equals(Natural.TEN));
+        equal("降链已经走完，所以更大的预算给出同一个形式", atOmegaOmega,
+                TransfiniteHyperoperation.apply(Natural.TEN, omegaOmega, Natural.TEN, 512));
+
+        Ordinal deepTower = notation.omegaTower(6);
+        Natural cut = TransfiniteHyperoperation.apply(Natural.TEN, deepTower, Natural.TEN);
+        equal("10{ω^ω^…^ω}10（六层塔）的降链走不完，于是保留入口级别", deepTower, cut.level().orElseThrow());
+        equal("预算 0 与预算 64 在这种情形下给出同一形式", cut,
+                TransfiniteHyperoperation.apply(Natural.TEN, deepTower, Natural.TEN, 0));
+        equal("与 Natural.tower 构造的结构形一致", Natural.tower(Natural.TEN, deepTower, Natural.TEN), cut);
+        check("10{ω}10 < 10{ω^2}10 < 10{ω^ω}10 < BEYOND",
+                atOmega.compareTo(atOmegaSquared) < 0 && atOmegaSquared.compareTo(atOmegaOmega) < 0
+                        && atOmegaOmega.compareTo(Natural.BEYOND) < 0);
+        check("超限级别的塔带序数级别而没有有限箭头数",
+                atOmegaOmega.level().isPresent() && atOmegaOmega.finiteLevel().isEmpty()
+                        && atOmegaOmega.arrows() == 0);
+        equal("Natural.tower 是构造器：不展开极限级别", omegaOmega,
+                Natural.tower(Natural.TEN, omegaOmega, Natural.TEN).level().orElseThrow());
+        equal("rank() 对有限级别给出经典级别", Natural.of(4),
+                Natural.arrow(Natural.TEN, 2, Natural.TEN).rank().orElseThrow().finiteValue().orElseThrow());
+        Natural symbolicOmegaOmega = Natural.tower(Natural.TEN, omegaOmega, Natural.TEN);
+        equal("rank() 对超限级别给出序数本身", omegaOmega, symbolicOmegaOmega.rank().orElseThrow());
+        check("走不完的降链与 tower 构造出的结构形完全相同",
+                cut.equals(Natural.tower(Natural.TEN, deepTower, Natural.TEN)));
+        equal("级别 0 是后继", Natural.of(11), Natural.tower(Natural.TEN, notation.zero(), Natural.TEN));
+        equal("级别 1 是加法", Natural.of(20), Natural.tower(Natural.TEN, notation.one(), Natural.TEN));
+        equal("级别 2 是乘法", Natural.of(100),
+                Natural.tower(Natural.TEN, notation.finite(Natural.TWO), Natural.TEN));
+        equal("级别 4 是四则幂塔", Natural.arrow(Natural.TEN, 2, Natural.TEN),
+                Natural.tower(Natural.TEN, notation.finite(Natural.of(4)), Natural.TEN));
+        equal("有限级别仍按箭头数折叠（a↑^k 2 = a↑^(k-1) a）", Natural.arrow(Natural.TEN, 2, Natural.TEN),
+                Natural.tower(Natural.TEN, notation.finite(Natural.of(5)), Natural.TWO));
+    }
+
+    // ------------------------------------------------------------------ 13) a custom notation
+
+    /** Shows that the notation seam is usable from outside: a notation that stops below {@code ω^ω}. */
+    private static void customOrdinalNotation() {
+        section("13) 自定义序数记号（OrdinalNotation 可插拔）");
+        BelowOmegaOmega notation = new BelowOmegaOmega();
+        Ordinal omega = notation.omega();
+        check("自定义记号提供自己的 ω", omega.isLimit() && notation.contains(omega));
+        check("它的极限是 ω^ω，且不为记号本身所包含",
+                notation.limit().compareTo(omega) > 0 && !notation.contains(notation.limit()));
+        equal("用自定义记号的 ω 做超运算同样生效", Natural.of(16),
+                TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3)));
+        equal("自定义记号的 ω[n] 仍然来自同一个基本列", notation.finite(Natural.of(4)),
+                omega.fundamentalSequence(3).orElseThrow());
+        check("写出 ω^ω 会被记号拒绝（这就是极限的含义）",
+                throwsIllegalArgument(() -> notation.omegaPower(omega)));
+        equal("记号里的序数值仍然是可比较的 CantorOrdinal", "ω", omega.toString());
+    }
+
+    /**
+     * A notation that reuses the {@link CantorOrdinal} value type but only accepts ordinals below
+     * {@code ω^ω}, which is its limit. It is the smallest honest example of a custom notation: the
+     * vocabulary is delegated, the boundary is its own.
+     */
+    private static final class BelowOmegaOmega implements OrdinalNotation {
+
+        private final CantorNormalForm delegate = CantorNormalForm.standard();
+        private final Ordinal ceiling = delegate.omegaPower(delegate.omega());
+
+        @Override
+        public String name() {
+            return "below-omega-omega";
+        }
+
+        @Override
+        public Ordinal zero() {
+            return delegate.zero();
+        }
+
+        @Override
+        public Ordinal finite(Natural value) {
+            return delegate.finite(value);
+        }
+
+        @Override
+        public Ordinal omega() {
+            return delegate.omega();
+        }
+
+        @Override
+        public Ordinal omegaPower(Ordinal exponent) {
+            Ordinal value = delegate.omegaPower(exponent);
+            if (!contains(value)) {
+                throw new IllegalArgumentException(exponent + " would leave " + name() + ": its limit is " + ceiling);
+            }
+            return value;
+        }
+
+        @Override
+        public Ordinal sum(List<Ordinal> terms) {
+            Ordinal value = delegate.sum(terms);
+            if (!contains(value) && !terms.isEmpty()) {
+                throw new IllegalArgumentException(value + " would leave " + name() + ": its limit is " + ceiling);
+            }
+            return value;
+        }
+
+        @Override
+        public boolean contains(Ordinal ordinal) {
+            return ordinal instanceof CantorOrdinal && ordinal.compareTo(ceiling) < 0;
+        }
+
+        @Override
+        public Ordinal limit() {
+            return ceiling;
+        }
     }
 
     private static void section(String title) {
@@ -239,6 +469,16 @@ public final class GoogologyCheck {
             action.run();
             return false;
         } catch (IllegalArgumentException | IllegalStateException expected) {
+            return true;
+        }
+    }
+
+    /** For the operations a notation documents as impossible, such as {@code ε₀ + 1}. */
+    private static boolean throwsUnsupported(Runnable action) {
+        try {
+            action.run();
+            return false;
+        } catch (UnsupportedOperationException expected) {
             return true;
         }
     }

@@ -40,21 +40,21 @@ public final class NaturalFormat {
             String mantissa = digits.charAt(0) + "." + digits.substring(1, 3);
             return "~" + mantissa + "e" + (digits.length() - 1);
         }
-        if (value.arrows() == 1) {
+        if (value.finiteLevel().filter(Natural.ONE::equals).isPresent()) {
             return value.towerBase().orElse(Natural.TEN) + "^" + value.towerHeight().orElse(Natural.ONE);
         }
         return arrow(value);
     }
 
-    /** Knuth up arrow notation for a structural value; exact values print as decimal digits. */
+    /**
+     * Knuth up arrow notation for a structural value: {@code 10^100}, {@code 10↑↑10}, and for a level that
+     * is a transfinite ordinal the hyperoperation form {@code 10{ω^ω}10}. Exact values print as decimal
+     * digits; a very long run of arrows is also written in hyperoperation form, since a wall of arrows
+     * helps nobody.
+     */
     public static String arrow(Natural value) {
         Objects.requireNonNull(value, "value");
-        if (value.isExact() || value.isBeyond()) {
-            return value.toString();
-        }
-        return value.towerBase().orElse(Natural.TEN)
-                + Natural.arrows(value.arrows())
-                + value.towerHeight().orElse(Natural.ONE);
+        return value.toString();
     }
 
     /**
@@ -72,8 +72,10 @@ public final class NaturalFormat {
         }
         StringBuilder text = new StringBuilder();
         text.append(arrow(value)).append(" (structural, ");
-        text.append(value.arrows() == 1 ? "exponentiation" : value.arrows() == 2 ? "tetration"
-                : value.arrows() + " arrows");
+        text.append(value.level().map(level -> "level " + level)
+                .orElseGet(() -> value.finiteLevel().filter(Natural.ONE::equals).isPresent() ? "exponentiation"
+                        : value.finiteLevel().filter(Natural.TWO::equals).isPresent() ? "tetration"
+                                : value.finiteLevel().map(level -> level + " arrows").orElse("unknown level")));
         Optional<BigInteger> digits = value.decimalDigits();
         if (digits.isPresent()) {
             text.append(", ").append(digits.get()).append(" decimal digits");
@@ -84,12 +86,18 @@ public final class NaturalFormat {
         return text.append(")").toString();
     }
 
-    /** The hyperoperation whose level best describes the value, if it is a structural one. */
+    /**
+     * The classic hyperoperation whose level describes the value, when the value is a structural one with a
+     * finite level in the range the {@link HyperOperation} enum names. A transfinite level has no classic
+     * hyperoperation, so the result is empty and callers should look at {@link Natural#level()} instead.
+     */
     public static Optional<HyperOperation> operationOf(Natural value) {
         Objects.requireNonNull(value, "value");
         if (!value.isStructural()) {
             return Optional.empty();
         }
-        return HyperOperation.find(value.arrows() + 2);
+        return value.rank()
+                .flatMap(Ordinal::finiteValue)
+                .flatMap(rank -> HyperOperation.find((int) rank.toLongSaturated()));
     }
 }
