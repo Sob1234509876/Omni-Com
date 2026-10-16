@@ -14,8 +14,8 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (151 checks, no test framework, no network) |
-| Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences and the transfinite hyperoperation |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (164 checks, no test framework, no network) |
+| Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
 
@@ -95,12 +95,32 @@ cases are conventions of the classic hierarchy: `n {α} 0` is `1` and `n {α} 1`
 level `α`, the way `a ↑^k 0 = 1` and `a ↑^k 1 = a` are for finite arrow counts.
 
 
+## Comparing towers
+
+Two towers are compared by **value**, not by form: both sides are first put through
+`TransfiniteHyperoperation.apply` with `Natural.COMPARISON_REDUCTION_BUDGET` (32) steps, which is an
+identity at every step and often turns a tower into an ordinary value (`2{ω}2` becomes the exact `4`,
+`10{ω}10` becomes a nine arrow tower). The survivors are then compared on the one rank scale that finite and
+transfinite levels share: a finite level tower contributes `arrows + 2`, a transfinite level contributes
+`Natural.reducedLevel()` - the level reduced at the value's own height.
+
+That is what makes `10{ω²+ω+10}10 < 10{ω²+ω·2}10` come out right (β reduces to `ω²+ω+11`) while the same
+pair at height 3 comes out the other way round (β reduces to `ω²+ω+4`), which is what the rules say. Two
+consequences: forms that denote the same value compare equal even when `equals` is false (so a `TreeSet`
+keeps one of them), and the order stays total, so sorting is safe.
+
+The budget is the honest part: reaching a successor takes 1 step from `ω`, 2 from `ω²` and 12 from `ω^ω`,
+but `ω^ω^ω` does not finish in any practical time and `ε₀` needs a tower of steps (roughly `f₃(n)`), with
+Buchholz style notations worse still. Beyond the budget the raw level order is used, which is a heuristic
+across very different heights - `2^(10^6)` against `2↑↑5`, for instance, is still ordered by level.
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
   a tower unchanged and multiplication of two towers returns the larger one — the same kind of
-  approximation floating point makes at the other end of the number line. Ordering, `min`, `max`,
-  `compareTo`, `equals` and `hashCode` stay faithful, so sorting and comparing always work.
+  approximation floating point makes at the other end of the number line. Ordering stays a total order and
+  `equals`/`hashCode` stay structural, so sorting works; the ordering itself is exact for exact values and
+  for anything the comparison budget can reduce, and a documented heuristic beyond that.
 - **Division, roots or logarithms as values.** Only `log10Approx()` and `toDoubleApprox()` exist, for
   display and for ratios such as a health bar; `Natural.fractionOf(whole)` returns that ratio as a float.
 - **Negative numbers.** `subtract` throws when the result would go below zero; `subtractClamped` stops at
@@ -117,7 +137,7 @@ level `α`, the way `a ↑^k 0 = 1` and `a ↑^k 1 = a` are for finite arrow cou
 | `add` | exact sum (promoted if it passes the threshold) | the larger operand |
 | `subtractClamped` | exact difference, clamped at zero | the larger operand, or zero when equal |
 | `multiply` | exact product (promoted if needed) | the larger operand, zero when one is zero |
-| `min`, `max`, `compareTo` | integer comparison | level, then base, then height |
+| `min`, `max`, `compareTo` | integer comparison | both sides are reduced by value first (budget `COMPARISON_REDUCTION_BUDGET = 32`), then rank, base, height |
 | `toString` | decimal digits | arrow notation (`10↑↑10`), or `base{level}height` for a transfinite level |
 | capacity checks (`isFull` style) | ordinary comparisons | an unlimited limit stays unlimited, a finite one saturates to full |
 
@@ -140,7 +160,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 151 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 164 check self check program
 ```
 
 ## Related

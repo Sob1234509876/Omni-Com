@@ -93,6 +93,19 @@ public final class Natural implements Comparable<Natural> {
      */
     private static final int MAX_ARROW_RUN = 10_000;
 
+    /**
+     * How many fundamental sequence steps a comparison may spend reducing a transfinite level to a
+     * successor, at the value's own height, before it gives up and compares the raw levels.
+     *
+     * <p>The measured cost of reaching a successor at index 10 is 1 step for {@code ω}, 2 for {@code ω^2}
+     * and 12 for {@code ω^ω}, but {@code ω^ω^ω} does not finish in any practical time and {@code ε₀} is
+     * worse: for notation systems of that size the number of steps is itself astronomical (an
+     * exponential tower for {@code ε₀}, a huge number for Buchholz style ordinals). A budget is therefore
+     * the only honest answer: 32 covers every level whose reduction is cheap and falls back to the level
+     * order for the rest, so a comparison never takes longer than 32 cheap ordinal steps.
+     */
+    public static final int COMPARISON_REDUCTION_BUDGET = 32;
+
     private enum Kind {
         /** Exact {@link BigInteger} value. */
         EXACT,
@@ -463,6 +476,54 @@ public final class Natural implements Comparable<Natural> {
         return Optional.of(CantorNormalForm.standard().finite(finiteLevel.add(TWO)));
     }
 
+    /**
+     * The level of a structural value whose level is a transfinite ordinal, reduced at the value's own
+     * height until it is no longer a limit ordinal, or empty when that does not finish within
+     * {@link #COMPARISON_REDUCTION_BUDGET} steps (which is what {@link #compareTo} does before comparing
+     * levels).
+     *
+     * <p>Empty is also the answer for exact values and for towers whose level is finite.
+     */
+    public Optional<Ordinal> reducedLevel() {
+        return reducedLevel(COMPARISON_REDUCTION_BUDGET);
+    }
+
+    /** Convenience for {@link #reducedLevel()} with an explicit reduction budget. */
+    public Optional<Ordinal> reducedLevel(int budget) {
+        if (kind != Kind.TOWER || level == null) {
+            return Optional.empty();
+        }
+        return level.normaliseAt(height, budget);
+    }
+
+    /**
+     * The level this value is compared by, expressed in the one scale that all towers share: the
+     * hyperoperation rank, where {@code 3} is exponentiation and {@code 4} tetration. A tower with a finite
+     * level stores its arrow count, so its rank is {@code arrows + 2}; a tower with a transfinite level uses
+     * {@link #reducedLevel()} when the reduction finishes and the raw level otherwise.
+     */
+    private Ordinal comparisonRank() {
+        if (level != null) {
+            return reducedLevel().orElse(level);
+        }
+        return CantorNormalForm.standard().finite(finiteLevel.add(TWO));
+    }
+
+    /**
+     * The value this one is compared as: a tower with a transfinite level is put through
+     * {@link TransfiniteHyperoperation#apply(Natural, Ordinal, Natural, int)} with the comparison budget,
+     * which is an identity at every step and often turns the tower into an ordinary finite level value
+     * (or an exact integer, as in {@code 2{ω}2 = 2{3}2 = 4}). Towers whose reduction the budget cannot
+     * finish are compared as they are.
+     */
+    private Natural reduceForComparison() {
+        if (kind != Kind.TOWER || level == null) {
+            return this;
+        }
+        Natural reduced = TransfiniteHyperoperation.apply(base, level, height, COMPARISON_REDUCTION_BUDGET);
+        return reduced.equals(this) ? this : reduced;
+    }
+
     /** Base of a structural value, empty for exact values and {@link #BEYOND}. */
     public Optional<Natural> towerBase() {
         return kind == Kind.TOWER ? Optional.of(base) : Optional.empty();
@@ -671,11 +732,24 @@ public final class Natural implements Comparable<Natural> {
 
     /**
      * Ordering by magnitude. Exact values are compared as integers; a structural value is greater than
-     * every exact value (it can only exist above the exact range) and towers are compared by level first,
-     * then base, then height, which follows the order of magnitude faithfully.
+     * every exact value (it can only exist above the exact range, unless it was built by
+     * {@link #tower(Natural, Ordinal, Natural)} without walking a limit level) and towers are compared by
+     * level first, then base, then height.
      *
      * <p>Levels follow the ordinals: a finite level is below every transfinite level, and among transfinite
-     * levels the ordinals decide. Two towers of the same level compare by base, then by height.
+     * levels the ordinals decide - but each level is <em>reduced at the value's own height</em> first
+     * ({@link #reducedLevel()}), because the value of {@code n {λ} m} is {@code n {λ[m]} m}: comparing the
+     * raw levels would call {@code 10{ω²+ω·2}10} larger, which is right, and {@code 10{ω²+ω·2}3} larger
+     * too, which is wrong since {@code (ω²+ω·2)[3] = ω²+ω+4}. The reduction is bounded by
+     * {@link #COMPARISON_REDUCTION_BUDGET} steps, and a level whose reduction is out of reach (anything
+     * from {@code ω^ω^ω} upwards, {@code ε₀} included, where the step count is itself astronomical) falls
+     * back to the raw order, so the comparison never costs more than 32 cheap ordinal steps.
+     *
+     * <p>Two consequences worth knowing. First, the order is by <em>magnitude</em>, not by form, so two
+     * towers that denote the same value compare equal even when {@link #equals(Object)} is false - a
+     * {@code TreeSet} therefore keeps one of them, and callers who need identity of form should use
+     * {@code equals}. Second, it stays a total order (both the reduced value and the comparison rank are
+     * functions of the value alone), so {@code Collections.sort} is well defined.
      */
     @Override
     public int compareTo(Natural other) {
@@ -686,35 +760,29 @@ public final class Natural implements Comparable<Natural> {
         if (kind == Kind.EXACT && other.kind == Kind.EXACT) {
             return value.compareTo(other.value);
         }
-        if (kind == Kind.EXACT) {
+        return compareReduced(reduceForComparison(), other.reduceForComparison());
+    }
+
+    /** {@link #compareTo(Natural)} on values that have already been through {@link #reduceForComparison()}. */
+    private static int compareReduced(Natural left, Natural right) {
+        if (left.kind == Kind.EXACT && right.kind == Kind.EXACT) {
+            return left.value.compareTo(right.value);
+        }
+        if (left.kind == Kind.EXACT) {
             return -1;
         }
-        if (other.kind == Kind.EXACT) {
+        if (right.kind == Kind.EXACT) {
             return 1;
         }
-        int byLevel = compareLevels(other);
-        if (byLevel != 0) {
-            return byLevel;
+        int byRank = left.comparisonRank().compareTo(right.comparisonRank());
+        if (byRank != 0) {
+            return byRank;
         }
-        int byBase = base.compareTo(other.base);
+        int byBase = left.base.compareTo(right.base);
         if (byBase != 0) {
             return byBase;
         }
-        return height.compareTo(other.height);
-    }
-
-    /** Finite levels are compared as numbers, transfinite levels as ordinals, and finite &lt; transfinite. */
-    private int compareLevels(Natural other) {
-        if (finiteLevel != null && other.finiteLevel != null) {
-            return finiteLevel.compareTo(other.finiteLevel);
-        }
-        if (finiteLevel != null) {
-            return -1;
-        }
-        if (other.finiteLevel != null) {
-            return 1;
-        }
-        return level.compareTo(other.level);
+        return left.height.compareTo(right.height);
     }
 
     @Override

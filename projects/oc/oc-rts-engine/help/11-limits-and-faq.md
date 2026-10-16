@@ -22,8 +22,9 @@
 | 结构形上的加减乘**按设计是近似的**，和浮点在小数端一样 | 给塔加/减一个很小的数，表示不变；乘两个塔得较大的那个；`subtractClamped` 夹在 0 | `Natural.add` / `multiply` / `subtractClamped` |
 | `Natural.BEYOND` 是**文档化的顶元素，不是自然数** | 比一切都大，吸收加减乘（`BEYOND - 任何有限值 = BEYOND`，`任何有限值 - BEYOND = 0`）；引擎把 `Inventory.UNLIMITED` 定义成它 | `Natural.BEYOND`、`Inventory.UNLIMITED` |
 | **没有除法、没有取余、没有负数** | `Natural` 只提供 `add` / `subtractClamped` / `subtract` / `multiply` / `min` / `max`；要比例就用 `fractionOf(whole)`，它给 `float` | `Natural.java` |
-| 排序、比较、`min`/`max`、`equals`/`hashCode` 在两种表示上都**忠实于量级** | 结构形大于一切精确值，塔之间按（级别，底数，高度）比较，所以 `Collections.sort` 用它当键是可靠的；级别是序数，有限级别低于任何超限级别 | `Natural.compareTo` |
-| 库的 `selfcheck` 任务有 151 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返，以及序数与超限超运算（第 11–13 节） | `GoogologyCheck.java` |
+| 比较是**量级序**、`equals` 是**形式序** | 两边都精确时完全精确；否则先按预算（`Natural.COMPARISON_REDUCTION_BUDGET = 32`）把两边各自归约成更规范的值（`2{ω}2` 会变成精确的 `4`），再比（级别 → 底数 → 高度），级别统一到超运算级别这把尺子上。所以 `10{ω}10`、`10{11}10` 与未归约的 `10{ω}10` 互比都是 `0`，但 `equals` 只对形式相同者为真；排序仍是全序，可以安全用作 `Collections.sort` 的键 | `Natural.compareTo`、`Natural.reducedLevel` |
+| 比较在**巨大序数级别**上会回落 | 把级别归约到后继所需的步数随级别爆炸：`ω` 1 步、`ω²` 2 步、`ω^ω` 12 步，但 `ω^ω^ω` 实测十分钟未完成、`ε₀` 是指数塔级（约 `f_3(n)`）。超出预算就回落到"级别字典序"：同高度通常正确，两侧高度相差悬殊时仍是启发式（`2^(10^6)` 与 `2↑↑5` 这类可能判反） | `Natural.COMPARISON_REDUCTION_BUDGET`、`Ordinal.normaliseAt` |
+| 库的 `selfcheck` 任务有 164 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返、序数与超限超运算（第 11–14 节） | `GoogologyCheck.java` |
 
 `float` 与 `int` 的领地没有被 `Natural` 取代，而且仍然各自带边界：位置/速度/半径/射程/`EntitySnapshot.healthFraction` 是 `float`，格坐标与一切 tick 时长（`buildTimeTicks`、`Recipe.durationTicks`、冷却、超时）是 `int`/`long`。位置与速度用的是 `float`，而 `Vec2` 只做 `float` 基本算术（这也是"同种子必然复现"的前提之一）：`float` 只有 24 位有效二进制位，**离原点越远分辨率越差**——原点附近相邻可表示值的间隔约 `1.2e-7` 格，到 10 万格处约 `0.0078` 格，到 100 万格处约 `0.0625` 格，此时"精确停在某个坐标"已没有意义（`UnitType.radius()` 通常在 0.35 格上下）。大数解决的是"数量"，不是"坐标"。
 
@@ -210,4 +211,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（151 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（164 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）

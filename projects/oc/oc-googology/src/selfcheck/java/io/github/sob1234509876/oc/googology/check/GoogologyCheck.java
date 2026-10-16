@@ -209,8 +209,85 @@ public final class GoogologyCheck {
         ordinals();
         transfiniteHyperoperation();
         customOrdinalNotation();
+        comparison();
 
         summary();
+    }
+
+    // ------------------------------------------------------------------ 14) comparing towers
+
+    /**
+     * Comparisons of transfinite level towers: the level is reduced at the value's own height first, within
+     * a budget, which fixes the cases where the raw level order disagrees with the rules - and the budget
+     * bounds the cost, because for {@code ω^ω^ω} and beyond the number of steps needed is astronomical.
+     */
+    private static void comparison() {
+        section("14) 塔的比较：按各自高度做预算内的级别归一化");
+        CantorNormalForm notation = CantorNormalForm.standard();
+        Ordinal omega = notation.omega();
+        Ordinal omegaSquared = notation.omegaPower(notation.of(2));
+        Ordinal alpha = notation.sum(omegaSquared, omega, notation.of(10));
+        Ordinal beta = notation.sum(omegaSquared, omega.times(2));
+
+        Natural alphaAtTen = Natural.tower(Natural.TEN, alpha, Natural.TEN);
+        Natural betaAtTen = Natural.tower(Natural.TEN, beta, Natural.TEN);
+        equal("高度 10 时 β 归约成 ω²+ω+11", notation.sum(omegaSquared, omega, notation.of(11)),
+                betaAtTen.reducedLevel().orElseThrow());
+        check("高度 10：ω²+ω+10 < ω²+ω·2（判对）", alphaAtTen.compareTo(betaAtTen) < 0);
+
+        Natural alphaAtThree = Natural.tower(Natural.TEN, alpha, Natural.of(3));
+        Natural betaAtThree = Natural.tower(Natural.TEN, beta, Natural.of(3));
+        equal("高度 3 时 β 归约成 ω²+ω+4", notation.sum(omegaSquared, omega, notation.of(4)),
+                betaAtThree.reducedLevel().orElseThrow());
+        check("高度 3：β 的塔反而更小（β[3] = ω²+ω+4 < ω²+ω+10）",
+                betaAtThree.compareTo(alphaAtThree) < 0);
+
+        Natural omegaAtTwo = Natural.tower(Natural.TWO, omega, Natural.TWO);
+        Natural fiveAtTwo = Natural.tower(Natural.TWO, notation.of(5), Natural.TWO);
+        Natural omegaAtThree = Natural.tower(Natural.TWO, omega, Natural.of(3));
+        Natural fiveAtThree = Natural.tower(Natural.TWO, notation.of(5), Natural.of(3));
+        equal("2{ω}2 的归约级别是 3", notation.of(3), omegaAtTwo.reducedLevel().orElseThrow());
+        check("2{ω}2 归约成 2{3}2 = 4，与同样等于 4 的 2{5}2 比较相等",
+                omegaAtTwo.compareTo(fiveAtTwo) == 0);
+        check("高度 3 才分得开：2{ω}3 = 2{4}3 = 16 < 2{5}3 = 65536",
+                omegaAtThree.compareTo(fiveAtThree) < 0);
+
+        Natural walkedOmega = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
+        Natural constructedEleven = Natural.tower(Natural.TEN, notation.of(11), Natural.TEN);
+        Natural symbolicOmega = Natural.tower(Natural.TEN, omega, Natural.TEN);
+        check("同一个值的两种写法比较相等：10{ω}10 与 10{11}10", walkedOmega.compareTo(constructedEleven) == 0);
+        check("连未归约的 10{ω}10 也与它们相等（归约后都是 9 个箭头）",
+                symbolicOmega.compareTo(walkedOmega) == 0 && walkedOmega.equals(constructedEleven));
+        check("但形式不同：equals 为 false（compareTo 是量级序，不是形式相等）",
+                !symbolicOmega.equals(walkedOmega));
+
+        Natural epsilonAtFive = Natural.tower(Natural.TEN, notation.limit(), Natural.of(5));
+        Natural deepTowerAtFive = Natural.tower(Natural.TEN, notation.omegaTower(6), Natural.of(5));
+        check("ε₀ 与六层 ω 塔在预算内归约不完，于是回落到原始级别",
+                epsilonAtFive.reducedLevel().isEmpty() && deepTowerAtFive.reducedLevel().isEmpty());
+        long start = System.nanoTime();
+        int forward = epsilonAtFive.compareTo(deepTowerAtFive);
+        int backward = deepTowerAtFive.compareTo(epsilonAtFive);
+        long millis = (System.nanoTime() - start) / 1_000_000L;
+        check("回落时比较反对称且立刻返回（" + millis + " ms）", forward == -backward && millis < 1_000);
+
+        List<Natural> values = List.of(alphaAtTen, betaAtTen, alphaAtThree, betaAtThree, omegaAtTwo, fiveAtTwo,
+                walkedOmega, epsilonAtFive, Natural.BEYOND);
+        boolean antisymmetric = true;
+        boolean transitive = true;
+        for (Natural a : values) {
+            for (Natural b : values) {
+                if (a.compareTo(b) != -b.compareTo(a)) {
+                    antisymmetric = false;
+                }
+                for (Natural c : values) {
+                    if (a.compareTo(b) <= 0 && b.compareTo(c) <= 0 && a.compareTo(c) > 0) {
+                        transitive = false;
+                    }
+                }
+            }
+        }
+        check("一组塔上比较满足反对称与传递（排序是安全的）", antisymmetric && transitive);
     }
 
     // ------------------------------------------------------------------ 11) ordinals

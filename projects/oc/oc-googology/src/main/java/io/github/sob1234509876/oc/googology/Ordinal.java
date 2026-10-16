@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.googology;
 
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -46,6 +47,40 @@ public interface Ordinal extends Comparable<Ordinal> {
      * fundamental sequence may be an astronomically large number.
      */
     Optional<Ordinal> fundamentalSequence(Natural index);
+
+    /**
+     * Reduces this ordinal at the given index until it stops being a limit ordinal, taking at most
+     * {@code budget} fundamental sequence steps. A non limit ordinal is returned unchanged in zero steps.
+     *
+     * <p>This is the operation behind comparing two hyperoperation towers of transfinite level: the value
+     * {@code n {λ} m} equals {@code n {λ[m]} m}, so comparing the levels <em>after</em> reducing them at
+     * their own heights reflects the rules, while comparing the raw levels can be wrong when an index is
+     * too small to reach the other level.
+     *
+     * <p>The cost is the number of steps it takes to reach a successor, and that number can itself be
+     * astronomical: measured with index 10, {@code ω} needs 1 step, {@code ω^2} two and {@code ω^ω} twelve,
+     * while {@code ω^ω^ω} does not finish in any practical time and {@code ε₀} is worse still. The budget
+     * is therefore explicit, and {@link Optional#empty()} means "still a limit after that many steps", not
+     * "does not exist".
+     */
+    default Optional<Ordinal> normaliseAt(Natural index, int budget) {
+        Objects.requireNonNull(index, "index");
+        if (!isLimit()) {
+            return Optional.of(this);
+        }
+        Ordinal current = this;
+        for (int step = 0; step < Math.max(0, budget); step++) {
+            Optional<Ordinal> next = current.fundamentalSequence(index);
+            if (next.isEmpty()) {
+                return Optional.empty();
+            }
+            current = next.get();
+            if (!current.isLimit()) {
+                return Optional.of(current);
+            }
+        }
+        return Optional.empty();
+    }
 
     /** The ordinary value when this ordinal is finite, empty otherwise. */
     Optional<Natural> finiteValue();
