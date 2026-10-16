@@ -6,6 +6,8 @@ import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.Gateway;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
@@ -19,6 +21,7 @@ import io.github.sob1234509876.oc.rts.sim.SimulationSystem;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Turns {@link DeliveryJob}s into moving haulers, or into a timed teleport when direct delivery is
@@ -157,9 +160,91 @@ public final class HaulingSystem implements SimulationSystem {
         if (directDelivery) {
             tickDirectDelivery(now);
         } else {
+            // Cross dimension jobs first: no hauler can walk from one map to another, so those goods are
+            // shipped through the gateways and the hauler search below never sees them.
+            tickShipped(now);
             tickHaulers(now);
         }
         pruneFinished();
+    }
+
+    // ------------------------------------------------------------------ shipping between dimensions
+
+    /**
+     * Ships the deliveries whose goods have to leave their map.
+     *
+     * <p>A hauler is a unit on one map, so it can neither fetch from nor deliver to another dimension;
+     * instead the goods travel as cargo through the gateway chain of the world. The waiting time is the
+     * configured direct delivery delay times the number of gateways on the route, which makes a Moon base
+     * supplied from Earth visibly more expensive than a delivery across the same map while keeping the
+     * behaviour identical to the direct delivery mode the engine already had.
+     */
+    private void tickShipped(long now) {
+        for (DeliveryJob job : jobs) {
+            if (!job.isPending()) {
+                continue;
+            }
+            int hops = shippingHops(job);
+            if (hops < 1) {
+                continue;
+            }
+            if (job.delivered().containsAll(job.bundle())) {
+                job.complete(now);
+                continue;
+            }
+            if (!isViable(job)) {
+                job.fail(now);
+                continue;
+            }
+            if (job.pendingTicks() < shippingDelay(hops)) {
+                continue;
+            }
+            if (expired(job)) {
+                job.fail(now);
+                continue;
+            }
+            ItemBundle wanted = job.reservation().bundle();
+            if (!job.target().inventory().canAcceptAll(wanted)) {
+                continue;
+            }
+            ItemBundle taken = job.reservation().commit();
+            ItemBundle accepted = insertInto(job.target().inventory(), taken);
+            job.recordDelivered(accepted);
+            ItemBundle leftover = taken.minusClamped(accepted);
+            if (!leftover.isEmpty()) {
+                storeBack(job.player(), leftover, job.target().position());
+            }
+            job.complete(now);
+        }
+    }
+
+    /**
+     * How many gateways stand between the warehouses that can supply the job and its target, or {@code 0}
+     * when the goods never leave their map and {@code -1} when no route exists at all.
+     */
+    private int shippingHops(DeliveryJob job) {
+        WarehouseLogistics logistics = WarehouseLogistics.of(job.player());
+        if (logistics == null) {
+            return 0;
+        }
+        DimensionId targetDimension = job.target().dimensionId();
+        int hops = 0;
+        for (Building warehouse : logistics.pickupWarehouses(job.reservation())) {
+            if (warehouse.dimensionId().equals(targetDimension)) {
+                continue;
+            }
+            Optional<List<Gateway>> route = world.route(warehouse.dimensionId(), targetDimension);
+            if (route.isEmpty()) {
+                return -1;
+            }
+            hops = Math.max(hops, route.get().size());
+        }
+        return hops;
+    }
+
+    /** Waiting time of a shipped delivery: the direct delivery delay per gateway it has to pass. */
+    private int shippingDelay(int hops) {
+        return Math.max(1, directDeliveryTicks) * Math.max(1, hops);
     }
 
     // ------------------------------------------------------------------ direct delivery
@@ -245,6 +330,12 @@ public final class HaulingSystem implements SimulationSystem {
         float bestDistance = 0f;
         for (Unit unit : world.units()) {
             if (!unit.isAlive() || !unit.owner().equals(job.player())) {
+                continue;
+            }
+            // A hauler lives on one map: only units standing in the target's dimension can ever walk the
+            // pickup to drop off route, and letting another map's unit through would send it to coordinates
+            // that mean something else entirely.
+            if (!unit.dimensionId().equals(job.target().dimensionId())) {
                 continue;
             }
             if (!unit.type().canHaul() || !isIdle(unit) || isAssigned(unit)) {

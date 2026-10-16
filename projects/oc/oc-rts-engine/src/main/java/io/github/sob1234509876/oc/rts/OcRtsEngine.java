@@ -7,6 +7,8 @@ import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.Dimension;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.EventBus;
@@ -106,6 +108,27 @@ public final class OcRtsEngine {
 
     public World world() {
         return world;
+    }
+
+    /**
+     * Every dimension of the world, in creation order.
+     *
+     * <p>Coordinates are local to a dimension, so a caller that compares positions - a renderer, a
+     * minimap, a scenario checking where a unit ended up - has to walk the maps one at a time instead of
+     * mixing the entities of {@link World#entities()}.
+     */
+    public List<Dimension> dimensions() {
+        return world.dimensions();
+    }
+
+    /** One dimension by identity, for map, entities, spatial index and streaming of that single map. */
+    public Dimension dimension(DimensionId id) {
+        return world.dimension(id);
+    }
+
+    /** Identity of the dimension the single map API of the engine ({@link #map()}, {@link #focus(Vec2)}) talks to. */
+    public DimensionId defaultDimensionId() {
+        return world.defaultDimensionId();
     }
 
     public ContentRegistry content() {
@@ -213,13 +236,28 @@ public final class OcRtsEngine {
         return false;
     }
 
-    /** Moves the point of interest; chunks around it are streamed in on the next tick. */
+    /**
+     * Moves the point of interest of the {@linkplain #defaultDimensionId() default dimension}; chunks
+     * around it are streamed in on the next tick.
+     */
     public void focus(Vec2 center) {
-        map.focus(center, map.radiusChunks());
+        focus(world.defaultDimensionId(), center, map.radiusChunks());
     }
 
     public void focus(GridPos tile) {
         focus(tile.center());
+    }
+
+    /**
+     * Moves the point of interest of one dimension, streaming chunks there and unloading the rest.
+     *
+     * <p>The focus is per dimension because a camera, a scenario or an AI can watch two maps at once and
+     * each map keeps its own loaded area. The radius is passed explicitly here, so this overload also
+     * changes how much of that map is kept in memory, unlike the default dimension overloads which keep
+     * the engine's configured radius. A map that cannot stream ignores the request.
+     */
+    public void focus(DimensionId dimension, Vec2 center, int radiusChunks) {
+        world.dimension(dimension).focus(center, radiusChunks);
     }
 
     /** Tiles that are currently held in memory. */
@@ -247,12 +285,23 @@ public final class OcRtsEngine {
 
     // ------------------------------------------------------------------ presentation seams
 
-    /** Immutable view of the world around a point, for a renderer, a minimap or a test. */
+    /** Immutable view of the default dimension around a point, for a renderer, a minimap or a test. */
     public WorldSnapshot snapshot(GridPos center, int radiusTiles) {
         return snapshots.capture(center, radiusTiles);
     }
 
-    /** Text picture of the world around a point; the engine itself never draws anything. */
+    /**
+     * Immutable view of one dimension around a point.
+     *
+     * <p>The center is a tile of {@code dimension}, and the returned snapshot reports that dimension, so
+     * a renderer showing the Moon does not accidentally draw the overworld standing at the same
+     * coordinates.
+     */
+    public WorldSnapshot snapshot(DimensionId dimension, GridPos center, int radiusTiles) {
+        return snapshots.capture(dimension, center, radiusTiles);
+    }
+
+    /** Text picture of the default dimension around a point; the engine itself never draws anything. */
     public String render(GridPos center, int radiusTiles) {
         return asciiRenderer.render(snapshot(center, radiusTiles));
     }

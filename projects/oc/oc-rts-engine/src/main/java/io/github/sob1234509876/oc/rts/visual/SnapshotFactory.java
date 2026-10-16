@@ -8,9 +8,12 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
+import io.github.sob1234509876.oc.rts.dimension.Dimension;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.OrderQueue;
 
 import java.util.ArrayList;
@@ -24,6 +27,13 @@ import java.util.Objects;
  * is copied and the entities inside it are read once. A renderer that keeps up with the simulation
  * calls this once per frame and then draws from the snapshot, which is what keeps the live world free
  * of any presentation concerns and lets a GUI run on its own thread.
+ *
+ * <p>A world holds several dimensions and their coordinates are local to each map, so a capture always
+ * names the {@link DimensionId} it describes: terrain comes from that dimension's map, entities from
+ * that dimension's spatial index. Using one index for every map would drag the neighbours of another
+ * world into the picture, which is precisely the phantom a renderer must never draw. The single
+ * argument entry points remain and mean the {@link World#defaultDimensionId() default dimension}, so
+ * code written before dimensions existed keeps behaving exactly as it did.
  *
  * <p>Only living entities are captured. An entity that died this tick has already been marked dead and
  * its death animation is the animator's business, not the snapshot's; including it would make a text
@@ -75,23 +85,41 @@ public final class SnapshotFactory {
     }
 
     /**
-     * Captures the square of {@code 2 * radiusTiles + 1} tiles around the center tile.
+     * Captures the square of {@code 2 * radiusTiles + 1} tiles around the center tile of the default
+     * dimension.
+     *
+     * <p>This is the entry point of a single map world and of every caller written before dimensions
+     * existed; it simply names {@link World#defaultDimensionId()} and delegates, so it describes the same
+     * map {@code world.map()} and {@code world.spatial()} do.
+     */
+    public WorldSnapshot capture(GridPos center, int radiusTiles) {
+        return capture(world.defaultDimensionId(), center, radiusTiles);
+    }
+
+    /**
+     * Captures the square of {@code 2 * radiusTiles + 1} tiles around the center tile of one dimension.
      *
      * <p>The rectangle is clipped nowhere: tiles outside the generated chunks are simply whatever the
      * terrain map reports for them, so a snapshot of the map edge is still a complete, usable image.
-     * Entities are taken from the spatial index and sorted by {@link EntityId}, which makes the capture
-     * of an unchanged world byte for byte reproducible.
+     * Entities are taken from the spatial index of <em>that</em> dimension and sorted by {@link EntityId},
+     * which makes the capture of an unchanged world byte for byte reproducible. The center is a tile of
+     * that dimension, not of the default one, because coordinates are local to a map.
+     *
+     * @throws IllegalArgumentException when the world has no such dimension
      */
-    public WorldSnapshot capture(GridPos center, int radiusTiles) {
+    public WorldSnapshot capture(DimensionId dimension, GridPos center, int radiusTiles) {
+        Objects.requireNonNull(dimension, "dimension");
         Objects.requireNonNull(center, "center");
         if (radiusTiles < 0) {
             throw new IllegalArgumentException("radiusTiles must not be negative, was " + radiusTiles);
         }
+        Dimension source = world.dimension(dimension);
+        TerrainMap map = source.map();
         TileRect bounds = TileRect.centered(center, radiusTiles);
-        TerrainType[][] terrain = captureTerrain(bounds);
+        TerrainType[][] terrain = captureTerrain(map, bounds);
         TerrainType fallback = world.content().fallbackTerrain();
         List<EntitySnapshot> entities = new ArrayList<>();
-        for (Entity entity : world.spatial().inRect(bounds)) {
+        for (Entity entity : world.spatial(dimension).inRect(bounds)) {
             if (!entity.isAlive()) {
                 continue;
             }
@@ -99,21 +127,23 @@ public final class SnapshotFactory {
         }
         entities.sort((left, right) -> left.id().compareTo(right.id()));
         return new WorldSnapshot(
+                dimension,
+                source.profile().displayName(),
                 world.tickNumber(),
                 ticksPerSecond,
                 bounds,
                 terrain,
                 fallback,
                 entities,
-                List.copyOf(world.map().loadedChunks()));
+                List.copyOf(map.loadedChunks()));
     }
 
     /** Reads one terrain row per map line, in row major order matching the bounds. */
-    private TerrainType[][] captureTerrain(TileRect bounds) {
+    private TerrainType[][] captureTerrain(TerrainMap map, TileRect bounds) {
         TerrainType[][] terrain = new TerrainType[bounds.height()][bounds.width()];
         for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
             for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
-                terrain[y - bounds.minY()][x - bounds.minX()] = world.map().terrainAt(x, y);
+                terrain[y - bounds.minY()][x - bounds.minX()] = map.terrainAt(x, y);
             }
         }
         return terrain;

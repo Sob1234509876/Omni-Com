@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.rts.order;
 
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 
@@ -40,6 +41,16 @@ public interface UnitDirector {
 
     /** Cancels the current order of the unit and tells it to stand still. */
     void stop(Unit unit);
+
+    /**
+     * Sends the unit to another dimension, walking it through the gateways of the world.
+     *
+     * <p>The unit is ordered to the first gateway on the route, and each arrival hands it to the next hop
+     * until it stands in {@code target}. The route is {@link io.github.sob1234509876.oc.rts.World#route}
+     * and nothing happens when the target is unreachable, so a scenario that forgot to place a portal sees
+     * the order fail rather than a unit teleporting across space.
+     */
+    void travel(Unit unit, DimensionId target);
 
     /** Cancels the current order of every given unit. */
     void stop(Collection<Unit> units);

@@ -45,8 +45,11 @@ import java.util.StringJoiner;
  * </ul>
  *
  * <p>A building occupies its footprint, so its letter is drawn at the origin tile of the footprint and
- * the remaining tiles stay terrain. The last line is a legend with the tick, the amount of entities and
- * the terrain symbols actually used, which is what makes the output readable without the class in hand.
+ * the remaining tiles stay terrain. The last line is a legend with the dimension the picture shows, the
+ * tick, the amount of entities and the terrain symbols actually used, which is what makes the output
+ * readable without the class in hand. The dimension belongs in that line because every map has its own
+ * terrain and its own tile {@code (0, 0)}: without it two renderings of the same coordinates could not
+ * be told apart, and a diff between them would look like a simulation change rather than a map change.
  */
 public final class AsciiMapRenderer {
 
@@ -170,11 +173,16 @@ public final class AsciiMapRenderer {
         return symbol == null ? OTHER_SYMBOL : symbol;
     }
 
-    /** Last line of the output: tick, entity counts and the terrain symbols that were drawn. */
+    /**
+     * Last line of the output: which dimension it shows, the tick, entity counts and the terrain symbols
+     * that were drawn. The dimension leads the line, so a console full of maps still says which map each
+     * one is even when only the first characters are read.
+     */
     private static String legend(WorldSnapshot snapshot, Map<String, Character> terrainLegend, int placed) {
         StringJoiner terrain = new StringJoiner(", ");
         terrainLegend.forEach((path, symbol) -> terrain.add(symbol + " " + path));
-        return "tick " + snapshot.tick() + " (" + String.format("%.2f", snapshot.elapsedSeconds()) + "s)"
+        return "dimension " + snapshot.dimension() + " (" + snapshot.dimensionName() + ")"
+                + " | tick " + snapshot.tick() + " (" + String.format("%.2f", snapshot.elapsedSeconds()) + "s)"
                 + " | entities " + snapshot.entityCount() + " (" + snapshot.unitCount() + " units, "
                 + snapshot.buildingCount() + " buildings), drawn " + placed
                 + " | tiles " + snapshot.width() + "x" + snapshot.height()

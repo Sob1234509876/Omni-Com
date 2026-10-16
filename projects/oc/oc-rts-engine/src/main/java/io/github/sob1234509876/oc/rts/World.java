@@ -10,6 +10,7 @@ import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.Dimension;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
+import io.github.sob1234509876.oc.rts.dimension.Gateway;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.SpatialIndex;
@@ -23,11 +24,14 @@ import io.github.sob1234509876.oc.rts.order.UnitDirector;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The simulation state: the dimensions, the players and the services the systems use to talk to each other.
@@ -70,6 +74,7 @@ public final class World {
     private final Map<DimensionId, Dimension> dimensions = new LinkedHashMap<>();
 
     private DimensionId defaultDimensionId = DimensionId.overworld();
+    private final List<Gateway> gateways = new ArrayList<>();
     private UnitDirector director;
     private long nextEntityId = 1L;
     private long tickNumber;
@@ -233,6 +238,112 @@ public final class World {
         DimensionProfile profile = existing != null ? existing.profile() : DimensionProfile.earth();
         dimensions.put(defaultDimensionId,
                 new Dimension(defaultDimensionId, profile, map, this::nextId, this::tickNumber, events));
+    }
+
+    // ------------------------------------------------------------------ gateways and travel
+
+    /** Registers a one way link between two dimensions. */
+    public void addGateway(Gateway gateway) {
+        gateways.add(Objects.requireNonNull(gateway, "gateway"));
+    }
+
+    /** Every gateway, in registration order. */
+    public List<Gateway> gateways() {
+        return List.copyOf(gateways);
+    }
+
+    /** Gateways leaving one dimension, in registration order. */
+    public List<Gateway> gatewaysFrom(DimensionId id) {
+        Objects.requireNonNull(id, "id");
+        return gateways.stream().filter(gateway -> gateway.from().equals(id)).toList();
+    }
+
+    /** The gateway a position stands on, within the given radius; the first match in registration order. */
+    public Optional<Gateway> gatewayAt(DimensionId id, Vec2 position, float radius) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(position, "position");
+        return gatewaysFrom(id).stream()
+                .filter(gateway -> position.distance(gateway.at().center()) <= radius)
+                .findFirst();
+    }
+
+    /**
+     * The chain of gateways leading from one dimension to another: empty when there is none, and an empty
+     * list when the two are the same.
+     *
+     * <p>Breadth first over the gateway graph. A world has a handful of dimensions, so a queue is plenty,
+     * and because gateways are walked in insertion order the route found for a given layout is always the
+     * same one, which keeps a replay deterministic.
+     */
+    public Optional<List<Gateway>> route(DimensionId from, DimensionId to) {
+        Objects.requireNonNull(from, "from");
+        Objects.requireNonNull(to, "to");
+        if (from.equals(to)) {
+            return Optional.of(List.of());
+        }
+        Map<DimensionId, List<Gateway>> outgoing = new LinkedHashMap<>();
+        for (Gateway gateway : gateways) {
+            outgoing.computeIfAbsent(gateway.from(), key -> new ArrayList<>()).add(gateway);
+        }
+        Map<DimensionId, Gateway> cameFrom = new LinkedHashMap<>();
+        Set<DimensionId> visited = new LinkedHashSet<>();
+        List<DimensionId> frontier = new ArrayList<>();
+        visited.add(from);
+        frontier.add(from);
+        while (!frontier.isEmpty()) {
+            List<DimensionId> next = new ArrayList<>();
+            for (DimensionId current : frontier) {
+                for (Gateway gateway : outgoing.getOrDefault(current, List.of())) {
+                    if (!visited.add(gateway.to())) {
+                        continue;
+                    }
+                    cameFrom.put(gateway.to(), gateway);
+                    if (gateway.to().equals(to)) {
+                        return Optional.of(retrace(cameFrom, from, to));
+                    }
+                    next.add(gateway.to());
+                }
+            }
+            frontier = next;
+        }
+        return Optional.empty();
+    }
+
+    private static List<Gateway> retrace(Map<DimensionId, Gateway> cameFrom, DimensionId from,
+            DimensionId to) {
+        List<Gateway> reversed = new ArrayList<>();
+        DimensionId current = to;
+        while (!current.equals(from)) {
+            Gateway gateway = cameFrom.get(current);
+            reversed.add(gateway);
+            current = gateway.from();
+        }
+        Collections.reverse(reversed);
+        return List.copyOf(reversed);
+    }
+
+    /**
+     * Moves an entity to another dimension straight away, keeping its id, health, cargo and orders.
+     *
+     * <p>The entity leaves the source index and joins the target one, so it stops being a neighbour of the
+     * units it left behind and becomes one of the units it arrives among. {@code EntitySpawned} is published
+     * for the arrival - subscribers index entities by that fact - followed by
+     * {@link Events.EntityTransferred}, which is the one that says "same entity, new map".
+     */
+    public void transfer(Entity entity, DimensionId to, Vec2 position) {
+        Objects.requireNonNull(entity, "entity");
+        Objects.requireNonNull(to, "to");
+        Objects.requireNonNull(position, "position");
+        DimensionId from = entity.dimensionId();
+        if (from.equals(to)) {
+            entity.setPosition(position);
+            dimension(to).spatial().update(entity);
+            return;
+        }
+        dimension(from).detach(entity);
+        entity.setPosition(position);
+        dimension(to).register(entity);
+        events.publish(new Events.EntityTransferred(entity, from, to, tickNumber));
     }
 
     // ------------------------------------------------------------------ clock

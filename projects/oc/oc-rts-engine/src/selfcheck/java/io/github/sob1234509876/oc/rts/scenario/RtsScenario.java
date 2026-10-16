@@ -12,10 +12,12 @@ import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.Gateway;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
@@ -754,7 +756,36 @@ public final class RtsScenario {
         engine.tick();
         check.equal(0, world.units(moon).size(), "the Moon is empty after the destroy");
         check.equal(1, world.units(overworld).size(), "the overworld unit survived");
-        check.note("dimension transfers (portals, rockets and cross dimensional logistics) are the next step");
+
+        // Travel: two gateways chain the overworld to Mars through the Moon, and the order walks the unit
+        // through both of them, keeping its id.
+        GridPos earthPad = findWalkable(world.map(overworld), sameSpot, 6);
+        GridPos moonPad = findWalkable(world.map(moon), new GridPos(0, 0), 6);
+        GridPos marsPad = findWalkable(world.map(mars), new GridPos(0, 0), 6);
+        world.addGateway(Gateway.of(overworld, earthPad, moon, moonPad));
+        world.addGateway(Gateway.of(moon, moonPad, mars, marsPad));
+        check.equal(2, world.route(overworld, mars).orElseThrow().size(),
+                "the route from the overworld to Mars goes through the Moon");
+        check.that(world.route(mars, overworld).isEmpty(), "gateways are one way unless reversed");
+        check.that(world.gatewayAt(overworld, earthPad.center(), 1f).isPresent(),
+                "a unit standing on the pad is at the gateway");
+
+        Unit traveller = world.spawnUnit(overworld, type, blue, earthPad);
+        var travellerId = traveller.id();
+        int[] transfers = {0};
+        world.events().subscribe(Events.EntityTransferred.class, event -> transfers[0]++);
+        world.director().travel(traveller, mars);
+        for (int i = 0; i < 400 && !traveller.dimensionId().equals(mars); i++) {
+            engine.tick();
+        }
+        check.equal("mars", traveller.dimensionId().key(), "the unit travelled to Mars through the Moon");
+        check.that(world.findEntity(travellerId).orElseThrow() == traveller,
+                "the transfer kept the entity id, so an id still finds it");
+        check.equal(2, transfers[0], "both gateways fired a transfer event");
+        check.equal(1, world.units(mars).size(), "Mars now holds the traveller");
+        check.equal(1, world.units(overworld).size(),
+                "the traveller left the overworld, which keeps its original unit");
+        check.note("cross dimension deliveries are shipped through gateways; hazards are still data only");
     }
 
     private static void checkHugeNumbers(Check check) {

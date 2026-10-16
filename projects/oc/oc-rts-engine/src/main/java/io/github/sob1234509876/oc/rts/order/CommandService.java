@@ -5,6 +5,7 @@ import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
 import io.github.sob1234509876.oc.rts.formation.FormationPlanner;
@@ -86,6 +87,15 @@ public final class CommandService implements UnitDirector {
             return;
         }
         unit.orders().replace(context(unit), new MoveOrder(destination));
+    }
+
+    @Override
+    public void travel(Unit unit, DimensionId target) {
+        Objects.requireNonNull(target, "target");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().replace(context(unit), new TransferOrder(target));
     }
 
     @Override

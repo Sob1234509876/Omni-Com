@@ -28,6 +28,14 @@ public final class Events {
     public record EntityDestroyed(Entity entity, long tick) {
     }
 
+    /**
+     * An entity changed dimension: it left {@code from} and now stands in {@code to}. A transfer is not a
+     * destroy plus a spawn - the entity keeps its id, its health, its cargo and its orders - so it gets its
+     * own fact for subscribers such as a user interface that follows a selected unit across maps.
+     */
+    public record EntityTransferred(Entity entity, DimensionId from, DimensionId to, long tick) {
+    }
+
     /** An entity took damage; {@code source} may be {@code null} for environmental damage. */
     public record DamageDealt(Entity target, Entity source, Natural amount, long tick) {
     }
