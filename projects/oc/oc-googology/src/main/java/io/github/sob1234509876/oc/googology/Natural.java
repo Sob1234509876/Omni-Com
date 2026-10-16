@@ -124,6 +124,16 @@ public final class Natural implements Comparable<Natural> {
     private final Ordinal level;
     private final Natural height;
 
+    /**
+     * Memoised {@link #reduceForComparison()}; null until first use. A pure function of the value, so it
+     * cannot change any answer, only the cost: this is what makes repeated comparisons (a sort, a hot loop)
+     * amortise the comparison budget.
+     */
+    private volatile Natural comparisonValue;
+
+    /** Memoised {@link #comparisonRank()}; null until first use, and a pure function as well. */
+    private volatile Ordinal comparisonRankCache;
+
     private Natural(Kind kind, BigInteger value, Natural base, Natural finiteLevel, Ordinal level, Natural height) {
         this.kind = kind;
         this.value = value;
@@ -501,27 +511,197 @@ public final class Natural implements Comparable<Natural> {
      * hyperoperation rank, where {@code 3} is exponentiation and {@code 4} tetration. A tower with a finite
      * level stores its arrow count, so its rank is {@code arrows + 2}; a tower with a transfinite level uses
      * {@link #reducedLevel()} when the reduction finishes and the raw level otherwise.
+     *
+     * <p>The result is cached: it is a pure function of the value, so memoising it cannot change any
+     * answer, and sorting a collection of towers pays for it once per value instead of once per comparison.
      */
     private Ordinal comparisonRank() {
-        if (level != null) {
-            return reducedLevel().orElse(level);
+        Ordinal cached = comparisonRankCache;
+        if (cached != null) {
+            return cached;
         }
-        return CantorNormalForm.standard().finite(finiteLevel.add(TWO));
+        Ordinal rank = level != null ? reducedLevel().orElse(level)
+                : CantorNormalForm.standard().finite(finiteLevel.add(TWO));
+        comparisonRankCache = rank;
+        return rank;
     }
 
     /**
-     * The value this one is compared as: a tower with a transfinite level is put through
-     * {@link TransfiniteHyperoperation#apply(Natural, Ordinal, Natural, int)} with the comparison budget,
-     * which is an identity at every step and often turns the tower into an ordinary finite level value
-     * (or an exact integer, as in {@code 2{ω}2 = 2{3}2 = 4}). Towers whose reduction the budget cannot
-     * finish are compared as they are.
+     * The value this one is compared as: the exact degenerate rules first ({@code n{α}1 = n},
+     * {@code n{α}0} per the documented conventions, and {@code 2{α}2 = 4} for every level {@code α >= 1},
+     * which holds even when the level is too large to walk), then one budgeted run of
+     * {@link TransfiniteHyperoperation#apply(Natural, Ordinal, Natural, int)}.
+     *
+     * <p>Every step is an identity, so the compared value is unchanged, and the run often turns a tower
+     * into an ordinary value: {@code 2{ω}2} becomes the exact {@code 4} and {@code 10{ω}10} becomes a nine
+     * arrow tower. Towers whose reduction the budget cannot finish are compared as they are.
+     *
+     * <p>Like {@link #comparisonRank()} this is cached, because it is a pure function of the value.
      */
     private Natural reduceForComparison() {
+        Natural cached = comparisonValue;
+        if (cached != null) {
+            return cached;
+        }
+        Natural reduced = computeComparisonValue();
+        comparisonValue = reduced;
+        return reduced;
+    }
+
+    private Natural computeComparisonValue() {
         if (kind != Kind.TOWER || level == null) {
             return this;
         }
+        if (base.equals(TWO) && height.equals(TWO) && !level.isZero()) {
+            // 2{1}2 = 2+2 = 4, 2{2}2 = 4, and 2{α}2 = 4 for every higher level as well: the successor
+            // identity n{β+1}2 = n{β}n collapses to 2{β}2 = 4 for n = 2, and the limit levels inherit it
+            // through their fundamental sequences, so this survives levels that no budget can walk.
+            return of(4);
+        }
         Natural reduced = TransfiniteHyperoperation.apply(base, level, height, COMPARISON_REDUCTION_BUDGET);
         return reduced.equals(this) ? this : reduced;
+    }
+
+    /** Base two logarithm of the magnitude, clamped like {@link #log10Approx()}. */
+    public double log2Approx() {
+        return log10Approx() / LOG10_OF_TWO;
+    }
+
+    /** Arrow count of a tower whose level is finite, or {@code -1} for transfinite levels and non towers. */
+    private int finiteArrowCount() {
+        if (kind != Kind.TOWER || level != null || finiteLevel == null) {
+            return -1;
+        }
+        long count = finiteLevel.toLongSaturated();
+        return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
+    }
+
+    /**
+     * Compares this value with the other by magnitude, allowing the answer
+     * {@link ComparisonResult#UNKNOWN} when no available rule proves the order.
+     *
+     * <p>The rules, in order: identical reduced forms are equal; two exact values compare as integers; a
+     * truncated comparison decides a pair when one side is exact (and therefore below
+     * {@code 2^EXACT_BIT_LIMIT}) and the other is provably at least that large; and two towers over the
+     * same base whose levels are both finite are decided by known monotonicity (the same level compares
+     * heights, a higher level wins when it can pay for the difference out of its own height). Everything
+     * else is {@code UNKNOWN}; the truncated evaluation never claims equality, because both sides reaching
+     * the threshold only means that both are huge.
+     *
+     * @see #compareTo(Natural)
+     */
+    public ComparisonResult compareMagnitude(Natural other) {
+        return compareMagnitude(other, COMPARISON_REDUCTION_BUDGET);
+    }
+
+    /**
+     * {@link #compareMagnitude(Natural)} with an explicit reduction budget: how many fundamental sequence
+     * steps the two values may spend being reduced before the rules above are tried.
+     */
+    public ComparisonResult compareMagnitude(Natural other, int budget) {
+        Objects.requireNonNull(other, "other");
+        Natural left = reduceWithBudget(budget);
+        Natural right = other.reduceWithBudget(budget);
+        if (left.kind == Kind.BEYOND || right.kind == Kind.BEYOND) {
+            if (left.kind == right.kind) {
+                return ComparisonResult.EQUAL;
+            }
+            return left.kind == Kind.BEYOND ? ComparisonResult.GREATER : ComparisonResult.LESS;
+        }
+        if (left.equals(right)) {
+            return ComparisonResult.EQUAL;
+        }
+        if (left.kind == Kind.EXACT && right.kind == Kind.EXACT) {
+            return ComparisonResult.of(left.value.compareTo(right.value));
+        }
+        boolean leftExact = left.kind == Kind.EXACT;
+        boolean rightExact = right.kind == Kind.EXACT;
+        if (leftExact && right.provablyAtLeastExactThreshold()) {
+            return ComparisonResult.LESS;
+        }
+        if (rightExact && left.provablyAtLeastExactThreshold()) {
+            return ComparisonResult.GREATER;
+        }
+        return compareFiniteLevelTowers(left, right);
+    }
+
+    /** The reduced form with an explicit budget; only the default budget is memoised. */
+    private Natural reduceWithBudget(int budget) {
+        if (budget == COMPARISON_REDUCTION_BUDGET) {
+            return reduceForComparison();
+        }
+        if (kind != Kind.TOWER || level == null) {
+            return this;
+        }
+        if (base.equals(TWO) && height.equals(TWO) && !level.isZero()) {
+            return of(4);
+        }
+        Natural reduced = TransfiniteHyperoperation.apply(base, level, height, budget);
+        return reduced.equals(this) ? this : reduced;
+    }
+
+    /**
+     * Whether this value is provably at least {@code 2^EXACT_BIT_LIMIT}, the threshold the truncated
+     * comparison uses. Exact values never are. A structural value is when its base already is, or when the
+     * floor lemma clears the threshold: a tower of level three or more is at least {@code base^height}, a
+     * level two tower is {@code base·height} and a lower one at least its base. The comparison carries a
+     * safety margin, so the answer is a proof and never a guess.
+     */
+    private boolean provablyAtLeastExactThreshold() {
+        if (kind == Kind.EXACT) {
+            return false;
+        }
+        if (kind == Kind.BEYOND) {
+            return true;
+        }
+        double baseLog2 = base.log2Approx();
+        if (baseLog2 >= EXACT_BIT_LIMIT) {
+            // a{α}m >= a for every level and height, so a huge base is enough
+            return true;
+        }
+        double heightValue = height.toDoubleApprox();
+        if (Double.isInfinite(heightValue)) {
+            return true;
+        }
+        double floorLog2;
+        if (level != null || finiteLevel.compareTo(ONE) >= 0) {
+            floorLog2 = baseLog2 * heightValue;             // log2(base^height), the floor for level >= 3
+        } else if (finiteLevel.equals(TWO)) {
+            floorLog2 = baseLog2 + log2Of(heightValue);     // log2(base·height) for multiplication
+        } else {
+            floorLog2 = Math.max(baseLog2, log2Of(heightValue));   // addition and succession
+        }
+        return floorLog2 >= EXACT_BIT_LIMIT + 64d;
+    }
+
+    /** {@code log2} of a positive double; zero stays zero. */
+    private static double log2Of(double value) {
+        return value <= 1d ? 0d : Math.log(value) / Math.log(2d);
+    }
+
+    /**
+     * Decides two towers whose levels are both finite and whose bases agree, using only monotonicity:
+     * for a fixed base and level the value grows with the height, and a level that is higher by
+     * {@code j} can pay for the difference out of its own height, because
+     * {@code n↑^(k+1)h >= n↑^k(h-1)}. Anything else, transfinite levels included, stays undetermined.
+     */
+    private static ComparisonResult compareFiniteLevelTowers(Natural left, Natural right) {
+        int leftArrows = left.finiteArrowCount();
+        int rightArrows = right.finiteArrowCount();
+        if (leftArrows < 0 || rightArrows < 0 || !left.base.equals(right.base)) {
+            return ComparisonResult.UNKNOWN;
+        }
+        if (leftArrows == rightArrows) {
+            return ComparisonResult.of(left.height.compareTo(right.height));
+        }
+        Natural tallerLevel = leftArrows > rightArrows ? left : right;
+        Natural shorterLevel = leftArrows > rightArrows ? right : left;
+        Natural difference = Natural.of(Math.abs(leftArrows - rightArrows));
+        if (tallerLevel.height.compareTo(difference) >= 0
+                && tallerLevel.height.subtractClamped(difference).compareTo(shorterLevel.height) >= 0) {
+            return leftArrows > rightArrows ? ComparisonResult.GREATER : ComparisonResult.LESS;
+        }
+        return ComparisonResult.UNKNOWN;
     }
 
     /** Base of a structural value, empty for exact values and {@link #BEYOND}. */

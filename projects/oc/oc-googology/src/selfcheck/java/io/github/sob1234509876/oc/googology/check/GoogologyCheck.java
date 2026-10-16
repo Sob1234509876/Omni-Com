@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.googology.check;
 
 import io.github.sob1234509876.oc.googology.CantorNormalForm;
 import io.github.sob1234509876.oc.googology.CantorOrdinal;
+import io.github.sob1234509876.oc.googology.ComparisonResult;
 import io.github.sob1234509876.oc.googology.HyperOperation;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.NaturalFormat;
@@ -210,8 +211,75 @@ public final class GoogologyCheck {
         transfiniteHyperoperation();
         customOrdinalNotation();
         comparison();
+        magnitudeComparison();
 
         summary();
+    }
+
+    // ------------------------------------------------------------------ 15) four valued comparison
+
+    /**
+     * {@link Natural#compareMagnitude(Natural)}: proofs where the library has one, and
+     * {@link ComparisonResult#UNKNOWN} instead of a guess where it has none.
+     */
+    private static void magnitudeComparison() {
+        section("15) 四值比较：可判定的给证明，判不了给 UNKNOWN");
+        CantorNormalForm notation = CantorNormalForm.standard();
+        Ordinal omega = notation.omega();
+        Natural four = Natural.of(4);
+        Natural five = Natural.of(5);
+
+        Natural twoAtEpsilon = Natural.tower(Natural.TWO, notation.limit(), Natural.TWO);
+        Natural twoAtDeepTower = Natural.tower(Natural.TWO, notation.omegaTower(3), Natural.TWO);
+        check("2{ε₀}2 被退化规则判为等于 4（这层预算根本展不开）",
+                twoAtEpsilon.compareMagnitude(four) == ComparisonResult.EQUAL);
+        check("2{ω^ω^ω}2 同样等于 4", twoAtDeepTower.compareMagnitude(four) == ComparisonResult.EQUAL);
+        check("比较序也跟着一致（塔不再被当成更大的数）", twoAtEpsilon.compareTo(four) == 0);
+        check("2{0}2 是后继，等于 3 而不是 4",
+                Natural.tower(Natural.TWO, notation.zero(), Natural.TWO).compareMagnitude(Natural.of(3))
+                        == ComparisonResult.EQUAL);
+
+        check("精确值之间完全精确",
+                five.compareMagnitude(Natural.of(7)) == ComparisonResult.LESS
+                        && Natural.of(7).compareMagnitude(five) == ComparisonResult.GREATER);
+
+        Natural hugePower = Natural.arrow(Natural.TEN, 1, Natural.of(100_000));
+        Natural tallerPower = Natural.arrow(Natural.TEN, 1, Natural.of(200_000));
+        Natural tetration = Natural.tetration(Natural.TEN, Natural.of(10));
+        Natural tallerTetration = Natural.tetration(Natural.TEN, Natural.of(20));
+        Natural pentationEleven = Natural.arrow(Natural.TEN, 3, Natural.of(11));
+        check("截断：10^100000 可证 ≥ 2^4096，于是与精确值直接判出方向",
+                hugePower.compareMagnitude(five) == ComparisonResult.GREATER
+                        && five.compareMagnitude(hugePower) == ComparisonResult.LESS);
+        check("同底同层比高度：10^100000 < 10^200000",
+                hugePower.compareMagnitude(tallerPower) == ComparisonResult.LESS);
+        check("同底同层比高度：10↑↑10 < 10↑↑20",
+                tetration.compareMagnitude(tallerTetration) == ComparisonResult.LESS);
+        check("高层用高度支付差值：10↑↑↑11 > 10↑↑10",
+                pentationEleven.compareMagnitude(tetration) == ComparisonResult.GREATER);
+        check("两个都巨大且没有证书时，截断不判方向：10↑↑10 与 10^100000 → UNKNOWN",
+                tetration.compareMagnitude(hugePower) == ComparisonResult.UNKNOWN);
+
+        Natural deepA = Natural.tower(Natural.TEN, notation.limit(), Natural.of(5));
+        Natural deepB = Natural.tower(Natural.TEN, notation.omegaTower(6), Natural.of(5));
+        check("两个展不开的极限层塔 → UNKNOWN，绝不猜",
+                deepA.compareMagnitude(deepB) == ComparisonResult.UNKNOWN);
+        check("但排序仍有全序兜底（compareTo 可用）", deepA.compareTo(deepB) != 0);
+
+        Natural walkedOmega = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
+        Natural symbolicOmega = Natural.tower(Natural.TEN, omega, Natural.TEN);
+        check("同一个值的两种写法得到 EQUAL",
+                walkedOmega.compareMagnitude(symbolicOmega) == ComparisonResult.EQUAL);
+        check("UNKNOWN 与 EQUAL 是不同结果，且只有后者是证明",
+                ComparisonResult.UNKNOWN != ComparisonResult.EQUAL
+                        && !ComparisonResult.UNKNOWN.isDecided() && ComparisonResult.EQUAL.isDecided());
+
+        Natural cached = Natural.tower(Natural.TEN, notation.omegaPower(omega), Natural.of(10));
+        ComparisonResult first = cached.compareMagnitude(Natural.of(7));
+        ComparisonResult second = cached.compareMagnitude(Natural.of(7));
+        check("缓存不改变结果：同一对连续比较一致（" + first + "）", first == second);
+        check("反对称：反向比较是相反结果",
+                cached.compareMagnitude(Natural.of(7)) == Natural.of(7).compareMagnitude(cached).reversed());
     }
 
     // ------------------------------------------------------------------ 14) comparing towers

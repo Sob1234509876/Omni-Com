@@ -14,7 +14,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (164 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (180 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 
 ## What it gives you
@@ -114,6 +114,28 @@ but `ω^ω^ω` does not finish in any practical time and `ε₀` needs a tower o
 Buchholz style notations worse still. Beyond the budget the raw level order is used, which is a heuristic
 across very different heights - `2^(10^6)` against `2↑↑5`, for instance, is still ordered by level.
 
+### When you want the truth, ask for it
+
+`compareTo` has to return an `int`, so in the cases above it reports a documented total order rather than a
+proof. `compareMagnitude` reports what is actually known:
+
+```java
+ComparisonResult result = a.compareMagnitude(b);   // LESS, EQUAL, GREATER or UNKNOWN
+```
+
+`LESS`, `EQUAL` and `GREATER` are proofs: identical reduced forms, two exact values, a truncated bound (an
+exact value is always below `2^EXACT_BIT_LIMIT`, so proving that the other side is at least that large
+decides the pair; a tower of level three or more is at least `base^height` by the floor lemma), or a
+monotonicity certificate for two towers over the same base whose levels are both finite (equal levels
+compare heights, and a higher level wins when it can pay for the difference out of its own height, because
+`n↑^(k+1)h >= n↑^k(h-1)`). `UNKNOWN` means no available rule settled the pair, and it is deliberately
+distinct from `EQUAL`: a truncated evaluation that reaches the threshold on both sides only says that both
+are huge.
+
+Both the reduction and the comparison rank are memoised per value (`comparisonValue`, `comparisonRankCache`):
+pure functions of the value, so caching cannot change an answer, but sorting a collection of towers pays the
+budget once per value instead of once per comparison.
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
@@ -160,7 +182,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 164 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 180 check self check program
 ```
 
 ## Related

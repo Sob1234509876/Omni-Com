@@ -215,6 +215,36 @@ symbolic.level().orElseThrow();                                          // ω^�
 
 第二行就是修好的那类：`(ω²+ω·2)[3] = ω²+ω+4` 落在 `ω²+ω+10` 下面，所以 β 的塔反而小。
 
+### 想要"真值"就用四值比较：`ComparisonResult`
+
+`compareTo` 必须给一个 `int`，所以在判不了的场合它只能**给一个倾向**（库把它做成按值排序键的全序兜底，因此排序安全，但量级上可能给错，而且是静默的）。要拿到"有证明的答案"用：
+
+```java
+ComparisonResult result = a.compareMagnitude(b);        // 默认预算
+ComparisonResult relaxed = a.compareMagnitude(b, 128);  // 自己指定归约预算
+switch (result) {
+    case LESS, EQUAL, GREATER -> { /* 这是证明 */ }
+    case UNKNOWN -> { /* 库没有可用规则判定，不要猜 */ }
+}
+```
+
+四条规则，按顺序：
+
+1. **退化规则先跑**：`n{α}1 = n`、按库的约定处理 `m=0`，以及 **`2{α}2 = 4` 对一切 `α ≥ 1`**——这条连预算展不开的层也成立（`2{ε₀}2` 就是 `4`，这是修掉的一个真 bug）；
+2. **同一个归约形式 → `EQUAL`**（形式相同即数值相同）；
+3. **截断比较**：精确值一定小于 `2^4096`（`EXACT_BIT_LIMIT`），所以只要证明另一边"至少这么大"，方向立刻确定。判定用**下界引理**：级别 ≥ 3 的塔至少是 `base^height`（级别 2 至少 `base·height`，更低至少 `base`），用对数估计并留安全边距——**只证不等，绝不证相等**（两边都"巨大"只说明都大，不说明相等）；
+4. **单调性证书**：同底数、两层都是有限级别时——同层比高度；高层如果能从自己的高度里"支付"级别差（`n↑^(k+j)h ≥ n↑^k(h-j)`）就判高层大。极限级别不套用这些规则。
+
+其余一律 `UNKNOWN`。**推荐的调用方式**：需要真相的场合用 `compareMagnitude`（并显式处理 `UNKNOWN`），需要排序/`min`/`max` 的场合继续用 `compareTo`（全序兜底）。
+
+### 缓存：把一个值的归约结果记住
+
+归约与比较键都是**值的纯函数**，所以库把它们记在值自己身上（`comparisonValue`、`comparisonRankCache`，懒计算、`volatile` 写一次）：
+
+- 一次 `compareTo`/`compareMagnitude` 的预算是"每边最多 32 步"；有了缓存，**同一个值反复参与比较（排序、循环）只付一次**，整体从 `O(n log n × 预算)` 降到 `O(n × 预算 + n log n)`；
+- 缓存是纯函数记忆，**不改变任何结果**（自校验里对同一对连续比较、反对称、传递都做了断言）；
+- 换预算调用（`compareMagnitude(other, budget)`）不走缓存，按需现算。
+
 ### 成本：为什么必须有预算
 
 "归约到后继级别"的步数随级别急剧增长（索引取 10，库里的实测）：
@@ -245,13 +275,13 @@ symbolic.level().orElseThrow();                                          // ω^�
 
 没保证：
 
-- 两侧**高度相差悬殊**时高度会翻盘：`2^(10^6)` 与 `2↑↑5`、`2↑↑10` 与 `3↑↑4` 这类仍然可能判反；
+- 两侧**高度相差悬殊**时高度会翻盘：`2^(10^6)` 与 `2↑↑5`、`2↑↑10` 与 `3↑↑4` 这类，`compareMagnitude` 会诚实地
+  返回 `UNKNOWN`（而 `compareTo` 只能给出排序兜底的倾向，量级上仍可能是错的）；
 - 级别归约不完（`ω^ω^ω` 及以上）时回落到"级别字典序"：同高度通常对，跨高度仍是启发式；
-- "精确 < 结构形"这条对**未归约**且真值很小的塔不成立（库已尽量在比较前把这类值归约掉，但无法穷尽，例如
-  高度很小时被后继递归塌缩的塔）。
+- "精确 < 结构形"这条对**未归约**且真值很小的塔不成立（库已把退化规则与归约放在比较之前，但无法穷尽）。
 
 真想彻底解决，需要把比较换成"对数空间递归比较"：把 `b↑^k h` 的比较降成"取一次对数后的量"的比较，每比一次
-降一层级别；代价是比较不再是 O(1) 而是 O(级别层数)。这一步留给以后。
+降一层级别。好消息是这套**证书框架已经就位**——要做的是往 `compareMagnitude` 里加证书，而不是加大展开深度。
 
 ## 八、关键 API
 
@@ -263,7 +293,8 @@ symbolic.level().orElseThrow();                                          // ω^�
 | `CantorOrdinal` | 范式值：`ω^α₁·c₁ + …` | `terms()`、`leadingTerm()`、`lastTerm()`、`Term(exponent, coefficient)` |
 | `EpsilonZero` | 记号上界 `ε₀`，基本列是 ω 塔 | `fundamentalSequence(n)`、`omegaPower()`、`add()`（吸收） |
 | `TransfiniteHyperoperation` | 序数级别的超运算 | `apply(base, level, height)`、`apply(..., budget)`、`applyFinite(base, rank, height)`、`DEFAULT_REDUCTION_BUDGET = 64`、`DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8` |
-| `Natural`（比较相关） | 塔的比较：先按值归约，再比级别 | `compareTo(other)`、`reducedLevel()`、`reducedLevel(budget)`、`COMPARISON_REDUCTION_BUDGET = 32` |
+| `ComparisonResult` | 四值比较结果：`LESS`/`EQUAL`/`GREATER` 是**证明**，`UNKNOWN` 是"没有可用规则" | `LESS`、`EQUAL`、`GREATER`、`UNKNOWN`、`isDecided()`、`signum()`、`reversed()`、`of(int)` |
+| `Natural`（比较相关） | 排序用全序（按值归约后的键），真相用四值比较 | `compareTo(other)`（全序兜底）、`compareMagnitude(other)`、`compareMagnitude(other, budget)`、`reducedLevel()`、`reducedLevel(budget)`、`log2Approx()`、`COMPARISON_REDUCTION_BUDGET = 32` |
 
 ## 九、常见坑
 
@@ -293,13 +324,16 @@ symbolic.level().orElseThrow();                                          // ω^�
     但 `equals` 只对**形式**相同的两个为 `true`。用它们当 `TreeSet`/`TreeMap` 键时，库按量级去重；要区分形式请
     自己存另一份键（例如 `toString()`）。
 13. **比较自带预算，超过就不归约**。`Natural.COMPARISON_REDUCTION_BUDGET = 32`：`ω^ω` 及以下能在预算内归约到
-    后继级别，`ω^ω^ω`、`ε₀` 这类步数是大数级的级别会回落到"级别字典序"。想要更强的判定，只能上"对数空间递归比较"。
-14. **别在大循环里反复比较超限级别的塔**。每次比较都可能花掉最多 32 步序数运算（虽然每步很便宜）。要排序大量
-    这样的值，可以先自己用 `reducedLevel()` 缓存比较用的级别。
+    后继级别，`ω^ω^ω`、`ε₀` 这类步数是大数级的级别会回落到"级别字典序"。
+14. **要真相就用 `compareMagnitude`，要排序就用 `compareTo`**。`compareMagnitude` 在判不了时返回 `UNKNOWN`
+    （这是**正确的答案**，不要把它当 `0`）；`compareTo` 为了满足排序契约会给一个全序兜底，量级上可能错。
+    混用两者时不要指望"`compareTo == 0` 就等于 `compareMagnitude` 是 `EQUAL`"。
+15. **缓存是纯函数记忆**：`comparisonValue` / `comparisonRankCache` 只有首次比较时计算，之后复用；所以排序
+    大量塔值只需要每值付一次预算，而不是每次比较付一次。换预算调用（`compareMagnitude(other, budget)`）不共享缓存。
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **164 项**，其中第 11–14 节是序数层：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **180 项**，其中第 11–15 节是序数层：
 
 - **11) 序数**：`0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀` 严格递增；`1 + ω = ω`、`ω + ω = ω·2`、
   `ω + ω^2 = ω^2`、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、`ε₀[1] = ω^ω`、`ε₀[2] = ω^ω^ω`；
@@ -313,6 +347,10 @@ symbolic.level().orElseThrow();                                          // ω^�
   `2{ω}2` 与 `2{5}2` 比较相等（都是 4），高度 3 时 `2{ω}3 = 16 < 2{5}3 = 65536`；
   `10{ω}10` 与 `10{11}10` 比较相等而 `equals` 为 `false`；`ε₀` 与六层 ω 塔超预算时回落、比较反对称且立刻返回；
   一组塔上验证反对称与传递。
+- **15) 四值比较**：`2{ε₀}2` 与 `2{ω^ω^ω}2` 都被退化规则判为等于 `4`（回归断言）；`2{0}2 = 3`；
+  截断把 `10^100000` 与精确值直接判开；同底同层比高度（`10^100000 < 10^200000`、`10↑↑10 < 10↑↑20`）；
+  高层用高度支付差值（`10↑↑↑11 > 10↑↑10`）；两个都巨大且无证书时给 `UNKNOWN`（不是 `EQUAL`）；
+  两个展不开的极限层塔给 `UNKNOWN` 而排序仍可用；缓存不改变结果、正反比较互为反向。
 
 引擎侧的 119 项自校验与本篇无关，但已经确认**没有被这次扩展影响**。
 
