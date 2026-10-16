@@ -156,6 +156,7 @@ commands.moveGroup(units, new GridPos(48, 40), FormationShape.WEDGE);
 commands.stop(unit);   // clear 队列 + motion.clearGoal() + clearFormation() + 速度归零
 commands.stop(units);
 commands.hold(unit);   // replace 成 HoldOrder：永不自己结束，等被取消或替换
+commands.travel(unit, DimensionId.of("mars"));   // replace 成 TransferOrder：沿传送门链路走到另一张图，见 13
 ```
 
 它不接受 tick 参数，所以自己造 `OrderContext`：
@@ -302,7 +303,7 @@ if (position.distance(goal) <= motion.arrivalRadius() + radius) {
 | `Entity.kill()` / `isAlive()` / `setPosition(Vec2)` | 实体层基本操作 |
 | `Unit.motion()` / `orders()` / `cargo()` | 移动意图 / 订单队列 / 背包 |
 | `Building.entrance()` / `rallyPoint()` | 交互点 / 集结点的默认目标 |
-| `UnitDirector.move/moveGroup/stop/hold` | 通过 `engine.commands()` 下达命令；`moveGroup` 返回编队 id（`0` = 无人可接令） |
+| `UnitDirector.move/moveGroup/stop/hold/travel` | 通过 `engine.commands()` 下达命令；`moveGroup` 返回编队 id（`0` = 无人可接令）；`travel(unit, dimension)` 沿传送门链路跨图（[13-dimensions.md](13-dimensions.md)） |
 | `OrderQueue.push/replace/clear/tick` | 队列语义与事件发布点 |
 | `Motion.setGoal/clearGoal/isArrived/setFormation` | 订单与移动系统之间的唯一契约 |
 | `PathService.request/cancel/pendingRequests` | 相位 300 的预算化寻路服务 |

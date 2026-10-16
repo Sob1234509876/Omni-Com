@@ -5,7 +5,7 @@
 ## 这一篇讲什么
 
 - 六条设计原则，以及它们各自带来的约束。
-- 14 个包的职责与依赖方向。
+- 15 个包的职责与依赖方向。
 - 相位 100 → 800 的完整管线：每个系统读什么、写什么、为什么排在这个位置。
 - 一 tick 内实体的增删生命周期，以及空间索引的维护责任。
 - 事件总线：谁发布什么、订阅语义。
@@ -30,6 +30,7 @@
 | `io.github.sob1234509876.oc.rts`（根） | 门面、世界、玩家 | `OcRtsEngine`、`OcRtsEngineBuilder`、`World`、`Player` |
 | `core` | 纯值类型：向量、格坐标、区块坐标、矩形、tick、确定性随机 | `Vec2`、`GridPos`、`ChunkPos`、`TileRect`、`Tick`、`EntityId`、`Direction`、`DeterministicRandom` |
 | `content` | 内容目录与定义 | `ContentRegistry`、`ItemType`、`ItemBundle`、`TerrainType`、`UnitType`、`BuildingType`、`Recipe`、`ResourceKey` |
+| `dimension` | 一个世界里的多张地图：身份、环境档案、一张图上的实体、地图之间的门 | `DimensionId`、`DimensionProfile`、`Dimension`、`Gateway` |
 | `map` | 区块地形、流式加载、寻路 | `TerrainMap`、`ChunkedMap`、`ChunkStreamer`、`NoiseChunkGenerator`、`AStarPathFinder`、`PathOptions` |
 | `entity` | 实体与空间索引 | `Entity`、`Unit`、`Building`、`Health`、`SpatialIndex`、`GridSpatialIndex` |
 | `movement` | 移动意图、转向、路径请求服务 | `Motion`、`MovementSystem`、`SteeringSystem`、`SteeringSettings`、`PathService` |
@@ -74,13 +75,13 @@
 
 | 相位 | 系统 | 读 | 写 |
 | --- | --- | --- | --- |
-| 100 | `chunk-streamer`（`ChunkStreamer`） | `map.focus()`、`map.loadedChunks()` | 加载/卸载区块；发布 `Events.ChunkLoaded` / `ChunkUnloaded` |
+| 100 | `chunk-streamer`（`ChunkStreamer`） | 每个维度各自的 `map.focus()`、`map.loadedChunks()` | 加载/卸载区块（预算跨维度共享）；发布带维度的 `Events.ChunkLoaded` / `ChunkUnloaded` |
 | 200 | `orders`（`OrderSystem`） | 每个单位的 `OrderQueue` | 启动/推进/结束订单；发布 `Events.OrderIssued` / `OrderFinished` |
 | 300 | `paths`（`PathService`） | 路径请求队列 | 调用 `PathFinder` 并把结果写回 `Motion.setPath(...)` |
 | 400 | `movement`（`MovementSystem`） | `Motion` 的目标与路径、`SpatialIndex` 邻居 | 请求新路径、更新位置/速度/朝向、`spatial().update(...)`、`markArrived()` |
 | 500 | `construction`（`ConstructionSystem`） | 未建成建筑 | 推进建造进度；发布 `Events.ConstructionCompleted` |
 | 600 | `production`（`ProductionSystem`） | 建筑、`ProductionQueue`、玩家 `Logistics` | 预订材料、消耗材料、生成单位/物品；发布 `Events.UnitProduced` / `ItemProduced` / `ProductionStateChanged` |
-| 700 | `hauling`（`HaulingSystem`） | `DeliveryJob`、空闲搬运工 | 给搬运工派单（把 `HaulOrder` 推入其订单队列）；发布交付相关事件 |
+| 700 | `hauling`（`HaulingSystem`） | `DeliveryJob`、空闲搬运工、`world.route(...)` | 给**同维度**的搬运工派单（把 `HaulOrder` 推入其订单队列）；跨维度的货先走 `tickShipped`（按门链路跳数计延迟）；发布交付相关事件 |
 | 800 | `animation`（`AnimationSystem`） | 单位/建筑状态、`Motion` | 切换动画片段、设置朝向、推进帧 |
 | — | `world.flush()` | 死亡实体列表 | 从实体集合与空间索引中真正移除 |
 
@@ -98,14 +99,15 @@
 
 | 动作 | 立即发生 | 延后发生 |
 | --- | --- | --- |
-| `world.spawnUnit(...)` / `spawnBuilding(...)` / `placeBuilding(...)` | 分配 `EntityId`、加入 `entities/units/buildings`、插入空间索引、发布 `Events.EntitySpawned` | — |
-| `world.destroy(entity)` | `kill()`（血量归零）、从空间索引移除、发布 `Events.EntityDestroyed` | 从集合中移除：tick 末的 `world.flush()` |
-| 移动实体 | `entity.setPosition(...)` | 空间索引只有在调用 `world.spatial().update(entity)` 后才知道新位置 |
+| `world.spawnUnit(...)` / `spawnBuilding(...)` / `placeBuilding(...)` | 分配 `EntityId`、加入该维度的 `entities/units/buildings`、插入**那个维度**的空间索引、发布 `Events.EntitySpawned` | — |
+| `world.destroy(entity)` | `kill()`（血量归零）、从**它所属维度**的空间索引移除、发布 `Events.EntityDestroyed` | 从集合中移除：tick 末的 `world.flush()`（每个维度各刷一遍） |
+| `world.transfer(entity, to, position)` | `detach`（源维度）→ 改位置 → `register`（目标维度，发布 `EntitySpawned`）→ 发布 `Events.EntityTransferred`；**id / 血量 / 背包 / 订单全部保留** | — |
+| 移动实体 | `entity.setPosition(...)` | 空间索引只有在调用 `world.spatial(unit.dimensionId()).update(entity)` 后才知道新位置 |
 
 由此得到两条硬性约定：
 
 1. **不要在遍历 `world.units()` 的过程中生成单位**（会 `ConcurrentModificationException`）。系统跑在不同相位，所以"生产系统生成单位"是安全的；如果你在自己的系统里生成单位，请先遍历 `world.unitsOf(player)`（它返回新列表）或先把单位收集出来。
-2. **改过位置必须 `spatial().update(...)`**，否则分离避让、`nearest(...)`、快照取实体都会用到旧位置。
+2. **改过位置必须 `spatial(dimensionId).update(...)`**，否则分离避让、`nearest(...)`、快照取实体都会用到旧位置。多维度下"哪个索引"必须跟着实体走：`world.spatial()` 是默认维度的，位置相关代码用 `world.spatial(unit.dimensionId())`（见 [13-dimensions.md](13-dimensions.md)）。
 
 ## 事件总线
 
@@ -124,8 +126,9 @@ subscription.cancel();
 
 | 事件 | 谁发布 | 何时 |
 | --- | --- | --- |
-| `Events.EntitySpawned` / `EntityDestroyed` | `World` | 生成/标记销毁的瞬间 |
-| `Events.ChunkLoaded` / `ChunkUnloaded` | `ChunkStreamer` | 区块进出内存 |
+| `Events.EntitySpawned` / `EntityDestroyed` | `Dimension` / `World` | 实体登记进某个维度的瞬间 / 标记销毁的瞬间 |
+| `Events.EntityTransferred` | `World` | 实体换了维度（`from` → `to`），**在**落地那次 `EntitySpawned` **之后**发布 |
+| `Events.ChunkLoaded` / `ChunkUnloaded` | `ChunkStreamer` | 某一张图的区块进出内存（事件带 `dimension` 分量） |
 | `Events.OrderIssued` / `OrderFinished` | `OrderQueue` | 订单成为当前订单 / 离开当前订单（含 `CANCELLED`） |
 | `Events.ConstructionCompleted` | `ConstructionSystem` | 建筑建造完成 |
 | `Events.ItemProduced` / `UnitProduced` / `ProductionStateChanged` | `ProductionSystem` | 物品入库、单位出厂、任务状态变化 |
@@ -164,12 +167,15 @@ subscription.cancel();
 | 加一种存档/统计 | 订阅事件 | `world.events().subscribe(...)` | 本文 |
 | 换动画来源 | `implements VisualState` 或构建 `VisualLibrary` | `.visuals(library)` | [07](07-sprites-and-animation.md) |
 | 限制某建筑只收某些物品 | `BuildingType.storageTags()`（目录 DSL 的 `.storageTag(...)`） | 目录定义 | [02](02-content-and-items.md) |
+| 再加一张独立地图（维度） | `OcRtsEngineBuilder.dimension(...)` / `.moonAndMars()` | build 时接线；`build()` 之后新增的维度用 `ChunkStreamer.streamDimension(...)` 补流式 | [13](13-dimensions.md) |
+| 把两张图连起来让人走过去 | `Gateway.of(...)`（单向；反向用 `reversed()`） | `world.addGateway(...)`，再用 `world.director().travel(unit, target)` | [13](13-dimensions.md) |
 
 ## 相关文档
 
 - 想让引擎替你送货而不写搬运逻辑 → [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)
 - 想知道每个门面方法 → [01-getting-started.md](01-getting-started.md)、[appendix-api-map.md](appendix-api-map.md)
 - 想知道数量为什么是 `Natural`、哪些字段仍然是 `float`/`int` → [12-numbers-and-googology.md](12-numbers-and-googology.md)
+- 想知道一个世界怎么装下多张地图、哪些东西按维度分开、单位怎么走过去 → [13-dimensions.md](13-dimensions.md)
 - 想按任务查做法 → [10-cookbook.md](10-cookbook.md)
 
 ## 相关源码

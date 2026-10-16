@@ -1,6 +1,6 @@
 # Omni Com
 
-Monorepo for the Omni Com project, built with Gradle.
+Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, made possible thanks to Deepseek.
 
 ## Modules
 
@@ -10,7 +10,10 @@ Monorepo for the Omni Com project, built with Gradle.
   dependencies).
 - `projects:oc:oc-rts-engine` — engine for the Omni Com real-time strategy game: a plain Java 17 library
   (JPMS, `java-library`) whose only dependency is `oc-googology`, which supplies the number type used for
-  item amounts, capacities, health and damage.
+  item amounts, capacities, health and damage. One world may hold several dimensions (maps) at once: each
+  has its own terrain, spatial index, path finder and streaming focus, while entity ids stay global and the
+  single map API keeps pointing at the default dimension. Gateways link the maps, so units can travel
+  between them, and deliveries that have to change map are shipped through the gateway chain.
 
 ## Build
 

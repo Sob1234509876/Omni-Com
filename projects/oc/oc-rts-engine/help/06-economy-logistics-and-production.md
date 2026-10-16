@@ -261,6 +261,21 @@ OcRtsEngine engine = OcRtsEngine.builder(content)
 
 系统把真正的走动完全交给 `HaulOrder`，所以新推入的订单要**下一 tick 的相位 200** 才开始执行（`OrderSystem` 在本 tick 的 700 之前早就跑完了）。
 
+### 跨维度的货：shipping（门链路发运）
+
+世界可以有多张地图（维度），而**搬运工是站在某一张图上的单位**。所以 `HaulingSystem` 对跨图的送货有两条规则：
+
+- **挑人只看本图**。`findHauler(job)` 先跳过 `!unit.dimensionId().equals(job.target().dimensionId())` 的单位：另一张图上"坐标恰好靠近提货点"的单位永远不该被选中（否则它会被派去一组毫无意义的坐标）。
+- **跨图的货走门，不走路**。开启真实搬运工模式时，每 tick 先跑 `tickShipped(now)`、再跑 `tickHaulers(now)`：`shippingHops(job)` 用 `world.route(仓库维度, 目标维度)` 算出跳数（**多条供货仓库取最大跳数**；没有路线返回 `-1`），跳数 `>= 1` 的 job 归发运处理，等待时间是
+
+  ```java
+  Math.max(1, directDeliveryTicks) * Math.max(1, hops)   // shippingDelay(hops)
+  ```
+
+  等够之后仍要过一遍"目标 `canAcceptAll(...)` 装得下吗"、`isViable(job)`、`expired(job)`（3000 tick 超时）这些门，再 `reservation().commit()` 取货、`insertInto` 进目标缓冲区、塞不下的 `storeBack(...)`、最后 `complete`。
+
+后果：**跨维度送货是"模拟货运"，不是"走路的人"**。没有任何代码会给一个走路单位规划跨图路线；`UnitDirector.travel(...)` 是显式命令（见 [13-dimensions.md](13-dimensions.md)），搬运工只在本图内短驳。没有路线时 job **保持 pending**，直到自己的超时把它判失败，不会被静默丢掉。
+
 ### HaulOrder：取货→送货→卸货
 
 `logistics.HaulOrder implements Order`，`name()` 返回 `"haul"`，`TIMEOUT_TICKS = 3000`，私有 `UNLOAD_WAIT_TICKS = 200`。它只有两条腿：`Phase.TO_PICKUP` 和 `Phase.TO_TARGET`，并在每个 tick 开头做一遍"世界还成立吗"的检查：
@@ -548,7 +563,7 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `economy.LogisticsReservation` | `remaining()`、`allocationCount()`、`describe()`（构造器包内可见） | 内部机制 |
 | `economy.ReservationPool` | `allocate(...)`、`bundleOf(plan)`、`primaryOf(plan, order)`、`Allocation`（包内可见） | 纯计算，不移动物品 |
 | `logistics.DeliveryJob` | `State.{WAITING_HAULER,IN_TRANSIT,COMPLETED,FAILED}`、`state()`、`isPending()`、`isFinished()`、`pendingTicks()`、`delivered()`、`missing()`、`hauler()`、`target()`、`bundle()`、`reservation()`、`registeredTick()`、`assignedTick()`、`finishedTick()` | 一次运输的状态机 |
-| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；订阅 `Events.EntityDestroyed` 以回收死亡搬运工的货 | 相位 700 |
+| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；`tickHaulers` 只挑**与目标同维度**的搬运工，跨图的 job 先走 `tickShipped`（等待 `directDeliveryTicks × 跳数`，跳数由 `World.route(...)` 给出，无路线则等到超时失败）；订阅 `Events.EntityDestroyed` 以回收死亡搬运工的货 | 相位 700 |
 | `logistics.HaulOrder` | `TIMEOUT_TICKS = 3000`、私有 `UNLOAD_WAIT_TICKS = 200`、`job()`、`name() == "haul"`、`Phase.{TO_PICKUP,TO_TARGET}` | 订单自己 `motion().setGoal()` |
 | `production.ProductionState` | 六个常量 + `isFinished()` | 只有 `COMPLETED`/`CANCELLED` 是终态 |
 | `production.ProductionJob` | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`pendingOutput()`、`enteredStateTick()`、`stateTicks()`、`isFinished()`、`describe()`（修改方法包内可见） | 可变小记录 |

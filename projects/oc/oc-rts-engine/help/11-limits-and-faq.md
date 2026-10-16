@@ -4,11 +4,11 @@
 
 ## 这一篇讲什么
 
-- 完全没实现的能力（以及临时替代方案）。
+- 完全没实现的能力（以及临时替代方案）：战斗、存档、**环境危害**等。
 - 已经定义但**没有任何代码使用**的字段与事件——看到它们不要以为已经生效。
 - 数量类型的近似边界：`Natural` 从哪一位开始不再精确、`BEYOND` 是什么、为什么库存会"明明没满却报满"。
 - 已知的取舍与硬限制。
-- FAQ：21 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
+- FAQ：24 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
 - 性能调优的旋钮在哪。
 
 ## 数量的精度边界（`Natural`）
@@ -45,6 +45,11 @@
 | 完整存档 | 只有区块持久化的接缝（`ChunkStore`） | 实体、订单、生产队列都需要你自己序列化；`ChunkStore` 只覆盖地形 |
 | 群体寻路 / 流场 | 每个单位各自跑一次 A*（受 `PathService` 预算约束） | 大队形移动时观察 `pendingRequests()`；预算调大或改成共享路径/流场 |
 | 建筑碰撞 | **建筑不阻挡单位移动**：`MovementSystem` 只检查地形是否可通行 | 见下面的 [FAQ 第 13 条](#13-单位会穿过建筑) |
+| 维度之间的旅行 | **已经实现**：`Gateway` + `World.route(...)` + `UnitDirector.travel(...)` | 见 [13-dimensions.md](13-dimensions.md)；没有门就是订单失败，不会瞬移 |
+| 跨维度送货 | **已经实现，但是"模拟货运"**：`HaulingSystem` 只挑同维度的搬运工，跨图的货按"直送延迟 × 门链跳数"发运 | 见 [13-dimensions.md](13-dimensions.md) 与 [06](06-economy-logistics-and-production.md)；走路单位永远不会被派去另一张图 |
+| 按维度的快照 | **已经实现**：`SnapshotFactory.capture(DimensionId, ...)`、`WorldSnapshot.dimension()` / `dimensionName()`、图例带维度 | 见 [08-snapshots-and-rendering.md](08-snapshots-and-rendering.md) |
+| 环境危害（不可呼吸、重力、辐射） | **没有**：`hazardDamagePerTick` / `gravity` / `breathable` / `requiresSealedUnits()` 无人读取 | 自己写一个按 `dimensionId()` 分组的危害系统；见 [13-dimensions.md](13-dimensions.md) |
+| 维度进存档 | **没有**：没有整体存档格式，`ChunkStore` 只覆盖地形，门列表与维度注册表没人序列化 | 存档格式自己带上维度键、各维度的地形 store 与 `world.gateways()` |
 | 单位体积碰撞的严格解 | 用的是分离力（软避让），不是物理求解 | 调 `SteeringSettings`；需要硬碰撞就自己写一个系统 |
 | 多线程 | 单线程，没有同步 | 渲染可以用快照在别的线程画，模拟本身不行 |
 
@@ -59,13 +64,15 @@
 | `Health.damage(...)` / `heal(...)` | 已实现，**无调用方**（`kill()` 会把血量直接置零） |
 | `Player.team()` / `isAlliedWith(...)` | 已实现，无调用方 |
 | `TerrainMap.setTerrain(...)` | 已实现（`ChunkedMap` 里真的会改地形并标脏），但**没有游戏逻辑调用**它——改地形/修路/炸桥都得你自己调 |
+| `DimensionProfile.hazardDamagePerTick` / `gravity` / `breathable` | 只是数据：引擎目前只读 `movementSpeedFactor()`（见 [13-dimensions.md](13-dimensions.md)），危害**不会真的掉血** |
+| `DimensionProfile.requiresSealedUnits()` | 已实现（`!breathable || hazardous()`），但**没有调用方**——"没穿宇航服就死"要自己写系统 |
 | `Direction` / `AnimationSet` 的方向变体 | 引擎会设置朝向，方向变体的选择发生在 `UnitAnimator` 里（需要你在动画集里提供对应方向） |
 
 ## 已知取舍与硬限制
 
 1. **出生地地形单调**。`NoiseSettings` 会把原点附近混合到 `originElevation`，保证一开局有可建造的陆地（默认半径 36 格内逐渐过渡）。代价是出生点周围相对平坦；把 `originRadius` 调小会更"野"，但可建造区也变小。
-2. **区块流式有每 tick 预算**。`ChunkStreamer` 默认每 tick 最多 4 次区块进出，而且**卸载与加载都算一次**：焦点从原点跳到另一处（半径 4）要卸掉 81 个再装上 81 个，约 41 tick 才能铺满；半径 2 实测是 25 卸 + 25 载 ≈ 13 tick。想更快就调大 `setChunksPerTick(...)`。
-3. **空间索引格固定 4 格**。`World` 内部用 `new GridSpatialIndex(4f)`；包围盒查询成本大致随半径平方增长。
+2. **区块流式有每 tick 预算，而且是所有维度共享的**。`ChunkStreamer` 默认每 tick 最多 4 次区块进出，而且**卸载与加载都算一次**：焦点从原点跳到另一处（半径 4）要卸掉 81 个再装上 81 个，约 41 tick 才能铺满；半径 2 实测是 25 卸 + 25 载 ≈ 13 tick。想更快就调大 `setChunksPerTick(...)`。多维度下这 4 次要先平均分给各维度（余数给先注册的），所以三张图各 1 块/ tick（地球还多拿 1 块）——加地图不会让预算翻倍，只会让每张图更慢铺满。
+3. **空间索引格固定 4 格，而且是每个维度各一份**。`Dimension` 内部用 `new GridSpatialIndex(4f)`；包围盒查询成本大致随半径平方增长，维度数只影响内存与每 tick 预算，不影响单次查询成本。
 4. **库存没有重量/体积概念**，容量只有"格数"与"总件数"两个上限，也不区分货架类型。
 5. **物流没有优先级与公平性**。`Logistics` 按订单注册顺序与距离处理；两个工厂抢同一批料时先到先得。
 6. **每单位一次寻路**。队形移动时每个单位都会走 `PathService` 请求一次；12 个单位的编队就是 12 次搜索（同 tick 内受预算约束）。
@@ -75,6 +82,8 @@
 10. **文本地图的 y 轴向下**（第一行是最大的 y），字符是角色字母（`C` 战斗 / `W` 工人 / `S` 支援），不是单位名首字母。
 11. **超出 4096 位（`Natural.EXACT_BIT_LIMIT`）的数量一律近似**。这个阈值之上 `Natural` 只保留量级：加减乘都可能"抹掉"小操作数，`subtractClamped` 夹在 0，而且**没有除法**（要比例用 `fractionOf`，它给 `float`）。阈值之内完全没有这个问题，普通玩法也碰不到它。
 12. **`Natural.BEYOND` 不是数字，是顶元素**。它比一切都大、吸收运算，引擎用它表达"无上限"（`Inventory.UNLIMITED = Natural.BEYOND`）。因此它不能当作普通数量参与结算，也**不能放进 `ItemBundle`**（`ItemBundle.Builder.add` 会拒绝）。要表达"装得下无限多"请把它写在 `Inventory` 的上限上。
+13. **门是单向的，旅行有整段超时**。`Gateway` 默认只朝一个方向，回程要 `reversed()` 或另写一条；`TransferOrder.TIMEOUT_TICKS = 2400`（两分钟）是**整段旅程**的预算，不是每跳重算。没有路线时 `travel` 直接失败，不会瞬移。
+14. **一个单位同时只能在一条供应线上**。`travel` 会替换订单队列（`orders().replace(...)`），而搬运工按"同图 + 空闲"挑选；让一个单位既长途旅行又承担本图短驳，只会让它两头都做不好。
 
 ## FAQ
 
@@ -189,6 +198,25 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 4. 有没有把比例当数量用？`Natural` **没有除法**，比例只有 `Natural.fractionOf(whole)` / `Health.fraction()` 这一条路，返回的是 `float`；大数之间差 300 个数量级以上时会直接给 0 或 1。
 5. 有没有混用 `Math.min` / `Math.max`？它们只接受基本类型，请用 `Natural.min` / `max`。
 
+### 22. 两张图上的单位互相"看见"了，或者给月球单位的命令把地球单位也带偏了
+
+坐标是**每张地图自己的**（见 [13-dimensions.md](13-dimensions.md)），所以"同一格"在两个维度上是两个无关的位置。症状通常来自用错了访问器：
+
+- `world.spatial()`、`world.map()`、`world.pathFinder()` 是**默认维度**的，不是"当前这张图"的。位置相关的代码要用 `world.spatial(unit.dimensionId())` 这一族；`MovementSystem` 与 `PathService` 已经这么做了。
+- `world.units()` / `world.buildings()` / `world.unitsOf(player)` 是**所有维度**的和；要一张图就用 `world.units(id)`。只有一个维度时它们才是那张图的活列表，所以旧代码不会坏。
+- 生成实体时漏了维度参数：`world.spawnUnit(type, owner, tile)` 会造到默认维度，多维度场景要用 `world.spawnUnit(id, type, owner, tile)`（建筑同理）。
+- 订阅 `Events.ChunkLoaded` 时没看 `event.dimension()`，三张图的区块统计会混在一起。
+
+如果只是"某张图没有邻居"，先确认那张图确实有空间索引数据：`world.spatial(id).size()` 应当是这张图上的实体数。
+
+### 23. `travel` 订单失败，或者单位根本走不到另一张图
+
+依次检查：① 目标维度确实存在（`world.hasDimension(target)`）；② **门是单向的**——`Gateway.of(overworld, a, moon, b)` 只把人从地球送到月球，回程要 `lift.reversed()` 或另写一条，`world.route(from, to)` 为空时 `TransferOrder` 会直接 `FAILED`；③ 门是**链式**的：地球 → 月球 → 火星需要两条门，`route` 会做 BFS，缺一环就不可达；④ 单位真的能走到第一道门（地形可通行、`PathService` 没被别的东西饿死）；⑤ 超时是**整段旅程**的 `TransferOrder.TIMEOUT_TICKS = 2400` tick（两分钟），多跳长途可能还没走完就被判失败；⑥ 有别的系统在覆盖它的订单队列——`CommandService.travel(...)` 用的是 `orders().replace(...)`，反过来别人 `replace` 也会顶掉这次旅行。排查看 `world.route(from, to)` 与 `world.gatewayAt(...)` 的返回值最直接。
+
+### 24. 跨维度的货迟迟不到，或者搬运工被派去了别的图
+
+先分清是"发运"还是"走路"：跨图的 job 由 `HaulingSystem.tickShipped` 按 `max(1, directDeliveryTicks) * 跳数` 发运，**不派搬运工**；只有同图的 job 才进 `findHauler`。① 迟迟不到：确认目标维度与供货仓库之间**有门链**（没有路线时 job 一直 pending，直到 3000 tick 超时失败）；② 目标缓冲区塞不下时也会一直等（`canAcceptAll(...)` 过不了就跳过，同样靠超时兜底）；③ 想控制跨图成本就调 `directDeliveryTicks`（它同时是"每跳延迟"）；④ 你自己写派单逻辑时要按 `dimensionId()` 过滤，`findHauler` 自己已经这么做了。详见 [13-dimensions.md](13-dimensions.md) 与 [06](06-economy-logistics-and-production.md)。
+
 ## 性能旋钮
 
 | 旋钮 | 默认 | 影响 |
@@ -198,7 +226,7 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 | `pathBudget(requests, nodes)` | `32 / 200000` | 每 tick 的寻路上限；配合 `PathService` 的统计观察 |
 | `directDelivery(boolean)` | `false` | 打开可省掉搬运工的移动与订单开销（用延迟模拟运输） |
 | `ticksPerSecond(n)` | `20` | 只改推进频率；移动按"格/秒"积分，所以世界速度不变 |
-| `ChunkStreamer.setChunksPerTick(n)` | `4` | 焦点跳转后的铺满速度；通过 `engine.pipeline().systems()` 找到 `ChunkStreamer` 实例调整 |
+| `ChunkStreamer.setChunksPerTick(n)` | `4` | 焦点跳转后的铺满速度；通过 `engine.pipeline().systems()` 找到 `ChunkStreamer` 实例调整。多维度下 `n` 是**所有维度共享**的总预算（先平均分，余数给先注册的维度），加一张图不会让预算翻倍 |
 | `map.setMaxLoadedChunks(n)` | `0`（不限） | 内存上限；超限时按"离焦点最远"驱逐，被驱逐的脏区块会先写回 `ChunkStore` |
 | `SteeringSettings` | `defaults()` | 分离强度、到达减速、速度平滑、卡住判定等的集中参数 |
 
@@ -208,6 +236,7 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - [10-cookbook.md](10-cookbook.md) —— 具体任务的写法
 - [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— 生产状态机与超时细节
 - [12-numbers-and-googology.md](12-numbers-and-googology.md) —— 数量类型 `Natural` 的完整说明（阈值、近似算术、`BEYOND`）
+- [13-dimensions.md](13-dimensions.md) —— 多张地图、每图的空间索引与焦点、环境档案的已生效/未生效字段
 - [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单
 
 ## 相关源码
@@ -215,4 +244,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11 节，整份 147 项）
