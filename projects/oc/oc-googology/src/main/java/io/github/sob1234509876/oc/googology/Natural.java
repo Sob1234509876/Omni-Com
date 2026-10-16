@@ -682,6 +682,10 @@ public final class Natural implements Comparable<Natural> {
         if (byLevels.isDecided()) {
             return byLevels;
         }
+        ComparisonResult byTransfiniteFloor = compareTransfiniteFloor(left, right, budget, depth);
+        if (byTransfiniteFloor.isDecided()) {
+            return byTransfiniteFloor;
+        }
         if (left.level != null && right.level != null
                 && left.reducedLevel(budget).isEmpty() && right.reducedLevel(budget).isEmpty()) {
             // Neither level could be walked to a successor inside the budget, so no value was computed for
@@ -773,6 +777,57 @@ public final class Natural implements Comparable<Natural> {
     /** {@code log2} of a positive double; zero stays zero. */
     private static double log2Of(double value) {
         return value <= 1d ? 0d : Math.log(value) / Math.log(2d);
+    }
+
+    /**
+     * Decides a transfinite level against a finite one through an explicit lower bound.
+     *
+     * <p>A tower {@code b{α}h} whose level is a transfinite <em>successor</em> of at least {@code ω+1} and
+     * whose height is at least three is at least {@code b{ω+1}3}, and that value has a finite level form:
+     * {@code b{ω+1}3 = b{ω}(b{ω+1}2) = b{ω}(b{ω}b)}, which by {@code ω[X] = X+1} is {@code b{X+1}X} with
+     * {@code X = b{ω}b}. So the lower bound is an ordinary finite level tower whose level and height are both
+     * astronomical, and the finite level certificates decide it against an ordinary opponent. The two steps
+     * being used are height monotonicity at a fixed level and successor level monotonicity, the same
+     * well-behavedness assumption the "two unreducible levels" rule documents.
+     *
+     * <p>This is what decides {@code 10{ω+1}3 > 10{100}10}, {@code 10{ω+2}2 > 10{100}10}, and - through the
+     * fundamental sequence walk that turns {@code ω·2}, {@code ω²} and {@code ω^ω} into successors - the
+     * cases {@code 10{ω·2}10}, {@code 10{ω²}10} and {@code 10{ω^ω}10} as well. A limit level that the walk
+     * cannot bring to a successor ({@code ω^ω^ω}, {@code ε₀}) has no such bound and stays undetermined.
+     */
+    private static ComparisonResult compareTransfiniteFloor(Natural left, Natural right, int budget, int depth) {
+        if (depth <= 0) {
+            return ComparisonResult.UNKNOWN;
+        }
+        ComparisonResult asLeft = transfiniteFloorBeats(left, right, budget, depth);
+        if (asLeft.isDecided()) {
+            return asLeft;
+        }
+        return transfiniteFloorBeats(right, left, budget, depth).reversed();
+    }
+
+    private static ComparisonResult transfiniteFloorBeats(Natural transfinite, Natural other, int budget,
+            int depth) {
+        if (transfinite.kind != Kind.TOWER || transfinite.level == null || transfinite.level.isFinite()
+                || !transfinite.level.isSuccessor()) {
+            return ComparisonResult.UNKNOWN;
+        }
+        if (other.kind == Kind.TOWER && other.level != null && !other.level.isFinite()) {
+            return ComparisonResult.UNKNOWN;                  // transfinite against transfinite: use the level rule
+        }
+        if (transfinite.height.compareTo(of(3)) < 0) {
+            return ComparisonResult.UNKNOWN;                  // height one and two are the degenerate cases
+        }
+        if (other.kind == Kind.TOWER && !transfinite.base.equals(other.base)) {
+            return ComparisonResult.UNKNOWN;                  // a floor is only usable on its own base
+        }
+        Ordinal omega = transfinite.level.notation().omega();
+        Natural inner = tower(transfinite.base, omega, transfinite.base);                    // b{ω}b
+        Natural floor = TransfiniteHyperoperation.apply(transfinite.base, omega, inner, budget);  // b{ω}(b{ω}b)
+        if (other.compareMagnitude(floor, budget, depth - 1) == ComparisonResult.LESS) {
+            return ComparisonResult.GREATER;
+        }
+        return ComparisonResult.UNKNOWN;
     }
 
     /**

@@ -24,10 +24,11 @@
 | **没有除法、没有取余、没有负数** | `Natural` 只提供 `add` / `subtractClamped` / `subtract` / `multiply` / `min` / `max`；要比例就用 `fractionOf(whole)`，它给 `float` | `Natural.java` |
 | 比较是**量级序**、`equals` 是**形式序** | 两边都精确时完全精确；否则先按预算（`Natural.COMPARISON_REDUCTION_BUDGET = 32`）把两边各自归约成更规范的值（`2{ω}2`、甚至 `2{ε₀}2` 都会变成精确的 `4`），再比（级别 → 底数 → 高度），级别统一到超运算级别这把尺子上。所以 `10{ω}10`、`10{11}10` 与未归约的 `10{ω}10` 互比都是 `0`，但 `equals` 只对形式相同者为真；排序仍是全序，可以安全用作 `Collections.sort` 的键 | `Natural.compareTo`、`Natural.reducedLevel` |
 | 要"有证明的答案"用四值比较 | `Natural.compareMagnitude(other)` 返回 `LESS`/`EQUAL`/`GREATER`（都是证明：退化恒等式、两个精确值、下界引理、**10 底对数距离**（差距超过一个数量级即判，与底数无关：`2↑↑10 > 3↑↑4`）、同底有限级别的单调性与**递归下降**（`10↑↑10 > 10^100000`）、两侧都没归约完时的序数级别比较）或 `UNKNOWN`（没有可用规则）。**`UNKNOWN` 不是 `EQUAL`**：截断只证不等。需要排序时继续用 `compareTo` 的全序兜底 | `ComparisonResult`、`Natural.compareMagnitude` |
-| 仍然 `UNKNOWN` 的三类 | ① 两者 `log10` 相差不足一个数量级且没有其他证书；② 超限级别 vs **大**有限级别且两边都没归约完（`10{ω+1}10` 与 `10{100}10`：极限层会塌缩，级别大不等于值大）；③ 记号给不出下一项基本列（如 `ε₀[300]` 超过 `MAX_TOWER_HEIGHT`） | `Natural.compareMagnitude` |
+| 仍然 `UNKNOWN` 的三类 | ① 两者 `log10` 相差不足一个数量级且没有其他证书；② **深层极限**（走不到后继）对**大**有限级别：`10{ω^ω^ω}10`、`10{ε₀}10` 对 `10{100}10`——实测基本列走 4096 步后级别仍是极限（`ω^ω` 只需 12 步）；③ 记号给不出下一项基本列（如 `ε₀[300]` 超过 `MAX_TOWER_HEIGHT`） | `Natural.compareMagnitude` |
+| 超限后继级别对有限级别**已经判得开** | 级别是超限后继（含归约后得到的后继）且高度 ≥ 3 时，值至少是 `10{ω+1}3 = 10{ω}(10{ω}10)`；它展开成 `10{X+1}X` 后是有限级别塔，交给同底有限级别证书即可。于是 `10{ω+1}3`、`10{ω+2}2`、`10{ω+10}2`（以及经归约变成后继的 `ω·2`/`ω²`/`ω^ω`）都大于 `10{100}10` | `Natural.compareTransfiniteFloor` |
 | 比较在**巨大序数级别**上会回落 | 把级别归约到后继所需的步数随级别爆炸：`ω` 1 步、`ω²` 2 步、`ω^ω` 12 步，但 `ω^ω^ω` 实测十分钟未完成、`ε₀` 是指数塔级（约 `f_3(n)`）。超出预算就不归约：两侧都没归约完时按序数级别判，其余情况才落到 `UNKNOWN`/兜底倾向 | `Natural.COMPARISON_REDUCTION_BUDGET`、`Ordinal.normaliseAt` |
 | 比较结果是**按值缓存**的 | 归约结果与比较级别都是值的纯函数，记在值自身上（懒计算），所以排序大量塔值时每个值只付一次预算，而不是每次比较都付 | `Natural.compareTo`（`comparisonValue`/`comparisonRankCache`） |
-| 库的 `selfcheck` 任务有 200 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返、序数、超限超运算与四值比较（第 11–15 节） | `GoogologyCheck.java` |
+| 库的 `selfcheck` 任务有 207 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返、序数、超限超运算与四值比较（第 11–15 节） | `GoogologyCheck.java` |
 
 `float` 与 `int` 的领地没有被 `Natural` 取代，而且仍然各自带边界：位置/速度/半径/射程/`EntitySnapshot.healthFraction` 是 `float`，格坐标与一切 tick 时长（`buildTimeTicks`、`Recipe.durationTicks`、冷却、超时）是 `int`/`long`。位置与速度用的是 `float`，而 `Vec2` 只做 `float` 基本算术（这也是"同种子必然复现"的前提之一）：`float` 只有 24 位有效二进制位，**离原点越远分辨率越差**——原点附近相邻可表示值的间隔约 `1.2e-7` 格，到 10 万格处约 `0.0078` 格，到 100 万格处约 `0.0625` 格，此时"精确停在某个坐标"已没有意义（`UnitType.radius()` 通常在 0.35 格上下）。大数解决的是"数量"，不是"坐标"。
 
@@ -214,4 +215,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（200 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（207 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10 节）

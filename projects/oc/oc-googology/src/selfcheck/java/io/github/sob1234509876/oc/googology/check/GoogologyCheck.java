@@ -315,15 +315,42 @@ public final class GoogologyCheck {
         check("ω+1 且高度 2：3{ω+1}2 = 3{ω}3 = 3↑↑3 < 3{100}2",
                 Natural.tower(three, omega.successor(), Natural.TWO)
                         .compareMagnitude(Natural.arrow(three, 98, Natural.TWO)) == ComparisonResult.LESS);
-        check("ω+k（k ≥ 2）对大有限级别仍是 UNKNOWN（4096 预算也判不出）",
+        check("ω+k（k ≥ 2）高度 2 由下界证书判开：3{ω+10}2 > 3{100}2",
                 Natural.tower(three, omega.plus(10), Natural.TWO)
-                        .compareMagnitude(Natural.arrow(three, 98, Natural.TWO)) == ComparisonResult.UNKNOWN
-                        && Natural.tower(three, omega.plus(10), Natural.TWO)
-                                .compareMagnitude(Natural.arrow(three, 98, Natural.TWO), 4096)
-                                == ComparisonResult.UNKNOWN);
+                        .compareMagnitude(Natural.arrow(three, 98, Natural.TWO)) == ComparisonResult.GREATER);
         check("但极限层对小有限级别判得开（下界证书）：10{ω^ω^ω}10 > 10{3}10",
                 Natural.tower(Natural.TEN, notation.omegaTower(3), Natural.TEN)
                         .compareMagnitude(Natural.arrow(Natural.TEN, 1, Natural.TEN)) == ComparisonResult.GREATER);
+
+        // The lower bound certificate: a transfinite successor level of at least omega plus one, at a height of
+        // at least three, is at least 10{w+1}3 = 10{w}(10{w}10), which unfolds into a finite level tower whose
+        // level and height are both astronomical.
+        Natural wideFinite = Natural.arrow(Natural.TEN, 98, Natural.TEN);
+        check("超限后继 + 高度 ≥ 3：10{ω+1}3 > 10{100}10",
+                Natural.tower(Natural.TEN, omega.successor(), Natural.of(3))
+                        .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
+        check("高度 2 仍是精确退化：10{ω+1}2 = 10{ω}10 < 10{100}10",
+                Natural.tower(Natural.TEN, omega.successor(), Natural.TWO)
+                        .compareMagnitude(wideFinite) == ComparisonResult.LESS);
+        check("ω+2 高度 2 = 10{ω+1}10 > 10{100}10",
+                Natural.tower(Natural.TEN, omega.plus(2), Natural.TWO)
+                        .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
+        check("ω·2 化为后继（(ω·2)[10] = ω+11）后判得开：10{ω·2}10 > 10{100}10",
+                Natural.tower(Natural.TEN, omega.times(2), Natural.TEN)
+                        .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
+        check("ω² 两步化为后继后判得开：10{ω²}10 > 10{100}10",
+                Natural.tower(Natural.TEN, notation.omegaPower(notation.of(2)), Natural.TEN)
+                        .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
+        check("ω^ω 十二步化为后继后判得开：10{ω^ω}10 > 10{100}10",
+                Natural.tower(Natural.TEN, notation.omegaPower(omega), Natural.TEN)
+                        .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
+        check("深层极限没有有界证明：ω^ω^ω 与 ε₀ 对 10{100}10 是 UNKNOWN（实测 4096 步后仍是极限）",
+                Natural.tower(Natural.TEN, notation.omegaTower(3), Natural.TEN)
+                                .compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN
+                        && Natural.tower(Natural.TEN, notation.limit(), Natural.TEN)
+                                .compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN
+                        && Natural.tower(Natural.TEN, notation.omegaTower(3), Natural.TEN)
+                                .compareMagnitude(wideFinite, 4096) == ComparisonResult.UNKNOWN);
 
         // Same base: everything the library promotes on its own is base ten (approximate() builds 10^digits),
         // and a tower the caller wrote keeps its own base, because 2↑↑10 cannot be rewritten as a base ten
@@ -362,12 +389,12 @@ public final class GoogologyCheck {
         check("极限层对小精确值可由下界引理判掉：10{ω^ω^ω}10 > 1000",
                 deepValue.compareMagnitude(Natural.of(1000)) == ComparisonResult.GREATER);
         Natural transfiniteSuccessor = Natural.tower(Natural.TEN, omega.successor(), Natural.TEN);
-        Natural wideFinite = Natural.arrow(Natural.TEN, 98, Natural.of(10));
-        check("极限层对大有限级别仍为 UNKNOWN（要展开才能判）",
-                transfiniteSuccessor.compareMagnitude(wideFinite) == ComparisonResult.UNKNOWN);
+        check("极限层对大有限级别现在也判得开（高度 10 ≥ 3 走超限后继下界）：10{ω+1}10 > 10{100}10",
+                transfiniteSuccessor.compareMagnitude(wideFinite) == ComparisonResult.GREATER);
 
         List<Ordinal> levelSample = List.of(omega, omega.times(2), notation.omegaPower(notation.of(2)),
-                notation.omegaPower(omega));        boolean agreed = true;
+                notation.omegaPower(omega));
+        boolean agreed = true;
         int comparablePairs = 0;
         for (Ordinal lower : levelSample) {
             for (Ordinal upper : levelSample) {
