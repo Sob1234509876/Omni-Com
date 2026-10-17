@@ -15,6 +15,8 @@
 | 网络 | 不需要；`./gradlew build --offline` 可构建并跑自校验 | 第一次 `pnpm install` **需要网络**；之后可离线 dev/build |
 | 谁调用谁 | Gradle **从不**调用 npm 或 pnpm | pnpm **从不**调用 Gradle |
 
+如果 `pnpm install` 打印 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild`，那是 pnpm 10 默认拦截依赖的生命周期脚本，不是失败：esbuild 的平台二进制也会以可选平台包的形式送达，所以客户端能正常运行。`package.json` 里的 `pnpm.onlyBuiltDependencies` 字段显式放行这一个脚本，从而让这条警告（以及 `--frozen-lockfile` 的 CI 运行）保持安静。
+
 由此得到两条硬规则：
 
 1. `./gradlew build --offline` 必须始终是绿的，且它的输出与 `web-client/` 无关；没有 `node_modules` 也照样能构建 Java。
@@ -131,8 +133,8 @@ pnpm install && pnpm dev
 `oc-game-server-hello-2.0a.jar` 是模块 `version = '2.0a'` 的默认产物名；如果 Gradle 产出的名字不同，
 以 `projects/oc/oc-game-server-hello/build/libs/` 里的文件为准。
 
-这个 jar 还带着 `assets/manifest.json` 和一张 256×80 的 `assets/atlas.png`：把 jar 放进 `plugins/`、启动服务器后，
-浏览器画面会自动用它的六种地形和两帧工人动画渲染——插件资源从 jar 到服务器路由再到画面的完整链路，就是这一步在演示。
+这个 jar 还带着 `assets/manifest.json` 和一张 128x128 的 `assets/atlas.png`（8x8 个 16x16 单元格）：把 jar 放进 `plugins/`、启动服务器后，
+浏览器画面会自动用这张图集渲染全部七条地形内容路径——`water`、`sand`、`grass`、`forest`、`hill`、`rock`、`void`。清单里有 20 个瓦片矩形（16 块美术瓦片，外加 `forest`、`hill`、`rock`、`void` 四个别名键），`entities` 为空，所以单位回退到程序化形状。插件资源从 jar 到服务器路由再到画面的完整链路，就是这一步在演示。
 不需要往 `public/` 里放任何图片。
 
 `plugins/` 是操作员的投放区：插件 jar 与它们的依赖 jar 都放在这一层，说明见
@@ -202,6 +204,6 @@ SSH 端口转发或 HTTPS 反向代理。
 
 ## 相关文档
 
-- 线上协议（本文的上游）：[`protocol/oc-protocol.md`](../protocol/oc-protocol.md)
+- 线上协议（本文的上游）：[`protocol/oc-protocol_zh_CN.md`](../protocol/oc-protocol_zh_CN.md)
 - 仓库总览与并行工具链：[`README.md`](../README.md)
 - 服务器启动、端口与数据目录：[`01-getting-started.md`](../projects/oc/oc-game-server/help/01-getting-started.md)

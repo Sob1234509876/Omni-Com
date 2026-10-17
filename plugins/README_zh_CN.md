@@ -42,5 +42,5 @@
 - 没有 `assets/manifest.json` 的插件不贡献清单条目；没有 `assets/` 的插件在文件路由上一律 404。
 - 一个插件清单坏掉只影响它自己：服务器记录一行原因并跳过，其它插件照常发布，客户端照常加载。
 
-示例：`oc-game-server-hello` 的 `src/main/resources/assets/` 里已经带了 `manifest.json` 和一张 256×80 的
-`atlas.png`，映射六种地形和两帧 `worker`。构建出 jar 放进本目录，浏览器客户端就会用这张图集渲染地形和工人动画。
+示例：`oc-game-server-hello` 的 `src/main/resources/assets/` 里已经带了默认素材：`manifest.json` 和一张 128x128 的
+`atlas.png`（8x8 个 16x16 单元格）。清单里有 20 个瓦片矩形（16 块美术瓦片，外加 `forest`、`hill`、`rock`、`void` 四个别名键），映射全部七条地形内容路径（`water`、`sand`、`grass`、`forest`、`hill`、`rock`、`void`），`entities` 为空，所以单位回退到程序化形状。构建出 jar 放进本目录，浏览器客户端就会用这张图集渲染地形。

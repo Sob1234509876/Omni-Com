@@ -13,12 +13,12 @@ The Java side and the Web side of this repository are two **completely parallel*
 | Build tool | Gradle wrapper (`gradlew` / `gradlew.bat`) | pnpm |
 | Third-party dependencies | **Zero**; only JDK 17 and JPMS | the two devDependencies `typescript` and `vite` |
 | Network | Not needed; `./gradlew build --offline` builds and runs the self-checks | the first `pnpm install` **needs the network**; dev/build works offline afterwards |
+| Who calls whom | Gradle **never** calls npm or pnpm | pnpm **never** calls Gradle |
 
 If pnpm install prints `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild` that is pnpm 10 blocking
 dependency lifecycle scripts by default, not a failure: esbuild's platform binary also arrives as an optional platform
 package, so the client runs. The `pnpm.onlyBuiltDependencies` field in `package.json` allows that one script
 explicitly, which keeps the warning (and a `--frozen-lockfile` CI run) quiet.
-| Who calls whom | Gradle **never** calls npm or pnpm | pnpm **never** calls Gradle |
 
 That gives two hard rules:
 
@@ -134,8 +134,8 @@ pnpm install && pnpm dev
 `oc-game-server-hello-2.0a.jar` is the default artifact name for the module with `version = '2.0a'`; if Gradle produces a different name,
 the file in `projects/oc/oc-game-server-hello/build/libs/` is authoritative.
 
-This jar also carries `assets/manifest.json` and a 256×80 `assets/atlas.png`: with the jar in `plugins/` and the server started, the
-browser view automatically renders with its six terrains and two-frame worker animation — this step demonstrates the whole chain from a plugin resource in the jar to the server route to the screen.
+This jar also carries `assets/manifest.json` and a 128x128 `assets/atlas.png` (8x8 cells of 16x16): with the jar in `plugins/` and the server started, the
+browser view automatically renders all seven terrain content paths — `water`, `sand`, `grass`, `forest`, `hill`, `rock`, `void` — from that atlas. The manifest holds 20 tile rectangles (16 art tiles plus the four alias keys `forest`, `hill`, `rock`, `void`) and an empty `entities`, so units fall back to procedural shapes. This step demonstrates the whole chain from a plugin resource in the jar to the server route to the screen.
 No images need to be put into `public/`.
 
 `plugins/` is the operator drop zone: plugin jars and the jars they depend on all live at this level; see

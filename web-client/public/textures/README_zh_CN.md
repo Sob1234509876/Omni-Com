@@ -51,7 +51,7 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 
 原始文件由 `GET /plugin-assets/<插件 id>/<文件>` 提供，例如
 `/plugin-assets/oc-hello/atlas.png`。这个路由只允许 `GET`/`HEAD`，不需要登录，也不属于 OC/1 协议；
-细节见 [`protocol/oc-protocol.md`](../../../protocol/oc-protocol.md)。
+细节见 [`protocol/oc-protocol_zh_CN.md`](../../../protocol/oc-protocol_zh_CN.md)。
 
 ## 基本约定
 

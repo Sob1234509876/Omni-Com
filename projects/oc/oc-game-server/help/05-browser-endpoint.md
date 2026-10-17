@@ -102,7 +102,7 @@ TCP 命令循环完全相同。因此这条端点上的命令、参数规则、�
 - `REQ` 的失败短句也相同：没登录是 `ERR login first`，名字没注册或载荷不是合法 base64 是
   `ERR unknown request`，处理器抛异常是 `ERR request failed`。登录前提由 `CommandDispatcher` 实现，
   浏览器拿不到任何 TCP 客户端拿不到的东西；插件的请求缝见 [03](03-plugins.md)。
-- [`protocol/oc-protocol.md`](../../../../protocol/oc-protocol.md) 是线上约定的**唯一**来源：命令表、base64
+- [`protocol/oc-protocol_zh_CN.md`](../../../../protocol/oc-protocol_zh_CN.md) 是线上约定的**唯一**来源：命令表、base64
   约定、`engine-info` 信封与版本兼容规则都以它为准，这一篇只解释服务器这一侧怎么实现。
 
 二进制帧不是命令，也到不了 `CommandDispatcher`：传输层自己回一行 `ERR binary frames are not commands` 并
@@ -283,7 +283,7 @@ mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`
 - 插件、`RequestRegistry` 与 `REQ` 的请求缝 → [03-plugins.md](03-plugins.md)
 - `engine-info` 的第二层信封与调试 CLI → [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)
 - 浏览器与服务器之间的线上约定（命令表、版本兼容与插件资源以它为准） →
-  [`protocol/oc-protocol.md`](../../../../protocol/oc-protocol.md)
+  [`protocol/oc-protocol_zh_CN.md`](../../../../protocol/oc-protocol_zh_CN.md)
 - 浏览器客户端本身 → [`web-client/README.md`](../../../../web-client/README.md)
 - 引擎的包与管线（`engine-info` 报告描述的那个模块） →
   [09-architecture-and-tick-pipeline.md](../../oc-rts-engine/help/09-architecture-and-tick-pipeline.md)

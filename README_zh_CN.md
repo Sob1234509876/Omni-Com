@@ -14,7 +14,7 @@ Omni Com 项目的单体仓库。Java 模块使用 Gradle 构建，不依赖任�
 Java 模块无依赖：它们可以离线构建并运行自检。
 `./gradlew build --offline` 从不访问网络，也从不调用 npm 或 pnpm。
 
-可选的浏览器客户端位于 [`web-client/`](web-client/README.md)。它需要 Node.js 和 pnpm，使用 pnpm 构建，首次 `pnpm install` 需要网络访问，并且绝不会被 Gradle 构建调用。双方共同实现的中立线路契约是 [`protocol/oc-protocol.md`](protocol/oc-protocol.md)。
+可选的浏览器客户端位于 [`web-client/`](web-client/README.md)。它需要 Node.js 和 pnpm，使用 pnpm 构建，首次 `pnpm install` 需要网络访问，并且绝不会被 Gradle 构建调用。双方共同实现的中立线路契约是 [`protocol/oc-protocol_zh_CN.md`](protocol/oc-protocol_zh_CN.md)。
 
 ## 构建
 

@@ -42,5 +42,5 @@ Gradle-built plugins write them to `src/main/resources/assets/`, and the `jar` t
 - Plugins without `assets/manifest.json` contribute no manifest entry; plugins without `assets/` return 404 on the file route across the board.
 - One broken plugin manifest affects only itself: the server logs one line of reason and skips it, while other plugins publish as usual and the client loads as usual.
 
-Example: `oc-game-server-hello`'s `src/main/resources/assets/` already ships `manifest.json` and a 256×80
-`atlas.png` mapping six terrain types and a two-frame `worker`. Build the jar, put it in this directory, and the browser client renders terrain and the worker animation with that atlas.
+Example: `oc-game-server-hello`'s `src/main/resources/assets/` already ships the default material set: `manifest.json` and a 128x128
+`atlas.png` (8x8 cells of 16x16). The manifest has 20 tile rectangles (16 art tiles plus the four alias keys `forest`, `hill`, `rock`, `void`) and maps all seven terrain content paths (`water`, `sand`, `grass`, `forest`, `hill`, `rock`, `void`); `entities` is empty, so units fall back to procedural shapes. Build the jar, put it in this directory, and the browser client renders terrain with that atlas.
