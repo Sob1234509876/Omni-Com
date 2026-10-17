@@ -13,6 +13,11 @@ The Java side and the Web side of this repository are two **completely parallel*
 | Build tool | Gradle wrapper (`gradlew` / `gradlew.bat`) | pnpm |
 | Third-party dependencies | **Zero**; only JDK 17 and JPMS | the two devDependencies `typescript` and `vite` |
 | Network | Not needed; `./gradlew build --offline` builds and runs the self-checks | the first `pnpm install` **needs the network**; dev/build works offline afterwards |
+
+If pnpm install prints `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild` that is pnpm 10 blocking
+dependency lifecycle scripts by default, not a failure: esbuild's platform binary also arrives as an optional platform
+package, so the client runs. The `pnpm.onlyBuiltDependencies` field in `package.json` allows that one script
+explicitly, which keeps the warning (and a `--frozen-lockfile` CI run) quiet.
 | Who calls whom | Gradle **never** calls npm or pnpm | pnpm **never** calls Gradle |
 
 That gives two hard rules:
