@@ -15,8 +15,10 @@ import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
+import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
@@ -122,6 +124,38 @@ public final class WorldHost {
      * reused while the world lives, which keeps an entity's owner stable for a replay.
      */
     public static final int MAX_PLAYERS = 8;
+
+    /**
+     * Content tag that marks a unit as a builder.
+     *
+     * <p>The classic AI selects its builder with the same tag, so a catalogue that wants human players to
+     * start with a builder has to tag it exactly the same way.
+     */
+    private static final String BUILDER_TAG = "builder";
+
+    /** Number of human slots a starting base anchor exists for: ids 3 through 8. */
+    private static final int BASE_SLOT_COUNT = MAX_PLAYERS - FIRST_HUMAN_PLAYER_ID + 1;
+
+    /** First tile of the grid of per-slot starting base anchors. */
+    private static final int BASE_ANCHOR_X = 4;
+
+    /** First tile row of the grid of per-slot starting base anchors. */
+    private static final int BASE_ANCHOR_Y = 4;
+
+    /** Anchors per row; the six human slots form a 3 x 2 grid, clear of the sample scene and the AI base. */
+    private static final int BASE_ANCHOR_COLUMNS = 3;
+
+    /** Distance between two anchor columns, in tiles. */
+    private static final int BASE_ANCHOR_STRIDE_X = 24;
+
+    /** Distance between two anchor rows, in tiles. */
+    private static final int BASE_ANCHOR_STRIDE_Y = 48;
+
+    /** How many rings around its anchor the warehouse site search visits before scanning the whole map. */
+    private static final int BASE_SITE_SEARCH_RADIUS = 12;
+
+    /** How many rings around the warehouse the builder tile search visits before scanning the whole map. */
+    private static final int BASE_UNIT_SEARCH_RADIUS = 6;
 
     /**
      * Colours handed to human players, cycled by id.
@@ -261,7 +295,12 @@ public final class WorldHost {
                 .build();
         engine.focus(Vec2.of(MAP_SIZE / 2f, MAP_SIZE / 2f));
         spawnScene(this.content, player);
-        applyStartingResources(this.worldContent, this.content, player);
+        ItemBundle leftover = depositStartingResources(this.worldContent, this.content, player,
+                Vec2.of(MAP_SIZE / 2f, MAP_SIZE / 2f));
+        if (!leftover.isEmpty()) {
+            throw new IllegalStateException("world content " + this.worldContent.id()
+                    + " declares starting resources that no warehouse accepted: " + leftover);
+        }
     }
 
     /** Builds the immutable catalogue a content seam describes. */
@@ -330,28 +369,240 @@ public final class WorldHost {
     }
 
     /**
-     * Deposits the content's starting stock into the player's warehouses.
+     * Spawns a human player's starting base and deposits the content's starting stock into it.
      *
-     * <p>Resources that no warehouse accepts are a content error, not something to drop silently: a player
-     * who is promised a starting fortune and receives part of it has no way to tell the difference from a
-     * bug in the economy.
+     * <p>The base is one drop off building and one builder unit. The building is the first warehouse type
+     * of the catalogue in key order - the same drop off the classic AI calls
+     * {@code ClassicContent.WAREHOUSE} - and the unit is the first unit carrying the {@value #BUILDER_TAG}
+     * tag, which is how the classic AI finds its engineer. A catalogue that declares neither is a sandbox:
+     * the player still joins, and one log line records why no base was spawned.
+     *
+     * <p>Placement is deterministic. Every human slot has an anchor tile on a fixed grid, the warehouse
+     * search visits rings of tiles around that anchor in row-major order and takes the first origin where
+     * the building fits on buildable ground and overlaps no living entity, and the builder is placed on the
+     * first free tile in rings around the warehouse. Two joins therefore never pick the same tiles: the
+     * second search sees the first base as occupied. If the anchored search exhausts its rings, a row-major
+     * scan of the whole map is the documented fallback, so a crowded map cannot make the result random.
      */
-    private static void applyStartingResources(WorldContent worldContent, ContentRegistry content, Player player) {
+    private void spawnStartingBase(Player player) {
+        World world = engine.world();
+        BuildingType warehouseType = dropOffBuilding(content);
+        UnitType builderType = builderUnit(content);
+        if (warehouseType == null || builderType == null) {
+            LOG.log(System.Logger.Level.INFO, "world content " + worldContent.id()
+                    + " declares " + (warehouseType == null ? "no warehouse building" : "no builder unit")
+                    + "; player " + player.id() + " joins without a starting base");
+            return;
+        }
+        GridPos origin = findWarehouseSite(world, warehouseType, player.id().value());
+        GridPos builderTile = origin == null ? null : findBuilderTile(world, warehouseType, origin);
+        if (origin == null || builderTile == null) {
+            LOG.log(System.Logger.Level.INFO, "world content " + worldContent.id()
+                    + " has no free starting site for player " + player.id()
+                    + "; the player joins without a starting base");
+            return;
+        }
+        Building warehouse = world.spawnBuilding(warehouseType, player, origin);
+        world.spawnUnit(builderType, player, builderTile);
+        ItemBundle leftover = depositStartingResources(worldContent, content, player,
+                warehouse.position());
+        if (!leftover.isEmpty()) {
+            LOG.log(System.Logger.Level.WARNING, "player " + player.id()
+                    + " could not store all starting resources: " + leftover);
+        }
+    }
+
+    /** The catalogue's drop off building: the lowest keyed type flagged as a warehouse, or {@code null}. */
+    private static BuildingType dropOffBuilding(ContentRegistry content) {
+        BuildingType best = null;
+        for (BuildingType type : content.buildings()) {
+            if (!type.isWarehouse()) {
+                continue;
+            }
+            if (best == null || type.key().compareTo(best.key()) < 0) {
+                best = type;
+            }
+        }
+        return best;
+    }
+
+    /** The catalogue's builder unit: the lowest keyed unit carrying the {@value #BUILDER_TAG} tag. */
+    private static UnitType builderUnit(ContentRegistry content) {
+        UnitType best = null;
+        for (UnitType type : content.units()) {
+            if (!type.hasTag(BUILDER_TAG)) {
+                continue;
+            }
+            if (best == null || type.key().compareTo(best.key()) < 0) {
+                best = type;
+            }
+        }
+        return best;
+    }
+
+    /** The fixed anchor of one human slot on the map; ids map to a 3 x 2 grid, never to a random tile. */
+    private static GridPos baseAnchor(int playerId) {
+        int slot = Math.floorMod(playerId - FIRST_HUMAN_PLAYER_ID, BASE_SLOT_COUNT);
+        return new GridPos(
+                BASE_ANCHOR_X + (slot % BASE_ANCHOR_COLUMNS) * BASE_ANCHOR_STRIDE_X,
+                BASE_ANCHOR_Y + (slot / BASE_ANCHOR_COLUMNS) * BASE_ANCHOR_STRIDE_Y);
+    }
+
+    /** The warehouse origin for a player: rings around the slot anchor first, then the whole map. */
+    private static GridPos findWarehouseSite(World world, BuildingType type, int playerId) {
+        GridPos site = scanWarehouseSite(world, type, baseAnchor(playerId), BASE_SITE_SEARCH_RADIUS);
+        return site != null ? site : scanWarehouseMap(world, type);
+    }
+
+    /** Visits rings around an anchor in row-major order and returns the first origin the building fits. */
+    private static GridPos scanWarehouseSite(World world, BuildingType type, GridPos anchor, int radius) {
+        for (int ring = 0; ring <= radius; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos origin = new GridPos(anchor.x() + dx, anchor.y() + dy);
+                    if (freeOrigin(world, type, origin)) {
+                        return origin;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Row-major fallback of {@link #findWarehouseSite(World, BuildingType, int)}. */
+    private static GridPos scanWarehouseMap(World world, BuildingType type) {
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                GridPos origin = new GridPos(x, y);
+                if (freeOrigin(world, type, origin)) {
+                    return origin;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether a building of the type can be spawned at the origin without overlapping anything alive.
+     *
+     * <p>{@link World#canPlace} covers buildable ground and other buildings; the unit check is added here
+     * because {@code canPlace} deliberately only tests buildings, and a starting base must not stand on
+     * top of a unit either.
+     */
+    private static boolean freeOrigin(World world, BuildingType type, GridPos origin) {
+        if (origin.x() < 0 || origin.y() < 0
+                || origin.x() + type.sizeX() > MAP_SIZE || origin.y() + type.sizeY() > MAP_SIZE) {
+            return false;
+        }
+        if (!world.canPlace(type, origin)) {
+            return false;
+        }
+        TileRect footprint = type.footprint(origin.x(), origin.y());
+        for (Unit unit : world.units()) {
+            if (unit.isAlive() && footprint.contains(unit.position().tile())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The builder tile for a warehouse: rings around a tile just below the footprint, then the whole map. */
+    private static GridPos findBuilderTile(World world, BuildingType warehouse, GridPos origin) {
+        TileRect footprint = warehouse.footprint(origin.x(), origin.y());
+        GridPos anchor = new GridPos(origin.x() + warehouse.sizeX() / 2, origin.y() + warehouse.sizeY() + 1);
+        GridPos tile = scanBuilderTile(world, anchor, BASE_UNIT_SEARCH_RADIUS, footprint);
+        return tile != null ? tile : scanBuilderMap(world, footprint);
+    }
+
+    /** Visits rings around an anchor in row-major order and returns the first free buildable tile. */
+    private static GridPos scanBuilderTile(World world, GridPos anchor, int radius, TileRect excluded) {
+        for (int ring = 0; ring <= radius; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos tile = new GridPos(anchor.x() + dx, anchor.y() + dy);
+                    if (freeTile(world, tile, excluded)) {
+                        return tile;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Row-major fallback of {@link #findBuilderTile(World, BuildingType, GridPos)}. */
+    private static GridPos scanBuilderMap(World world, TileRect excluded) {
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                GridPos tile = new GridPos(x, y);
+                if (freeTile(world, tile, excluded)) {
+                    return tile;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether a tile can carry a freshly spawned unit without touching any existing entity.
+     *
+     * <p>A unit's radius is below half a tile in every catalogue this host serves, so treating the tile of
+     * its centre as its footprint is enough for a starting base, and it keeps the check simple and
+     * deterministic.
+     */
+    private static boolean freeTile(World world, GridPos tile, TileRect excluded) {
+        if (tile.x() < 0 || tile.y() < 0 || tile.x() >= MAP_SIZE || tile.y() >= MAP_SIZE) {
+            return false;
+        }
+        if (!world.map().isBuildable(tile) || excluded.contains(tile)) {
+            return false;
+        }
+        for (Building building : world.buildings()) {
+            if (building.isAlive() && footprintOf(building).contains(tile)) {
+                return false;
+            }
+        }
+        for (Unit unit : world.units()) {
+            if (unit.isAlive() && unit.position().tile().equals(tile)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Tile footprint of a spawned building. */
+    private static TileRect footprintOf(Building building) {
+        return building.type().footprint(building.origin().x(), building.origin().y());
+    }
+
+    /**
+     * Deposits the content's starting stock into the player's warehouses from {@code at}.
+     *
+     * <p>The stock is resolved through the catalogue exactly like the classic AI resolves it, so a content
+     * keeps one set of item paths for its own opening. Whatever the warehouses cannot hold is returned; the
+     * world constructor treats that as a content error, while a joining player only gets a log line because
+     * the player must still join.
+     *
+     * @return the part of the stock no warehouse accepted; empty when everything was stored or there is no
+     *     starting stock
+     */
+    private static ItemBundle depositStartingResources(WorldContent worldContent, ContentRegistry content,
+            Player player, Vec2 at) {
         StartingResources starting = worldContent.startingResources();
         if (starting.isEmpty()) {
-            return;
+            return ItemBundle.EMPTY;
         }
         ItemBundle.Builder bundle = ItemBundle.builder();
         for (Map.Entry<String, Natural> entry : starting.amounts().entrySet()) {
             ItemType item = content.item(entry.getKey());
             bundle.add(item, entry.getValue());
         }
-        ItemBundle items = bundle.build();
-        ItemBundle leftover = player.logistics().deposit(items, Vec2.of(MAP_SIZE / 2f, MAP_SIZE / 2f));
-        if (!leftover.isEmpty()) {
-            throw new IllegalStateException("world content " + worldContent.id()
-                    + " declares starting resources that no warehouse accepted: " + leftover);
-        }
+        return player.logistics().deposit(bundle.build(), at);
     }
 
     /** Starts the daemon tick thread. Calling this on a running host does nothing. */
@@ -688,10 +939,12 @@ public final class WorldHost {
      * under a replay. The colour is a fixed function of the id; see the palette constant.
      *
      * <p>The player is added to the world with an engine logistics network and, when another player
-     * already has one, the world's hauling system. Nothing else is granted: a new player owns no
-     * entities and no stock; commands can only act on what that player already owns. The content's
-     * starting resources are applied to the host's scene player, not to every join, because goods need a
-     * warehouse to live in and a fresh player has none.
+     * already has one, the world's hauling system. A starting base is then spawned for the player: one
+     * drop off building of the catalogue and one builder unit, on free buildable tiles chosen by a fixed
+     * scan order that starts at a per-slot anchor on the map (see {@link #spawnStartingBase(Player)}).
+     * Finally the content's {@link WorldContent#startingResources()} are deposited into that building, so
+     * the player can immediately use the build and train commands. A sandbox catalogue that declares no
+     * drop off or no builder gets a log line and no base, but still joins.
      *
      * <p>This method mutates the world and must therefore run on the world thread, which in practice
      * means from a {@link WorldCommand} (the command dispatcher does exactly that). It is not a client
@@ -716,6 +969,7 @@ public final class WorldHost {
             engine.world().addPlayer(joined);
             joined.attachLogistics(new WarehouseLogistics(engine.world(), joined));
             joinHauling(engine.world(), joined);
+            spawnStartingBase(joined);
             return Optional.of(joined);
         }
         return Optional.empty();

@@ -104,8 +104,16 @@
         color: #9fd6a8;
       }
 
+      #hud-player {
+        color: #d9b4ff;
+      }
+
       #hud-selected {
         color: var(--warn);
+      }
+
+      #hud-building {
+        color: #ffd479;
       }
 
       .controls-hint {
@@ -206,6 +214,46 @@
         color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.08em;
+      }
+
+      .panel h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        letter-spacing: 0.05em;
+      }
+
+      .panel h3 span {
+        color: var(--text);
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-weight: 400;
+      }
+
+      .gameplay-section {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--line);
+      }
+
+      .gameplay-note {
+        flex: 1 1 180px;
+        min-width: 0;
+        color: var(--muted);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      #train-buttons button,
+      #build-buttons button {
+        padding: 6px 9px;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+      }
+
+      button.armed {
+        border-color: var(--warn);
+        background: #4a3c1f;
       }
 
       .fields {
@@ -384,13 +432,15 @@
         <div class="hud" aria-live="off">
           <span id="hud-atlas">procedural</span>
           <span id="hud-world">世界：demo</span>
+          <span id="hud-player">玩家：—</span>
           <span id="hud-tile">瓦片：—</span>
           <span id="hud-zoom">缩放：1.00×</span>
           <span id="hud-fps">FPS：—</span>
           <span id="hud-selected">选中：无</span>
+          <span id="hud-building">建筑：—</span>
         </div>
         <p class="controls-hint">
-          点击画面后：拖拽平移 · 滚轮缩放 · 点击选中 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
+          左键选中 · 右键移动/攻击 · 拖拽平移 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
         </p>
       </section>
 
@@ -404,11 +454,12 @@
         </header>
 
         <section class="notice">
-          <strong>只读声明：</strong>这里改不了游戏状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
-          <code>REGISTER</code>、<code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与
-          <code>QUIT</code>；其中 <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号，
-          其余命令都不修改游戏、配置或插件状态。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
-          <code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
+          <strong>操作说明：</strong>协议面板提供 <code>PING</code>、<code>COUNT</code>、<code>REGISTER</code>、
+          <code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与 <code>QUIT</code>；下面的
+          「游戏操作」面板会发送 <code>WHOAMI</code>、<code>ORDER</code>、<code>BUILD</code> 与
+          <code>TRAIN</code>，这些游戏命令会改变服务器上的世界（<code>WHOAMI</code> 只登记身份）。页面不会
+          修改服务器配置或插件状态；所有游戏命令都要求先在<strong>同一条连接</strong>上 <code>LOGIN</code>。
+          <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号。
         </section>
 
         <section class="panel">
@@ -485,6 +536,26 @@
             <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
             <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
             请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
+          </p>
+        </section>
+
+        <section class="panel" id="gameplay-panel">
+          <h2>游戏操作</h2>
+          <div class="row">
+            <button id="order-stop" type="button" disabled>STOP</button>
+            <span class="gameplay-note" id="gameplay-note">选中自己（HUD 中的玩家 id）的单位后可用</span>
+          </div>
+          <div id="train-section" class="gameplay-section" hidden>
+            <h3>TRAIN <span id="train-target"></span></h3>
+            <div id="train-buttons" class="row"></div>
+          </div>
+          <div id="build-section" class="gameplay-section" hidden>
+            <h3>BUILD <span id="build-target"></span></h3>
+            <div id="build-buttons" class="row"></div>
+          </div>
+          <p class="footnote">
+            右键地面发 <code>ORDER MOVE</code>，右键敌方实体发 <code>ORDER ATTACK</code>；左键仍然只选中。
+            BUILD 按钮进入放置模式后，下一次左键点地面才发 <code>BUILD</code>，<kbd>Esc</kbd> 取消放置。
           </p>
         </section>
 

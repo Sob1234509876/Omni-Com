@@ -30,6 +30,18 @@ export interface InputHooks {
   readonly onSelectionChange: (id: number | null) => void;
   readonly onHoverChange?: (tile: TileCoord | null) => void;
   readonly onCameraChange?: () => void;
+  /** A right click on a map tile; `targetId` is the entity under the cursor, if any. */
+  readonly onRightClick?: (tile: TileCoord, targetId: number | null) => void;
+  /**
+   * A plain left click on a map tile, before selection. Returning `true` consumes the click, which is
+   * how the build placement mode places a site instead of changing the selection.
+   */
+  readonly onLeftClick?: (tile: TileCoord, targetId: number | null) => boolean;
+  /**
+   * Escape, before the default "clear selection". Returning `true` consumes the key, which is how an
+   * armed build placement is cancelled without also deselecting the engineer.
+   */
+  readonly onCancel?: () => boolean;
 }
 
 interface ScreenPoint {
@@ -74,6 +86,7 @@ export class InputController {
     canvas.addEventListener("pointercancel", this.handlePointerCancel);
     canvas.addEventListener("pointerleave", this.handlePointerLeave);
     canvas.addEventListener("lostpointercapture", this.handleLostPointerCapture);
+    canvas.addEventListener("contextmenu", this.handleContextMenu);
     canvas.addEventListener("wheel", this.handleWheel, { passive: false });
     canvas.addEventListener("keydown", this.handleKeyDown);
     canvas.addEventListener("keyup", this.handleKeyUp);
@@ -122,6 +135,7 @@ export class InputController {
     this.canvas.removeEventListener("pointercancel", this.handlePointerCancel);
     this.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
     this.canvas.removeEventListener("lostpointercapture", this.handleLostPointerCapture);
+    this.canvas.removeEventListener("contextmenu", this.handleContextMenu);
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("keydown", this.handleKeyDown);
     this.canvas.removeEventListener("keyup", this.handleKeyUp);
@@ -214,7 +228,21 @@ export class InputController {
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
-    if (!event.isPrimary || event.button !== 0) {
+    if (!event.isPrimary) {
+      return;
+    }
+    if (event.button === 2) {
+      // The right button never starts a drag; it only aims an order. Focus the canvas so the keyboard
+      // shortcuts (including Escape) keep working after the click.
+      const point = this.localPoint(event);
+      this.pointerX = point.x;
+      this.pointerY = point.y;
+      this.updateHover(point.x, point.y);
+      this.canvas.focus({ preventScroll: true });
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0) {
       return;
     }
     const point = this.localPoint(event);
@@ -260,6 +288,16 @@ export class InputController {
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
+    if (event.button === 2) {
+      if (!event.isPrimary) {
+        return;
+      }
+      const point = this.localPoint(event);
+      this.updateHover(point.x, point.y);
+      this.emitRightClick(point.x, point.y);
+      event.preventDefault();
+      return;
+    }
     if (event.pointerId !== this.activePointerId) {
       return;
     }
@@ -268,8 +306,27 @@ export class InputController {
     const wasDragging = this.dragging;
     this.releasePointer();
     if (!wasDragging) {
-      this.setSelection(this.pickEntity(point.x, point.y));
+      const targetId = this.pickEntity(point.x, point.y);
+      const tile = this.hoverTileValue;
+      const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId) === true;
+      if (!consumed) {
+        this.setSelection(targetId);
+      }
     }
+  };
+
+  /** Emits a right click with its tile and the entity body under the cursor, if the tile is on the map. */
+  private emitRightClick(screenX: number, screenY: number): void {
+    const tile = this.hoverTileValue;
+    if (tile === null) {
+      return;
+    }
+    this.hooks.onRightClick?.(tile, this.pickEntity(screenX, screenY));
+  }
+
+  private readonly handleContextMenu = (event: MouseEvent): void => {
+    // The canvas uses the right button for orders, so the browser menu must not open over it.
+    event.preventDefault();
   };
 
   private readonly handlePointerCancel = (event: PointerEvent): void => {
@@ -320,6 +377,9 @@ export class InputController {
     const key = event.key.toLowerCase();
     if (key === "escape") {
       event.preventDefault();
+      if (this.hooks.onCancel?.() === true) {
+        return;
+      }
       this.setSelection(null);
       return;
     }

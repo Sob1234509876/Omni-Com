@@ -50,7 +50,7 @@ pnpm dev
 
 连接成功后页面会先发 `HELLO 1`，并且只在收到 `OK OC/1` 时启用命令按钮。然后：
 
-1. 填用户名与密码，点 `REGISTER` 创建账号（注册不会登录），再点 `LOGIN`；成功后 `REQ` 才可用。
+1. 填用户名与密码，点 `REGISTER` 创建账号（注册不会登录），再点 `LOGIN`；成功后 `REQ` 才可用。`LOGIN` 成功后页面会自动发 `WHOAMI`，把引擎玩家 id 存下来并显示在 HUD 上；游戏操作面板用这个 id 做归属检查。
 2. 把服务器的 `data/oc-debug/debug.key` 内容粘进 `debug.key` 文本框。
 3. 点 `engine-info`：页面用 `INFO json` 封一个信封，发 `REQ engine-info <base64>`，再打开回答并格式化 JSON。
 4. 在 `hello` 名字框里填一个名字（默认 `world`），点 `hello`：页面发 `REQ hello <base64(UTF-8 名字)>`，
@@ -81,10 +81,12 @@ HUD 固定在画面左上角，实时显示：
 
 - 世界来源：快照正常时显示 `世界：server · tick 42`，使用内置占位地图时显示 `世界：demo`；
 - 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
+- `WHOAMI` 回答的引擎玩家 id（`玩家：3`；未登录时 `玩家：—`，每次重连都会清空）；
 - 鼠标下的瓦片坐标；
 - 缩放倍率（0.5× 到 2.5×）；
 - 平滑后的 FPS；
-- 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`。
+- 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`；
+- 选中的建筑属于自己时，显示它的 kind 与 id（`建筑：building.armory.t1 #42`）。
 
 **服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
 （上一次请求未完成就跳过），并原地替换渲染用的世界。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器
@@ -93,17 +95,29 @@ JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id
 抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时 `visibilitychange` 会取消定时器，后台标签页不会
 继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
 
-操作（首次点击画面后生效，键盘事件只挂在 canvas 上，不会抢协议输入框的按键）：
+### 操作
+
+首次点击画面后生效，键盘事件只挂在 canvas 上，不会抢协议输入框的按键：
 
 | 操作 | 效果 |
 | --- | --- |
 | 左键单击 | 选中光标下的实体；点空地取消选中 |
+| 右键空地 | 选中的单位属于自己时，发 `ORDER MOVE <selected> <tileX> <tileY>` |
+| 右键不属于自己的实体 | 发 `ORDER ATTACK <selected> <enemyId>` |
 | 左键拖拽 | 平移镜头（移动小于 4 像素算点击） |
 | 滚轮 | 以光标为中心缩放，光标下的瓦片保持不动 |
 | `WASD` / 方向键 | 平移镜头 |
 | `+` / `-` | 以画面中心放大 / 缩小 |
 | `F` | 复位镜头（居中、1×） |
-| `Esc` | 取消选中 |
+| `Esc` | 有 BUILD 放置模式时取消它；没有放置模式时取消选中 |
+
+协议命令下面的**游戏操作**面板驱动剩下的语法。只有选中的实体属于 HUD 里的玩家 id 时（`entity.playerId === myPlayerId`）命令才可用，所以点中别人的单位不会误发命令：
+
+- `STOP` 对选中的自己的单位发 `ORDER STOP <selected>`。
+- 选中自己的建筑时，面板按目录中的每条单位路径显示一个 `TRAIN <buildingId> <unitPath>` 按钮（`unit.melee.t1` … `unit.melee.t5`、`unit.engineer`）。当前兵营等级不够的单位也会显示，服务器回答的 `ERR ...` 会原样变红显示。
+- 选中自己的工程师时，面板按目录中的每条建筑路径显示一个 `BUILD <engineerId> <buildingPath> <tileX> <tileY>` 按钮（`building.armory.t1`、`building.mine.t1`）。按下按钮进入放置模式：状态行显示模式，光标下的瓦片高亮，**下一次在画面上左键单击**才发送命令，然后模式清除；`Esc` 只取消放置，不会取消工程师的选中。
+
+`LOGIN` 成功后页面自动发 `WHOAMI`（重新登录也会再发），把 `OK player <id>` 解析到 HUD 字段。每条游戏命令与回答都会写进日志；`ERR ...` 还会原样显示在红色状态行，成功则显示一句简短确认。目录在 [`src/commands.ts`](src/commands.ts)，注释说明服务器才是事实来源：服务器内容增加时这里也要同步。线路格式接收整数瓦片索引；引擎把 `GridPos` 当作该瓦片的中心。
 
 **纹理由插件提供**：每个插件把 `assets/manifest.json` 和图片打进自己的 jar，服务器把它们合并成
 `GET /plugin-assets/manifest.json`，客户端启动时读取并按 `atlasUrl` 加载每张图片。多个插件同时提供时按数组顺序
@@ -184,15 +198,19 @@ pnpm preview
 `http://localhost:5173/` 可以；直接用 `http://<局域网 IP>:25567/` 打开页面时通常不行，请用 localhost、
 SSH 端口转发或 HTTPS 反向代理。
 
-## 只读声明
+## 游戏命令与协议面板
 
-**这个页面改不了游戏状态。** 它只提供 `PING`、`COUNT`、`REGISTER`、`LOGIN`、`REQ engine-info`、
-`REQ hello` 与 `QUIT`：除了 `REGISTER` 会在服务器上创建一个新账号，没有修改游戏、服务器配置或插件状态的命令。
+协议面板仍然只提供 `PING`、`COUNT`、`REGISTER`、`LOGIN`、`REQ engine-info`、`REQ hello` 与 `QUIT`；
+除了 `REGISTER` 会创建账号，这些命令都不修改游戏状态。单独的**游戏操作**面板发送服务器的游戏语法——
+`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`——它们**会**改变世界：命令让单位移动、战斗，`BUILD` 放置并支付工地，
+`TRAIN` 排队训练单位。每条游戏命令都要求同一条连接已成功 `LOGIN`，并由服务器校验归属、实体是否存在、
+所服务的内容以及玩家的库存。页面不会修改服务器配置、插件目录，也不会改账号密码或权限。
 
 - `engine-info` 是 `oc-debug` 注册的只读报告；处理器不持有任何可写引用，报告由常量与临时对象拼成。
 - `hello` 是 `oc-hello` 注册的只读问候；处理器只读取请求里的名字，不持有任何引擎、配置或网络引用。
 - `REGISTER` 只创建新账号（重名会回答 `ERR …`），不登录，也不改已有账号的密码或权限。
 - `LOGIN` 只在这条连接上标记身份，并刷新服务器记录的最近登录时间；它不改密码、不改权限，也没有改密入口。
+- `WHOAMI` 按需分配并报告这条连接的引擎玩家 id；它本身不改变游戏状态。
 
 ## 文件
 
@@ -201,15 +219,16 @@ SSH 端口转发或 HTTPS 反向代理。
 | `index.html` | 页面结构（Canvas 画面 + HUD + 协议面板），不内联脚本；模块入口是 `src/main.ts` |
 | `src/protocol.ts` | OC/1 命令、base64 辅助函数、AES-256-GCM 信封的封/开 |
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
-| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
+| `src/commands.ts` | 纯游戏命令构建器（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`）、`parseWhoAmI`，以及游戏操作面板提供的目录 |
+| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
 | `src/render/atlas.ts` | 插件清单解析、合成图集（last wins）与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
 | `src/render/view.ts` | `WorldView` / `EntityView` 形状、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
-| `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序与动画帧 |
-| `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作与实体拾取 |
+| `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序、动画帧与放置高亮 |
+| `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作、实体拾取、右键命令与放置点击 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验与插件图集合并的离线自检 |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、插件图集合并与游戏命令构建器的离线自检 |
 | `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档

@@ -53,7 +53,7 @@ Open the address Vite prints (usually `http://localhost:5173/`). When **both the
 
 After connecting, the page sends `HELLO 1` first and enables the command buttons only once it receives `OK OC/1`. Then:
 
-1. Fill in a username and password, click `REGISTER` to create an account (registering does not log in), then click `LOGIN`; only after that is `REQ` available.
+1. Fill in a username and password, click `REGISTER` to create an account (registering does not log in), then click `LOGIN`; only after that is `REQ` available. A successful `LOGIN` also sends `WHOAMI` automatically, stores the engine player id and shows it in the HUD; the gameplay panel uses that id for its ownership check.
 2. Paste the contents of the server's `data/oc-debug/debug.key` into the `debug.key` text box.
 3. Click `engine-info`: the page seals an envelope with `INFO json`, sends `REQ engine-info <base64>`, then opens the reply and formats the JSON.
 4. Type a name into the `hello` name box (default `world`) and click `hello`: the page sends `REQ hello <base64(UTF-8 name)>`,
@@ -83,10 +83,12 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
 - Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
+- the engine player id answered by `WHOAMI` (`玩家：3`; `玩家：—` before login, cleared again on every reconnect);
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, kind, and ground coordinates of the selected entity; `Selected: none` when nothing is selected.
+- the id, kind, and ground coordinates of the selected entity; `Selected: none` when nothing is selected;
+- the kind and id of the selected building when it belongs to the player (`建筑：building.armory.t1 #42`).
 
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible, `main.ts` polls
 `GET /world/snapshot` every 500 ms (skipping a request while the previous one is still in flight) and replaces the rendered
@@ -97,17 +99,29 @@ rejected. The procedural `demoWorld(seed)` is kept intact as the fallback and is
 with `--world off`, which answers 503). The timer is cancelled on `visibilitychange` while the tab is hidden, so a background
 tab sends no snapshot requests. With `--http-port 0` nothing is polled and the page stays on the demo map.
 
-Controls (they take effect after the first click on the view; keyboard events are bound only to the canvas and never steal keystrokes from the protocol input fields):
+### Controls
+
+They take effect after the first click on the view; keyboard events are bound only to the canvas and never steal keystrokes from the protocol input fields.
 
 | Action | Effect |
 | --- | --- |
 | Left click | selects the entity under the cursor; clicking empty ground clears the selection |
+| Right click empty ground | sends `ORDER MOVE <selected> <tileX> <tileY>` for the selected unit, but only when that entity belongs to the player |
+| Right click an entity that is not mine | sends `ORDER ATTACK <selected> <enemyId>` |
 | Left drag | pans the camera (movements under 4 pixels count as a click) |
 | Wheel | zooms around the cursor, keeping the tile under the cursor fixed |
 | `WASD` / arrow keys | pan the camera |
 | `+` / `-` | zoom in / out around the center of the view |
 | `F` | resets the camera (centered, 1×) |
-| `Esc` | clears the selection |
+| `Esc` | cancels an armed BUILD placement; with no placement armed it clears the selection |
+
+The **Gameplay** panel below the protocol commands drives the rest of the grammar. It only enables a command when the selection belongs to the player id in the HUD (`entity.playerId === myPlayerId`), so a click on someone else's unit can never send an order by accident:
+
+- `STOP` sends `ORDER STOP <selected>` for the selected own unit.
+- With an own building selected, the panel shows one `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` … `unit.melee.t5`, `unit.engineer`). A tier the current armory cannot produce is still offered and the server's `ERR ...` is shown in red.
+- With the own engineer selected, the panel shows one `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`, `building.mine.t1`). Pressing one arms placement: the status line shows the mode, the tile under the cursor is highlighted, and the **next left click on the canvas** sends the command; the mode then clears. `Esc` cancels without deselecting the engineer.
+
+`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer is written to the log; an `ERR ...` answer is also shown verbatim in the red status line, while a success gets a short confirmation. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
 
 **Textures are provided by plugins**: each plugin packs `assets/manifest.json` and images into its own jar, the server merges them into
 `GET /plugin-assets/manifest.json`, and the client reads that on startup and loads each image by its `atlasUrl`. When several plugins provide textures at once they are merged in array order,
@@ -188,15 +202,21 @@ pnpm preview
 `http://localhost:5173/` are fine; opening the page directly at `http://<LAN IP>:25567/` usually is not, so use localhost,
 SSH port forwarding, or an HTTPS reverse proxy.
 
-## Read-only statement
+## Gameplay commands and the protocol panel
 
-**This page cannot change game state.** It offers only `PING`, `COUNT`, `REGISTER`, `LOGIN`, `REQ engine-info`,
-`REQ hello`, and `QUIT`: apart from `REGISTER` creating a new account on the server, no command modifies the game, the server configuration, or plugin state.
+The protocol panel still offers only `PING`, `COUNT`, `REGISTER`, `LOGIN`, `REQ engine-info`, `REQ hello`, and
+`QUIT`; apart from `REGISTER` creating an account, none of those changes game state. The separate **Gameplay**
+panel sends the server's gameplay grammar — `WHOAMI`, `ORDER`, `BUILD`, and `TRAIN` — which **does** change the
+world: orders move and fight, `BUILD` places and pays for a site, and `TRAIN` queues a unit. Every gameplay
+command requires a successful `LOGIN` on the same connection and is validated by the server against ownership,
+entity existence, the served content, and the player's stock. The page never changes server configuration, the
+plugin directory, or an account's password/permissions.
 
 - `engine-info` is a read-only report registered by `oc-debug`; the handler holds no writable reference, and the report is assembled from constants and temporary objects.
 - `hello` is a read-only greeting registered by `oc-hello`; the handler only reads the name from the request and holds no engine, configuration, or network reference.
 - `REGISTER` only creates a new account (a duplicate name gets `ERR …`); it does not log in and does not change an existing account's password or permissions.
 - `LOGIN` only marks the identity on this connection and refreshes the last-login time recorded by the server; it changes no password, changes no permissions, and there is no password-change entry point.
+- `WHOAMI` assigns (lazily) and reports the engine player id of this connection; it changes no game state itself.
 
 ## Files
 
@@ -205,15 +225,16 @@ SSH port forwarding, or an HTTPS reverse proxy.
 | `index.html` | page structure (Canvas view + HUD + protocol panel), no inline scripts; the module entry is `src/main.ts` |
 | `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
-| `src/main.ts` | DOM wiring: connect, handshake, buttons, log, `engine-info`, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
+| `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers |
+| `src/main.ts` | DOM wiring: connect, handshake, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, and clamping |
 | `src/render/atlas.ts` | plugin manifest parsing, composite atlas (last wins), and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, and selection ring when there is no atlas |
 | `src/render/view.ts` | `WorldView` / `EntityView` shapes, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` fetch/conversion |
-| `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, and animation frames |
-| `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, and entity picking |
+| `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
+| `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, and plugin atlas merging |
+| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, plugin atlas merging, and gameplay command builders |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

@@ -8,6 +8,18 @@
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
 
+import {
+  BUILDING_PATHS,
+  UNIT_PATHS,
+  build,
+  orderAttack,
+  orderAttackMove,
+  orderMove,
+  orderStop,
+  parseWhoAmI,
+  train,
+  whoAmI,
+} from "../src/commands.ts";
 import { Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
 import {
   atlasLabel,
@@ -578,6 +590,127 @@ check(
   terrainColor("unobtainium") === terrainColor("unobtainium") &&
     terrainColor("unobtainium") !== terrainColor("water"),
   terrainColor("unobtainium"),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Gameplay command builders
+// ---------------------------------------------------------------------------------------------
+
+/** Whether the builder throws an Error carrying a Chinese explanation, which is the UI contract. */
+function throwsChinese(action: () => string): boolean {
+  try {
+    action();
+    return false;
+  } catch (error: unknown) {
+    return error instanceof Error && /[\u4e00-\u9fff]/u.test(error.message);
+  }
+}
+
+// Golden lines: exactly the grammar documented in protocol/oc-protocol.md.
+check("whoAmI 生成 WHOAMI", whoAmI() === "WHOAMI", whoAmI());
+check(
+  "orderMove 生成 ORDER MOVE",
+  orderMove(7, 12, 8) === "ORDER MOVE 7 12 8",
+  orderMove(7, 12, 8),
+);
+check(
+  "orderAttack 生成 ORDER ATTACK",
+  orderAttack(7, 42) === "ORDER ATTACK 7 42",
+  orderAttack(7, 42),
+);
+check(
+  "orderAttackMove 生成 ORDER ATTACKMOVE",
+  orderAttackMove(7, 3, 4) === "ORDER ATTACKMOVE 7 3 4",
+  orderAttackMove(7, 3, 4),
+);
+check("orderStop 生成 ORDER STOP", orderStop(7) === "ORDER STOP 7", orderStop(7));
+check(
+  "build 生成 BUILD",
+  build(9, "building.armory.t1", 20, 40) === "BUILD 9 building.armory.t1 20 40",
+  build(9, "building.armory.t1", 20, 40),
+);
+check(
+  "train 生成 TRAIN",
+  train(42, "unit.melee.t1") === "TRAIN 42 unit.melee.t1",
+  train(42, "unit.melee.t1"),
+);
+
+check(
+  "实体 id 必须是正整数（0、负数、小数、NaN、Infinity、超出安全整数都拒绝）",
+  [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].every((id) =>
+    throwsChinese(() => orderStop(id)),
+  ),
+);
+check(
+  "目标 id 也必须是正整数",
+  [0, -2, 3.25, Number.NaN].every((id) => throwsChinese(() => orderAttack(7, id))),
+);
+check(
+  "ORDER 的坐标必须是有限数字",
+  [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY].every(
+    (value) =>
+      throwsChinese(() => orderMove(7, value, 1)) &&
+      throwsChinese(() => orderMove(7, 1, value)) &&
+      throwsChinese(() => orderAttackMove(7, value, 1)),
+  ),
+);
+check(
+  "BUILD 的坐标必须是有限数字",
+  [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY].every(
+    (value) =>
+      throwsChinese(() => build(9, "building.armory.t1", value, 2)) &&
+      throwsChinese(() => build(9, "building.armory.t1", 2, value)),
+  ),
+);
+check(
+  "内容路径必须非空且不含空白或换行",
+  ["", " building.armory.t1", "building.armory.t1 extra", "building\tarmory", "unit.\nengineer"].every(
+    (path) => throwsChinese(() => build(9, path, 1, 2)) && throwsChinese(() => train(42, path)),
+  ),
+);
+
+check("parseWhoAmI 接受 OK player 7", parseWhoAmI("OK player 7") === 7);
+check(
+  "parseWhoAmI 拒绝所有非规范回答",
+  [
+    "",
+    "player 7",
+    "OK 7",
+    "OK player",
+    "OK player seven",
+    "OK player 7.0",
+    "OK player 0",
+    "OK player -3",
+    "OK player 07",
+    "OK player 7 extra",
+    "ERR login first",
+    "OK player 9007199254740993",
+  ].every((answer) => parseWhoAmI(answer) === null),
+  [parseWhoAmI("OK player 0"), parseWhoAmI("OK player 7.0")].join(", "),
+);
+
+check(
+  "建筑目录与面板一致",
+  JSON.stringify(BUILDING_PATHS) === JSON.stringify(["building.armory.t1", "building.mine.t1"]),
+  BUILDING_PATHS.join(", "),
+);
+check(
+  "单位目录与面板一致",
+  JSON.stringify(UNIT_PATHS) ===
+    JSON.stringify([
+      "unit.melee.t1",
+      "unit.melee.t2",
+      "unit.melee.t3",
+      "unit.melee.t4",
+      "unit.melee.t5",
+      "unit.engineer",
+    ]),
+  UNIT_PATHS.join(", "),
+);
+check(
+  "目录里每条路径都能原样交给对应的构建器",
+  UNIT_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
+    BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
 );
 
 // ---------------------------------------------------------------------------------------------

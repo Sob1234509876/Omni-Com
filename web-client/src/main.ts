@@ -17,6 +17,17 @@ import {
   sealEnvelope,
 } from "./protocol";
 import { connect, type CommandSocket } from "./socket";
+import {
+  BUILDING_PATHS,
+  UNIT_PATHS,
+  build,
+  orderAttack,
+  orderMove,
+  orderStop,
+  parseWhoAmI,
+  train,
+  whoAmI,
+} from "./commands";
 import { atlasLabel, loadPluginAtlas, type Atlas } from "./render/atlas";
 import { Camera, type TileCoord } from "./render/camera";
 import { InputController, type InputHooks } from "./render/input";
@@ -25,6 +36,9 @@ import {
   demoWorld,
   entityById,
   fetchWorldSnapshot,
+  isBuildingKind,
+  kindName,
+  type EntityView,
   type WorldView,
 } from "./render/view";
 
@@ -55,11 +69,21 @@ const logPane = required<HTMLPreElement>("#log");
 const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
 const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
+const hudPlayer = required<HTMLSpanElement>("#hud-player");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
 const hudSelected = required<HTMLSpanElement>("#hud-selected");
+const hudBuilding = required<HTMLSpanElement>("#hud-building");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
+const orderStopButton = required<HTMLButtonElement>("#order-stop");
+const gameplayNote = required<HTMLSpanElement>("#gameplay-note");
+const trainSection = required<HTMLDivElement>("#train-section");
+const trainTarget = required<HTMLSpanElement>("#train-target");
+const trainButtonHost = required<HTMLDivElement>("#train-buttons");
+const buildSection = required<HTMLDivElement>("#build-section");
+const buildTarget = required<HTMLSpanElement>("#build-target");
+const buildButtonHost = required<HTMLDivElement>("#build-buttons");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -77,6 +101,10 @@ type LogKind = "info" | "send" | "recv" | "error";
 let socket: CommandSocket | null = null;
 let loggedIn = false;
 let connectionSeq = 0;
+/** Engine player id answered by WHOAMI; null before LOGIN and after every reconnect. */
+let myPlayerId: number | null = null;
+/** Building path armed for placement, or null when the canvas is not in placement mode. */
+let placementPath: string | null = null;
 
 function setStatus(text: string, state: StatusState): void {
   statusLine.textContent = text;
@@ -104,6 +132,18 @@ function reportError(error: unknown): void {
 
 function isOkAnswer(answer: string): boolean {
   return answer === "OK" || answer.startsWith("OK ");
+}
+
+function isErrorAnswer(answer: string): boolean {
+  return answer === "ERR" || answer.startsWith("ERR ");
+}
+
+/** Forgets the connection's engine identity, including any armed build placement. */
+function clearGameplayIdentity(): void {
+  myPlayerId = null;
+  placementPath = null;
+  updateHud(true);
+  updateGameplayPanel();
 }
 
 function formatHost(host: string): string {
@@ -166,6 +206,7 @@ async function handshake(seq: number): Promise<void> {
       return;
     }
     loggedIn = false;
+    clearGameplayIdentity();
     setCommandsEnabled(true);
     connectButton.textContent = "断开";
     connectButton.disabled = false;
@@ -212,6 +253,7 @@ function openConnection(): void {
         }
         socket = null;
         loggedIn = false;
+        clearGameplayIdentity();
         setCommandsEnabled(false);
         connectButton.textContent = "连接";
         connectButton.disabled = false;
@@ -337,11 +379,38 @@ async function doLogin(): Promise<void> {
   }
   if (isOkAnswer(answer)) {
     loggedIn = true;
+    myPlayerId = null;
+    placementPath = null;
+    updateGameplayPanel();
+    updateHud(true);
     setStatus(`已登录：${answer.slice(2).trim()}`, "ok");
+    await fetchWhoAmI();
   } else {
     loggedIn = false;
+    clearGameplayIdentity();
     setStatus(`登录失败：${answer}`, "error");
   }
+}
+
+/** Asks WHOAMI after a successful LOGIN and stores the engine player id for ownership checks. */
+async function fetchWhoAmI(): Promise<void> {
+  const active = socket;
+  if (active === null) {
+    return;
+  }
+  const answer = await sendAnswered("WHOAMI", whoAmI());
+  if (answer === undefined || socket !== active || !loggedIn) {
+    return;
+  }
+  const playerId = parseWhoAmI(answer);
+  if (playerId === null) {
+    setStatus(`WHOAMI 收到意外回答：${answer}`, "error");
+    return;
+  }
+  myPlayerId = playerId;
+  updateHud(true);
+  updateGameplayPanel();
+  setStatus(`已登录 · player ${playerId}`, "ok");
 }
 
 async function doRegister(): Promise<void> {
@@ -561,6 +630,26 @@ let lastFrameTime = performance.now();
 const animationStart = performance.now();
 let lastHudUpdate = 0;
 
+function isMine(entity: EntityView | undefined): boolean {
+  return entity !== undefined && myPlayerId !== null && entity.playerId === myPlayerId;
+}
+
+/** A building is either one of the fallback renderer's known kinds or a `building.*` content path. */
+function isBuildingEntity(entity: EntityView): boolean {
+  const kind = kindName(entity.kind);
+  return kind.startsWith("building.") || isBuildingKind(kind);
+}
+
+/** The engineer is `unit.engineer` in the classic catalogue; the demo/legacy name is `engineer`. */
+function isEngineerEntity(entity: EntityView): boolean {
+  const kind = kindName(entity.kind);
+  return kind === "engineer" || kind.endsWith(".engineer");
+}
+
+function selectedEntity(): EntityView | undefined {
+  return entityById(world, selectedId);
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -570,21 +659,246 @@ function updateHud(force = false, now = performance.now()): void {
     atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
   hudWorld.textContent =
     worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo";
+  hudPlayer.textContent = myPlayerId === null ? "玩家：—" : `玩家：${myPlayerId}`;
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
-  const selected = entityById(world, selectedId);
+  const selected = selectedEntity();
   hudSelected.textContent =
     selected === undefined
       ? "选中：无"
       : `选中：e${selected.id} ${selected.kind} (${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
+  hudBuilding.textContent =
+    selected !== undefined && isMine(selected) && isBuildingEntity(selected)
+      ? `建筑：${kindName(selected.kind)} #${selected.id}`
+      : "建筑：—";
 }
+
+// ---------------------------------------------------------------------------------------------
+// Gameplay commands. Every builder lives in commands.ts; this section only decides which one the
+// current selection and pointer target allow, and turns the server's answer into status/log lines.
+// ---------------------------------------------------------------------------------------------
+
+function requireLoggedInForGameplay(): boolean {
+  if (!loggedIn || socket === null) {
+    setStatus("请先 LOGIN：游戏命令需要同一条连接上的登录", "error");
+    return false;
+  }
+  return true;
+}
+
+/** Logs the command and its answer, and puts `ERR ...` on the red status line. */
+async function sendGameplayCommand(
+  label: string,
+  line: string,
+  confirmation: string,
+): Promise<void> {
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const answer = await sendAnswered(label, line);
+  if (answer === undefined) {
+    return;
+  }
+  if (isErrorAnswer(answer)) {
+    setStatus(answer, "error");
+    return;
+  }
+  if (!isOkAnswer(answer)) {
+    setStatus(`${label} 收到意外回答：${answer}`, "error");
+    return;
+  }
+  const detail = answer === "OK" ? "" : `：${answer.slice(2).trim()}`;
+  setStatus(`${confirmation}${detail}`, "ok");
+}
+
+function updateGameplayPanel(): void {
+  const selected = selectedEntity();
+  const ownUnit = selected !== undefined && isMine(selected) && !isBuildingEntity(selected);
+  const ownBuilding = selected !== undefined && isMine(selected) && isBuildingEntity(selected);
+  const ownEngineer = selected !== undefined && isMine(selected) && isEngineerEntity(selected);
+  const connected = loggedIn && socket !== null;
+
+  orderStopButton.disabled = !(connected && ownUnit);
+
+  trainSection.hidden = !(connected && ownBuilding);
+  trainTarget.textContent =
+    connected && ownBuilding && selected !== undefined
+      ? `· e${selected.id} ${kindName(selected.kind)}`
+      : "";
+  for (const button of trainButtons) {
+    button.disabled = !(connected && ownBuilding);
+  }
+
+  buildSection.hidden = !(connected && ownEngineer);
+  buildTarget.textContent =
+    connected && ownEngineer && selected !== undefined
+      ? `· e${selected.id} ${kindName(selected.kind)}`
+      : "";
+  for (const button of buildButtons) {
+    button.disabled = !(connected && ownEngineer);
+    const armed =
+      connected && ownEngineer && placementPath !== null && button.dataset["path"] === placementPath;
+    button.classList.toggle("armed", armed);
+    button.setAttribute("aria-pressed", armed ? "true" : "false");
+  }
+
+  if (placementPath !== null) {
+    gameplayNote.textContent = `BUILD ${placementPath}：左键点地面放置 · Esc 取消`;
+  } else if (!connected) {
+    gameplayNote.textContent = "先连接并 LOGIN；游戏命令都要求同一条连接已登录";
+  } else if (myPlayerId === null) {
+    gameplayNote.textContent = "等待 WHOAMI 回答玩家 id…";
+  } else if (ownBuilding) {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：TRAIN 一次只排一个单位`;
+  } else if (ownEngineer) {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：点 BUILD 进入放置模式`;
+  } else if (selected === undefined) {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：选中自己的单位或建筑后可用`;
+  } else if (!isMine(selected)) {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：选中的实体 e${selected.id} 不属于你`;
+  } else if (ownUnit) {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：右键地面移动，右键敌方实体攻击`;
+  } else {
+    gameplayNote.textContent = `玩家 ${myPlayerId}：没有可用的操作`;
+  }
+}
+
+function doOrderStop(): void {
+  const selected = selectedEntity();
+  if (selected === undefined || !isMine(selected)) {
+    setStatus("先选中自己的单位，再点 STOP", "error");
+    return;
+  }
+  if (isBuildingEntity(selected)) {
+    setStatus("STOP 只能下达给单位，不能下达给建筑", "error");
+    return;
+  }
+  void sendGameplayCommand("ORDER STOP", orderStop(selected.id), `已停止 e${selected.id}`);
+}
+
+function doTrain(unitPath: string): void {
+  const selected = selectedEntity();
+  if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
+    setStatus("先选中自己的建筑，再训练单位", "error");
+    return;
+  }
+  void sendGameplayCommand("TRAIN", train(selected.id, unitPath), `已下训练 ${unitPath}`);
+}
+
+/** Arms build placement for the selected engineer; the next left click on the canvas sends BUILD. */
+function armBuild(buildingPath: string): void {
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const selected = selectedEntity();
+  if (selected === undefined || !isMine(selected) || !isEngineerEntity(selected)) {
+    setStatus("先选中自己的工程师，再点 BUILD", "error");
+    return;
+  }
+  placementPath = buildingPath;
+  // Moving focus to the canvas keeps the existing Escape shortcut (bound to the canvas) working.
+  gameCanvas.focus({ preventScroll: true });
+  setStatus(`BUILD ${buildingPath}：左键点击地面放置，Esc 取消`, "busy");
+  updateGameplayPanel();
+  updateHud(true);
+}
+
+function cancelPlacement(showStatus: boolean): void {
+  if (placementPath === null) {
+    return;
+  }
+  const path = placementPath;
+  placementPath = null;
+  if (showStatus) {
+    setStatus(`已取消 BUILD ${path}`, "idle");
+  }
+  updateGameplayPanel();
+  updateHud(true);
+}
+
+function doRightClick(tile: TileCoord, targetId: number | null): void {
+  if (placementPath !== null) {
+    setStatus(`BUILD ${placementPath} 放置中：左键放置，Esc 取消`, "busy");
+    return;
+  }
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const selected = selectedEntity();
+  if (selected === undefined || !isMine(selected)) {
+    setStatus("先选中自己的单位，再右键下达命令", "error");
+    return;
+  }
+  if (isBuildingEntity(selected)) {
+    setStatus("右键命令只能下达给单位，不能下达给建筑", "error");
+    return;
+  }
+  const target = entityById(world, targetId);
+  if (target !== undefined && !isMine(target)) {
+    void sendGameplayCommand(
+      "ORDER ATTACK",
+      orderAttack(selected.id, target.id),
+      `已攻击 e${target.id}`,
+    );
+    return;
+  }
+  // The wire takes whole tile indices; the engine turns that GridPos into the tile's centre.
+  void sendGameplayCommand(
+    "ORDER MOVE",
+    orderMove(selected.id, tile.x, tile.y),
+    `已移动 e${selected.id}`,
+  );
+}
+
+/** Places the armed building; returns true when the click was consumed by placement mode. */
+function doLeftClick(tile: TileCoord): boolean {
+  if (placementPath === null) {
+    return false;
+  }
+  const path = placementPath;
+  const engineer = selectedEntity();
+  placementPath = null;
+  updateGameplayPanel();
+  updateHud(true);
+  if (engineer === undefined || !isMine(engineer) || !isEngineerEntity(engineer)) {
+    setStatus("放置时选中的工程师已失效，BUILD 没有发送", "error");
+    return true;
+  }
+  void sendGameplayCommand(
+    "BUILD",
+    build(engineer.id, path, tile.x, tile.y),
+    `已在 ${tile.x},${tile.y} 下达 BUILD ${path}`,
+  );
+  return true;
+}
+
+/** Escape cancels an armed placement before the input controller clears the selection. */
+function doCancel(): boolean {
+  if (placementPath === null) {
+    return false;
+  }
+  cancelPlacement(true);
+  return true;
+}
+
+// Filled once from the command catalogue below; keeping them in arrays lets the panel show and hide
+// whole sections without rebuilding DOM on every snapshot.
+const trainButtons: HTMLButtonElement[] = [];
+const buildButtons: HTMLButtonElement[] = [];
 
 const inputHooks: InputHooks = {
   getWorld: () => world,
   onSelectionChange: (id) => {
     selectedId = id;
+    if (placementPath !== null) {
+      const next = entityById(world, id);
+      if (next === undefined || !isMine(next) || !isEngineerEntity(next)) {
+        cancelPlacement(false);
+      }
+    }
     updateHud(true);
+    updateGameplayPanel();
   },
   onHoverChange: (tile) => {
     hoverTile = tile;
@@ -593,6 +907,11 @@ const inputHooks: InputHooks = {
   onCameraChange: () => {
     updateHud(true);
   },
+  onRightClick: (tile, targetId) => {
+    doRightClick(tile, targetId);
+  },
+  onLeftClick: (tile) => doLeftClick(tile),
+  onCancel: () => doCancel(),
 };
 
 let input = new InputController(gameCanvas, camera, inputHooks);
@@ -615,8 +934,10 @@ function useWorld(next: WorldView): void {
     input = new InputController(gameCanvas, camera, inputHooks);
     selectedId = null;
     hoverTile = null;
+    placementPath = null;
   }
   updateHud(true);
+  updateGameplayPanel();
 }
 
 /** Fetches one snapshot, skipping the request while a previous one is still in flight. */
@@ -684,6 +1005,7 @@ function animationFrame(now: number): void {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
       selectedId,
+      placementTile: placementPath === null ? null : hoverTile,
     });
     updateHud(false, now);
   }
@@ -722,6 +1044,56 @@ function setViewVisible(visible: boolean): void {
 toggleViewButton.addEventListener("click", () => {
   setViewVisible(viewHidden);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Gameplay panel: one TRAIN button per catalogued unit and one BUILD button per catalogued
+// building. The paths come from commands.ts, so the panel cannot drift from the builders.
+// ---------------------------------------------------------------------------------------------
+
+for (const unitPath of UNIT_PATHS) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = unitPath;
+  button.title = `TRAIN ${unitPath}`;
+  button.disabled = true;
+  button.addEventListener("click", () => {
+    doTrain(unitPath);
+  });
+  trainButtonHost.append(button);
+  trainButtons.push(button);
+}
+
+for (const buildingPath of BUILDING_PATHS) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = buildingPath;
+  button.title = `BUILD ${buildingPath}`;
+  button.disabled = true;
+  button.setAttribute("aria-pressed", "false");
+  button.dataset["path"] = buildingPath;
+  button.addEventListener("click", () => {
+    armBuild(buildingPath);
+  });
+  buildButtonHost.append(button);
+  buildButtons.push(button);
+}
+
+orderStopButton.addEventListener("click", doOrderStop);
+
+// The canvas owns Escape for its own focus; this fallback keeps "cancel placement" working while
+// focus is still on the BUILD button that armed the mode.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || placementPath === null) {
+    return;
+  }
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+  event.preventDefault();
+  cancelPlacement(true);
+});
+
+updateGameplayPanel();
 
 // The snapshot poll is a view feature: stop it while the tab is hidden and resume it when the view is
 // shown again. `setViewVisible` covers the explicit hide button; this listener covers tab switching.

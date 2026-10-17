@@ -5,8 +5,8 @@
  * pixels from `devicePixelRatio`, and the context is scaled so every drawing call below can use CSS
  * pixels. It never assumes the two sizes are equal.
  *
- * Draw order is terrain, tile grid (fallback only), hover tile, ground shadows and selection rings,
- * then entities sorted by y so lower entities overlap higher ones, then health bars.
+ * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows and
+ * selection rings, then entities sorted by y so lower entities overlap higher ones, then health bars.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -36,6 +36,8 @@ export interface RenderOptions {
   readonly hoverTile: TileCoord | null;
   /** Currently selected entity id, or null. */
   readonly selectedId: number | null;
+  /** Tile armed for build placement, or null; drawn with a stronger highlight than plain hover. */
+  readonly placementTile: TileCoord | null;
 }
 
 interface Size {
@@ -200,10 +202,13 @@ export class WorldRenderer {
     if (hover !== null && hover.x >= 0 && hover.y >= 0 && hover.x < world.width && hover.y < world.height) {
       const hoverX = origin.x + (hover.x - range.minX) * tileOnScreen;
       const hoverY = origin.y + (hover.y - range.minY) * tileOnScreen;
-      context.fillStyle = "rgba(230, 245, 255, 0.12)";
+      const placement = options.placementTile;
+      const placing =
+        placement !== null && placement.x === hover.x && placement.y === hover.y;
+      context.fillStyle = placing ? "rgba(255, 209, 102, 0.28)" : "rgba(230, 245, 255, 0.12)";
       context.fillRect(hoverX, hoverY, tileOnScreen, tileOnScreen);
-      context.strokeStyle = "rgba(200, 235, 255, 0.75)";
-      context.lineWidth = Math.max(1, 1.5 / size.devicePixelRatio);
+      context.strokeStyle = placing ? "rgba(255, 226, 150, 0.95)" : "rgba(200, 235, 255, 0.75)";
+      context.lineWidth = Math.max(1, (placing ? 2.5 : 1.5) / size.devicePixelRatio);
       context.strokeRect(hoverX + 0.5, hoverY + 0.5, tileOnScreen - 1, tileOnScreen - 1);
     }
 
