@@ -48,6 +48,18 @@ export function login(name: string, password: string): string {
   return `${COMMAND.login} ${name} ${password}`;
 }
 
+export function register(name: string, password: string): string {
+  requireToken(name, "用户名");
+  requireSingleLine(password, "密码");
+  if (name === "") {
+    throw new Error("用户名不能为空：注册需要一个名字");
+  }
+  if (password === "") {
+    throw new Error("密码不能为空：注册需要一个密码");
+  }
+  return `${COMMAND.register} ${name} ${password}`;
+}
+
 export function req(name: string, payloadBase64: string): string {
   requireToken(name, "请求名");
   requireToken(payloadBase64, "base64 载荷");

@@ -223,9 +223,10 @@
       </header>
 
       <section class="notice">
-        <strong>只读声明：</strong>这里改不了服务器状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
-        <code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与 <code>QUIT</code>；
-        没有修改游戏、配置或插件状态的命令。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
+        <strong>只读声明：</strong>这里改不了游戏状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
+        <code>REGISTER</code>、<code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与
+        <code>QUIT</code>；其中 <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号，
+        其余命令都不修改游戏、配置或插件状态。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
         <code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
       </section>
 
@@ -251,7 +252,7 @@
               name="password"
               type="password"
               autocomplete="current-password"
-              placeholder="只用于 LOGIN 命令"
+              placeholder="只用于 REGISTER 与 LOGIN 命令"
             />
           </label>
           <label class="wide">
@@ -280,6 +281,7 @@
         <div class="row">
           <button id="ping" type="button" disabled>PING</button>
           <button id="count" type="button" disabled>COUNT</button>
+          <button id="register" type="button" disabled>REGISTER</button>
           <button id="login" type="button" disabled>LOGIN</button>
           <button id="engine-info" type="button" disabled>engine-info</button>
           <button id="quit" type="button" disabled>QUIT</button>

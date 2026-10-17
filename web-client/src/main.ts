@@ -12,6 +12,7 @@ import {
   parseKeyHex,
   ping,
   quit,
+  register,
   req,
   sealEnvelope,
 } from "./protocol";
@@ -33,6 +34,7 @@ const keyInput = required<HTMLTextAreaElement>("#debug-key");
 const connectButton = required<HTMLButtonElement>("#connect");
 const pingButton = required<HTMLButtonElement>("#ping");
 const countButton = required<HTMLButtonElement>("#count");
+const registerButton = required<HTMLButtonElement>("#register");
 const loginButton = required<HTMLButtonElement>("#login");
 const engineInfoButton = required<HTMLButtonElement>("#engine-info");
 const helloNameInput = required<HTMLInputElement>("#hello-name");
@@ -44,6 +46,7 @@ const logPane = required<HTMLPreElement>("#log");
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
   countButton,
+  registerButton,
   loginButton,
   engineInfoButton,
   helloButton,
@@ -323,6 +326,39 @@ async function doLogin(): Promise<void> {
   }
 }
 
+async function doRegister(): Promise<void> {
+  const user = userInput.value.trim();
+  const password = passwordInput.value;
+  if (user === "") {
+    setStatus("请先填写用户名", "error");
+    return;
+  }
+  if (password === "") {
+    setStatus("请先填写密码", "error");
+    return;
+  }
+
+  let line: string;
+  try {
+    line = register(user, password);
+  } catch (error) {
+    reportError(error);
+    return;
+  }
+  const answer = await sendAnswered("REGISTER", line, `REGISTER ${user} <密码已隐藏>`);
+  if (answer === undefined) {
+    return;
+  }
+  if (isOkAnswer(answer)) {
+    setStatus(
+      `已注册 ${user}：${answer.slice(2).trim()}（注册不会自动登录，现在点 LOGIN）`,
+      "ok",
+    );
+  } else {
+    setStatus(`注册失败：${answer}`, "error");
+  }
+}
+
 async function doEngineInfo(): Promise<void> {
   if (!loggedIn) {
     setStatus("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端", "error");
@@ -461,6 +497,9 @@ pingButton.addEventListener("click", () => {
 });
 countButton.addEventListener("click", () => {
   void doCount();
+});
+registerButton.addEventListener("click", () => {
+  void doRegister();
 });
 loginButton.addEventListener("click", () => {
   void doLogin();
