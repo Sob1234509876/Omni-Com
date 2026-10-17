@@ -1,6 +1,6 @@
 # oc-web-client
 
-> Omni Com 的可选浏览器客户端。它通过 WebSocket 与 Java 服务器对话，只使用 DOM API 与 WebCrypto，不依赖前端框架。
+> Omni Com 的可选浏览器客户端。它通过 WebSocket 与 Java 服务器对话，只使用 DOM、Canvas 2D 与 WebCrypto，不依赖前端框架。
 
 ## 并行工具链
 
@@ -22,7 +22,7 @@
 
 | 需要 | 版本 |
 | --- | --- |
-| Node.js | 18+（Vite 6 的要求；建议 20+） |
+| Node.js | 18+（Vite 6 的要求；建议 20+；`pnpm check:render` 直接执行 TypeScript，需要 24+） |
 | pnpm | 9+；`package.json` 里写的是 `packageManager: "pnpm@9"` |
 | 浏览器 | 支持原生 ES modules、WebSocket、WebCrypto 的现代浏览器 |
 
@@ -56,6 +56,57 @@ pnpm dev
 OC/1 只使用文本帧。若服务端发来二进制帧，页面只记录一行“服务端发来二进制帧，已忽略（协议只使用文本帧）”，
 **不关闭连接**，也不丢弃还在等待回答的命令；这与服务端“回 `ERR binary frames are not commands` 并保持连接”
 的行为一致。
+
+## 游戏画面
+
+页面左侧是整块 Canvas 2D 世界画面，右侧（窄屏时在下方）是原来的协议面板；协议面板的
+`connect`、`REGISTER`、`LOGIN`、`PING`、`COUNT`、`engine-info`、`hello`、`QUIT` 与日志行为都与以前完全一样。
+不需要安装新依赖：仍然是 `typescript` 与 `vite` 两个 devDependencies。
+
+```shell
+cd web-client
+pnpm dev
+```
+
+打开 Vite 打印的地址即可；Java 服务器没起也能看画面，只是协议面板连不上。右侧协议面板顶部的
+**隐藏游戏画面 / 显示游戏画面** 按钮会把 Canvas 收起，让协议面板占满整页，方便读日志。
+
+HUD 固定在画面左上角，实时显示：
+
+- 当前图集名（例如 `atlas.png`），没有图集时显示 `绘制：程序化`；
+- 鼠标下的瓦片坐标；
+- 缩放倍率（0.5× 到 2.5×）；
+- 平滑后的 FPS；
+- 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`。
+
+操作（首次点击画面后生效，键盘事件只挂在 canvas 上，不会抢协议输入框的按键）：
+
+| 操作 | 效果 |
+| --- | --- |
+| 左键单击 | 选中光标下的实体；点空地取消选中 |
+| 左键拖拽 | 平移镜头（移动小于 4 像素算点击） |
+| 滚轮 | 以光标为中心缩放，光标下的瓦片保持不动 |
+| `WASD` / 方向键 | 平移镜头 |
+| `+` / `-` | 以画面中心放大 / 缩小 |
+| `F` | 复位镜头（居中、1×） |
+| `Esc` | 取消选中 |
+
+**纹理放在 `public/textures/`**：一张 `atlas.png` 加一份 `atlas.json`。完整契约（JSON 结构、示例、
+脚底锚点、每种实体一行动画）见 [`public/textures/README.md`](public/textures/README.md)。
+图集缺失或损坏时客户端自动退回程序化绘制：每种地形有独立颜色和细节，单位是圆形、建筑是带屋顶线的方块，
+放大后还有 1 像素格线。
+
+> 当前地图由 `demoWorld(seed)` 生成，只是一个确定性的占位岛屿；等 Vanilla 插件通过同一个
+> `WorldView` 形状推送真实快照后，渲染层不需要改。
+
+渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、图集越界帧拒绝）可以离线检查：
+
+```shell
+pnpm check:render
+```
+
+它先做类型检查，再用 Node 24 的 TypeScript 类型擦除直接运行
+[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。
 
 ## hello 插件演示
 
@@ -126,10 +177,18 @@ SSH 端口转发或 HTTPS 反向代理。
 
 | 文件 | 作用 |
 | --- | --- |
-| `index.html` | 页面结构，不内联脚本；模块入口是 `src/main.ts` |
+| `index.html` | 页面结构（Canvas 画面 + HUD + 协议面板），不内联脚本；模块入口是 `src/main.ts` |
 | `src/protocol.ts` | OC/1 命令、base64 辅助函数、AES-256-GCM 信封的封/开 |
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
-| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info` 的格式化输出 |
+| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，以及画面/HUD 的启动 |
+| `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
+| `src/render/atlas.ts` | `atlas.json` 校验与图片加载；失败时返回 `null` |
+| `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
+| `src/render/view.ts` | `WorldView` / `EntityView` 形状与确定性 `demoWorld(seed)` 占位地图 |
+| `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序与动画帧 |
+| `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作与实体拾取 |
+| `public/textures/README.md` | 用户画图时要遵守的图集契约 |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验的离线自检 |
 | `vite.config.ts` | `/ws` dev proxy 与 `dist` 输出目录 |
 
 ## 相关文档

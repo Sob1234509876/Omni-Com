@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:render": "tsc -p scripts/tsconfig.check.json && node scripts/check-render-math.ts"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

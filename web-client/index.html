@@ -22,25 +22,136 @@
         box-sizing: border-box;
       }
 
+      html,
+      body {
+        height: 100%;
+      }
+
       body {
         margin: 0;
+        overflow: hidden;
         background: var(--bg);
         color: var(--text);
         font: 15px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
       }
 
-      main {
-        width: min(1040px, calc(100% - 32px));
-        margin: 28px auto 48px;
+      main.app {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        margin: 0;
       }
 
-      header h1 {
-        margin: 0 0 6px;
-        font-size: 26px;
+      .stage {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #0b1016;
+      }
+
+      #world-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+        cursor: grab;
+        outline: none;
+      }
+
+      #world-canvas:active {
+        cursor: grabbing;
+      }
+
+      #world-canvas:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+
+      .hud {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 8px;
+        max-width: calc(100% - 28px);
+        padding: 8px 10px;
+        border: 1px solid rgba(120, 155, 190, 0.28);
+        border-radius: 8px;
+        background: rgba(9, 14, 20, 0.78);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+        color: #cfe0ef;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: none;
+        backdrop-filter: blur(6px);
+      }
+
+      .hud span {
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.06);
+        white-space: nowrap;
+      }
+
+      #hud-atlas {
+        color: var(--accent);
+      }
+
+      #hud-selected {
+        color: var(--warn);
+      }
+
+      .controls-hint {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: calc(100% - 28px);
+        margin: 0;
+        padding: 6px 12px;
+        border: 1px solid rgba(120, 155, 190, 0.2);
+        border-radius: 999px;
+        background: rgba(9, 14, 20, 0.72);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+
+      .console {
+        min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 20px 18px 36px;
+        border-left: 1px solid var(--line);
+        background: var(--bg);
+      }
+
+      .console-head {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+        padding: 2px 0 8px;
+        background: var(--bg);
+      }
+
+      .console-head h1 {
+        margin: 0 0 4px;
+        font-size: 23px;
         letter-spacing: 0.01em;
       }
 
-      header h1 span {
+      .console-head h1 span {
         color: var(--accent);
         font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 0.72em;
@@ -49,16 +160,27 @@
       .lede {
         margin: 0;
         color: var(--muted);
+        font-size: 13px;
+      }
+
+      #toggle-view {
+        flex: 0 0 auto;
+        margin-top: 2px;
+        padding: 6px 10px;
+        font-size: 12px;
+        white-space: nowrap;
       }
 
       .notice {
-        margin: 18px 0;
-        padding: 12px 14px;
+        margin: 14px 0;
+        padding: 10px 12px;
         border: 1px solid var(--line);
         border-left: 3px solid var(--warn);
         border-radius: 8px;
         background: var(--panel);
         color: var(--muted);
+        font-size: 12.5px;
+        line-height: 1.55;
       }
 
       .notice strong {
@@ -66,16 +188,16 @@
       }
 
       .panel {
-        margin: 18px 0;
-        padding: 16px;
+        margin: 14px 0;
+        padding: 14px;
         border: 1px solid var(--line);
         border-radius: 10px;
         background: var(--panel);
       }
 
       .panel h2 {
-        margin: 0 0 12px;
-        font-size: 15px;
+        margin: 0 0 10px;
+        font-size: 13px;
         font-weight: 600;
         color: var(--muted);
         text-transform: uppercase;
@@ -84,8 +206,8 @@
 
       .fields {
         display: grid;
-        grid-template-columns: minmax(170px, 1.1fr) minmax(110px, 0.55fr) minmax(160px, 1fr);
-        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 12px;
       }
 
       .fields .wide {
@@ -144,7 +266,7 @@
       }
 
       .row label.inline input {
-        width: 220px;
+        width: 180px;
       }
 
       button {
@@ -188,8 +310,8 @@
       }
 
       .log {
-        min-height: 260px;
-        max-height: 430px;
+        min-height: 200px;
+        max-height: 360px;
         margin: 0;
         overflow: auto;
         padding: 12px;
@@ -208,7 +330,43 @@
         font-size: 12px;
       }
 
-      @media (max-width: 720px) {
+      code {
+        color: #cfe0ef;
+      }
+
+      body.view-hidden main.app {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      body.view-hidden .stage {
+        display: none;
+      }
+
+      body.view-hidden .console {
+        border-left: 0;
+      }
+
+      @media (max-width: 900px) {
+        main.app {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: minmax(280px, 52dvh) minmax(0, 1fr);
+        }
+
+        .console {
+          border-top: 1px solid var(--line);
+          border-left: 0;
+        }
+
+        body.view-hidden main.app {
+          grid-template-rows: minmax(0, 1fr);
+        }
+
+        .controls-hint {
+          display: none;
+        }
+      }
+
+      @media (max-width: 420px) {
         .fields {
           grid-template-columns: 1fr;
         }
@@ -216,105 +374,124 @@
     </style>
   </head>
   <body>
-    <main>
-      <header>
-        <h1>Omni Com <span>OC/1</span></h1>
-        <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
-      </header>
-
-      <section class="notice">
-        <strong>只读声明：</strong>这里改不了游戏状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
-        <code>REGISTER</code>、<code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与
-        <code>QUIT</code>；其中 <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号，
-        其余命令都不修改游戏、配置或插件状态。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
-        <code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
-      </section>
-
-      <section class="panel">
-        <h2>连接</h2>
-        <div class="fields">
-          <label>
-            主机
-            <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
-          </label>
-          <label>
-            端口
-            <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
-          </label>
-          <label>
-            用户名
-            <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
-          </label>
-          <label>
-            密码
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              placeholder="只用于 REGISTER 与 LOGIN 命令"
-            />
-          </label>
-          <label class="wide">
-            debug.key
-            <textarea
-              id="debug-key"
-              name="debug-key"
-              rows="3"
-              spellcheck="false"
-              placeholder="64 个十六进制字符；从服务器的 data/oc-debug/debug.key 手工复制，只用于 engine-info"
-            ></textarea>
-          </label>
+    <main class="app">
+      <section id="game-view" class="stage" aria-label="游戏画面">
+        <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面"></canvas>
+        <div class="hud" aria-live="off">
+          <span id="hud-atlas">绘制：程序化</span>
+          <span id="hud-tile">瓦片：—</span>
+          <span id="hud-zoom">缩放：1.00×</span>
+          <span id="hud-fps">FPS：—</span>
+          <span id="hud-selected">选中：无</span>
         </div>
-        <div class="row">
-          <button id="connect" class="primary" type="button">连接</button>
-          <span id="status" data-state="idle">未连接</span>
-        </div>
-        <p class="footnote">
-          开发时把主机与端口都留空，页面会连同源的 <code>/ws</code>，由 Vite 代理转发到
-          <code>ws://127.0.0.1:25567</code>。手填主机/端口则直连。
+        <p class="controls-hint">
+          点击画面后：拖拽平移 · 滚轮缩放 · 点击选中 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
         </p>
       </section>
 
-      <section class="panel">
-        <h2>命令</h2>
-        <div class="row">
-          <button id="ping" type="button" disabled>PING</button>
-          <button id="count" type="button" disabled>COUNT</button>
-          <button id="register" type="button" disabled>REGISTER</button>
-          <button id="login" type="button" disabled>LOGIN</button>
-          <button id="engine-info" type="button" disabled>engine-info</button>
-          <button id="quit" type="button" disabled>QUIT</button>
-        </div>
-        <div class="row">
-          <label class="inline">
-            hello 名字
-            <input
-              id="hello-name"
-              name="hello-name"
-              value="world"
-              autocomplete="off"
-              placeholder="留空 = world"
-            />
-          </label>
-          <button id="hello" type="button" disabled>hello</button>
-        </div>
-        <p class="footnote">
-          <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
-          <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
-          <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
-          请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
-        </p>
-      </section>
+      <aside class="console">
+        <header class="console-head">
+          <div>
+            <h1>Omni Com <span>OC/1</span></h1>
+            <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
+          </div>
+          <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
+        </header>
 
-      <section class="panel">
-        <h2>日志</h2>
-        <pre id="log" class="log" aria-live="polite"></pre>
-        <p class="footnote">
-          <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
-          打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
-        </p>
-      </section>
+        <section class="notice">
+          <strong>只读声明：</strong>这里改不了游戏状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
+          <code>REGISTER</code>、<code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与
+          <code>QUIT</code>；其中 <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号，
+          其余命令都不修改游戏、配置或插件状态。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
+          <code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
+        </section>
+
+        <section class="panel">
+          <h2>连接</h2>
+          <div class="fields">
+            <label>
+              主机
+              <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
+            </label>
+            <label>
+              端口
+              <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
+            </label>
+            <label>
+              用户名
+              <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
+            </label>
+            <label>
+              密码
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="只用于 REGISTER 与 LOGIN 命令"
+              />
+            </label>
+            <label class="wide">
+              debug.key
+              <textarea
+                id="debug-key"
+                name="debug-key"
+                rows="3"
+                spellcheck="false"
+                placeholder="64 个十六进制字符；从服务器的 data/oc-debug/debug.key 手工复制，只用于 engine-info"
+              ></textarea>
+            </label>
+          </div>
+          <div class="row">
+            <button id="connect" class="primary" type="button">连接</button>
+            <span id="status" data-state="idle">未连接</span>
+          </div>
+          <p class="footnote">
+            开发时把主机与端口都留空，页面会连同源的 <code>/ws</code>，由 Vite 代理转发到
+            <code>ws://127.0.0.1:25567</code>。手填主机/端口则直连。
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>命令</h2>
+          <div class="row">
+            <button id="ping" type="button" disabled>PING</button>
+            <button id="count" type="button" disabled>COUNT</button>
+            <button id="register" type="button" disabled>REGISTER</button>
+            <button id="login" type="button" disabled>LOGIN</button>
+            <button id="engine-info" type="button" disabled>engine-info</button>
+            <button id="quit" type="button" disabled>QUIT</button>
+          </div>
+          <div class="row">
+            <label class="inline">
+              hello 名字
+              <input
+                id="hello-name"
+                name="hello-name"
+                value="world"
+                autocomplete="off"
+                placeholder="留空 = world"
+              />
+            </label>
+            <button id="hello" type="button" disabled>hello</button>
+          </div>
+          <p class="footnote">
+            <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
+            <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
+            <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
+            请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>日志</h2>
+          <pre id="log" class="log" aria-live="polite"></pre>
+          <p class="footnote">
+            <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
+            打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
+          </p>
+        </section>
+      </aside>
     </main>
 
     <noscript>这个页面需要 JavaScript，并且只通过 WebSocket 与服务器通信；启用 JavaScript 后重新打开。</noscript>

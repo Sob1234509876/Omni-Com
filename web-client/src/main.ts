@@ -17,6 +17,11 @@ import {
   sealEnvelope,
 } from "./protocol";
 import { connect, type CommandSocket } from "./socket";
+import { loadAtlas, type Atlas } from "./render/atlas";
+import { Camera, type TileCoord } from "./render/camera";
+import { InputController } from "./render/input";
+import { WorldRenderer } from "./render/renderer";
+import { demoWorld, entityById } from "./render/view";
 
 function required<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -42,6 +47,13 @@ const helloButton = required<HTMLButtonElement>("#hello");
 const quitButton = required<HTMLButtonElement>("#quit");
 const statusLine = required<HTMLSpanElement>("#status");
 const logPane = required<HTMLPreElement>("#log");
+const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
+const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
+const hudTile = required<HTMLSpanElement>("#hud-tile");
+const hudZoom = required<HTMLSpanElement>("#hud-zoom");
+const hudFps = required<HTMLSpanElement>("#hud-fps");
+const hudSelected = required<HTMLSpanElement>("#hud-selected");
+const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -514,7 +526,137 @@ quitButton.addEventListener("click", () => {
   void doQuit();
 });
 
+// ---------------------------------------------------------------------------------------------
+// Game view. The protocol console above is untouched; everything below is additive.
+// ---------------------------------------------------------------------------------------------
+
+const TILE_SIZE_PX = 32;
+const DEMO_SEED = 0x0c0ffee;
+const HUD_INTERVAL_MS = 150;
+
+const world = demoWorld(DEMO_SEED);
+const camera = new Camera(world.width, world.height, TILE_SIZE_PX, 1);
+const renderer = new WorldRenderer(gameCanvas);
+
+let atlas: Atlas | null = null;
+let selectedId: number | null = null;
+let hoverTile: TileCoord | null = null;
+let viewHidden = false;
+let fps = 0;
+let rafId = 0;
+let lastFrameTime = performance.now();
+const animationStart = performance.now();
+let lastHudUpdate = 0;
+
+function updateHud(force = false, now = performance.now()): void {
+  if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
+    return;
+  }
+  lastHudUpdate = now;
+  hudAtlas.textContent = atlas === null ? "绘制：程序化" : `图集：${atlas.label}`;
+  hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
+  hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
+  hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
+  const selected = entityById(world, selectedId);
+  hudSelected.textContent =
+    selected === undefined
+      ? "选中：无"
+      : `选中：e${selected.id} ${selected.kind} (${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
+}
+
+const input = new InputController(gameCanvas, camera, {
+  getWorld: () => world,
+  onSelectionChange: (id) => {
+    selectedId = id;
+    updateHud(true);
+  },
+  onHoverChange: (tile) => {
+    hoverTile = tile;
+    updateHud(true);
+  },
+  onCameraChange: () => {
+    updateHud(true);
+  },
+});
+
+function animationFrame(now: number): void {
+  rafId = 0;
+  const deltaSeconds = Math.min(0.1, Math.max(0, (now - lastFrameTime) / 1000));
+  lastFrameTime = now;
+  if (deltaSeconds > 0.001) {
+    // Clamp the first sample: a zero-length frame would otherwise report an absurd FPS briefly.
+    const instant = Math.min(240, 1 / deltaSeconds);
+    fps = fps === 0 ? instant : fps * 0.88 + instant * 0.12;
+  }
+  if (!viewHidden) {
+    input.update(deltaSeconds);
+    renderer.render(world, camera, atlas, {
+      clockSeconds: (now - animationStart) / 1000,
+      hoverTile,
+      selectedId,
+    });
+    updateHud(false, now);
+  }
+  rafId = window.requestAnimationFrame(animationFrame);
+}
+
+function startGameLoop(): void {
+  if (rafId === 0 && !viewHidden) {
+    lastFrameTime = performance.now();
+    rafId = window.requestAnimationFrame(animationFrame);
+  }
+}
+
+function stopGameLoop(): void {
+  if (rafId !== 0) {
+    window.cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+}
+
+function setViewVisible(visible: boolean): void {
+  viewHidden = !visible;
+  document.body.classList.toggle("view-hidden", viewHidden);
+  toggleViewButton.textContent = viewHidden ? "显示游戏画面" : "隐藏游戏画面";
+  toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
+  if (viewHidden) {
+    stopGameLoop();
+  } else {
+    startGameLoop();
+  }
+  updateHud(true);
+}
+
+toggleViewButton.addEventListener("click", () => {
+  setViewVisible(viewHidden);
+});
+
+async function loadArtwork(): Promise<void> {
+  try {
+    const texturesUrl = new URL("textures/", document.baseURI).href;
+    atlas = await loadAtlas(texturesUrl);
+  } catch (error: unknown) {
+    // loadAtlas promises never to reject; this is only a belt-and-braces guard.
+    console.warn("图集载入异常，继续使用程序化绘制", error);
+    atlas = null;
+  }
+  updateHud(true);
+}
+
+void loadArtwork();
+window.addEventListener("resize", () => {
+  updateHud(true);
+});
+startGameLoop();
+updateHud(true);
+log(
+  "info",
+  `游戏画面已启用：${world.width}×${world.height} 格，${world.entities.length} 个实体` +
+    "（占位地图；图集缺失时使用程序化绘制）。",
+);
+
 window.addEventListener("beforeunload", () => {
+  input.dispose();
   socket?.close("page unload");
 });
 
