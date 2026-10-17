@@ -199,7 +199,7 @@ animator.frameIndex();      // currentFrame() == null 时给 0
 
 ```text
 AnimationSystem.order() == 800
-相位：100 区块流式 → 200 命令 → 300 寻路 → 400 移动 → 500 建造 → 600 生产 → 700 搬运 → 800 动画
+相位：100 区块流式 → 200 命令 → 300 寻路 → 400 移动 → 450 战斗 → 500 建造 → 600 生产 → 700 搬运 → 800 动画
 ```
 
 - 构造 `AnimationSystem(World world, VisualLibrary library)` 时订阅事件：`EntitySpawned`（绑动画状态）、`ProductionStateChanged`（记录谁在生产）、`ItemProduced` / `UnitProduced` / `EntityDestroyed`（清掉生产标记）。
@@ -227,7 +227,7 @@ AnimationSystem.order() == 800
 
 `idle`、`move`、`attack`、`death`、`build`、`gather`、`carry_idle`、`carry_move`、`produce`。
 
-`attack` 与 `gather` 目前没有任何系统会去选（战斗层尚未实现），但常量已经定死，渲染层可以假定这些名字稳定。
+`attack` 与 `gather` 目前没有任何系统会去选（战斗层已经存在，但 `AnimationSystem` 不会因为单位开火而切到 `attack`），但常量已经定死，渲染层可以假定这些名字稳定。
 
 ## 十、如何接入真实图片资源
 
@@ -321,7 +321,7 @@ VisualLibrary directional = VisualLibrary.builder()
 6. **`facing` 是弧度、0 指向东、逆时针为正**，与 `Vec2.angle()` 同一约定；`Direction.fromAngle` 内部按 `PI/4` 取整，八个方向等分。
 7. **`play` 对未定义的 clip 是静默忽略**（`UnitAnimator` 返回前不改任何状态），而 `AnimationSet.clip(String)` 是抛异常。模拟层用宽容的 `findClip`，工具代码用严格的 `clip`。
 8. **动画层不写模拟状态**，但 `AnimationSystem` 依赖 `Events.ProductionStateChanged` 的字符串状态名；换一套生产层实现时，只要状态名不在 `PRODUCING`/`RUNNING`/`ACTIVE` 里，建筑就不会播 `produce`。
-9. **`DEATH` 目前没有任何系统会去触发**：引擎里没有任何系统调用 `World.destroy(Entity)`（战斗尚未实现），`Health.damage(...)` 与 `Events.DamageDealt` 虽然已经就位但无人调用，所以 `healthFraction` 实际恒为 1、死亡分支不可达。即使调用方自己 `world.destroy(...)`，快照也只采集活着的实体（见 [08-snapshots-and-rendering.md](08-snapshots-and-rendering.md)），死亡姿势永远不会出现在快照里；要做尸体演出得订阅 `Events.EntityDestroyed` 自己维护一份特效列表。
+9. **`DEATH` 已经会被触发**：`CombatSystem` 把血量为零的单位标死后，`AnimationSystem` 对 `!isAlive()` 或 `health().isDead()` 的实体返回 `DEATH`，所以死亡分支是可达的，`healthFraction` 也会随伤害下降。但快照只采集活着的实体（见 [08-snapshots-and-rendering.md](08-snapshots-and-rendering.md)），死亡姿势通常不会出现在快照里；要做尸体演出得订阅 `Events.EntityKilled` / `Events.EntityDestroyed` 自己维护一份特效列表。
 10. **`SpriteSheet` 的 pivot 默认按"帧高"算**，`frameHeight` 就是脚底；如果美术给的是居中锚点图，记得用 `pivot(x, y)` 显式覆盖。
 
 ## 相关文档
@@ -331,7 +331,7 @@ VisualLibrary directional = VisualLibrary.builder()
 - [03-map-and-pathfinding.md](03-map-and-pathfinding.md) —— 地形的 `TerrainType.spriteId()` 与区块流式
 - [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— `CARRY_MOVE` / `CARRY_IDLE` / `PRODUCE` 背后的模拟状态
 - [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) —— 相位 100→800 的完整顺序，以及怎么插入自己的系统
-- [11-limits-and-faq.md](11-limits-and-faq.md) —— 死亡/战斗尚未接通的边界
+- [11-limits-and-faq.md](11-limits-and-faq.md) —— 死亡动画、环境危害与未接通字段的边界
 
 ## 相关源码
 

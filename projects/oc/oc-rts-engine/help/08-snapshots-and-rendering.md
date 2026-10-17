@@ -301,7 +301,7 @@ engine.dimension(DimensionId.of("moon")).focus(new Vec2(0f, 0f), 3); // 等价�
 - [13-dimensions.md](13-dimensions.md) —— 按维度的快照、`dimension()` / `dimensionName()`、每张图自己的焦点与坐标
 - [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md) —— `carrying` / `currentOrderName` 背后的物流与生产状态
 - [10-cookbook.md](10-cookbook.md) —— 按任务查做法
-- [11-limits-and-faq.md](11-limits-and-faq.md) —— 预留但未接通的字段（战斗、死亡流程）
+- [11-limits-and-faq.md](11-limits-and-faq.md) —— 预留但未接通的字段（环境危害等）与死亡流程的边界
 
 ## 相关源码
 

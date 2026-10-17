@@ -4,8 +4,8 @@
 
 ## 这一篇讲什么
 
-- 完全没实现的能力（以及临时替代方案）：战斗、存档、**环境危害**等。
-- 已经定义但**没有任何代码使用**的字段与事件——看到它们不要以为已经生效。
+- 能力清单：哪些已经实现、哪些完全没有（以及临时替代方案），例如存档、环境危害、尸体演出。
+- 已经定义、但模拟逻辑没有真正接通的字段与事件——看到它们不要以为已经生效。
 - 数量类型的近似边界：`Natural` 从哪一位开始不再精确、`BEYOND` 是什么、为什么库存会"明明没满却报满"。
 - 已知的取舍与硬限制。
 - FAQ：24 条「症状 → 原因 → 处理」，都是这个引擎里真实会发生的情况。
@@ -32,13 +32,13 @@
 
 `float` 与 `int` 的领地没有被 `Natural` 取代，而且仍然各自带边界：位置/速度/半径/射程/`EntitySnapshot.healthFraction` 是 `float`，格坐标与一切 tick 时长（`buildTimeTicks`、`Recipe.durationTicks`、冷却、超时）是 `int`/`long`。位置与速度用的是 `float`，而 `Vec2` 只做 `float` 基本算术（这也是"同种子必然复现"的前提之一）：`float` 只有 24 位有效二进制位，**离原点越远分辨率越差**——原点附近相邻可表示值的间隔约 `1.2e-7` 格，到 10 万格处约 `0.0078` 格，到 100 万格处约 `0.0625` 格，此时"精确停在某个坐标"已没有意义（`UnitType.radius()` 通常在 0.35 格上下）。大数解决的是"数量"，不是"坐标"。
 
-## 完全没有实现的能力
+## 能力清单：哪些已经实现，哪些没有
 
 | 能力 | 现状 | 你可以怎么做 |
 | --- | --- | --- |
 | 渲染、窗口、输入、选中 UI | 引擎零图形依赖 | 用[只读快照](08-snapshots-and-rendering.md)自己写渲染层；`AsciiMapRenderer` 是一个完整的消费示例 |
-| 战斗 | 没有伤害、攻击、死亡结算 | `Events.DamageDealt`、`Health.damage(...)`、`UnitType.attackDamage/attackRange/canAttack()` 都已就位，写一个 CombatSystem 即可（订阅/发布这些事件） |
-| 死亡与尸体 | 实体只有 `alive` 标记，没有"死亡动画播完再消失"的流程 | 自己写系统：血量归零 → 播 `AnimationClips.DEATH` → 若干 tick 后 `world.destroy(entity)` |
+| 战斗 | **已实现**：相位 450 的 `CombatSystem` 自动索敌、扣护甲、结算伤害与死亡；只打单位，不打建筑 | 见 [14-combat.md](14-combat.md)；攻城要自己扩展目标类型与伤害规则 |
+| 死亡与尸体 | 战斗会把血量为零的单位立刻标死并在 tick 末移除，**没有“死亡动画播完再消失”的流程** | 自己写系统：订阅 `Events.EntityKilled` → 播 `AnimationClips.DEATH` → 若干 tick 后清理 |
 | AI | 没有 | 它本质上就是"按 tick 读快照/世界，然后调 `UnitDirector` 与 `ProductionSystem`"，不需要引擎改动 |
 | 战争迷雾 | 没有可见性/探索状态 | 自己按玩家维护一张已探索区块集合，订阅 `Events.ChunkLoaded` 更新 |
 | 网络同步 | 没有 | 引擎是确定性的，理论上可以做 lockstep：同步种子 + 每 tick 的命令序列 |
@@ -55,14 +55,10 @@
 
 ## 预留但未接通的字段
 
-这些名字出现在 API 里，但引擎内部**没有任何代码读写它们**（我用源码全局搜索确认过）：看到它们别以为已经生效。
+这些名字出现在 API 里，但引擎的模拟逻辑没有真正让它们生效（有的只在表现层生效，有的完全没有调用方）：看到它们别以为已经生效。
 
 | 类型 / 成员 | 状态 |
 | --- | --- |
-| `UnitType.attackDamage()` / `attackRange()` / `attackCooldownTicks()` / `canAttack()` | 只是数据，等战斗系统 |
-| `Events.DamageDealt` | 已定义，**无人发布** |
-| `Health.damage(...)` / `heal(...)` | 已实现，**无调用方**（`kill()` 会把血量直接置零） |
-| `Player.team()` / `isAlliedWith(...)` | 已实现，无调用方 |
 | `TerrainMap.setTerrain(...)` | 已实现（`ChunkedMap` 里真的会改地形并标脏），但**没有游戏逻辑调用**它——改地形/修路/炸桥都得你自己调 |
 | `DimensionProfile.hazardDamagePerTick` / `gravity` / `breathable` | 只是数据：引擎目前只读 `movementSpeedFactor()`（见 [13-dimensions.md](13-dimensions.md)），危害**不会真的掉血** |
 | `DimensionProfile.requiresSealedUnits()` | 已实现（`!breathable || hazardous()`），但**没有调用方**——"没穿宇航服就死"要自己写系统 |
@@ -242,6 +238,6 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 ## 相关源码
 
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
-- 预留字段：[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
+- 战斗字段与生命：[`CombatStats.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatStats.java)、[`CombatSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatSystem.java)、[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11 节，整份 153 项）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11、12、13 节，整份 239 项）

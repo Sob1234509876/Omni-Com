@@ -205,6 +205,7 @@ OcRtsEngineBuilder c = OcRtsEngine.builder(content)
 | --- | --- | --- |
 | `PathService`（300） | `world.map(unit.dimensionId())`、`world.pathFinder(unit.dimensionId())` | 搜索永远在单位自己那张图上，另一张图的同坐标目标走不过去 |
 | `MovementSystem`（400） | `world.spatial(unit.dimensionId())`、`world.map(unit.dimensionId())`、`world.dimension(unit.dimensionId()).profile().movementSpeedFactor()` | 邻居、地形约束与最大速度都来自本图 |
+| `CombatSystem`（450） | `world.spatial(unit.dimensionId())` | 目标查询只看本图；坐标局部的敌人不会被另一张图的同坐标单位误伤 |
 | `ProductionSystem`（600） | `building.dimensionId()` | 单位产出到建筑**所在**的维度，不会掉到默认维度 |
 | `ChunkStreamer`（100） | 每个维度一份地图与焦点 | 见第九节 |
 | `HaulingSystem`（700） | `unit.dimensionId()` 与 `job.target().dimensionId()`，以及 `world.route(...)` | 挑人只看本图（见第十一节）；跨图的货走门"发运"，不会给走路单位规划跨图路线 |
@@ -417,10 +418,10 @@ engine.events().subscribe(Events.ChunkUnloaded.class, event ->
   [ok] the traveller left the overworld, which keeps its original unit
 ```
 
-整份场景目前是 **153 项断言**（引入维度前是 119 项；维度本身带来 20 项，旅行再带来 8 项）：
+整份场景目前是 **239 项断言**（引入维度前是 119 项；第 11 节维度本身 34 项，之后第 12 节战斗 59 项、第 13 节建造扣费 27 项）：
 
 ```text
-RTS engine scenario: all 153 checks passed.
+RTS engine scenario: all 239 checks passed.
 ```
 
 断言覆盖五件事：三张图确实存在且档案正确；同一格上的两个单位互不干扰（id 不同、全世界 2 个、各自索引各 1 个、地球索引看不到月球单位）；`findEntity` 能跨维度按 id 找到实体；给月球单位下移动命令后它留在月球、地球单位没被拖走，销毁月球单位也不影响地球的那个；**两跳路线 + 单向性 + 踩门判定 + 旅行后 id 不变 + 两次转移各一条事件 + 出发图少一个、火星多一个**。

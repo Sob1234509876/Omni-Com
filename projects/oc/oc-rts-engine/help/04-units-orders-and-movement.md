@@ -10,7 +10,7 @@
 1. 订单**不能**用 `UnitDirector.move()` 来驱动自己走路——那会 `replace` 整个订单队列，把正在执行的订单本身取消掉（`HaulOrder` 真实踩过这个死锁）。
 2. `Motion.isArrived()` 在单位**从未接到目标时默认就是 `true`**，“等全部到达”的判定必须同时看 `orders().hasCurrent()`。
 3. 位置被改动后必须让空间索引知道（`world.spatial().update(unit)`），否则分离避让读到的是旧位置。
-每 tick 的相位顺序（`SystemPipeline` 按 `SimulationSystem.order()` 排序）：`100 区块流式 → 200 订单 → 300 寻路请求 → 400 移动 → 500 建造 → 600 生产 → 700 搬运 → 800 动画`。订单在 200、路径在 300、移动在 400，所以**这一 tick 下的命令，这一 tick 就会把目标写进 `Motion` 并在同一 tick 被规划**，玩家点击没有延迟。
+每 tick 的相位顺序（`SystemPipeline` 按 `SimulationSystem.order()` 排序）：`100 区块流式 → 200 订单 → 300 寻路请求 → 400 移动 → 450 战斗 → 500 建造 → 600 生产 → 700 搬运 → 800 动画`。订单在 200、路径在 300、移动在 400，所以**这一 tick 下的命令，这一 tick 就会把目标写进 `Motion` 并在同一 tick 被规划**，玩家点击没有延迟。
 
 ## entity：实体层
 

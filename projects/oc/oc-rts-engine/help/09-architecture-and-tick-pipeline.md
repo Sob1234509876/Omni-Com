@@ -5,7 +5,7 @@
 ## 这一篇讲什么
 
 - 六条设计原则，以及它们各自带来的约束。
-- 15 个包的职责与依赖方向。
+- 16 个包的职责与依赖方向。
 - 相位 100 → 800 的完整管线：每个系统读什么、写什么、为什么排在这个位置。
 - 一 tick 内实体的增删生命周期，以及空间索引的维护责任。
 - 事件总线：谁发布什么、订阅语义。
@@ -34,6 +34,7 @@
 | `map` | 区块地形、流式加载、寻路 | `TerrainMap`、`ChunkedMap`、`ChunkStreamer`、`NoiseChunkGenerator`、`AStarPathFinder`、`PathOptions` |
 | `entity` | 实体与空间索引 | `Entity`、`Unit`、`Building`、`Health`、`SpatialIndex`、`GridSpatialIndex` |
 | `movement` | 移动意图、转向、路径请求服务 | `Motion`、`MovementSystem`、`SteeringSystem`、`SteeringSettings`、`PathService` |
+| `combat` | 自动索敌、伤害与护甲、击杀结算 | `CombatStats`、`CombatSystem` |
 | `formation` | 阵型几何与阵位分配 | `FormationShape`、`FormationPlanner`、`FormationPlan` |
 | `order` | 订单模型与命令入口 | `Order`、`OrderQueue`、`OrderSystem`、`UnitDirector`、`CommandService`、`MoveOrder` |
 | `economy` | 库存与玩家仓库网络 | `Inventory`、`Logistics`、`LogisticsReservation`、`WarehouseLogistics` |
@@ -79,6 +80,7 @@
 | 200 | `orders`（`OrderSystem`） | 每个单位的 `OrderQueue` | 启动/推进/结束订单；发布 `Events.OrderIssued` / `OrderFinished` |
 | 300 | `paths`（`PathService`） | 路径请求队列 | 调用 `PathFinder` 并把结果写回 `Motion.setPath(...)` |
 | 400 | `movement`（`MovementSystem`） | `Motion` 的目标与路径、`SpatialIndex` 邻居 | 请求新路径、更新位置/速度/朝向、`spatial().update(...)`、`markArrived()` |
+| 450 | `combat`（`CombatSystem`） | 每个单位的 `CombatStats`、攻击冷却、本维度空间索引、生命 | 目标 id、朝向、冷却、伤害；发布 `Events.DamageDealt` / `EntityKilled`，标记死亡 |
 | 500 | `construction`（`ConstructionSystem`） | 未建成建筑 | 推进建造进度；发布 `Events.ConstructionCompleted` |
 | 600 | `production`（`ProductionSystem`） | 建筑、`ProductionQueue`、玩家 `Logistics` | 预订材料、消耗材料、生成单位/物品；发布 `Events.UnitProduced` / `ItemProduced` / `ProductionStateChanged` |
 | 700 | `hauling`（`HaulingSystem`） | `DeliveryJob`、空闲搬运工、`world.route(...)` | 给**同维度**的搬运工派单（把 `HaulOrder` 推入其订单队列）；跨维度的货先走 `tickShipped`（按门链路跳数计延迟）；发布交付相关事件 |
@@ -91,6 +93,7 @@
 - **订单在寻路之前**：订单只设置目标，随后同一 tick 的寻路与移动就能用上这个目标，减少一 tick 延迟。
 - **寻路在移动之前**：新算好的路径在同一 tick 就能被消费。
 - **生产与搬运在移动之后**：它们可能生成单位或下达搬运命令，此时本 tick 的移动已经跑完，新单位从下一 tick 开始动，不会边遍历边插入。
+- **战斗紧跟移动**：命中要落在单位这一 tick 真正到达的位置上；订单（200）先决定去哪，移动（400）把人带过去，战斗（450）才按新位置判断射程。
 - **动画最后**：它只读取本 tick 结束时的状态，所以显示的永远是最终姿态。
 
 `SystemPipeline` 在 `add()` 时按 `order()` 排序；`order()` 相同则保持加入顺序。想打印当前管线用 `engine.pipeline().describe()` 或 `engine.describe()`。
@@ -132,7 +135,8 @@ subscription.cancel();
 | `Events.OrderIssued` / `OrderFinished` | `OrderQueue` | 订单成为当前订单 / 离开当前订单（含 `CANCELLED`） |
 | `Events.ConstructionCompleted` | `ConstructionSystem` | 建筑建造完成 |
 | `Events.ItemProduced` / `UnitProduced` / `ProductionStateChanged` | `ProductionSystem` | 物品入库、单位出厂、任务状态变化 |
-| `Events.DamageDealt` | **目前无人发布** | 预留：等战斗系统实现后由它发布 |
+| `Events.DamageDealt` | `CombatSystem` | 每次命中；`amount` 是**实际扣掉**的血（可能被剩余血量截断） |
+| `Events.EntityKilled` | `CombatSystem` | 目标的血第一次到 0，**在** `World.destroy` 之前发布 |
 
 ## 确定性规则清单
 

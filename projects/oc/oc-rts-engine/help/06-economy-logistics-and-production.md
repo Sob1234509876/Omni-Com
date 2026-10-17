@@ -570,7 +570,7 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `production.ProductionQueue` | `building()`、`enqueue(recipe, count)`、`jobs()`、`size()`、`isEmpty()`、`current()`、`cancel(index)`、`clear()` | 请求展开成多个 job |
 | `production.ProductionSystem` | `SYSTEM_ORDER = 600`、`DEFAULT_DELIVERY_TIMEOUT_TICKS = 3000`、私有 `STATE_REPEAT_TICKS = 600`、`enqueue`、`queueOf`、`queue`、`cancel(b, i)`、`availableRecipes(b)`、`totalJobs()`、`trackedBuildings()`、`close()` | 相位 600 |
 | `production.ConstructionSystem` | `SYSTEM_ORDER = 500` | 相位 500，发布 `ConstructionCompleted` |
-| 相位数 | 100 区块流式 / 200 订单 / 300 寻路 / 400 移动 / **500 建造** / **600 生产** / **700 搬运** / 800 动画 | 见 `SystemPipeline` 与 [04-units-orders-and-movement.md](04-units-orders-and-movement.md) |
+| 相位数 | 100 区块流式 / 200 订单 / 300 寻路 / 400 移动 / 450 战斗 / **500 建造** / **600 生产** / **700 搬运** / 800 动画 | 见 `SystemPipeline` 与 [04-units-orders-and-movement.md](04-units-orders-and-movement.md) |
 
 ## 常见坑
 
@@ -614,4 +614,4 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 - 实体与内容定义：[Building.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Building.java)、[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)、[BuildingType.java](../src/main/java/io/github/sob1234509876/oc/rts/content/BuildingType.java)、[UnitType.java](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)
 - 引擎装配与时钟：[OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[OcRtsEngine.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngine.java)、[World.java](../src/main/java/io/github/sob1234509876/oc/rts/World.java)、[Player.java](../src/main/java/io/github/sob1234509876/oc/rts/Player.java)、[SystemPipeline.java](../src/main/java/io/github/sob1234509876/oc/rts/sim/SystemPipeline.java)
 - 事件：[Events.java](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
-- 权威用例：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 4、5、5b 节）、[ScenarioContent.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/ScenarioContent.java)
+- 权威用例：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 4、5、5b 节）、[ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)

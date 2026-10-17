@@ -9,7 +9,7 @@
 - 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，12 个源文件）的 11 个 public 类型：`Natural` / `HyperOperation` / `NaturalFormat` / `ComparisonResult`，以及库新增的序数层 `Ordinal` / `OrdinalNotation` / `CantorNormalForm` / `CantorOrdinal`（含嵌套 public 类型 `CantorOrdinal.Term`）/ `EpsilonZero` / `TransfiniteHyperoperation`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上；引擎本身不使用序数层，也不使用四值比较（它的数量永远落在精确区间）。
 - 每个包一节，逐行给出：类型 → 一句话作用 → 关键方法/字段 → 详见的文档。
 - 常量值全部从源码读出，包含默认参数与枚举成员；`throws` 列只写源码里真实存在的校验与异常。
-- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 15 个导出包里（`dimension` 是新增的那个）；大数与序数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
+- 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 16 个导出包里（`combat` 与 `dimension` 是新增的两个）；大数与序数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
 
 ## 我想做 X → 看哪篇
 
@@ -36,6 +36,8 @@
 | 单次寻路更省或更彻底 | [03](03-map-and-pathfinding.md) | `PathOptions.DEFAULT/FAST/EXHAUSTIVE` |
 | 调整分离避让强度 / 卡位重寻路 | [04](04-units-orders-and-movement.md) / [11](11-limits-and-faq.md) | `SteeringSettings`、`MovementSystem#settings` |
 | 让单位没接到命令就原地不动 | [04](04-units-orders-and-movement.md) | `HoldOrder`、`CommandService#hold` |
+| 让单位自动打射程内的敌人 | [14](14-combat.md) | `CombatSystem`、`CombatStats` |
+| 追一个指定目标 / 边走边打 | [14](14-combat.md) | `UnitDirector#attack`、`UnitDirector#attackMove`、`AttackOrder`、`AttackMoveOrder` |
 | 给单位加一个自定义订单 | [04](04-units-orders-and-movement.md) / [10](10-cookbook.md) | `Order`、`OrderContext`、`OrderQueue#push` |
 | 把动画接到真实图集 | [07](07-sprites-and-animation.md) | `VisualLibrary.Builder`、`SpriteSheet`、`SpriteFrame` |
 | 做八方向行走动画 | [07](07-sprites-and-animation.md) | `VisualLibrary.ClipBuilder#direction`、`AnimationSet#clip(String,Direction)`、`Direction` |
@@ -90,6 +92,13 @@
 | `CantorOrdinal.Term` | 一个标准式项的 record：`ω^exponent·coefficient`，系数必须为正 | `exponent()`、`coefficient()` | [序数层](../../oc-googology/help/ordinals.md) |
 | `EpsilonZero` | ε₀ = `sup(1, ω, ω^ω, ω^ω^ω, …)`：康托尔标准式的天花板；吸收更小的加法，`ε₀ + 1` 与 `ε₀·2` 写不出来 | `isLimit()`、`fundamentalSequence(n)`（n+1 个 ω 的塔，索引超过 256 时放弃）、`add(Ordinal)`、`successor()`、`times(Natural)`（后两者在标准式之外，抛 `UnsupportedOperationException`） | [序数层](../../oc-googology/help/ordinals.md) |
 | `TransfiniteHyperoperation` | 把超运算推到超限序数级别：极限级别 `n{λ}m = n{λ[m]}m`，超限后继级别沿用有限级别的递归 | `apply(Natural, Ordinal, Natural)`、`apply(..., int reductionBudget)`、`applyFinite(Natural, int, Natural)`、`DEFAULT_REDUCTION_BUDGET = 64`、`DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8` | [序数层](../../oc-googology/help/ordinals.md) |
+
+### `...oc.rts.combat`
+
+| 类型 | 一句话作用 | 关键方法/字段 | 详见 |
+| --- | --- | --- | --- |
+| `CombatStats` | 一个单位从内容目录继承的只读战斗视图，生成时缓存一次、终身不变 | `of(UnitType)`、`of(Unit)`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`maxHealth()`（`Natural`）、`canAttack()`、`reaches(float)`、`damageAfterArmour(int)`、`damageAgainst(CombatStats)` | [14](14-combat.md) |
+| `CombatSystem` | 相位 450：每个能攻击的单位锁定本维度射程内最近的敌人，按冷却开火，结算伤害与死亡 | `SYSTEM_ORDER`（450）、`nearestEnemyInRange(World,Unit)`、`isEnemy(Unit,Entity)`、`inRange(Unit,Entity)`、`face(Unit,Vec2)`、`name()`（返回 `"combat"`） | [14](14-combat.md) |
 
 ### `...oc.rts.content`
 
@@ -153,7 +162,8 @@
 | `Events.EntitySpawned` | 实体被创建（登记进某个维度） | `entity`、`tick` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
 | `Events.EntityDestroyed` | 实体被标记死亡（`flush()` 前发布） | `entity`、`tick` | [09](09-architecture-and-tick-pipeline.md) |
 | `Events.EntityTransferred` | 实体换了维度（`World.transfer` 在落地那次 `EntitySpawned` 之后发布） | `entity`、`from`、`to`、`tick` | [13](13-dimensions.md) |
-| `Events.DamageDealt` | 造成伤害 | `target`、`source`、`amount`（`Natural`）、`tick` | [09](09-architecture-and-tick-pipeline.md) |
+| `Events.DamageDealt` | 造成伤害；`amount` 是实际扣掉的血 | `target`、`source`、`amount`（`Natural`）、`tick` | [14](14-combat.md) |
+| `Events.EntityKilled` | 目标的血第一次到 0（在 `World.destroy` 之前） | `victim`、`killer`、`tick` | [14](14-combat.md) |
 | `Events.ConstructionCompleted` | 工地完工 | `building`、`tick` | [06](06-economy-logistics-and-production.md) |
 | `Events.ItemProduced` | 配方产出物品 | `player`、`building`、`items`、`recipe`、`tick` | [06](06-economy-logistics-and-production.md) |
 | `Events.UnitProduced` | 配方产出单位 | `player`、`building`、`unit`、`recipe`、`tick` | [06](06-economy-logistics-and-production.md) |
@@ -219,10 +229,13 @@
 | `OrderState` | 订单生命周期 | `RUNNING`/`COMPLETED`/`FAILED`/`CANCELLED`、`isFinished()` | [04](04-units-orders-and-movement.md) |
 | `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()` | [04](04-units-orders-and-movement.md) |
 | `OrderSystem` | 推进每个单位的订单队列 | `order()`（返回 200） | [04](04-units-orders-and-movement.md) |
-| `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
+| `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
 | `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder` | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
 | `MoveOrder` | 把单个单位走到某个位置 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`destination()` | [04](04-units-orders-and-movement.md) |
 | `HoldOrder` | 让单位留在原地 | `name()`（返回 `"hold"`） | [04](04-units-orders-and-movement.md) |
+| `AttackOrder` | 追一个实体 id：走进射程、停下，由战斗系统开火；未知 id 或目标换图会失败 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`targetId()`、`name()`（返回 `"attack"`） | [14](14-combat.md) |
+| `AttackMoveOrder` | 走向一个点，路上遇到射程内敌人就停下打，打完继续走 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`destination()`、`isFighting()`、`name()`（返回 `"attack_move"`） | [14](14-combat.md) |
+| `BuildOrder` | 把建造者留在工地入口，直到建筑建成或工地被毁 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`BUILD_RANGE_TILES`（2f）、`site()`、`name()`（返回 `"build"`） | [06](06-economy-logistics-and-production.md) |
 | `FormationMoveOrder` | 让单个单位走到自己在移动队形中的槽位 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`ANCHOR_EPSILON`、`formationId()`、`slotOffset()`、`goal()`、`updateAnchor()`、`isActive()` | [05](05-formations.md) |
 | `TransferOrder` | 让单位沿传送门链路走到另一张图（`name()` 返回 `"travel"`） | `GATEWAY_RADIUS = 1.5f`、`TIMEOUT_TICKS = 20 * 120`、`TransferOrder(DimensionId target)`、`target()` | [13](13-dimensions.md) |
 
@@ -321,9 +334,13 @@
 | `PathService.*` | `DEFAULT_MAX_REQUESTS_PER_TICK=32`、`DEFAULT_NODE_BUDGET_PER_TICK=200_000`、`MAX_EXPANSIONS_PER_SEARCH=PathOptions.DEFAULT.maxExpansions()`（即 `20_000`）、`FAILED_REPATH_COOLDOWN=30`、`GOAL_ADJUST_RING=8` |
 | `HaulingSystem.*` | `SYSTEM_ORDER=700`、`DEFAULT_TIMEOUT_TICKS=3000`；跨维度发运的等待时间 = `max(1, directDeliveryTicks) * max(1, 跳数)`，跳数由 `World.route(...)` 给出，无路线返回 `-1`（job 一直 pending 到超时） |
 | `ProductionSystem.*` | `SYSTEM_ORDER=600`、`DEFAULT_DELIVERY_TIMEOUT_TICKS=3000` |
+| `CombatSystem.SYSTEM_ORDER` | `450`（移动 400 之后、建造 500 之前） |
 | `ConstructionSystem.SYSTEM_ORDER` | `500` |
 | `FormationPlanner.*` | `MIN_SPACING=0.6f`、`DEFAULT_SPACING_SCALE=1.25f` |
 | `MoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300` |
+| `AttackOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`name()` 返回 `"attack"` |
+| `AttackMoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、到达容差 `1f + radius`、`name()` 返回 `"attack_move"` |
+| `BuildOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`BUILD_RANGE_TILES=2f`、`name()` 返回 `"build"` |
 | `FormationMoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`ANCHOR_EPSILON=0.25f` |
 | `TransferOrder.*` | `GATEWAY_RADIUS=1.5f`、`TIMEOUT_TICKS=20 * 120`（即 `2400`，**整段旅程**的预算）、`name()` 返回 `"travel"` |
 | `Gateway.of(from, at, to, arrival)` 的 `name` | `from.key() + "-to-" + to.key()`（例如 `overworld-to-moon`）；`reversed()` 给 `to + "-to-" + from` |
@@ -334,7 +351,7 @@
 | `AsciiMapRenderer.UNKNOWN_SYMBOL` / `OTHER_SYMBOL` | `'?'` / `'%'` |
 | `ItemBundle.EMPTY`、`Vec2.ZERO` | 空 bundle / `new Vec2(0f, 0f)` |
 | `OcRtsEngineBuilder` 默认值 | `seed=20240101L`、`ticksPerSecond=20`、`chunkSize=16`、`viewRadiusChunks=4`、`chunkStore=new InMemoryChunkStore()`、`visuals=VisualLibrary.empty()`、`directDelivery=false`、`directDeliveryTicks=60`、`pathRequestsPerTick=32`、`pathNodeBudgetPerTick=200_000`；`build()` 时若没有任何玩家，自动加入 `Player.of(1, "Player 1", 0xFF4FC3F7)` |
-| `SimulationSystem.order()` 建议阶段 | `100` 地图流式、`200` 订单、`300` 寻路请求、`400` 移动、`500` 建造、`600` 生产、`700` 后勤、`800` 动画、`900` 清理；接口默认 `1000` |
+| `SimulationSystem.order()` 建议阶段 | `100` 地图流式、`200` 订单、`300` 寻路请求、`400` 移动、`450` 战斗、`500` 建造、`600` 生产、`700` 后勤、`800` 动画、`900` 清理；接口默认 `1000` |
 | `World` 内部默认 | **每个维度**各自用 `new GridSpatialIndex(4f)`；事件总线用 `SimpleEventBus`；维度用 `LinkedHashMap` 按创建顺序保存 |
 
 ## 门面类方法速查
@@ -379,7 +396,7 @@
 | `directDeliveryTicks(int)` | 传送耗时（默认 60） | `<= 0` → `IllegalArgumentException` |
 | `pathBudget(int requestsPerTick, int nodeBudgetPerTick)` | 寻路队列预算 | 任一 `<= 0` → `IllegalArgumentException` |
 | `player(Player)` / `players(List<Player>)` | 加入玩家 | 元素为 `null` → `NullPointerException` |
-| `build()` | 接线世界与全部子系统（每个维度一张地图、一个区块存储与寻路器；区块流 100 → 订单 200 → 寻路 300 → 移动 400 → 建造 500 → 生产 600 → 后勤 700 → 动画 800） | 内容目录非法在构造 `ContentRegistry` 时已抛；玩家列表为空时自动补一个默认玩家 |
+| `build()` | 接线世界与全部子系统（每个维度一张地图、一个区块存储与寻路器；区块流 100 → 订单 200 → 寻路 300 → 移动 400 → 战斗 450 → 建造 500 → 生产 600 → 后勤 700 → 动画 800） | 内容目录非法在构造 `ContentRegistry` 时已抛；玩家列表为空时自动补一个默认玩家 |
 
 ### `World`（425 行，直接 `new` 或从 `OcRtsEngine#world()` 取）
 
@@ -426,4 +443,5 @@
 - [11 限制与 FAQ](11-limits-and-faq.md) —— 已知取舍、性能与陷阱
 - [12 大数与 `Natural`](12-numbers-and-googology.md) —— 数量类型、4096 位阈值、结构形算术与 `BEYOND`
 - [13 维度](13-dimensions.md) —— 多张地图、每图的空间索引与焦点、传送门与旅行、跨维度送货、共享的区块预算
+- [14 战斗](14-combat.md) —— `CombatStats`、`CombatSystem`、`AttackOrder`、`AttackMoveOrder`、伤害与击杀事件
 - [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) —— 大数库的序数层：`Ordinal`、`OrdinalNotation`、康托尔标准式与超限超运算

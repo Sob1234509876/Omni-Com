@@ -50,7 +50,7 @@ ContentRegistry.builder("oc")
         .buildTime(150)
         .cargo(0)                      // 0 表示不能搬运
         .spriteSet("rifleman")
-        .attack(16f, 5.5f).attackCooldown(24)   // 预留：战斗系统尚未实现
+        .attack(16f, 5.5f).attackCooldown(24)   // CombatSystem 读它：伤害 / 射程 / 冷却
 ```
 
 - `speed` 单位是**格/秒**，与 tick 率无关（移动用 `Tick.deltaSeconds()` 积分）。
@@ -381,7 +381,7 @@ sub.cancel();   // 不再需要时注销
 ```
 
 - 事件是**同步**分发的：监听器里做重活会直接拖慢 tick。
-- 事件表与发布者清单见 [09](09-architecture-and-tick-pipeline.md#事件总线)；`Events.DamageDealt` 目前无人发布（等战斗系统）。
+- 事件表与发布者清单见 [09](09-architecture-and-tick-pipeline.md#事件总线)；`Events.DamageDealt` 与 `Events.EntityKilled` 由战斗系统在相位 450 发布。
 
 ## 16. 让渲染层或工具跟上模拟
 

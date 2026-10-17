@@ -23,6 +23,7 @@
 | [11 限制与常见问题](help/11-limits-and-faq.md) | 未实现的内容、取舍、按症状查找的答案 |
 | [12 数值与 googology](help/12-numbers-and-googology.md) | `Natural` 数量类型：精确范围、箭头记法、近似、`BEYOND` |
 | [13 维度](help/13-dimensions.md) | 一个世界中的多张地图（主世界、月球、火星）：按维度的空间索引、环境配置、流式加载预算、事件、网关与旅行 |
+| [14 战斗](help/14-combat.md) | 战斗阶段：`CombatStats`、目标选择、伤害与护甲、攻击订单、事件、确定性 |
 | [附录：API 地图](help/appendix-api-map.md) | 所有公共类型、常量、门面方法表 |
 
 ## 坐标
@@ -42,11 +43,11 @@
 ./gradlew :projects:oc:oc-rts-engine:scenario
 ```
 
-该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一座兵营训练士兵、动画帧推进、三个维度并排模拟，以及一幅世界的 ASCII 图。
+该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一座兵营训练士兵、动画帧推进、三个维度并排模拟、一场近战、一次建造扣费，以及一幅世界的 ASCII 图。
 成功运行以以下内容结束：
 
 ```text
-RTS engine scenario: all 153 checks passed.
+RTS engine scenario: all 239 checks passed.
 ```
 
 自检是一个程序，而不是基于框架的测试套件，因此它位于自己的 `selfCheck` 源集（`src/selfcheck/java`）中；`src/test/java` 保持为空，留给以后真正的单元测试。
@@ -65,6 +66,8 @@ RTS engine scenario: all 153 checks passed.
 | 7 确定性 | 相同种子和相同命令的两次运行产生逐位相同的单位位置 |
 | 10 巨大数值 | 一个物品堆叠为 `10^5000`，一个单位拥有 `10↑↑10` 生命值：1000 点伤害伤不到它，`Natural.BEYOND` 伤害能杀死它，一个宝库报告 `BEYOND` 个槽位，而无上限的宝库仍然未满，同样结构数量的四槽宝库则已满 |
 | 11 维度 | `moonAndMars()` 给出三个维度；在主世界和月球同一地块生成的两个单位保持各自的 id，每个空间索引只有一个实体，且没有跨地图邻居；把焦点放在遥远的火星只加载火星区块；移动命令让单位留在月球；销毁它后主世界的单位仍然存活；两个网关通过月球把主世界连到火星，路线为两跳，网关是单向的，旅行的单位保持其 id，并在每一跳触发一次 `EntityTransferred` |
+| 12 战斗 | 决斗者与无武装假人：恰好一次击杀发生在第 21 tick，三次 `DamageDealt` 各 10；10 点伤害打在 5 血目标上只报告真正扣掉的 5；护甲 5 让每次命中减半；3 血的石板仍会被下限 1 打死；射程为 0 的单位永远不攻击；最近的敌人获胜、平局按 id；`AttackOrder` 追击，`AttackMoveOrder` 接敌后继续；击杀会把死者的 id 从每个单位的目标里清掉 |
+| 13 建造扣费 | 放置工地时按目录成本恰好扣一次费；付不起的第二座与压住仓库的放置都被拒绝，且分文不扣 |
 
 生成世界的真实预览，仅地形，每地块一个字符
 （`~` 水、`:` 沙、`.` 草、`f` 森林、`^` 丘陵、`#` 岩石；单位绘制为 `C`、`W`、`S`）：
@@ -94,6 +97,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 5 | 精灵与动画（仅数据） | `visual.VisualLibrary`、`visual.AnimationSet`、`visual.UnitAnimator`、`visual.AnimationSystem` |
 | 6 | 一个世界中的多张地图（维度） | `dimension.DimensionId`、`dimension.DimensionProfile`、`dimension.Dimension`、`dimension.Gateway`、`World` 的维度访问器、`map.ChunkStreamer` |
 | 7 | 通过网关在地图之间旅行 | `World.addGateway`、`World.route`、`order.TransferOrder`、`order.UnitDirector.travel`、`event.Events.EntityTransferred` |
+| 8 | 会自己开战的单位 | `combat.CombatSystem`、`combat.CombatStats`、`order.AttackOrder`、`order.AttackMoveOrder`、`event.Events.DamageDealt`、`event.Events.EntityKilled` |
 
 ## 架构
 
@@ -104,6 +108,7 @@ dimension 维度标识、环境配置、网关、一张地图及其实体
 map       分块地形、流式加载、A* 寻路
 entity    实体、空间索引、单位与建筑状态
 movement  转向、移动系统、带预算的寻路请求
+combat    自动索敌、伤害、护甲与击杀结算
 formation 阵型形状与槽位分配
 order     命令、命令队列、单位指挥器（命令 API）
 economy   库存、玩家的物流网络
@@ -126,6 +131,7 @@ event     同步事件总线以及系统发布的事实
 | 200 | `OrderSystem` | 推进每个单位的命令队列 |
 | 300 | `PathService` | 在节点预算内处理排队的寻路请求 |
 | 400 | `MovementSystem` | 转向、分离、地形约束、到达 |
+| 450 | `CombatSystem` | 锁定射程内最近的敌人，按冷却与护甲结算，发布伤害与击杀 |
 | 500 | `ConstructionSystem` | 为建造中的建筑倒计时 |
 | 600 | `ProductionSystem` | 材料、生产进度、生成单位 |
 | 700 | `HaulingSystem` | 在目标自己所在的地图上挑选搬运工，通过网关链运送跨维度货物 |
@@ -186,7 +192,7 @@ System.out.println(engine.render(new GridPos(60, 40), 20));
 
 ## 有意尚未实现的内容
 
-渲染、输入、选择 UI、战争迷雾、战斗结算（`UnitType` 中的攻击数值是为它保留的数据）、AI、网络、存档和流场寻路。维度之间的旅行已经可用（网关、`UnitDirector.travel`、按维度的快照以及经网关运送的跨维度交付），但地图的环境只是数据：`DimensionProfile.hazardDamagePerTick`、`gravity`、`breathable` 和 `requiresSealedUnits()` 没有被任何代码读取，引擎唯一实际作用的是 `movementSpeedFactor`。感知维度的存档和按维度的寻路预算也还缺失。引擎核心有意保持不依赖第三方库；`map.ChunkStore` 是持久化接入的接缝。
+渲染、输入、选择 UI、战争迷雾、AI、网络、存档和流场寻路。维度之间的旅行已经可用（网关、`UnitDirector.travel`、按维度的快照以及经网关运送的跨维度交付），但地图的环境只是数据：`DimensionProfile.hazardDamagePerTick`、`gravity`、`breathable` 和 `requiresSealedUnits()` 没有被任何代码读取，引擎唯一实际作用的是 `movementSpeedFactor`。感知维度的存档和按维度的寻路预算也还缺失。引擎核心有意保持不依赖第三方库；`map.ChunkStore` 是持久化接入的接缝。
 
 ## 目录结构
 

@@ -135,7 +135,7 @@ NoSuchElementException: no item 'oc:b'; defined items: [oc:a]
 | `Recipe` | `inputs()`、`itemOutputs()`（都是 `ItemBundle`）、`unitOutput()`（`Optional<UnitType>`）、`isUnitRecipe()`、`durationTicks()`、`producerTags()`、`produces(ItemType)` |
 | `UnitRole` | 枚举 `COMBAT` / `WORKER` / `SUPPORT`，`id()` 返回 `"combat"` / `"worker"` / `"support"` |
 
-`UnitType` 的 `attackDamage/attackRange/attackCooldownTicks` 是**预留字段**：数据模型里有，但当前版本没有战斗系统读它们（源码注释明确写了这一点）；抄目录时照填即可，不会报错，但也暂时不会生效。注意 `attackDamage` 是 `Natural`、`attackRange` 是 `float`：伤害是件数，射程是距离。
+`UnitType` 的 `attackDamage/attackRange/attackCooldownTicks/armour` 是**真正生效的字段**：`CombatStats` 在单位生成时把它们缓存成只读视图，战斗系统（相位 450）按射程索敌、按冷却开火、按护甲减伤。写内容时照填即可，`attackDamage` 为 0 或 `attackRange` 为 0 的单位永远不会攻击。注意 `attackDamage` 是 `Natural`、`attackRange` 是 `float`：伤害是件数，射程是距离。完整规则见 [14-combat.md](14-combat.md)。
 
 ## 5. `ItemBundle`：不可变、有序的多重集
 
@@ -359,4 +359,4 @@ player.logistics().amount(ironIngot);       // 107，7 个一到账就可用
 - [Inventory.java](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)、[WarehouseLogistics.java](../src/main/java/io/github/sob1234509876/oc/rts/economy/WarehouseLogistics.java)
 - [Natural.java](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[NaturalFormat.java](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)（数量类型的实现）
 - [Building.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Building.java)、[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)
-- [ScenarioContent.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/ScenarioContent.java)（46 种物品 / 6 种地形 / 3 单位 / 4 建筑 / 5 配方的目录示例）、[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)
+- [ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)（46 种物品 / 6 种地形 / 3 单位 / 4 建筑 / 5 配方的目录示例）、[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)

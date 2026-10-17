@@ -13,7 +13,7 @@
 | 基础包 | `io.github.sob1234509876.oc.server`，其下是 `.auth`、`.net`、`.plugin`、`.ws`、`.world` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖**（托管的 RTS 世界来自仓库内的引擎模块） |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（593 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（633 项检查，无测试框架，无网络） |
 | TCP 信道 | 加密，默认 `25566`（`--port`） |
 | 浏览器端点 | HTTP/WebSocket，默认 `25567`（`--http-port`；`0` 关闭它） |
 | 帮助 | [`help/README.md`](help/README.md) —— 五章，中文 |
@@ -28,10 +28,10 @@
 自检末尾打印一行：
 
 ```text
-game server self check: all 593 checks passed.
+game server self check: all 633 checks passed.
 ```
 
-593 条是 `ServerCheck` 依次调用的十个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（升级、版本握手、帧规则与来源规则）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、快照 JSON、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 57 条（`WHOAMI`、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
+633 条是 `ServerCheck` 依次调用的十一个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（升级、版本握手、帧规则与来源规则）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、快照 JSON、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 57 条（`WHOAMI`、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 40 条（加入世界时的仓库、工程师与开局资源）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
 
 `server` 任务用 `JavaExec` 运行 `OcGameServer`，标准输入接到进程，工作目录是仓库根，所以 `Ctrl+C` 能走到 shutdown hook，默认的 `--static-root web-client/dist` 也能解析到构建好的浏览器客户端。
 
@@ -84,7 +84,7 @@ game server self check: all 593 checks passed.
 ```text
 src/main/java/module-info.java          导出六个包，requires RTS 引擎
 src/main/java/.../server/               上面那六个包
-src/selfcheck/java/.../server/check/    593 条检查的自检程序
+src/selfcheck/java/.../server/check/    633 条检查的自检程序
 help/                                   五章中文文档
 ```
 

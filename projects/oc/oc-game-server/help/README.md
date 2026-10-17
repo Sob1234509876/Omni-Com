@@ -68,11 +68,11 @@ QUIT                            -> OK bye（随后服务器关掉这条连接）
 ## 自校验
 
 ```shell
-./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 593 checks passed.
+./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 633 checks passed.
 ./gradlew :projects:oc:oc-game-server-debug:selfcheck    # debug plugin self check: all 82 checks passed.
 ```
 
-两个自校验都不需要网络、不需要测试框架。服务器那一个 593 条断言分十组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 63 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 82 条、插件 tick 钩子 23 条、游戏命令 57 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
+两个自校验都不需要网络、不需要测试框架。服务器那一个 633 条断言分十一组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 63 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 82 条、插件 tick 钩子 23 条、游戏命令 57 条、玩家基地 40 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
 
 自校验不是框架测试，所以它放在独立的 `selfCheck` 源集（`src/selfcheck/java`），由上面的任务以普通程序运行；`src/test/java` 留给以后的单元测试。调试插件的自校验复用服务器那一个的断言记录器，只在自己的 `build.gradle` 里把服务器的 selfCheck 输出挂上类路径。
 

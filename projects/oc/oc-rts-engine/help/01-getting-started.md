@@ -29,10 +29,10 @@
 `scenario` 的末尾会打印一行结论：
 
 ```text
-RTS engine scenario: all 153 checks passed.
+RTS engine scenario: all 239 checks passed.
 ```
 
-它逐节覆盖：[区块地图与寻路](03-map-and-pathfinding.md)、[队形移动](05-formations.md)、[物品与仓库](06-economy-logistics-and-production.md)、[生产](06-economy-logistics-and-production.md)、[真实搬运](06-economy-logistics-and-production.md)、[贴图与动画](07-sprites-and-animation.md)、[确定性](09-architecture-and-tick-pipeline.md)，然后是[大数与 `Natural`](12-numbers-and-googology.md)（物品每格 `10^5000`、血量 `10↑↑10`）与[维度](13-dimensions.md)（地球/月球/火星三张图、两跳传送门与旅行、跨维度送货）。把它当活文档读，比读本文更快。
+它逐节覆盖：[区块地图与寻路](03-map-and-pathfinding.md)、[队形移动](05-formations.md)、[物品与仓库](06-economy-logistics-and-production.md)、[生产](06-economy-logistics-and-production.md)、[真实搬运](06-economy-logistics-and-production.md)、[贴图与动画](07-sprites-and-animation.md)、[确定性](09-architecture-and-tick-pipeline.md)，然后是[大数与 `Natural`](12-numbers-and-googology.md)（物品每格 `10^5000`、血量 `10↑↑10`）、[维度](13-dimensions.md)（地球/月球/火星三张图、两跳传送门与旅行、跨维度送货）、[战斗](14-combat.md)（伤害、护甲、目标选择与攻击订单）与建造扣费。把它当活文档读，比读本文更快。
 
 自校验不是框架测试，所以它位于独立的 `selfCheck` 源集（`src/selfcheck/java/.../scenario/`），由 `scenario` 任务以普通程序运行；`src/test/java` 因此保持为空，给以后的单元测试用。
 
@@ -40,7 +40,7 @@ RTS engine scenario: all 153 checks passed.
 
 1. **状态都在 `World` 里**：地形是 `World.map()`，实体是 `World.units()` / `World.buildings()`，玩家是 `World.players()`。系统不持有游戏状态，只操作 `World`。
 2. **没有主循环**：`engine.tick()` 推进一个固定步长（默认每秒 20 tick），谁来调用由你决定。GUI 在渲染帧里调，测试在 `for` 里调，脚本用 `tickUntil(...)`。
-3. **每 tick 按相位跑系统**：区块流式(100) → 订单(200) → 寻路请求(300) → 移动(400) → 建造(500) → 生产(600) → 搬运(700) → 动画(800)。细节见 [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md)。
+3. **每 tick 按相位跑系统**：区块流式(100) → 订单(200) → 寻路请求(300) → 移动(400) → 战斗(450) → 建造(500) → 生产(600) → 搬运(700) → 动画(800)。细节见 [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md)。
 4. **不含渲染**：引擎只维护"谁在哪儿、朝哪边、在播哪段动画"。想画出来就取一份[只读快照](08-snapshots-and-rendering.md)；想快速看一眼就用 `engine.render(...)` 打文本地图。
 5. **单线程、不读时钟、不用 `java.util.Random`**：所以同种子 + 同命令 = 逐位相同的结果。
 
@@ -121,7 +121,7 @@ public final class QuickStart {
 ```text
 arrived=true, tick=309, 用时 15.45 秒
 tick 309 (15.4s), entities 8, units 8, buildings 0, chunks 49, pending paths 0, pending deliveries 0
-systems: 100: chunk-streamer, 200: orders, 300: paths, 400: movement, 500: construction, 600: production, 700: hauling, 800: animation
+systems: 100: chunk-streamer, 200: orders, 300: paths, 400: movement, 450: combat, 500: construction, 600: production, 700: hauling, 800: animation
 ```
 
 `engine.render(...)` 会看到 8 个士兵已经展开成楔形（`C` 是战斗单位的角色字母，y 轴向下增长，详见 [08](08-snapshots-and-rendering.md)）：
@@ -154,7 +154,7 @@ systems: 100: chunk-streamer, 200: orders, 300: paths, 400: movement, 500: const
 | `pathBudget(int, int)` | `32` 个请求 / `200000` 节点每 tick | 寻路吞吐上限（详见 03） |
 | `player(Player)` / `players(List)` | 自动建 `Player.of(1, "Player 1", 0xFF4FC3F7)` | 参战玩家；每个玩家的仓库网络在 `build()` 时接上 |
 
-`build()` 会按相位把 8 个系统装进 `SystemPipeline`，把 `AStarPathFinder`（用内容目录的最小地形步进作为启发式尺度）、`PathService`、`CommandService` 接到 `World` 上，并让焦点落在原点。
+`build()` 会按相位把 9 个系统装进 `SystemPipeline`，把 `AStarPathFinder`（用内容目录的最小地形步进作为启发式尺度）、`PathService`、`CommandService` 接到 `World` 上，并让焦点落在原点。
 
 ## `OcRtsEngine` 门面速查
 
@@ -202,4 +202,4 @@ systems: 100: chunk-streamer, 200: orders, 300: paths, 400: movement, 500: const
 
 - 门面与接线：[`OcRtsEngine.java`](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngine.java)、[`OcRtsEngineBuilder.java`](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)
 - 世界状态：[`World.java`](../src/main/java/io/github/sob1234509876/oc/rts/World.java)
-- 自校验的真实出处：[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)、[`ScenarioContent.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/ScenarioContent.java)
+- 自校验的真实出处：[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)、[`ScenarioContent.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)
