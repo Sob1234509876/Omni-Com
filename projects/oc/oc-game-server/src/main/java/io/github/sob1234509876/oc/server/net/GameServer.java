@@ -1,8 +1,6 @@
 package io.github.sob1234509876.oc.server.net;
 
-import io.github.sob1234509876.oc.server.auth.AuthResult;
 import io.github.sob1234509876.oc.server.auth.AuthService;
-import io.github.sob1234509876.oc.server.plugin.RequestHandler;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
 
 import java.io.IOException;
@@ -12,12 +10,9 @@ import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
-import java.util.Base64;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
@@ -63,6 +58,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * argument, hands the bytes to the plugin handler registered under {@code name} and base64 encodes whatever
  * that handler returns. The server never parses, logs or stores either blob, and it requires an authenticated
  * session, so a client cannot use a plugin's request surface before the server knows who is asking.
+ *
+ * <p>The grammar itself is executed by {@link CommandDispatcher}, which the browser facing WebSocket endpoint
+ * uses as well. This class therefore owns sockets, framing and lifecycle only; a rule such as "REQ needs a
+ * successful LOGIN" has exactly one implementation for both transports.
  */
 public final class GameServer {
 
@@ -70,29 +69,17 @@ public final class GameServer {
 
     private static final int CLIENT_QUEUE_CAPACITY = 128;
 
-    /** Request name a plugin registers under: lower case letters, digits and dashes; see the registry. */
-    private static final int MAX_REQUEST_NAME_LENGTH = 32;
-
-    /** The single line a client gets when it sends a request without having logged in first. */
-    private static final String ERR_LOGIN_FIRST = "ERR login first";
-
-    /** The single line a client gets for a name nothing is registered under, or for a malformed request. */
-    private static final String ERR_UNKNOWN_REQUEST = "ERR unknown request";
-
-    /** The single line a client gets when a registered handler threw instead of answering. */
-    private static final String ERR_REQUEST_FAILED = "ERR request failed";
-
     private final ServerConfig config;
-    private final AuthService auth;
 
     /**
-     * The plugin request handlers this server is willing to relay.
+     * The command grammar both this transport and the browser facing one execute.
      *
-     * <p>An empty registry is the default and the reason the constructors without a registry are still
-     * correct: no plugin, no answer, and {@code REQ} reports an unknown request without the server needing
-     * to know that plugins exist at all.
+     * <p>It is stateless, so the TCP channel and the WebSocket channel can each hold their own instance over
+     * the same services and still answer identically. Keeping the call behind this field is also what keeps
+     * {@link #serveClient(Socket)} about sockets: it frames lines, and the dispatcher decides what a line
+     * means.
      */
-    private final RequestRegistry requests;
+    private final CommandDispatcher commands;
 
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicInteger clientCount = new AtomicInteger();
@@ -123,6 +110,8 @@ public final class GameServer {
      *
      * <p>A server with plugins passes the very registry the plugin loader handed to them, so a handler
      * registered at load time is reachable through {@code REQ} as soon as the socket accepts a client.
+     * An empty registry is equally valid: no plugin, no answer, and {@code REQ} reports an unknown request
+     * without the server needing to know that plugins exist at all.
      *
      * @param config   the socket and framing limits
      * @param auth     the authentication service every {@code REGISTER} and {@code LOGIN} goes through
@@ -130,30 +119,9 @@ public final class GameServer {
      */
     public GameServer(ServerConfig config, AuthService auth, RequestRegistry requests) {
         this.config = Objects.requireNonNull(config, "config");
-        this.auth = Objects.requireNonNull(auth, "auth");
-        this.requests = Objects.requireNonNull(requests, "requests");
-    }
-
-    /**
-     * State of one connection that is not the socket: whether its client has logged in.
-     *
-     * <p>The game protocol has no session tokens yet, so "who is asking" is exactly "which connection is
-     * this", and a field per connection is the smallest thing that can hold it. The object lives on the
-     * client thread that reads the socket, so it needs no synchronisation.
-     */
-    private static final class ClientSession {
-
-        private boolean authenticated;
-
-        /** Whether this connection completed a successful {@code LOGIN}. */
-        boolean authenticated() {
-            return authenticated;
-        }
-
-        /** Records a successful login of the client on this connection. */
-        void markAuthenticated() {
-            this.authenticated = true;
-        }
+        this.commands = new CommandDispatcher(
+                Objects.requireNonNull(auth, "auth"),
+                Objects.requireNonNull(requests, "requests"));
     }
 
     /**
@@ -427,168 +395,19 @@ public final class GameServer {
 
     /** Reads command lines until the client quits, closes or breaks the protocol. */
     private void commandLoop(Socket socket, SecureChannel channel, String peer) throws IOException {
-        ClientSession session = new ClientSession();
+        CommandDispatcher.Session session = new CommandDispatcher.Session();
         while (running.get() && !socket.isClosed()) {
             String line = channel.readLine();
             if (line == null) {
                 return;
             }
-            String response = execute(line, session);
+            String response = commands.execute(line, session);
             if (response == null) {
-                channel.writeLine("OK bye");
+                channel.writeLine(CommandDispatcher.BYE);
                 return;
             }
             channel.writeLine(response);
         }
-    }
-
-    /**
-     * Executes one command and returns the single response line.
-     *
-     * <p>Command names are case insensitive, but names and passwords are compared exactly and are never
-     * trimmed beyond the single separating whitespace, because a password may legitimately contain or end
-     * with whitespace.
-     *
-     * @param line the raw command line, already validated to be at most the configured length
-     * @param session the state of this connection, which {@code LOGIN} and {@code REQ} both consult
-     * @return the response line, or {@code null} when the client asked to quit
-     */
-    private String execute(String line, ClientSession session) {
-        String trimmed = line.strip();
-        if (trimmed.isEmpty()) {
-            return "ERR unknown command";
-        }
-        int firstSpace = indexOfWhitespace(trimmed, 0);
-        String command = (firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace))
-                .toUpperCase(Locale.ROOT);
-        String rest = firstSpace < 0 ? "" : trimmed.substring(firstSpace + 1).strip();
-
-        switch (command) {
-            case "PING":
-                return "PONG";
-            case "COUNT":
-                return "OK " + auth.userCount();
-            case "QUIT":
-                return null;
-            case "REGISTER":
-                return credentials("REGISTER", rest, session, auth::register);
-            case "LOGIN":
-                return credentials("LOGIN", rest, session, auth::authenticate);
-            case "REQ":
-                return request(rest, session);
-            default:
-                return "ERR unknown command";
-        }
-    }
-
-    /**
-     * Serves one {@code REQ}: an authenticated session, a registered name and an opaque base64 payload.
-     *
-     * <p>The rule that a request needs a login is new and deliberate. {@code REQ} is the only command that
-     * can make a plugin do work, so it is the only one that must know who is asking; {@code PING},
-     * {@code REGISTER}, {@code LOGIN} and {@code COUNT} keep their old behaviour exactly.
-     *
-     * <p>Nothing in this method touches the payload or the response beyond base64 and the relay: the bytes
-     * are neither parsed nor logged, and an unparsable payload is refused without ever reaching the handler.
-     */
-    private String request(String rest, ClientSession session) {
-        if (!session.authenticated()) {
-            return ERR_LOGIN_FIRST;
-        }
-        int separator = indexOfWhitespace(rest, 0);
-        if (separator < 0) {
-            return ERR_UNKNOWN_REQUEST;
-        }
-        String name = rest.substring(0, separator);
-        String encoded = rest.substring(separator + 1).strip();
-        if (name.length() > MAX_REQUEST_NAME_LENGTH) {
-            // A name that long cannot be registered, so there is no point decoding a payload for it.
-            return ERR_UNKNOWN_REQUEST;
-        }
-        Optional<RequestHandler> handler = requests.find(name);
-        if (handler.isEmpty()) {
-            return ERR_UNKNOWN_REQUEST;
-        }
-        byte[] payload;
-        try {
-            payload = Base64.getDecoder().decode(encoded);
-        } catch (IllegalArgumentException malformed) {
-            // The message from the decoder describes the base64 text, never the plaintext it would have
-            // carried, so recording the reason cannot leak what a plugin seals into its envelope.
-            LOG.log(System.Logger.Level.WARNING,
-                    "refusing request '" + name + "': the payload is not base64 ("
-                            + malformed.getMessage() + ")");
-            return ERR_UNKNOWN_REQUEST;
-        }
-        byte[] response;
-        try {
-            response = handler.get().handle(payload);
-        } catch (RuntimeException failure) {
-            // The server keeps serving: one bad handler costs one reply, not the connection and not the
-            // listener. Only the exception type and message are logged; the payload stays opaque.
-            LOG.log(System.Logger.Level.WARNING, "request '" + name + "' failed in the plugin: " + failure);
-            return ERR_REQUEST_FAILED;
-        }
-        if (response == null) {
-            // A handler that returns null has nothing to say; treat it as a failed request rather than
-            // letting a NullPointerException escape into the client loop.
-            LOG.log(System.Logger.Level.WARNING, "request '" + name + "' answered with null");
-            return ERR_REQUEST_FAILED;
-        }
-        return "OK " + Base64.getEncoder().encodeToString(response);
-    }
-
-    /** Functional shape shared by {@code REGISTER} and {@code LOGIN}. */
-    @FunctionalInterface
-    private interface CredentialCall {
-        AuthResult apply(String name, String password);
-    }
-
-    /**
-     * Parses exactly {@code <name> <password>} and runs one authentication call.
-     *
-     * <p>The reply never contains the password: success replies carry the message from {@link AuthResult},
-     * which the auth package controls, and every failure reply constructed here is a fixed string about
-     * the shape of the command or about the name, not about the secret.
-     *
-     * <p>A successful {@code LOGIN} also marks the connection authenticated, which is what {@code REQ}
-     * checks. The flag is deliberately owned by the connection rather than by the auth service: the service
-     * answers "are these credentials right", and only the server knows which client is speaking, so the
-     * session is the server's business and the password hash never has to be consulted twice.
-     */
-    private String credentials(String command, String rest, ClientSession session, CredentialCall call) {
-        int separator = indexOfWhitespace(rest, 0);
-        if (separator < 0) {
-            return "ERR " + command + " needs a name and a password";
-        }
-        String name = rest.substring(0, separator);
-        String password = rest.substring(separator + 1);
-        if (name.isEmpty()) {
-            return "ERR " + command + " needs a non-empty name";
-        }
-        AuthResult result;
-        try {
-            result = call.apply(name, password);
-        } catch (RuntimeException failure) {
-            // An auth failure must not close the connection, but it must not leak a stack trace either.
-            LOG.log(System.Logger.Level.WARNING,
-                    command + " for '" + name + "' failed in the auth service: " + failure);
-            return "ERR internal authentication error for '" + name + "'";
-        }
-        if (result.ok() && "LOGIN".equals(command)) {
-            session.markAuthenticated();
-        }
-        return (result.ok() ? "OK " : "ERR ") + result.message();
-    }
-
-    /** Returns the index of the first whitespace character at or after {@code from}, or {@code -1}. */
-    private static int indexOfWhitespace(String value, int from) {
-        for (int index = from; index < value.length(); index++) {
-            if (Character.isWhitespace(value.charAt(index))) {
-                return index;
-            }
-        }
-        return -1;
     }
 
     /** Formats the peer address of a socket for logging and for {@link #clientAddresses()}. */

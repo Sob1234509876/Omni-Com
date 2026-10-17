@@ -1,6 +1,8 @@
 # Omni Com
 
-Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, made possible thanks to Deepseek.
+Monorepo for the Omni Com project. The Java modules are built with Gradle and use no third-party
+dependencies; the optional browser client is built with pnpm. Idea by Sob1234509876, made possible thanks
+to Deepseek.
 
 ## Modules
 
@@ -24,14 +26,27 @@ Monorepo for the Omni Com project, built with Gradle. Idea by Sob1234509876, mad
   it: the plugin registers a single `engine-info` request over a small server seam that only relays opaque
   bytes, seals its answers with AES-256-GCM under `debug.key` (a second layer on top of the encrypted
   channel, 60 s anti-replay window) and reports server, JVM and engine facts from a throwaway `World`. It
-  cannot reach a live game or change anything, and only a logged-in client may ask.## Build
+  cannot reach a live game or change anything, and only a logged-in client may ask.
+
+The Java modules are dependency free: they build and run their self checks offline.
+`./gradlew build --offline` never touches the network and never invokes npm or pnpm.
+
+The optional browser client lives in [`web-client/`](web-client/README.md). It needs Node.js and pnpm, is
+built with pnpm, needs network access for its first `pnpm install`, and is never invoked by the Gradle build.
+The neutral wire contract both sides implement is [`protocol/oc-protocol.md`](protocol/oc-protocol.md).
+
+## Build
 
 ```shell
-./gradlew build
+./gradlew build --offline
 ```
 
 Self checks (no test framework, no network):
 
 ```shell
-./gradlew :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck :projects:oc:oc-game-server-debug:selfcheck
+./gradlew --offline \
+    :projects:oc:oc-googology:selfcheck \
+    :projects:oc:oc-rts-engine:scenario \
+    :projects:oc:oc-game-server:selfcheck \
+    :projects:oc:oc-game-server-debug:selfcheck
 ```

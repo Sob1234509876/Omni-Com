@@ -52,5 +52,7 @@ tasks.register('server', JavaExec) {
     description = 'Starts the Omni Com game server.'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'io.github.sob1234509876.oc.server.OcGameServer'
+    // Run from the repository root so the default '--static-root web-client/dist' resolves there.
+    workingDir = rootProject.projectDir
     standardInput = System.in
 }

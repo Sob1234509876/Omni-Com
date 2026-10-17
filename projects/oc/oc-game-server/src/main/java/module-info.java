@@ -6,4 +6,5 @@ module oc.projects.oc.game.server {
     exports io.github.sob1234509876.oc.server.auth;
     exports io.github.sob1234509876.oc.server.net;
     exports io.github.sob1234509876.oc.server.plugin;
+    exports io.github.sob1234509876.oc.server.ws;
 }
