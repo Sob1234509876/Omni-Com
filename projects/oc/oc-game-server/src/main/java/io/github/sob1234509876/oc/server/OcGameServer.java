@@ -10,11 +10,13 @@ import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
 import io.github.sob1234509876.oc.server.ws.CommandWebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
+import io.github.sob1234509876.oc.server.world.WorldHost;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -27,10 +29,12 @@ import java.util.concurrent.TimeUnit;
  * The Omni Com game server: users, authentication, an encrypted TCP channel, plugins and periodic saving,
  * wired together in one startable program.
  *
- * <p>The vanilla game is meant to be nothing special - it is a plugin like any other - so this class only
- * owns the parts a plugin must not own: the listening socket, the user records and the timer that writes them
- * to disk. Everything game shaped is loaded from {@code plugins/*.jar} and is given a data directory of its
- * own, so a plugin can be replaced or removed without touching the server.
+ * <p>The vanilla game content is meant to be nothing special - it is a plugin like any other - so this class
+ * only owns the parts a plugin must not own: the listening socket, the user records and the timer that writes
+ * them to disk. Everything game shaped is loaded from {@code plugins/*.jar} and is given a data directory of
+ * its own, so a plugin can be replaced or removed without touching the server. The one game shaped thing the
+ * server does own is the optional {@link WorldHost} described below, because the browser view needs a live
+ * engine whose snapshot only the server process can produce.
  *
  * <p>Shutdown is deliberate about ordering: the autosave timer stops first, then plugins are disabled (before
  * the socket closes, so a plugin may still flush something), then the socket closes and finally the user
@@ -43,6 +47,12 @@ import java.util.concurrent.TimeUnit;
  * over a WebSocket. When that port is {@code 0} no HTTP socket is bound at all, and the server behaves
  * exactly as it did before the endpoint existed. {@link #stop()} closes both sockets in the same shutdown
  * step.
+ *
+ * <p><strong>The server side world is optional.</strong> With {@code --world on} (the default) the endpoint
+ * also gets one {@link WorldHost} and publishes its snapshot at {@code GET /world/snapshot}. The world is
+ * built before any socket opens, started with the rest of the server and stopped after the endpoint that
+ * reads it; {@code --world off}, or {@code --http-port 0}, leaves it unstarted and the snapshot route answers
+ * {@code 503}.
  */
 public final class OcGameServer {
 
@@ -77,6 +87,15 @@ public final class OcGameServer {
     /** The running browser endpoint, or {@code null} when it is disabled or not started. */
     private volatile HttpWebServer webServer;
 
+    /** Whether this server was asked to host a world; a port of {@code 0} always turns it off. */
+    private final boolean worldEnabled;
+
+    /** Seed of the hosted world. It is ignored when {@link #worldEnabled} is false. */
+    private final long worldSeed;
+
+    /** The running world, or {@code null} when it is disabled or not started. */
+    private volatile WorldHost worldHost;
+
     private final int saveIntervalSeconds;
     private ScheduledExecutorService saver;
     private List<Plugin> plugins = List.of();
@@ -97,7 +116,7 @@ public final class OcGameServer {
     public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
             int saveIntervalSeconds) {
         this(config, pluginsDirectory, dataDirectory, saveIntervalSeconds,
-                WebSocketConfig.defaults().withPort(0));
+                WebSocketConfig.defaults().withPort(0), false, WorldHost.DEFAULT_SEED);
     }
 
     /**
@@ -108,6 +127,10 @@ public final class OcGameServer {
      * closed again and this constructor's {@link #start()} throws, rather than leaving a server that is
      * half listening.
      *
+     * <p>The world follows the endpoint: this form hosts one world with {@link WorldHost#DEFAULT_SEED}
+     * whenever the endpoint port is not {@code 0}, and hosts none when the browser endpoint is disabled.
+     * Use the seven argument form to choose the seed or to switch the world off explicitly.
+     *
      * @param config              the game socket and framing limits
      * @param pluginsDirectory    where plugin jars live
      * @param dataDirectory       server owned state, user records today
@@ -116,6 +139,28 @@ public final class OcGameServer {
      */
     public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
             int saveIntervalSeconds, WebSocketConfig webSocketConfig) {
+        this(config, pluginsDirectory, dataDirectory, saveIntervalSeconds, webSocketConfig,
+                webSocketConfig.port() != 0, WorldHost.DEFAULT_SEED);
+    }
+
+    /**
+     * Creates a server with explicit world settings.
+     *
+     * <p>A world is only started when it is enabled <em>and</em> the browser endpoint has a non-zero port:
+     * with no HTTP endpoint there is nothing that could serve a snapshot, and starting a tick thread for no
+     * reader would be waste. The constructor only remembers the decision; {@link #start()} builds and starts
+     * the {@link WorldHost}, and {@link #stop()} stops it before the final save.
+     *
+     * @param config              the game socket and framing limits
+     * @param pluginsDirectory    where plugin jars live
+     * @param dataDirectory       server owned state, user records today
+     * @param saveIntervalSeconds how often user records are written
+     * @param webSocketConfig     the browser endpoint settings; a port of {@code 0} disables the endpoint
+     * @param worldEnabled        whether to host a world (ignored when the endpoint port is {@code 0})
+     * @param worldSeed           seed of the hosted world
+     */
+    public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
+            int saveIntervalSeconds, WebSocketConfig webSocketConfig, boolean worldEnabled, long worldSeed) {
         this.config = Objects.requireNonNull(config, "config");
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory")
                 .toAbsolutePath().normalize();
@@ -126,6 +171,8 @@ public final class OcGameServer {
         }
         this.saveIntervalSeconds = saveIntervalSeconds;
         this.webSocketConfig = Objects.requireNonNull(webSocketConfig, "webSocketConfig");
+        this.worldEnabled = worldEnabled;
+        this.worldSeed = worldSeed;
         this.auth = new AuthService(LocalUserStore.inDirectory(this.dataDirectory));
         // One registry, two owners: the loader hands it to every plugin through the PluginContext, and the
         // socket consults it for REQ. A plugin loaded here is therefore reachable the moment a client logs
@@ -154,6 +201,18 @@ public final class OcGameServer {
 
     public GameServer server() {
         return server;
+    }
+
+    /**
+     * The running world host, or {@code null} when the world is disabled or the server is not started.
+     *
+     * <p>Exposed for diagnostics and for a check that wants to assert what the endpoint is publishing; the
+     * HTTP route reads it on every request, so a caller must not keep the reference across a restart.
+     *
+     * @return the live host, or {@code null}
+     */
+    public WorldHost worldHost() {
+        return worldHost;
     }
 
     public Path pluginsDirectory() {
@@ -201,15 +260,31 @@ public final class OcGameServer {
         for (String problem : pluginLoader.problems()) {
             LOG.log(System.Logger.Level.WARNING, "plugin problem: " + problem);
         }
+        // Build the world before any socket opens: a broken catalogue is then a startup failure that leaves
+        // no half listening server, exactly like a plugin that cannot load.
+        WorldHost host = worldEnabled && webSocketConfig.port() != 0 ? new WorldHost(worldSeed) : null;
         server.start();
+        if (host != null) {
+            try {
+                host.start();
+            } catch (RuntimeException failure) {
+                server.stop();
+                throw failure;
+            }
+            worldHost = host;
+        }
         if (webSocketConfig.port() != 0) {
             HttpWebServer browser = new HttpWebServer(webSocketConfig,
-                    new CommandWebSocketHandler(auth, requests), pluginLoader);
+                    new CommandWebSocketHandler(auth, requests), pluginLoader, host);
             try {
                 browser.start();
             } catch (IOException failure) {
                 // A half started server would leave the game socket bound with no browser route, so undo the
-                // socket and the plugins and report the bind failure as the reason start() failed.
+                // world, the socket and the plugins and report the bind failure as the reason start() failed.
+                if (host != null) {
+                    host.stop();
+                }
+                worldHost = null;
                 server.stop();
                 try {
                     pluginLoader.unloadAll();
@@ -251,6 +326,13 @@ public final class OcGameServer {
         if (browser != null) {
             browser.stop();
         }
+        // Stop the tick thread after the endpoint that reads it and before the final save, so no request can
+        // observe a world that is shutting down halfway through its last tick.
+        WorldHost host = worldHost;
+        worldHost = null;
+        if (host != null) {
+            host.stop();
+        }
         saveQuietly();
     }
 
@@ -289,6 +371,18 @@ public final class OcGameServer {
         return parsed;
     }
 
+    /**
+     * Reads the {@code --world} switch. {@code on}/{@code true} and {@code off}/{@code false} are accepted;
+     * anything else is a command line error rather than a silent "on".
+     */
+    private static boolean parseWorldOption(String value) {
+        return switch (value.strip().toLowerCase(Locale.ROOT)) {
+            case "on", "true" -> true;
+            case "off", "false" -> false;
+            default -> throw new IllegalArgumentException("--world must be on or off, was '" + value + "'");
+        };
+    }
+
     public static void main(String[] args) throws Exception {
         Map<String, String> options = parseArguments(args);
         if (options.containsKey("help")) {
@@ -302,6 +396,8 @@ public final class OcGameServer {
                       --save-seconds N    how often user records are written (default 60)
                       --http-port N       browser facing HTTP/WebSocket port, 0 disables it (default 25567)
                       --static-root DIR   directory the HTTP route serves (default web-client/dist)
+                      --world on|off      start the server side world (default on; off answers 503)
+                      --seed N            seed of the server side world (default 1)
                       --help              this text
                     """);
             return;
@@ -313,6 +409,9 @@ public final class OcGameServer {
         int httpPort = Integer.parseInt(options.getOrDefault("http-port",
                 Integer.toString(WebSocketConfig.DEFAULT_PORT)));
         String staticRoot = options.getOrDefault("static-root", WebSocketConfig.DEFAULT_STATIC_ROOT);
+        boolean worldEnabled = parseWorldOption(options.getOrDefault("world", "on")) && httpPort != 0;
+        long worldSeed = Long.parseLong(options.getOrDefault("seed",
+                Long.toString(WorldHost.DEFAULT_SEED)));
         ServerConfig config = ServerConfig.defaults().withPort(port);
         WebSocketConfig webConfig = WebSocketConfig.defaults()
                 .withPort(httpPort)
@@ -323,7 +422,8 @@ public final class OcGameServer {
             webConfig = webConfig.withBindAddress(options.get("bind"));
         }
 
-        OcGameServer server = new OcGameServer(config, plugins, data, saveSeconds, webConfig);
+        OcGameServer server = new OcGameServer(config, plugins, data, saveSeconds, webConfig,
+                worldEnabled, worldSeed);
         server.start();
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop, "oc-shutdown"));
         System.out.println("Omni Com " + VERSION + " listening on " + config.bindAddress() + ":" + server.port());

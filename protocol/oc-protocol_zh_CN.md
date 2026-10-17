@@ -11,6 +11,7 @@
 - `REQ` 的登录前提、base64 约定与错误词汇。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
 - 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
+- 世界快照：`/world/snapshot` 上的普通 HTTP 内容，同样不属于命令协议。
 - 版本兼容规则，以及怎么用 pnpm 起浏览器客户端。
 
 ## 传输
@@ -18,7 +19,7 @@
 | 项 | 约定 |
 | --- | --- |
 | WebSocket 地址 | `ws://<host>:25567/ws` |
-| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件，以及 `/plugin-assets` 下的插件资源 |
+| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件、`/plugin-assets` 下的插件资源，以及 `/world/snapshot` 的世界快照 |
 | 帧类型 | 只使用 **TEXT** 帧；二进制帧不是命令，服务端回 ERR 并保持连接，客户端忽略并提示 |
 | 帧内容 | 每个 TEXT 帧**恰好一条命令行**，UTF-8，不含 CR/LF |
 | 回答 | 每条命令**恰好一行**回答；客户端不得把多条命令塞进一个帧 |
@@ -203,6 +204,34 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 - **它不改变本文的任何命令、回答、帧规则或版本号。** 客户端拿不到图集时退回程序化绘制，协议面板照常工作。
 - 多个插件提供同一地形或实体时，客户端按数组顺序**后者覆盖前者**；清单格式见
   [`web-client/public/textures/README.md`](../web-client/public/textures/README.md)。
+
+## 世界快照
+
+服务器还可以为浏览器画面发布一个活的世界。快照是**普通 HTTP 内容**，和插件资源完全一样，不是 OC/1 消息：客户端用 `fetch` 读取，与 WebSocket 无关，也不需要登录。
+
+| 路由 | 内容 |
+| --- | --- |
+| `GET /world/snapshot` | 服务器世界在当前 tick 的 JSON 快照 |
+
+```json
+{
+  "tick": 42,
+  "width": 64,
+  "height": 64,
+  "tilePixels": 16,
+  "tiles": [["grass", "grass", "..."], ["...", "...", "..."]],
+  "entities": [
+    {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ]
+}
+```
+
+- 成功回答是 `200`，`Content-Type: application/json; charset=utf-8`，`Cache-Control: no-store`；只允许 `GET` 与 `HEAD`，其它方法回 `405` 并带 `Allow: GET, HEAD`。
+- `tiles` 是 row major，恰好 `width * height` 个条目；每个条目是一条地形内容路径（`grass`、`sand`、...）。`entities` 按 id 排序，`kind` 是引擎的内容路径（`worker`、`soldier`、`medic`、`warehouse`、...），单位与建筑形状相同。`x` / `y` 是实体中心的地图坐标，保留一位小数。
+- 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
+- `--world` 默认 `on`，`--seed` 默认 `1`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
+- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。
 
 ## 版本兼容
 

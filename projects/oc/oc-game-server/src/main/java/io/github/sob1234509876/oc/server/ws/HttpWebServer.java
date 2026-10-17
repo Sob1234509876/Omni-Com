@@ -1,6 +1,7 @@
 package io.github.sob1234509876.oc.server.ws;
 
 import io.github.sob1234509876.oc.server.plugin.PluginLoader;
+import io.github.sob1234509876.oc.server.world.WorldHost;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -60,6 +61,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * route exactly as before, and an endpoint built without a loader has no plugin asset route at all. Nothing
  * on that route touches the filesystem - every byte comes from a plugin's class loader.
  *
+ * <p><strong>World snapshot.</strong> {@code GET /world/snapshot} publishes the server side
+ * {@link WorldHost}'s JSON document, unauthenticated like the plugin assets. It answers {@code 503} while
+ * the host is stopped or absent (including a server started with {@code --world off}), and it is never a
+ * static file route. This is the one endpoint that reads live simulation state; the host serialises it
+ * against its own tick thread, so a request can never observe a half applied tick.
+ *
  * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
  * uses; callers that want to know the port read {@link #port()} after {@link #start()}.
  */
@@ -79,10 +86,22 @@ public final class HttpWebServer implements AutoCloseable {
     /** Requests waiting for a thread; beyond this the endpoint refuses the connection. */
     private static final int CONNECTION_QUEUE_CAPACITY = 128;
 
+    /** The exact path of the world snapshot route, without a query string. */
+    private static final String WORLD_SNAPSHOT_PATH = "/world/snapshot";
+
+    /** The content type and cache policy of a world snapshot. */
+    private static final String WORLD_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+
+    private static final String WORLD_CACHE_CONTROL = "no-store";
+
     private final WebSocketConfig config;
     private final WebSocketHandler handler;
     private final StaticFiles staticFiles;
     private final PluginAssets pluginAssets;
+
+    /** The hosted world, or {@code null} when this endpoint has no world (legacy or {@code --world off}). */
+    private final WorldHost world;
+
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong connectionIds = new AtomicLong();
 
@@ -108,7 +127,7 @@ public final class HttpWebServer implements AutoCloseable {
      * @param handler the callbacks every upgraded connection delivers its messages to
      */
     public HttpWebServer(WebSocketConfig config, WebSocketHandler handler) {
-        this(config, handler, null);
+        this(config, handler, null, null);
     }
 
     /**
@@ -123,10 +142,29 @@ public final class HttpWebServer implements AutoCloseable {
      * @param plugins the loader whose plugins publish assets, or {@code null} for no asset route
      */
     public HttpWebServer(WebSocketConfig config, WebSocketHandler handler, PluginLoader plugins) {
+        this(config, handler, plugins, null);
+    }
+
+    /**
+     * Creates an endpoint that also publishes plugin assets and a server side world snapshot.
+     *
+     * <p>The world is read on every request instead of captured once, so a host that is stopped answers
+     * {@code 503} immediately and a host that is ticking is always represented by its current tick. A
+     * {@code null} world is not an error: the route still exists and answers {@code 503}, which is exactly
+     * how {@code --world off} is represented and keeps the route from falling through to the SPA fallback.
+     *
+     * @param config  the port, path, static root and limits
+     * @param handler the callbacks every upgraded connection delivers its messages to
+     * @param plugins the loader whose plugins publish assets, or {@code null} for no asset route
+     * @param world   the hosted world, or {@code null} when the server runs without one
+     */
+    public HttpWebServer(WebSocketConfig config, WebSocketHandler handler, PluginLoader plugins,
+            WorldHost world) {
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
         this.staticFiles = new StaticFiles(config.staticRoot());
         this.pluginAssets = plugins == null ? null : new PluginAssets(plugins);
+        this.world = world;
     }
 
     /**
@@ -310,6 +348,9 @@ public final class HttpWebServer implements AutoCloseable {
             }
             if (request.isWebSocketAttempt() || request.path().equals(config.path())) {
                 serveWebSocket(socket, request, peer);
+            } else if (WORLD_SNAPSHOT_PATH.equals(request.path())) {
+                // Always routed, even without a host, so --world off cannot fall through to the SPA fallback.
+                serveWorldSnapshot(socket, request);
             } else if (pluginAssets != null && PluginAssets.isRoute(request.path())) {
                 servePluginAssets(socket, request);
             } else {
@@ -344,6 +385,36 @@ public final class HttpWebServer implements AutoCloseable {
         }
         HttpResponse response = staticFiles.get(request.path());
         response.writeTo(out, "HEAD".equals(request.method()));
+    }
+
+    /**
+     * Serves the world snapshot: JSON when the world is ticking, a short {@code 503} when it is not.
+     *
+     * <p>Only {@code GET} and {@code HEAD} reach this route, the same rule the plugin asset route applies.
+     * There is no authentication: a snapshot is public read-only data, just like the plugin assets. The
+     * body is rebuilt per request and marked {@code no-store}, so a browser can never show a stale tick.
+     * When the host is absent ({@code --world off}) the method still answers {@code 503} rather than
+     * letting the path fall through to the static SPA fallback.
+     */
+    private void serveWorldSnapshot(Socket socket, HttpRequest request) throws IOException {
+        OutputStream out = socket.getOutputStream();
+        if (!"GET".equals(request.method()) && !"HEAD".equals(request.method())) {
+            HttpResponse.text(405, "Method Not Allowed", "only GET and HEAD are served by the world"
+                    + " snapshot route")
+                    .withHeader("Allow", "GET, HEAD")
+                    .writeTo(out, false);
+            return;
+        }
+        WorldHost hosted = world;
+        if (hosted == null || !hosted.running()) {
+            HttpResponse.text(503, HttpResponse.reasonFor(503), "the world is not running")
+                    .withHeader("Cache-Control", WORLD_CACHE_CONTROL)
+                    .writeTo(out, false);
+            return;
+        }
+        byte[] body = hosted.snapshotJson().getBytes(StandardCharsets.UTF_8);
+        HttpResponse.file(200, "OK", body, WORLD_JSON_CONTENT_TYPE, WORLD_CACHE_CONTROL)
+                .writeTo(out, "HEAD".equals(request.method()));
     }
 
     /**

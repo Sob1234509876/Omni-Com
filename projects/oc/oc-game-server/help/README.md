@@ -6,10 +6,10 @@
 
 | 模块 | Gradle 路径 | Java 模块 / 包 | 是什么 |
 | --- | --- | --- | --- |
-| 游戏服务器 | `:projects:oc:oc-game-server` | `oc.projects.oc.game.server` / `io.github.sob1234509876.oc.server` 及 `.auth`、`.net`、`.plugin`、`.ws` | 纯 Java 17、**零第三方依赖**的 TCP 服务器，外加可选的浏览器 HTTP/WebSocket 端点：用户记录、加密信道、插件加载器、定时保存、只读请求缝 |
+| 游戏服务器 | `:projects:oc:oc-game-server` | `oc.projects.oc.game.server` / `io.github.sob1234509876.oc.server` 及 `.auth`、`.net`、`.plugin`、`.ws`、`.world` | 纯 Java 17、**零第三方依赖**的 TCP 服务器，外加可选的浏览器 HTTP/WebSocket 端点与服务器世界：用户记录、加密信道、插件加载器、定时保存、只读请求缝、`/world/snapshot` |
 | 调试插件 | `:projects:oc:oc-game-server-debug` | `oc.projects.oc.game.server.debug` / `io.github.sob1234509876.oc.server.debug` 及 `.cli` | 只读调试插件 `oc-debug`，以及它的命令行客户端 |
 
-服务器刻意保持"什么都不懂"：它只拥有插件不该拥有的三样东西——监听 socket、用户记录、把记录写盘的定时器。游戏内容本来打算做成一个和别的插件一样的插件，从 `plugins/*.jar` 里加载（见 [03-plugins.md](03-plugins.md)）。调试插件是唯一依赖 RTS 引擎的模块，因为它要报告引擎的版本与构件（见 [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)）。
+服务器刻意保持"什么都不懂"：它只拥有插件不该拥有的三样东西——监听 socket、用户记录、把记录写盘的定时器。浏览器端点旁边还有一个由 `server.world.WorldHost` 托管的扁平 64×64 世界，只通过 `/world/snapshot` 公开只读快照（见 [05-browser-endpoint.md](05-browser-endpoint.md)）；插件系统本身仍然不知道引擎、socket 或用户记录的存在（见 [03-plugins.md](03-plugins.md)）。调试插件与服务器现在都依赖 RTS 引擎，前者报告引擎的版本与构件，后者托管世界（见 [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)）。
 
 文中所有类型名、方法名、默认值、字节数与断言数都取自这两个模块的源码与它们的自校验输出，不是示意；每篇末尾给出「相关源码」的相对路径。
 
@@ -17,7 +17,7 @@
 
 **A. 先把服务器跑起来（约 10 分钟）**
 
-1. [01-getting-started.md](01-getting-started.md) —— 构建、跑自校验、命令行选项、启动与关闭顺序、五个包的分工
+1. [01-getting-started.md](01-getting-started.md) —— 构建、跑自校验、命令行选项、启动与关闭顺序、六个包的分工
 2. [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md) —— 装一个真插件，看它返回什么
 3. [05-browser-endpoint.md](05-browser-endpoint.md) —— 用浏览器打开同一套命令
 
@@ -40,7 +40,7 @@
 | [02-accounts-and-encryption.md](02-accounts-and-encryption.md) | `UserStore` / `LocalUserStore`、PBKDF2、`AuthService` 的锁、`AuthResult` 的文案、握手与帧格式、命令表、加固 | 想知道账号存在哪，或要看懂线上的字节 |
 | [03-plugins.md](03-plugins.md) | `Plugin` 生命周期、`PluginContext`、描述文件、发现顺序、依赖规则、为什么不关类加载器、请求缝、最小插件 | 想写插件，或插件加载行为不符合预期 |
 | [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md) | `oc-debug` 注册的请求、两层加密、`debug.key`、报告字段、CLI 的全部开关与失败退出、只读的安全属性 | 想远程看一眼服务器 |
-| [05-browser-endpoint.md](05-browser-endpoint.md) | `--http-port` / `--static-root`、两套版本机制、同一套命令语法、来源规则、静态路由、插件资源路由、WebSocket 帧规则 | 想用浏览器打开，或排查静态文件/来源/帧问题 |
+| [05-browser-endpoint.md](05-browser-endpoint.md) | `--http-port` / `--static-root` / `--world` / `--seed`、两套版本机制、同一套命令语法、来源规则、静态路由、插件资源路由、世界快照路由、WebSocket 帧规则 | 想用浏览器打开，或排查静态文件/来源/帧/快照问题 |
 
 ## 30 秒了解这个服务器
 
@@ -68,11 +68,11 @@ QUIT                            -> OK bye（随后服务器关掉这条连接）
 ## 自校验
 
 ```shell
-./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 431 checks passed.
+./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 513 checks passed.
 ./gradlew :projects:oc:oc-game-server-debug:selfcheck    # debug plugin self check: all 82 checks passed.
 ```
 
-两个自校验都不需要网络、不需要测试框架。服务器那一个 431 条断言分七组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 63 条、HTTP 静态路由 47 条、插件资源路由 80 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
+两个自校验都不需要网络、不需要测试框架。服务器那一个 513 条断言分八组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 63 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 82 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
 
 自校验不是框架测试，所以它放在独立的 `selfCheck` 源集（`src/selfcheck/java`），由上面的任务以普通程序运行；`src/test/java` 留给以后的单元测试。调试插件的自校验复用服务器那一个的断言记录器，只在自己的 `build.gradle` 里把服务器的 selfCheck 输出挂上类路径。
 

@@ -19,7 +19,12 @@ repositories {
 }
 
 dependencies {
-    // Pure Java 17 on the module path, with no third-party dependencies.
+    // Pure Java 17 on the module path, with no third-party dependencies. The server hosts one real RTS
+    // world, so it links the engine module; the engine brings the googology module transitively. This is
+    // `api`, not `implementation`: module-info requires the engine, so every consumer of this modular jar
+    // needs it on its compile module path to resolve the module graph. Plugins still receive no engine
+    // reference through the plugin API; only the module descriptor names it.
+    api project(':projects:oc:oc-rts-engine')
 }
 
 // Comments and descriptions may contain non-ASCII text, so the build must not fall back to the
@@ -32,6 +37,17 @@ tasks.withType(JavaCompile).configureEach {
 // source set and the standard test task stays source free. Runs with:
 // ./gradlew :projects:oc:oc-game-server:selfcheck
 sourceSets {
+    main {
+        java {
+            // The engine's sample catalogue is the content the served world uses. It lives in the engine's
+            // selfCheck source set, so this module compiles that one file into its own module instead of
+            // duplicating the catalogue or adding an unreadable class directory dependency to the module
+            // path. The engine module itself is not modified.
+            srcDir '../oc-rts-engine/src/selfcheck/java'
+            exclude 'io/github/sob1234509876/oc/rts/scenario/RtsScenario.java'
+            exclude 'io/github/sob1234509876/oc/rts/scenario/Check.java'
+        }
+    }
     selfCheck {
         java.srcDir 'src/selfcheck/java'
         compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath

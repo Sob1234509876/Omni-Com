@@ -11,25 +11,28 @@
 - 来源（`Origin`）规则：同源、白名单、空白名单的含义。
 - 静态文件路由：方法、路径穿越、SPA 回退、缓存与缺失的静态根。
 - 插件资源路由：`/plugin-assets/...` 与静态根的关系（细节在协议文档）。
+- 世界快照路由：`/world/snapshot` 的 JSON 形状、503 规则与 `--world` / `--seed`。
 - WebSocket 帧规则、关闭码、空闲超时，以及二进制帧的处理。
-- 常见坑：工作目录、反向代理、`--http-port 0`。
+- 常见坑：工作目录、反向代理、`--http-port 0`、关闭世界。
 
 ## 它是什么
 
-`OcGameServer` 在 `--http-port`（默认 `25567`）上启动一个 `HttpWebServer`，它做三件事，前两件是主线：
+`OcGameServer` 在 `--http-port`（默认 `25567`）上启动一个 `HttpWebServer`，它做四件事，前两件是主线：
 
 | 路由 | 做什么 |
 | --- | --- |
 | `GET` / `HEAD` 其它路径 | 从 `--static-root`（默认 `web-client/dist`）发静态文件，也就是构建好的浏览器客户端 |
 | `/ws` 的 WebSocket 升级 | 升级成 RFC 6455 WebSocket，之后一个文本帧就是一条命令行 |
 | `/plugin-assets/...`（端点持有 `PluginLoader` 时） | 从插件 jar 的 `assets/` 发资源，见下面的「插件资源路由」 |
+| `GET /world/snapshot` | 把 `--world` 启动的服务器世界当前 tick 的 JSON 快照发给浏览器，见下面的「世界快照」 |
 
 它存在的原因很直接：**浏览器不会说那条加密 TCP 信道**。TCP 信道在握手阶段自己实现 X25519、HKDF-SHA256 与
 AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应的 API；WebSocket 则是浏览器原生就有的。
 于是服务器把同一条命令语法搬到文本帧上，页面既能由这个服务器自己发出来，也能连回同一个服务器。
 
-这不是第二个游戏服务器，而是一个适配器：它不自己保存用户记录，也不认识游戏内容。`REGISTER` / `LOGIN` 走的是
-同一个 `AuthService`，`REQ` 走的是同一个 `RequestRegistry`，命令语法两边都委托给 `CommandDispatcher`。
+这不是第二个游戏服务器，而是一个适配器：它不自己保存用户记录，也不解释命令里的游戏内容。`REGISTER` / `LOGIN`
+走的是同一个 `AuthService`，`REQ` 走的是同一个 `RequestRegistry`，命令语法两边都委托给 `CommandDispatcher`。
+唯一的游戏状态读取是 `/world/snapshot`，它直接转交 `server.world.WorldHost`，HTTP 层只负责加响应头。
 
 一个必须说清楚的前提：**这条端点是明文 HTTP/WS，不是加密 TCP 的替代品**。它默认绑 `0.0.0.0`，适合本机开发；
 把它暴露到不可信网络、或在上面输入真实密码之前，先套一层 HTTPS 反向代理或 SSH 端口转发。`oc-debug` 的
@@ -39,9 +42,10 @@ AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应
 这个端点出现之前完全一样。注意 `0` 在这里是“关闭”，不是 `--port 0` 的“让操作系统挑一个空闲端口”；
 `HttpWebServer` 自己把 `0` 解释为后者，是 `OcGameServer` 给了它第二个含义。
 
-启动顺序是：插件先加载 → TCP socket 绑定 →（如果端口不是 `0`）浏览器端点绑定 → 定时器。浏览器端点绑定失败时，
-`OcGameServer.start()` 会把已经绑好的 TCP socket 和已经加载的插件回滚掉，再抛出异常，避免留下一个“半个服务器”。
-关闭时 TCP socket 先关，浏览器端点紧随其后，最后才写用户记录；细节见 [01](01-getting-started.md) 的关闭顺序。
+启动顺序是：插件先加载 → 构造 `WorldHost`（不启动线程）→ TCP socket 绑定 → 启动世界的 daemon 线程 →
+（如果端口不是 `0`）浏览器端点绑定 → 定时器。浏览器端点绑定失败时，`OcGameServer.start()` 会把世界线程、已经绑好的
+TCP socket 和已经加载的插件回滚掉，再抛出异常，避免留下一个“半个服务器”。关闭时 TCP socket 先关，浏览器端点
+紧随其后，世界线程在端点关闭后停止，最后才写用户记录；细节见 [01](01-getting-started.md) 的关闭顺序。
 
 ## 两套版本机制
 
@@ -217,6 +221,62 @@ built”的 `404`。这条日志只写一次，避免每个请求刷一行。
 并且**只通过插件自己的类加载器读资源，不碰磁盘上的插件目录**。完整契约在协议文档的“插件资源”一节，
 这一篇不重复；没有插件加载器的端点没有这条路由，`/plugin-assets/...` 会落到静态路由。
 
+## 世界快照路由
+
+`/world/snapshot` 是浏览器画面读取真实引擎世界的唯一入口。它是**普通 HTTP**，和插件资源一样不需要登录、不经过
+WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHost`，`--seed`（默认 `1`）决定世界种子。
+服务器用一个 daemon 线程按固定 20 ticks/s 推进 `OcRtsEngine`，快照在同一个锁下读取，所以请求不会看到半个 tick。
+
+### 成功响应
+
+`GET /world/snapshot`（`HEAD` 同样支持）在 host 运行时返回：
+
+| 项 | 值 |
+| --- | --- |
+| 状态 | `200` |
+| `Content-Type` | `application/json; charset=utf-8` |
+| `Cache-Control` | `no-store` |
+| 正文 | 下面这个 JSON |
+
+```json
+{
+  "tick": 42,
+  "width": 64,
+  "height": 64,
+  "tilePixels": 16,
+  "tiles": [["grass", "grass", "..."], ["...", "...", "..."]],
+  "entities": [
+    {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ]
+}
+```
+
+- `tiles` 是 row major，恰好 `width * height` 个条目；每个字符串是地形的内容路径（`grass`、`sand`、...），和
+  `TerrainType.key().path()` 一致。
+- `entities` 按 id 排序；`kind` 是引擎的内容路径（`worker`、`soldier`、`medic`、`warehouse`、`barracks`、
+  `workshop`、`ore_silo`），建筑与单位形状相同。`x` / `y` 是实体中心的地图坐标，保留一位小数。
+- `tilePixels` 固定 `16`，只是给渲染器的建议值；浏览器仍按自己的相机缩放。
+- 64×64 的快照只有几 KB，服务器每次请求重建，不缓存。
+
+### 失败与关闭
+
+| 情况 | 结果 |
+| --- | --- |
+| `--world off`，或 host 未启动 / 已停止 | `503 Service Unavailable`，短文本 `the world is not running` |
+| `--http-port 0` | 根本没有 HTTP 监听器，也就没有这条路由 |
+| `GET` / `HEAD` 之外的方法 | `405`，带 `Allow: GET, HEAD` |
+
+路由在端点存在时**总是**注册：即使 `--world off`，`/world/snapshot` 也回答 503，而不是掉进静态路由的 SPA 回退
+（那会错误地返回 `index.html`）。这和插件资源路由的方法规则一致。
+
+### 浏览器侧
+
+`web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
+（地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`），结构不合法或实体越界时返回
+`null`，页面继续使用确定性的 `demoWorld()` 占位地图。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次请求未完成
+就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`。Vite dev proxy 把 `/world` 转发到同一个 Java 服务器。
+
 ## 帧规则
 
 `WebSocketConnection` 是模块里唯一解释 WebSocket 字节的类。它只把**完整的文本消息**交给 handler，分片、
@@ -275,10 +335,13 @@ mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`
 6. **这条端点是明文的。** HTTP 与 WebSocket 都没有 TLS；`REGISTER` / `LOGIN` 的密码在链路上是明文。只在
    本机或受控网络使用，或放到 HTTPS 反向代理后面。`engine-info` 还需要安全上下文里的 `crypto.subtle`，
    局域网 IP 直连通常拿不到它。
+7. **`--world off` 不是“没有这条路由”。** 只要 `--http-port` 不是 `0`，`/world/snapshot` 就存在，只是回答
+   `503 the world is not running`。看到 503 先看启动参数，而不是怀疑浏览器缓存；`--http-port 0` 才是连端点一起
+   关掉。世界快照是公开只读数据，和插件资源一样不做鉴权。
 
 ## 相关文档
 
-- 命令行选项、启动与关闭顺序、五个包的分工 → [01-getting-started.md](01-getting-started.md)
+- 命令行选项、启动与关闭顺序、六个包的分工 → [01-getting-started.md](01-getting-started.md)
 - 加密 TCP 的握手、帧格式与命令表 → [02-accounts-and-encryption.md](02-accounts-and-encryption.md)
 - 插件、`RequestRegistry` 与 `REQ` 的请求缝 → [03-plugins.md](03-plugins.md)
 - `engine-info` 的第二层信封与调试 CLI → [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)
@@ -297,6 +360,7 @@ mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`
 | 状态码与正文 | [`HttpError.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/HttpError.java) |
 | 路径解析、穿越检查与缓存 | [`StaticFiles.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/StaticFiles.java) |
 | 插件资源路由与清单合并 | [`PluginAssets.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/PluginAssets.java)、[`PluginManifest.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/PluginManifest.java) |
+| 服务器世界主机与快照 JSON | [`WorldHost.java`](../src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java) |
 | 扩展名到 `Content-Type` | [`MimeTypes.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/MimeTypes.java) |
 | 端点配置与默认值 | [`WebSocketConfig.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/WebSocketConfig.java) |
 | 分帧、分片与关闭 | [`WebSocketConnection.java`](../src/main/java/io/github/sob1234509876/oc/server/ws/WebSocketConnection.java) |
@@ -310,4 +374,5 @@ mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`
 | WebSocket 自校验 | [`WebSocketCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/WebSocketCheck.java) |
 | HTTP 静态路由自校验 | [`HttpCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/HttpCheck.java) |
 | 插件资源路由自校验 | [`PluginAssetsCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/PluginAssetsCheck.java) |
+| 世界主机与快照路由自校验 | [`WorldHostCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java) |
 | `REQ` 自校验与总入口 | [`RequestCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/RequestCheck.java)、[`ServerCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/server/check/ServerCheck.java) |

@@ -100,6 +100,155 @@ export function entityById(world: WorldView, id: number | null): EntityView | un
 }
 
 // ---------------------------------------------------------------------------------------------
+// Server world snapshot
+// ---------------------------------------------------------------------------------------------
+
+/** The route the Java server answers with its current world. */
+export const WORLD_SNAPSHOT_PATH = "/world/snapshot";
+
+/**
+ * The `WorldView` plus the server tick it came from.
+ *
+ * The renderer only needs the `WorldView` half; the extra tick is what the HUD prints next to
+ * `server`, so a browser can tell a live world from a frozen one without opening the protocol panel.
+ */
+export interface ServerWorldView extends WorldView {
+  readonly tick: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Converts one server terrain content path to the renderer's terrain id. */
+function terrainIdFromSnapshot(value: string): TerrainId {
+  const name = kindName(value.trim());
+  return name === "" ? TERRAIN_VOID : name;
+}
+
+/**
+ * Converts `/world/snapshot` JSON into the model the renderer already consumes.
+ *
+ * The server sends terrain content paths (`grass`, `oc:grass`, ...): they are normalized to the
+ * renderer's terrain ids. Entity `health` becomes `healthRatio`, `player` becomes `playerId`, and
+ * `kind` stays the engine content path. Anything structurally wrong is rejected with `null`: a tile
+ * row of the wrong length, a non-string tile, a missing id/kind/position, a non-finite coordinate or
+ * an entity outside `[0, width) x [0, height)`. Rejecting is deliberate - a partial world would draw
+ * entities at positions the simulation never had, and the caller has a deterministic demo fallback.
+ */
+export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const tick = finiteNumber(payload["tick"]);
+  const width = finiteNumber(payload["width"]);
+  const height = finiteNumber(payload["height"]);
+  if (tick === null || width === null || height === null) {
+    return null;
+  }
+  if (!Number.isInteger(tick) || tick < 0) {
+    return null;
+  }
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const rawTiles = payload["tiles"];
+  if (!Array.isArray(rawTiles) || rawTiles.length !== height) {
+    return null;
+  }
+  const tiles: TerrainId[][] = [];
+  for (const rawRow of rawTiles) {
+    if (!Array.isArray(rawRow) || rawRow.length !== width) {
+      return null;
+    }
+    const row: TerrainId[] = [];
+    for (const rawTile of rawRow) {
+      if (typeof rawTile !== "string" || rawTile.trim() === "") {
+        return null;
+      }
+      row.push(terrainIdFromSnapshot(rawTile));
+    }
+    tiles.push(row);
+  }
+
+  const rawEntities = payload["entities"];
+  if (!Array.isArray(rawEntities)) {
+    return null;
+  }
+  const entities: EntityView[] = [];
+  for (const rawEntity of rawEntities) {
+    if (!isRecord(rawEntity)) {
+      return null;
+    }
+    const id = finiteNumber(rawEntity["id"]);
+    const kind = rawEntity["kind"];
+    const x = finiteNumber(rawEntity["x"]);
+    const y = finiteNumber(rawEntity["y"]);
+    if (id === null || x === null || y === null || typeof kind !== "string" || kind.trim() === "") {
+      return null;
+    }
+    if (!Number.isInteger(id)) {
+      return null;
+    }
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+      return null;
+    }
+    const player = finiteNumber(rawEntity["player"]);
+    const health = finiteNumber(rawEntity["health"]);
+    entities.push({
+      id,
+      kind: kindName(kind.trim()),
+      x,
+      y,
+      selected: false,
+      ...(player === null ? {} : { playerId: Math.trunc(player) }),
+      ...(health === null ? {} : { healthRatio: Math.min(1, Math.max(0, health)) }),
+    });
+  }
+
+  return { tick, width, height, tiles, entities };
+}
+
+/**
+ * Fetches `/world/snapshot` from the given base URL and converts it.
+ *
+ * An empty base URL means the same origin, which is what the Vite dev proxy and the production
+ * static build both use. Every failure - offline, a 503 `--world off`, malformed JSON, an invalid
+ * document - resolves to `null` rather than rejecting, so the caller's demo fallback stays one
+ * `??` away and a polling request can never produce an unhandled rejection.
+ */
+export async function fetchWorldSnapshot(baseUrl = ""): Promise<ServerWorldView | null> {
+  const prefix = baseUrl.trim().replace(/\/+$/u, "");
+  const url = prefix === "" ? WORLD_SNAPSHOT_PATH : `${prefix}${WORLD_SNAPSHOT_PATH}`;
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload: unknown = await response.json();
+    return worldViewFromSnapshot(payload);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The fallback rule in one place: a good snapshot wins, a missing one is the deterministic demo map.
+ * The demo generator is kept intact and is still what the page shows when no server is running.
+ */
+export function snapshotOrDemo(payload: unknown, seed: number): WorldView {
+  return worldViewFromSnapshot(payload) ?? demoWorld(seed);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Deterministic map generation
 // ---------------------------------------------------------------------------------------------
 

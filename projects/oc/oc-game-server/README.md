@@ -2,11 +2,12 @@ English | [简体中文](README_zh_CN.md)
 
 # Omni Com Game Server
 
-`projects:oc:oc-game-server` — the Omni Com game server: a dependency free Java 17 program (JPMS) that owns
-the three things a plugin should not own — the listening socket, the user records, and the timer that writes
-them to disk. The game itself is meant to be a plugin loaded from `plugins/*.jar`; the server speaks an
-encrypted TCP channel on `25566`, an optional browser endpoint on `25567`, and a read-only request seam that
-plugins publish handlers into.
+`projects:oc:oc-game-server` — the Omni Com game server: a zero-third-party-dependency Java 17 program (JPMS)
+that owns the three things a plugin should not own — the listening socket, the user records, and the timer that
+writes them to disk. The server speaks an encrypted TCP channel on `25566`, an optional browser endpoint on
+`25567`, and a read-only request seam that plugins publish handlers into. The browser endpoint also hosts one
+real RTS world (`server.world.WorldHost`) and publishes its live snapshot; plugins still provide the game
+content and assets through `plugins/*.jar`.
 
 ## Coordinates
 
@@ -14,12 +15,12 @@ plugins publish handlers into.
 | --- | --- |
 | Gradle path | `:projects:oc:oc-game-server` |
 | Java module | `oc.projects.oc.game.server` |
-| Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin` and `.ws` below it |
+| Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
-| Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (431 checks, no test framework, no network) |
+| Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (513 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
-| Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it) |
+| Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
 
 ## Build, self check, run
@@ -32,17 +33,18 @@ plugins publish handlers into.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 431 checks passed.
+game server self check: all 513 checks passed.
 ```
 
-431 is the sum of seven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+513 is the sum of eight check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 63
 (upgrade, the version handshake, frame rules and origin rules), `HttpCheck` 47 (static files, traversal,
-caching, a missing static root) and `PluginAssetsCheck` 80 (manifest merging and the asset route over real
-plugin jars). The check is a program in its own `selfCheck` source set (`src/selfcheck/java`), so the standard
-`test` task stays source free.
+caching, a missing static root), `PluginAssetsCheck` 80 (manifest merging and the asset route over real
+plugin jars) and `WorldHostCheck` 82 (the daemon tick thread, the snapshot JSON, seed determinism, and the
+`/world/snapshot` 200/503/405 answers). The check is a program in its own `selfCheck` source set
+(`src/selfcheck/java`), so the standard `test` task stays source free.
 
 The `server` task runs `OcGameServer` with standard input attached and the repository root as its working
 directory, so `Ctrl+C` reaches the shutdown hook and the default `--static-root web-client/dist` resolves to
@@ -59,6 +61,8 @@ the built web client.
 | `--save-seconds N` | `60` | how often user records are written; must be positive |
 | `--http-port N` | `25567` | browser endpoint port; `0` disables the endpoint, it does not pick a random port |
 | `--static-root DIRECTORY` | `web-client/dist` | directory the browser endpoint serves, relative to the process working directory |
+| `--world on|off` | `on` | start the server side world; `off` makes `/world/snapshot` answer 503; `--http-port 0` forces it off |
+| `--seed N` | `1` | seed of the server side world; the same seed reproduces the same map and starting layout |
 | `--help` | — | print the help text and exit |
 
 There are no other switches: no configuration file, no environment variable.
@@ -82,8 +86,10 @@ its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `
 **The browser endpoint.** `GET` and `HEAD` are served from `--static-root`, the built web client; `/ws` is
 upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answered with `OK OC/1`;
 `/plugin-assets/...` serves `assets/` out of plugin jars, with every plugin's `assets/manifest.json` merged
-into one array at `/plugin-assets/manifest.json`. It is a plain HTTP/WS listener with no TLS, meant for a local
-machine or behind a reverse proxy, and `--http-port 0` removes it entirely.
+into one array at `/plugin-assets/manifest.json`. `GET /world/snapshot` publishes the hosted world as
+`application/json; charset=utf-8` with `Cache-Control: no-store`, and answers `503 the world is not running`
+when the world is off. It is a plain HTTP/WS listener with no TLS, meant for a local machine or behind a
+reverse proxy, and `--http-port 0` removes it entirely (and with it the world).
 
 **The plugin loader.** `PluginLoader` scans `plugins/*.jar` in file name order and gives each jar its own
 `URLClassLoader`. The URL list is that jar first, then every other jar in the folder, sorted by file name, so
@@ -104,8 +110,8 @@ name, an over long name or a payload that is not base64 is `ERR unknown request`
 **Autosave and shutdown.** A daemon timer named `oc-autosave` flushes the user records every `--save-seconds`
 seconds (60 by default), which is a no-op when nothing changed. `stop()` then runs in a fixed order: stop the
 timer, call `onDisable()` on every plugin while the sockets are still open, close the TCP listener and its
-clients, close the browser endpoint (sending WebSocket close code `1001`), and flush the user records one last
-time.
+clients, close the browser endpoint (sending WebSocket close code `1001`), stop the world tick thread after no
+request can read it any more, and flush the user records one last time.
 
 ## Module layout
 
@@ -115,16 +121,18 @@ time.
 | `...server.auth` | account rules, password hashing, the local text store | `AuthService`, `UserStore`, `LocalUserStore`, `PasswordHasher`, `Pbkdf2PasswordHasher`, `UserRecord`, `AuthResult` |
 | `...server.net` | listening, the encrypted channel, command parsing, the protocol client | `ServerConfig`, `SecureChannel`, `GameServer`, `GameClient` |
 | `...server.plugin` | plugin loading and the read-only request seam | `Plugin`, `PluginContext`, `PluginDescriptor`, `DiscoveryResult`, `PluginLoader`, `RequestHandler`, `RequestRegistry` |
-| `...server.ws` | the optional browser endpoint: HTTP static files, plugin assets, WebSocket framing, the version handshake | `HttpWebServer`, `WebSocketConfig`, `WebSocketConnection`, `CommandWebSocketHandler`, `PluginAssets`, `PluginManifest` |
+| `...server.ws` | the optional browser endpoint: HTTP static files, plugin assets, the world snapshot, WebSocket framing, the version handshake | `HttpWebServer`, `WebSocketConfig`, `WebSocketConnection`, `CommandWebSocketHandler`, `PluginAssets`, `PluginManifest` |
+| `...server.world` | the hosted world: one flat 64×64 `OcRtsEngine`, its daemon tick thread and the snapshot JSON | `WorldHost` |
 
-Dependencies run one way: `auth` and `plugin` do not know each other, `net` knows both, `ws` knows `auth`, `net`
-and `plugin`, and the root package knows all four. The `plugin` package holds no reference to `net` or `auth`,
-which is the first guarantee that a plugin never sees a socket or a password.
+Dependencies run one way: `auth` and `plugin` do not know each other, `net` knows both, `ws` knows `auth`, `net`,
+`plugin` and `world`, and the root package knows all five. The `world` package is the only one that knows the
+RTS engine; the `plugin` package holds no reference to `net`, `auth` or `world`, which is the first guarantee
+that a plugin never sees a socket, a password or the live game.
 
 ```text
-src/main/java/module-info.java          exports the five packages, requires nothing
-src/main/java/.../server/               the five packages above
-src/selfcheck/java/.../server/check/    the 431 check self check program
+src/main/java/module-info.java          exports the six packages, requires the RTS engine
+src/main/java/.../server/               the six packages above
+src/selfcheck/java/.../server/check/    the 513 check self check program
 help/                                   the five chapters, in Chinese
 ```
 
@@ -132,11 +140,11 @@ help/                                   the five chapters, in Chinese
 
 | Chapter | Topic |
 | --- | --- |
-| [01 getting started](help/01-getting-started.md) | build, self check, every option, startup and shutdown order, the five packages |
+| [01 getting started](help/01-getting-started.md) | build, self check, every option, startup and shutdown order, the six packages |
 | [02 accounts and encryption](help/02-accounts-and-encryption.md) | the user file, PBKDF2, `AuthService`, the handshake, frames, the command table |
 | [03 plugins](help/03-plugins.md) | lifecycle, descriptor, discovery order, the dependency rule, the request seam, a minimal plugin |
 | [04 debug plugin and CLI](help/04-debug-plugin-and-cli.md) | `oc-debug`, the second envelope, `debug.key`, the report, the CLI |
-| [05 browser endpoint](help/05-browser-endpoint.md) | `/ws`, static files, origin rules, plugin assets, WebSocket frame rules |
+| [05 browser endpoint](help/05-browser-endpoint.md) | `/ws`, static files, origin rules, plugin assets, `/world/snapshot`, WebSocket frame rules |
 | [help/README.md](help/README.md) | the index, three reading paths, and what is not implemented |
 
 The chapters are written in Chinese, with API names in English.

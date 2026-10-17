@@ -11,6 +11,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
+- World snapshot: ordinary HTTP content at `/world/snapshot`, likewise outside the command protocol.
 - Version compatibility rules, and how to start the browser client with pnpm.
 
 ## Transport
@@ -18,7 +19,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 | Item | Contract |
 | --- | --- |
 | WebSocket address | `ws://<host>:25567/ws` |
-| HTTP address | `http://<host>:25567/`, serving the static files of the same `web-client/dist/` plus the plugin assets under `/plugin-assets` |
+| HTTP address | `http://<host>:25567/`, serving the static files of the same `web-client/dist/`, the plugin assets under `/plugin-assets` and the world snapshot at `/world/snapshot` |
 | Frame type | **TEXT** frames only; a binary frame is not a command, so the server answers ERR and keeps the connection open, and the client ignores it and shows a notice |
 | Frame content | Each TEXT frame carries **exactly one command line**, UTF-8, without CR/LF |
 | Answer | **Exactly one line** of answer per command; the client must not pack several commands into one frame |
@@ -203,6 +204,34 @@ Textures and other plugin assets are **ordinary HTTP content**, not OC/1 message
 - **It changes no command, answer, frame rule, or version number in this document.** When the client cannot get the atlas it falls back to procedural drawing, and the protocol panel works as usual.
 - When several plugins provide the same terrain or entity, the client lets the **later one override the earlier** in array order; for the manifest format see
   [`web-client/public/textures/README.md`](../web-client/public/textures/README.md).
+
+## World snapshot
+
+The server can also publish a live world for the browser view. The snapshot is **ordinary HTTP content**, exactly like the plugin assets, not an OC/1 message: the client reads it with `fetch`, it has nothing to do with the WebSocket, and it needs no login.
+
+| Route | Content |
+| --- | --- |
+| `GET /world/snapshot` | JSON snapshot of the server world at its current tick |
+
+```json
+{
+  "tick": 42,
+  "width": 64,
+  "height": 64,
+  "tilePixels": 16,
+  "tiles": [["grass", "grass", "..."], ["...", "...", "..."]],
+  "entities": [
+    {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ]
+}
+```
+
+- A successful answer is `200` with `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`; only `GET` and `HEAD` are allowed, other methods answer `405` with `Allow: GET, HEAD`.
+- `tiles` is row major and has exactly `width * height` entries; every entry is a terrain content path (`grass`, `sand`, ...). `entities` is sorted by id, and `kind` is the engine's content path (`worker`, `soldier`, `medic`, `warehouse`, ...), with the same shape for units and buildings. `x` / `y` are the entity centre in tiles, rounded to one decimal.
+- When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
+- `--world` defaults to `on`, `--seed` defaults to `1`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
+- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server.
 
 ## Version compatibility
 

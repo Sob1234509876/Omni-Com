@@ -19,9 +19,14 @@ import {
 import { connect, type CommandSocket } from "./socket";
 import { atlasLabel, loadPluginAtlas, type Atlas } from "./render/atlas";
 import { Camera, type TileCoord } from "./render/camera";
-import { InputController } from "./render/input";
+import { InputController, type InputHooks } from "./render/input";
 import { WorldRenderer } from "./render/renderer";
-import { demoWorld, entityById } from "./render/view";
+import {
+  demoWorld,
+  entityById,
+  fetchWorldSnapshot,
+  type WorldView,
+} from "./render/view";
 
 function required<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -49,6 +54,7 @@ const statusLine = required<HTMLSpanElement>("#status");
 const logPane = required<HTMLPreElement>("#log");
 const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
 const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
+const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
@@ -533,15 +539,22 @@ quitButton.addEventListener("click", () => {
 const TILE_SIZE_PX = 32;
 const DEMO_SEED = 0x0c0ffee;
 const HUD_INTERVAL_MS = 150;
+const WORLD_POLL_MS = 500;
 
-const world = demoWorld(DEMO_SEED);
-const camera = new Camera(world.width, world.height, TILE_SIZE_PX, 1);
+type WorldSource = "demo" | "server";
+
+let world: WorldView = demoWorld(DEMO_SEED);
+let camera = new Camera(world.width, world.height, TILE_SIZE_PX, 1);
 const renderer = new WorldRenderer(gameCanvas);
 
 let atlas: Atlas | null = null;
 let selectedId: number | null = null;
 let hoverTile: TileCoord | null = null;
 let viewHidden = false;
+let worldSource: WorldSource = "demo";
+let worldTick = 0;
+let worldPollTimer: number | null = null;
+let worldRequestInFlight = false;
 let fps = 0;
 let rafId = 0;
 let lastFrameTime = performance.now();
@@ -555,6 +568,8 @@ function updateHud(force = false, now = performance.now()): void {
   lastHudUpdate = now;
   hudAtlas.textContent =
     atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
+  hudWorld.textContent =
+    worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo";
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
@@ -565,7 +580,7 @@ function updateHud(force = false, now = performance.now()): void {
       : `选中：e${selected.id} ${selected.kind} (${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
 }
 
-const input = new InputController(gameCanvas, camera, {
+const inputHooks: InputHooks = {
   getWorld: () => world,
   onSelectionChange: (id) => {
     selectedId = id;
@@ -578,7 +593,81 @@ const input = new InputController(gameCanvas, camera, {
   onCameraChange: () => {
     updateHud(true);
   },
-});
+};
+
+let input = new InputController(gameCanvas, camera, inputHooks);
+
+/**
+ * Replaces the rendered world in place.
+ *
+ * The camera bounds are immutable, so a world with different dimensions gets a fresh camera and input
+ * controller (preserving the zoom); the hooks read `world` lazily, so every frame after the swap already
+ * sees the new tiles. The server always reports 64x64, so this rebuild happens once, on the first
+ * snapshot after the 44x32 demo map.
+ */
+function useWorld(next: WorldView): void {
+  const resized = next.width !== world.width || next.height !== world.height;
+  world = next;
+  if (resized) {
+    const zoom = camera.zoom;
+    camera = new Camera(next.width, next.height, TILE_SIZE_PX, zoom);
+    input.dispose();
+    input = new InputController(gameCanvas, camera, inputHooks);
+    selectedId = null;
+    hoverTile = null;
+  }
+  updateHud(true);
+}
+
+/** Fetches one snapshot, skipping the request while a previous one is still in flight. */
+async function pollWorldSnapshot(): Promise<void> {
+  if (worldRequestInFlight || viewHidden || document.hidden) {
+    return;
+  }
+  worldRequestInFlight = true;
+  try {
+    const snapshot = await fetchWorldSnapshot();
+    if (snapshot !== null) {
+      const wasDemo = worldSource === "demo";
+      worldSource = "server";
+      worldTick = snapshot.tick;
+      useWorld(snapshot);
+      if (wasDemo) {
+        log(
+          "info",
+          `服务器世界已接管画面：${snapshot.width}×${snapshot.height} 格，tick ${snapshot.tick}`,
+        );
+      }
+    } else if (worldSource === "server") {
+      worldSource = "demo";
+      worldTick = 0;
+      useWorld(demoWorld(DEMO_SEED));
+      log("info", "服务器世界快照不可用，回退到程序化占位地图");
+    }
+  } catch (error: unknown) {
+    // fetchWorldSnapshot never rejects by design; this is only a guard against an unexpected swap bug.
+    console.warn("服务器世界快照处理异常，继续使用当前画面", error);
+  } finally {
+    worldRequestInFlight = false;
+  }
+}
+
+function startWorldPolling(): void {
+  if (worldPollTimer !== null || document.hidden) {
+    return;
+  }
+  void pollWorldSnapshot();
+  worldPollTimer = window.setInterval(() => {
+    void pollWorldSnapshot();
+  }, WORLD_POLL_MS);
+}
+
+function stopWorldPolling(): void {
+  if (worldPollTimer !== null) {
+    window.clearInterval(worldPollTimer);
+    worldPollTimer = null;
+  }
+}
 
 function animationFrame(now: number): void {
   rafId = 0;
@@ -622,14 +711,26 @@ function setViewVisible(visible: boolean): void {
   toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
   if (viewHidden) {
     stopGameLoop();
+    stopWorldPolling();
   } else {
     startGameLoop();
+    startWorldPolling();
   }
   updateHud(true);
 }
 
 toggleViewButton.addEventListener("click", () => {
   setViewVisible(viewHidden);
+});
+
+// The snapshot poll is a view feature: stop it while the tab is hidden and resume it when the view is
+// shown again. `setViewVisible` covers the explicit hide button; this listener covers tab switching.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopWorldPolling();
+  } else if (!viewHidden) {
+    startWorldPolling();
+  }
 });
 
 async function loadArtwork(): Promise<void> {
@@ -649,14 +750,16 @@ window.addEventListener("resize", () => {
   updateHud(true);
 });
 startGameLoop();
+startWorldPolling();
 updateHud(true);
 log(
   "info",
-  `游戏画面已启用：${world.width}×${world.height} 格，${world.entities.length} 个实体` +
-    "（占位地图；插件没有提供图集时使用程序化绘制）。",
+  `游戏画面已启用：先显示 ${world.width}×${world.height} 的确定性占位地图，` +
+    "每 500ms 尝试用服务器 /world/snapshot 接管；插件没有提供图集时使用程序化绘制。",
 );
 
 window.addEventListener("beforeunload", () => {
+  stopWorldPolling();
   input.dispose();
   socket?.close("page unload");
 });

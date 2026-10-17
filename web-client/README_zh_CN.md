@@ -45,7 +45,8 @@ pnpm dev
 
 打开 Vite 打印的地址（通常是 `http://localhost:5173/`）。页面上的**主机与端口都留空**时，客户端连接同源的
 `/ws`，由 Vite 的 dev proxy 转发到 `ws://127.0.0.1:25567`；填上主机与端口则直连。同一条 dev proxy 也把
-`/plugin-assets` 转发到 Java 服务器，所以开发时贴图同样来自插件，而不是 `public/`。
+`/plugin-assets` 转发到 Java 服务器，所以开发时贴图同样来自插件，而不是 `public/`。同一条 dev proxy 也把
+`/world` 转发到 Java 服务器，游戏画面因此能轮询真实的 `GET /world/snapshot`。
 
 连接成功后页面会先发 `HELLO 1`，并且只在收到 `OK OC/1` 时启用命令按钮。然后：
 
@@ -78,11 +79,19 @@ pnpm dev
 
 HUD 固定在画面左上角，实时显示：
 
+- 世界来源：快照正常时显示 `世界：server · tick 42`，使用内置占位地图时显示 `世界：demo`；
 - 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
 - 鼠标下的瓦片坐标；
 - 缩放倍率（0.5× 到 2.5×）；
 - 平滑后的 FPS；
 - 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`。
+
+**服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
+（上一次请求未完成就跳过），并原地替换渲染用的世界。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器
+JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，`health` 变成 `healthRatio`，`player` 变成
+`playerId`；行宽不符、字段缺失、坐标非有限值或实体越界的文档会被拒绝。确定性的 `demoWorld(seed)` 原样保留为回退，
+抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时 `visibilitychange` 会取消定时器，后台标签页不会
+继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
 
 操作（首次点击画面后生效，键盘事件只挂在 canvas 上，不会抢协议输入框的按键）：
 
@@ -103,10 +112,11 @@ HUD 固定在画面左上角，实时显示：
 清单缺失、请求失败、图片载入失败或返回 `[]` 时，客户端自动退回程序化绘制：每种地形有独立颜色和细节，
 单位是圆形、建筑是带屋顶线的方块，放大后还有 1 像素格线。
 
-> 当前地图由 `demoWorld(seed)` 生成，只是一个确定性的占位岛屿；等 Vanilla 插件通过同一个
-> `WorldView` 形状推送真实快照后，渲染层不需要改。
+> 初始地图由 `demoWorld(seed)` 生成，是确定性的占位岛屿；Java 服务器一旦能回答 `/world/snapshot`，画面就切换到
+> 那个真实的引擎世界（64×64，地形与实体来自服务器的内容目录）。两边使用同一个 `WorldView` 形状，渲染层不需要改。
 
-渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、图集越界帧拒绝、插件图集合并与回退）可以离线检查：
+渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、图集越界帧拒绝、插件图集合并与回退）
+可以离线检查：
 
 ```shell
 pnpm check:render
@@ -191,16 +201,16 @@ SSH 端口转发或 HTTPS 反向代理。
 | `index.html` | 页面结构（Canvas 画面 + HUD + 协议面板），不内联脚本；模块入口是 `src/main.ts` |
 | `src/protocol.ts` | OC/1 命令、base64 辅助函数、AES-256-GCM 信封的封/开 |
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
-| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，以及画面/HUD 的启动 |
+| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
 | `src/render/atlas.ts` | 插件清单解析、合成图集（last wins）与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
-| `src/render/view.ts` | `WorldView` / `EntityView` 形状与确定性 `demoWorld(seed)` 占位地图 |
+| `src/render/view.ts` | `WorldView` / `EntityView` 形状、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序与动画帧 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作与实体拾取 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
 | `scripts/check-render-math.ts` | 相机、地图确定性、图集校验与插件图集合并的离线自检 |
-| `vite.config.ts` | `/ws` 与 `/plugin-assets` dev proxy、`dist` 输出目录 |
+| `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档
 

@@ -21,8 +21,10 @@ import { TERRAIN_COLORS, terrainColor } from "../src/render/fallback.ts";
 import {
   demoWorld,
   isBuildingKind,
+  snapshotOrDemo,
   TERRAIN_IDS,
   terrainAt,
+  worldViewFromSnapshot,
   type WorldView,
 } from "../src/render/view.ts";
 
@@ -207,6 +209,139 @@ const terrainSet = tileTypes(first);
 for (const terrain of ["water", "sand", "grass", "forest", "hill", "rock"]) {
   check(`地图包含地形 ${terrain}`, terrainSet.has(terrain));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Server snapshot -> WorldView
+// ---------------------------------------------------------------------------------------------
+
+const serverSnapshot = worldViewFromSnapshot({
+  tick: 17,
+  width: 3,
+  height: 2,
+  tilePixels: 16,
+  tiles: [
+    ["grass", "sand", "oc:forest"],
+    ["rock", "water", "hill"],
+  ],
+  entities: [
+    { id: 1, kind: "worker", x: 1.5, y: 0.5, player: 1, health: 0.8 },
+    { id: 2, kind: "oc:warehouse", x: 2, y: 1, player: 2, health: 1 },
+  ],
+});
+check("服务器快照转换成功", serverSnapshot !== null);
+if (serverSnapshot !== null) {
+  check("快照保留 tick 与宽高", serverSnapshot.tick === 17 && serverSnapshot.width === 3 &&
+    serverSnapshot.height === 2);
+  check(
+    "地形字符串被转换成渲染地形 id（去掉命名空间前缀）",
+    serverSnapshot.tiles[0]?.[0] === "grass" &&
+      serverSnapshot.tiles[0]?.[2] === "forest" &&
+      serverSnapshot.tiles[1]?.[0] === "rock",
+    JSON.stringify(serverSnapshot.tiles),
+  );
+
+  const worker = serverSnapshot.entities.find((entity) => entity.id === 1);
+  check(
+    "实体字段被映射：kind/x/y/playerId/healthRatio",
+    worker !== undefined &&
+      worker.kind === "worker" &&
+      worker.x === 1.5 &&
+      worker.y === 0.5 &&
+      worker.playerId === 1 &&
+      worker.healthRatio === 0.8,
+    JSON.stringify(worker),
+  );
+  const warehouse = serverSnapshot.entities.find((entity) => entity.id === 2);
+  check(
+    "建筑同样使用内容路径作为 kind",
+    warehouse !== undefined && warehouse.kind === "warehouse" && warehouse.playerId === 2,
+    JSON.stringify(warehouse),
+  );
+  check("快照实体数量正确", serverSnapshot.entities.length === 2);
+}
+
+const validSnapshot = {
+  tick: 1,
+  width: 2,
+  height: 2,
+  tiles: [
+    ["grass", "grass"],
+    ["grass", "grass"],
+  ],
+  entities: [],
+};
+check("顶层不是对象时拒绝", worldViewFromSnapshot(null) === null);
+check(
+  "行数与 height 不符时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, height: 2, tiles: [["grass", "grass"]] }) === null,
+);
+check(
+  "行宽与 width 不符时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, tiles: [["grass"], ["grass"]] }) === null,
+);
+check(
+  "非字符串地形时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, tiles: [[1, "grass"], ["grass", "grass"]] }) === null,
+);
+check(
+  "实体坐标为 NaN 时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "worker", x: Number.NaN, y: 1 }],
+  }) === null,
+);
+check(
+  "实体越出右边界时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "worker", x: 2, y: 1 }],
+  }) === null,
+);
+check(
+  "实体越出下边界时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "worker", x: 1, y: 2 }],
+  }) === null,
+);
+check(
+  "实体坐标为负时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "worker", x: -0.1, y: 1 }],
+  }) === null,
+);
+check(
+  "实体缺少 kind 时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "", x: 1, y: 1 }],
+  }) === null,
+);
+check(
+  "实体缺少 id 时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, entities: [{ kind: "worker", x: 1, y: 1 }] }) ===
+    null,
+);
+check(
+  "超出范围的血量被夹到 [0, 1]",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    entities: [{ id: 1, kind: "worker", x: 1, y: 1, health: 2 }],
+  })?.entities[0]?.healthRatio === 1,
+);
+
+const fallbackWorld = snapshotOrDemo(null, seed);
+check(
+  "转换失败（null）时回退到 demoWorld",
+  JSON.stringify(fallbackWorld) === JSON.stringify(demoWorld(seed)),
+);
+const serverOrDemo = snapshotOrDemo(validSnapshot, seed);
+check(
+  "有快照时使用服务器世界而不是 demo",
+  serverOrDemo.width === 2 && serverOrDemo.height === 2,
+  `${serverOrDemo.width}x${serverOrDemo.height}`,
+);
 
 // ---------------------------------------------------------------------------------------------
 // Atlas parsing
