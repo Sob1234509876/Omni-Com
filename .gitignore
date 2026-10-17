@@ -4,7 +4,9 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
-**/plugins
+# The plugin drop zone is tracked as documentation, but the operator supplied jars in it are not.
+plugins/*.jar
+**/plugins/*.jar
 
 ### STS ###
 .apt_generated

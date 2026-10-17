@@ -137,6 +137,16 @@
         margin-top: 12px;
       }
 
+      .row label.inline {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .row label.inline input {
+        width: 220px;
+      }
+
       button {
         border: 1px solid var(--line);
         border-radius: 7px;
@@ -214,8 +224,9 @@
 
       <section class="notice">
         <strong>只读声明：</strong>这里改不了服务器状态。页面只提供 <code>PING</code>、<code>COUNT</code>、
-        <code>LOGIN</code>、<code>REQ engine-info</code> 与 <code>QUIT</code>；没有修改游戏、配置或插件状态的命令。
-        <code>engine-info</code> 返回只读报告；<code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
+        <code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与 <code>QUIT</code>；
+        没有修改游戏、配置或插件状态的命令。<code>engine-info</code> 与 <code>hello</code> 都返回只读文本；
+        <code>LOGIN</code> 只在这条连接上标记身份，并刷新服务器记录的最近登录时间。
       </section>
 
       <section class="panel">
@@ -273,10 +284,24 @@
           <button id="engine-info" type="button" disabled>engine-info</button>
           <button id="quit" type="button" disabled>QUIT</button>
         </div>
+        <div class="row">
+          <label class="inline">
+            hello 名字
+            <input
+              id="hello-name"
+              name="hello-name"
+              value="world"
+              autocomplete="off"
+              placeholder="留空 = world"
+            />
+          </label>
+          <button id="hello" type="button" disabled>hello</button>
+        </div>
         <p class="footnote">
           <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
           <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
-          <code>debug.key</code>。
+          <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
+          请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
         </p>
       </section>
 

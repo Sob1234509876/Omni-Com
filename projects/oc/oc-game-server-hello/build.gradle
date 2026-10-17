@@ -1,0 +1,59 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.sob1234509876.oc'
+version = '2.0a'
+description = 'Omni Com Hello World Plugin'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    maven {
+        url = uri('https://maven.aliyun.com/repository/public')
+    }
+}
+
+dependencies {
+    // The hello plugin is the smallest possible plugin: it compiles against the server's passive plugin API
+    // and nothing else. It brings no third-party library, no engine and no game state.
+    implementation project(':projects:oc:oc-game-server')
+}
+
+// Text in this module - the greeting, this file, the check's descriptions - is UTF-8, so the build must not
+// fall back to the platform encoding, which is GBK on a Chinese Windows install.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// The self check is a runnable program rather than a framework based test suite, matching the other modules,
+// so it lives in its own source set and the standard test task stays source free.
+//
+// Its compile and runtime class path additionally carry the game server module's selfCheck output, because
+// the assertion reporter (io.github.sob1234509876.oc.server.check.Check) lives there: one reporter for the
+// whole repository, and no copy of it in this module.
+sourceSets {
+    selfCheck {
+        java.srcDir 'src/selfcheck/java'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+def serverSelfCheck = project(':projects:oc:oc-game-server').sourceSets.selfCheck
+
+dependencies {
+    selfCheckImplementation serverSelfCheck.output
+}
+
+// Runs with: ./gradlew :projects:oc:oc-game-server-hello:selfcheck
+tasks.register('selfcheck', JavaExec) {
+    group = 'verification'
+    description = 'Runs the hello plugin self check, including a real WebSocket round trip.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.server.hello.check.HelloPluginCheck'
+}

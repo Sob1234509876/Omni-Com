@@ -46,8 +46,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><strong>Strictness.</strong> The handshake is validated field by field and any deviation answers
  * {@code 400} (or {@code 403} for a refused origin) with a one line reason, then closes. In particular the
- * {@code Sec-WebSocket-Key} must decode to exactly sixteen bytes and the {@code Origin} must match the
- * configured allowlist when one is configured. An empty allowlist permits any origin and is documented in
+ * {@code Sec-WebSocket-Key} must decode to exactly sixteen bytes. The {@code Origin} is accepted first when
+ * it is the same origin as the request's {@code Host}, and otherwise has to match the configured allowlist
+ * when one is configured. An empty allowlist permits any origin and is documented in
  * {@link WebSocketConfig} as a development default only.
  *
  * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
@@ -385,17 +386,52 @@ public final class HttpWebServer implements AutoCloseable {
             return new Refusal(400, "Sec-WebSocket-Key must decode to 16 bytes, decoded to "
                     + decoded.length);
         }
-        return originRefusal(request.header("origin"));
+        return originRefusal(request);
     }
 
     /**
-     * Checks the {@code Origin} against the configured patterns.
+     * Applies the same origin rule first, then the configured allowlist.
      *
-     * <p>A browser always sends {@code Origin}; when an allowlist is configured and the header is missing,
-     * the request is refused rather than admitted. The empty list is the documented development escape
-     * hatch: it allows any origin, including the opaque {@code null} origin of a {@code file://} page.
+     * <p><strong>Why same origin is safe.</strong> A browser sets {@code Origin} to the page that opened
+     * the socket and {@code Host} to the server the socket was opened to, and the page cannot forge either
+     * value. When the two host and port values are equal, the page was served by this very server, so the
+     * browser already applied our own origin policy to it. Accepting that upgrade therefore does not trust
+     * a foreign page; it trusts a page we handed out ourselves. That is what lets a LAN client work when
+     * the page is opened through {@code http://192.168.1.7:25567/} without adding every possible LAN
+     * address to the loopback allowlist.
+     *
+     * <p><strong>Why the allowlist stays.</strong> A WebSocket handshake is not protected by the browser's
+     * same origin policy, so a page served from another site can still open a socket to this server. The
+     * allowlist is the second, explicit rule for exactly that case: it names the origins - by default the
+     * bundled development client on localhost - that may talk to the server even though they are not same
+     * origin. Keeping it means a page from {@code http://evil.example} is refused unless an operator
+     * deliberately allows it, while same origin needs no configuration at all.
+     *
+     * <p>The scheme is ignored because a page may be served over HTTPS through a proxy while the socket is
+     * plain {@code ws}; the host and port, which are the origin's identity, are compared case-insensitively.
+     * A missing {@code Host} or a missing {@code Origin} is never same origin, because without both there
+     * is nothing to compare. A malformed {@code Origin} answers {@code 400}: it is a broken request, not an
+     * origin this server could safely decide about.
+     *
+     * <p>When the allowlist is empty, any syntactically valid origin is still allowed. That development
+     * default is unchanged; a malformed header is refused rather than handed to the wildcard, because it
+     * cannot be an origin a browser sent.
+     *
+     * @param request the upgrade request whose {@code Origin} and {@code Host} are compared
+     * @return the refusal to send, or {@code null} when the request may upgrade
      */
-    private Refusal originRefusal(String origin) {
+    private Refusal originRefusal(HttpRequest request) {
+        String origin = request.header("origin");
+        String host = request.header("host");
+        if (origin != null && !"null".equalsIgnoreCase(origin)) {
+            String authority = authorityOf(origin);
+            if (authority == null) {
+                return new Refusal(400, "the Origin header is malformed: '" + origin + "'");
+            }
+            if (host != null && authority.equalsIgnoreCase(host.strip())) {
+                return null;
+            }
+        }
         List<String> allowed = config.allowedOrigins();
         if (allowed.isEmpty()) {
             return null;
@@ -409,7 +445,134 @@ public final class HttpWebServer implements AutoCloseable {
                 return null;
             }
         }
-        return new Refusal(403, "origin '" + origin + "' is not in the WebSocket origin allowlist");
+        return new Refusal(403, "origin '" + origin + "' is neither the same origin as the request nor in"
+                + " the WebSocket origin allowlist");
+    }
+
+    /**
+     * Extracts the {@code host[:port]} authority of a serialized origin.
+     *
+     * <p>The check is structural rather than a full URL parse. An origin is exactly
+     * {@code scheme://host[:port]} with no path, query, fragment, user information or whitespace; a value
+     * that has any of those, or a scheme that is not a legal scheme token, is malformed for this header
+     * rather than a URL this server should normalize. Keeping the comparison to the authority is what makes
+     * the rule independent of the scheme and of any default port the client chose to omit.
+     *
+     * @param origin the raw {@code Origin} header value
+     * @return the authority exactly as written, or {@code null} when the value is not a serialized origin
+     */
+    private static String authorityOf(String origin) {
+        int separator = origin.indexOf("://");
+        if (separator <= 0 || !isScheme(origin.substring(0, separator))) {
+            return null;
+        }
+        String authority = origin.substring(separator + 3);
+        if (authority.isEmpty()) {
+            return null;
+        }
+        for (int index = 0; index < authority.length(); index++) {
+            char character = authority.charAt(index);
+            if (character <= 0x20 || character >= 0x7F || "/?#@\\".indexOf(character) >= 0) {
+                return null;
+            }
+        }
+        return isAuthority(authority) ? authority : null;
+    }
+
+    /** Whether a string is an RFC 3986 scheme, which is what precedes {@code ://} in an origin. */
+    private static boolean isScheme(String scheme) {
+        if (scheme.isEmpty() || !isAsciiLetter(scheme.charAt(0))) {
+            return false;
+        }
+        for (int index = 1; index < scheme.length(); index++) {
+            char character = scheme.charAt(index);
+            boolean legal = isAsciiLetter(character) || (character >= '0' && character <= '9')
+                    || character == '+' || character == '-' || character == '.';
+            if (!legal) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether an authority is a host with an optional valid port.
+     *
+     * <p>An IPv6 literal must be bracketed, as it is in every serialized origin; an unbracketed value with
+     * more than one colon is refused instead of being split at an arbitrary colon. An empty host and a
+     * port outside {@code 1..65535} are refused as well, because neither can name the server a browser
+     * opened a socket to.
+     */
+    private static boolean isAuthority(String authority) {
+        if (authority.startsWith("[")) {
+            int close = authority.indexOf(']');
+            if (close < 0) {
+                return false;
+            }
+            String literal = authority.substring(1, close);
+            if (literal.isEmpty()) {
+                return false;
+            }
+            for (int index = 0; index < literal.length(); index++) {
+                char character = literal.charAt(index);
+                if (Character.digit(character, 16) < 0 && character != ':' && character != '.') {
+                    return false;
+                }
+            }
+            String rest = authority.substring(close + 1);
+            return rest.isEmpty() || (rest.startsWith(":") && isPort(rest.substring(1)));
+        }
+        int colon = authority.indexOf(':');
+        if (colon >= 0) {
+            if (authority.indexOf(':', colon + 1) >= 0) {
+                return false;
+            }
+            return isHost(authority.substring(0, colon)) && isPort(authority.substring(colon + 1));
+        }
+        return isHost(authority);
+    }
+
+    /**
+     * Whether a host is a DNS name or an IPv4 literal.
+     *
+     * <p>The character set is intentionally small: letters, digits, {@code -}, {@code .} and {@code _}.
+     * International names reach this layer as punycode, so a non-ASCII character here means the header is
+     * malformed rather than a name this server should try to normalize.
+     */
+    private static boolean isHost(String host) {
+        if (host.isEmpty()) {
+            return false;
+        }
+        for (int index = 0; index < host.length(); index++) {
+            char character = host.charAt(index);
+            boolean legal = isAsciiLetter(character) || (character >= '0' && character <= '9')
+                    || character == '-' || character == '.' || character == '_';
+            if (!legal) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether a port is decimal digits naming a usable TCP port. */
+    private static boolean isPort(String text) {
+        if (text.isEmpty() || text.length() > 5) {
+            return false;
+        }
+        int port = 0;
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character < '0' || character > '9') {
+                return false;
+            }
+            port = port * 10 + (character - '0');
+        }
+        return port >= 1 && port <= 65535;
+    }
+
+    /** Whether a character is an ASCII letter; host names and schemes are ASCII on the wire. */
+    private static boolean isAsciiLetter(char character) {
+        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
     }
 
     /**

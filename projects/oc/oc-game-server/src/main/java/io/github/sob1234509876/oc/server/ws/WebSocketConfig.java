@@ -30,9 +30,11 @@ import java.util.Objects;
  * @param maxFrameBytes    largest accepted WebSocket frame payload, in bytes
  * @param maxMessageBytes  largest accepted reassembled WebSocket message, in bytes
  * @param idleTimeoutMillis socket read timeout, which doubles as the idle timeout, in milliseconds
- * @param allowedOrigins   glob patterns an {@code Origin} header must match; an empty list allows any
- *                         origin and is a development default only, because a page on any site could then
- *                         drive a server that listens on a developer's machine
+ * @param allowedOrigins   glob patterns a foreign {@code Origin} must match; a request whose
+ *                         {@code Origin} host and port equal its {@code Host} is accepted as same origin
+ *                         before this list is consulted, and an empty list allows any origin as a
+ *                         development default only, because a page on any site could then drive a server
+ *                         that listens on a developer's machine
  */
 public record WebSocketConfig(
         int port,
@@ -68,6 +70,8 @@ public record WebSocketConfig(
      * <p>A WebSocket handshake is not protected by the same origin policy: a page served from anywhere can
      * open a socket to {@code localhost}. Restricting the default to the loopback origins is what stops a
      * random website from driving a developer's game server, while still allowing the bundled web client.
+     * A page served by the server itself is accepted by the same origin rule before this list is
+     * consulted, so the list only has to name the cross-origin development client.
      */
     private static final List<String> DEFAULT_ORIGINS = List.of(
             "http://localhost:*",

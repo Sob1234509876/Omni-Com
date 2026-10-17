@@ -136,6 +136,7 @@ public final class WebSocketCheck {
         }
         check.that(!server.running(), "stop() 之后端点不再运行");
         probe(check, "来源白名单", () -> originAllowlist(check, auth, registry, store));
+        probe(check, "同源规则", () -> sameOrigin(check, auth, registry, store));
         check.note("WebSocket 检查完成；RFC 6455 示例键的期望 accept 值是 " + RFC_ACCEPT);
     }
 
@@ -378,6 +379,80 @@ public final class WebSocketCheck {
         }
     }
 
+    /**
+     * The same origin rule runs before the allowlist: a page served by this server may connect from any
+     * address, a foreign page is still refused, and only an allowlisted origin may cross origins.
+     *
+     * <p>The allowlist is deliberately non-empty here, because an empty one admits every origin and would
+     * make the refusals indistinguishable from the development escape hatch. The loopback entry is the
+     * default the server actually ships with.
+     */
+    private static void sameOrigin(Check check, AuthService auth, RequestRegistry registry, Path store)
+            throws IOException {
+        WebSocketConfig config = new WebSocketConfig(0, InetAddress.getLoopbackAddress().getHostAddress(),
+                "/ws", store + "-web", 256, 1024, 10_000, List.of("http://localhost:*"));
+        HttpWebServer server = new HttpWebServer(config, new CommandWebSocketHandler(auth, registry));
+        try {
+            server.start();
+            int port = server.port();
+            String lanHost = "192.168.1.7:" + port;
+
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://" + lanHost, lanHost);
+                check.equal(101, client.awaitHttpAnswer().status(),
+                        "同源请求被接受：Origin 的主机端口等于 Host（局域网地址无需加白名单）");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "https://" + lanHost, lanHost);
+                check.equal(101, client.awaitHttpAnswer().status(),
+                        "同源比较忽略 scheme：https Origin 与 http Host 的主机端口相同仍然接受");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://Example.Test:" + port,
+                        "example.test:" + port);
+                check.equal(101, client.awaitHttpAnswer().status(),
+                        "同源比较不区分大小写：Example.Test 与 example.test 相同");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://192.168.1.7:1", lanHost);
+                check.equal(403, client.awaitHttpAnswer().status(),
+                        "同源但端口不同被拒绝为 403");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://192.168.1.8:" + port, lanHost);
+                check.equal(403, client.awaitHttpAnswer().status(),
+                        "同源但主机不同被拒绝为 403");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://evil.example", lanHost);
+                check.equal(403, client.awaitHttpAnswer().status(),
+                        "别的站点（http://evil.example）仍然被拒绝为 403");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://localhost:5173", lanHost);
+                check.equal(101, client.awaitHttpAnswer().status(),
+                        "Host 不同时，回环白名单条目仍然放行开发客户端");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://" + lanHost, null);
+                check.equal(403, client.awaitHttpAnswer().status(),
+                        "缺失 Host 不算同源，回退到白名单后被拒绝为 403");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "not-an-origin", lanHost);
+                check.equal(400, client.awaitHttpAnswer().status(),
+                        "格式错误的 Origin（没有 scheme）被拒绝为 400");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.sendUpgrade("/ws", RFC_KEY, "http://192.168.1.7:not-a-port", lanHost);
+                check.equal(400, client.awaitHttpAnswer().status(),
+                        "格式错误的 Origin（端口不是数字）被拒绝为 400");
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
     /** Sends one text command and returns the text answer. */
     private static String command(RawClient client, String line) throws IOException {
         client.sendText(line);
@@ -443,10 +518,24 @@ public final class WebSocketCheck {
             out.flush();
         }
 
-        /** Writes a well formed upgrade request. */
+        /** Writes a well formed upgrade request with the loopback Host the rest of the checks use. */
         void sendUpgrade(String path, String key, String origin) throws IOException {
+            sendUpgrade(path, key, origin, "127.0.0.1");
+        }
+
+        /**
+         * Writes an upgrade request with an explicit {@code Host}, or none at all.
+         *
+         * <p>The same origin rule compares {@code Origin} with {@code Host}, so a check that wants to
+         * exercise it has to control the Host value rather than accept the fixed loopback one.
+         *
+         * @param host the Host header value, or {@code null} to omit the header
+         */
+        void sendUpgrade(String path, String key, String origin, String host) throws IOException {
             List<String> headers = new ArrayList<>();
-            headers.add("Host: 127.0.0.1");
+            if (host != null) {
+                headers.add("Host: " + host);
+            }
             headers.add("Upgrade: websocket");
             // A deliberately padded Connection header: RFC 6455 defines it as a token list.
             headers.add("Connection: keep-alive, Upgrade");

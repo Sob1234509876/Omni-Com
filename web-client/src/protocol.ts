@@ -23,6 +23,9 @@ export const COMMAND = {
 /** The one request name the oc-debug plugin registers. */
 export const ENGINE_INFO_REQUEST = "engine-info";
 
+/** The example request the oc-hello plugin registers; its payload is a plain UTF-8 name. */
+export const HELLO_REQUEST = "hello";
+
 export function hello(): string {
   return HELLO_LINE;
 }

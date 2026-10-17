@@ -47,11 +47,39 @@ pnpm dev
 1. 填用户名与密码，点 `LOGIN`；成功后 `REQ` 才可用。
 2. 把服务器的 `data/oc-debug/debug.key` 内容粘进 `debug.key` 文本框。
 3. 点 `engine-info`：页面用 `INFO json` 封一个信封，发 `REQ engine-info <base64>`，再打开回答并格式化 JSON。
-4. `PING`、`COUNT` 与 `QUIT` 按协议表工作。
+4. 在 `hello` 名字框里填一个名字（默认 `world`），点 `hello`：页面发 `REQ hello <base64(UTF-8 名字)>`，
+   把回答的 base64 解码成 UTF-8 文本显示在日志里。这需要先按下一节安装 `oc-hello` 插件。
+5. `PING`、`COUNT` 与 `QUIT` 按协议表工作。
 
 OC/1 只使用文本帧。若服务端发来二进制帧，页面只记录一行“服务端发来二进制帧，已忽略（协议只使用文本帧）”，
 **不关闭连接**，也不丢弃还在等待回答的命令；这与服务端“回 `ERR binary frames are not commands` 并保持连接”
 的行为一致。
+
+## hello 插件演示
+
+`hello` 是示例插件 `oc-hello` 提供的请求，用来演示“插件回答请求”这一最小闭环。它不需要 `debug.key`，
+但和所有 `REQ` 一样要求先 `LOGIN`。它只回答问候，不读写任何游戏状态。
+
+构建插件 jar、放进服务器的插件目录、启动服务器，再启动浏览器客户端：
+
+```shell
+./gradlew --offline :projects:oc:oc-game-server-hello:jar
+# 把 projects/oc/oc-game-server-hello/build/libs/oc-game-server-hello-2.0a.jar 复制到 plugins/
+./gradlew --offline :projects:oc:oc-game-server:server
+# 然后在 web-client/ 里：
+pnpm install && pnpm dev
+```
+
+`oc-game-server-hello-2.0a.jar` 是模块 `version = '2.0a'` 的默认产物名；如果 Gradle 产出的名字不同，
+以 `projects/oc/oc-game-server-hello/build/libs/` 里的文件为准。
+
+`plugins/` 是操作员的投放区：插件 jar 与它们的依赖 jar 都放在这一层，说明见
+[`plugins/README.md`](../plugins/README.md)。插件生成的状态在服务器的 `data/` 下，不在 `plugins/` 里。
+第一次 `pnpm install` 需要网络；装好之后的 `pnpm dev` 可以离线。
+
+页面把名字按 UTF-8 编码再 base64（标准字母表，带 `=` 补齐）；服务器把请求载荷解码成原始字节交给插件，
+再把插件返回的字节 base64 编码回送；浏览器最后把回答解码成 UTF-8 文本。`oc-hello` 自己不做 base64，
+也不加任何信封。名字超过 64 字节时，插件会截断并加上省略号。
 
 ## 构建
 
@@ -84,10 +112,11 @@ SSH 端口转发或 HTTPS 反向代理。
 
 ## 只读声明
 
-**这个页面改不了服务器状态。** 它只提供 `PING`、`COUNT`、`LOGIN`、`REQ engine-info` 与 `QUIT`：
-没有修改游戏、服务器配置或插件状态的命令。
+**这个页面改不了服务器状态。** 它只提供 `PING`、`COUNT`、`LOGIN`、`REQ engine-info`、`REQ hello`
+与 `QUIT`：没有修改游戏、服务器配置或插件状态的命令。
 
 - `engine-info` 是 `oc-debug` 注册的只读报告；处理器不持有任何可写引用，报告由常量与临时对象拼成。
+- `hello` 是 `oc-hello` 注册的只读问候；处理器只读取请求里的名字，不持有任何引擎、配置或网络引用。
 - `LOGIN` 只在这条连接上标记身份，并刷新服务器记录的最近登录时间；它不改密码、不改权限，也没有改密入口。
 - 页面不提供 `REGISTER`，不会创建账号；账号要用服务器的既有方式准备。
 

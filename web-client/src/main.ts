@@ -1,6 +1,7 @@
 import {
   ENGINE_INFO_REQUEST,
   HELLO_ANSWER,
+  HELLO_REQUEST,
   PROTOCOL_NAME,
   base64ToBytes,
   bytesToBase64,
@@ -34,6 +35,8 @@ const pingButton = required<HTMLButtonElement>("#ping");
 const countButton = required<HTMLButtonElement>("#count");
 const loginButton = required<HTMLButtonElement>("#login");
 const engineInfoButton = required<HTMLButtonElement>("#engine-info");
+const helloNameInput = required<HTMLInputElement>("#hello-name");
+const helloButton = required<HTMLButtonElement>("#hello");
 const quitButton = required<HTMLButtonElement>("#quit");
 const statusLine = required<HTMLSpanElement>("#status");
 const logPane = required<HTMLPreElement>("#log");
@@ -43,6 +46,7 @@ const commandButtons: readonly HTMLButtonElement[] = [
   countButton,
   loginButton,
   engineInfoButton,
+  helloButton,
   quitButton,
 ];
 
@@ -395,6 +399,44 @@ async function doEngineInfo(): Promise<void> {
   }
 }
 
+async function doHello(): Promise<void> {
+  if (!loggedIn) {
+    setStatus("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端", "error");
+    return;
+  }
+
+  // An empty base64 payload has no token for REQ, so a blank field means the plugin's own "world"
+  // default. The plugin still handles a truly blank payload; the self check covers that case.
+  const name = helloNameInput.value.trim() === "" ? "world" : helloNameInput.value;
+  const payload = new TextEncoder().encode(name);
+  const requestLine = req(HELLO_REQUEST, bytesToBase64(payload));
+  const answer = await sendAnswered(
+    "hello",
+    requestLine,
+    `REQ ${HELLO_REQUEST} <base64(${payload.length} 字节名字)>`,
+  );
+  if (answer === undefined) {
+    return;
+  }
+  if (!isOkAnswer(answer)) {
+    setStatus(`hello 被拒绝：${answer}`, "error");
+    return;
+  }
+  const payloadBase64 = answer.slice(2).trim();
+  if (payloadBase64 === "") {
+    setStatus("hello 的 OK 回答里没有 base64 载荷", "error");
+    return;
+  }
+
+  try {
+    const plaintext = new TextDecoder("utf-8", { fatal: true }).decode(base64ToBytes(payloadBase64));
+    log("info", `hello 回答：${plaintext}`);
+    setStatus("hello 已由 oc-hello 回答", "ok");
+  } catch (error) {
+    reportError(error);
+  }
+}
+
 async function doQuit(): Promise<void> {
   const answer = await sendAnswered("QUIT", quit());
   if (answer === undefined) {
@@ -425,6 +467,9 @@ loginButton.addEventListener("click", () => {
 });
 engineInfoButton.addEventListener("click", () => {
   void doEngineInfo();
+});
+helloButton.addEventListener("click", () => {
+  void doHello();
 });
 quitButton.addEventListener("click", () => {
   void doQuit();
