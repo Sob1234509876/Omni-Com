@@ -106,6 +106,13 @@ public final class BuildingType implements Comparable<BuildingType> {
         return level;
     }
 
+    /**
+     * Items the owner's warehouses have to provide when a site of this type is placed.
+     *
+     * <p>Empty when the content did not declare a cost, which means the building is free. The director
+     * reserves exactly this bundle and charges it once, at placement; construction itself consumes no
+     * further materials.
+     */
     public ItemBundle cost() {
         return cost;
     }

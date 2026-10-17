@@ -9,6 +9,7 @@
 - 传输：WebSocket 路径、一个文本帧一条命令、`HELLO 1` 版本握手。
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
+- 游戏命令：`WHOAMI`、`ORDER`、`BUILD` 与 `TRAIN`，登录与所有权规则，以及世界步边界。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
 - 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
 - 世界快照：`/world/snapshot` 上的普通 HTTP 内容，同样不属于命令协议。
@@ -53,7 +54,7 @@ OK OC/1
 | `ERR malformed HELLO` | `HELLO` 缺版本号、多参数或版本号不是十进制数字 |
 | `ERR unsupported version, this server speaks OC/1` | 版本号不是 `1` |
 
-握手的版本号与本文的版本号是同一个东西：本文变，版本号就变（见“版本兼容”）。
+握手的版本号与本文的版本号是同一个东西：本文改变已有线上约定时，版本号就变（见“版本兼容”）。增加一条旧客户端永远不会发送的命令不改变已有约定；下面的游戏命令就是这样的增量。
 
 ## 命令表
 
@@ -63,9 +64,13 @@ OK OC/1
 | --- | --- | --- |
 | `PING` | `PONG` | 连通性探测，不改变任何东西 |
 | `REGISTER <name> <password>` | `OK <message>` 或 `ERR <message>` | 注册账号；成功与失败的文案由服务器给出 |
-| `LOGIN <name> <password>` | `OK <message>` 或 `ERR <message>` | 认证**这条连接**；成功后这条连接才能发 `REQ` |
+| `LOGIN <name> <password>` | `OK <message>` 或 `ERR <message>` | 认证**这条连接**；成功后这条连接才能发 `REQ` 与游戏命令 |
 | `COUNT` | `OK <n>` | 已注册账号数，`n` 是十进制非负整数 |
 | `REQ <name> <base64-payload>` | `OK <base64-payload>` 或 `ERR <reason>` | 调用一个已注册的只读请求；需要同一条连接先 `LOGIN` |
+| `WHOAMI` | `OK player <id>` 或 `ERR <reason>` | 这条连接的引擎玩家 id；需要 `LOGIN` |
+| `ORDER ...` | `OK` 或 `ERR <reason>` | 移动与战斗命令；需要 `LOGIN` 与所有权；见“游戏命令” |
+| `BUILD ...` | `OK <buildingId>` 或 `ERR <reason>` | 放置一个要付费的建筑工地；需要 `LOGIN` 与所有权；见“游戏命令” |
+| `TRAIN ...` | `OK` 或 `ERR <reason>` | 在属于自己的生产建筑里排入一个单位；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `QUIT` | `OK bye` | 服务器先回这一行，然后关闭连接 |
 
 `REGISTER` 与 `LOGIN` 的 `<message>` 是给人看的文本，客户端只能依赖开头的 `OK` / `ERR` 判断成败，
@@ -86,9 +91,78 @@ OK OC/1
 成功时回答 `OK <base64-payload>`。服务器只把请求载荷的 base64 解码成**不透明字节**交给处理器，
 再把处理器返回的字节 base64 编码回送；它不解析载荷、不记录载荷内容，也不认识 `oc-debug` 的信封。
 
-`REQ` 是协议里唯一需要登录的命令。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
+`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
 
 `hello` 是 `oc-hello` 插件提供的示例请求：载荷是普通 UTF-8 名字（不是 `oc-debug` 那样的信封），回答也是普通 UTF-8 文本。
+
+## 游戏命令
+
+成功 `LOGIN` 之后，连接可以用下面的命令操作单位、建筑与游戏经济。它们属于 OC/1：命令字、回答与帧规则
+在 WebSocket 通道和加密 TCP 通道上完全一致，因为两个传输执行的是同一个命令分发器。
+
+### 语法
+
+```text
+WHOAMI                                      -> OK player <id>            (需要 LOGIN)
+ORDER MOVE <entityId> <x> <y>               -> OK                        (需要 LOGIN，实体必须属于该玩家)
+ORDER ATTACK <entityId> <targetId>          -> OK                        (需要 LOGIN，实体必须属于该玩家)
+ORDER ATTACKMOVE <entityId> <x> <y>         -> OK                        (需要 LOGIN，实体必须属于该玩家)
+ORDER STOP <entityId>                       -> OK                        (需要 LOGIN，实体必须属于该玩家)
+BUILD <engineerId> <buildingPath> <x> <y>   -> OK <buildingId> | ERR ...  (需要 LOGIN，工程师必须属于该玩家)
+TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (需要 LOGIN，建筑必须属于该玩家)
+```
+
+- `<entityId>`、`<targetId>` 与 `<buildingId>` 是 `/world/snapshot` 里的十进制实体 id。
+- `<x>` 与 `<y>` 是十进制地图格坐标。
+- `<buildingPath>` 与 `<unitPath>` 是不带命名空间的内容路径，例如 `building.armory.t1` 或
+  `unit.melee.t4`。
+- 命令字与其它命令一样大小写不敏感；`ORDER` 的子命令也大小写不敏感（`MOVE` 与 `move` 等价）。
+  内容路径与参数不做大小写折叠。
+
+### 登录与身份
+
+本节每一条命令都要求**同一条连接成功 `LOGIN` 过**。没有登录时服务器精确回答 `ERR login first`，
+不触碰任何东西，和 `REQ` 完全一样。连接的身份是惰性创建的，在它的第一条游戏命令（包括 `WHOAMI`）时创建：
+
+- 玩家 `1` 拥有服务器搭建的样例场景；玩家 `2` 保留给经典插件的敌方 AI。因此真人连接拿到的是从
+  `3` 开始的最小未占用 id。主机的世界上限是 `8` 个玩家，所以默认世界提供 `3` 到 `8` 的真人 id，
+  并在连接的整个生命周期里保持不变。
+- 这个 id 就是引擎 `Player` 的 id，也是 `/world/snapshot` 实体 `player` 字段里的同一个数字。
+- `WHOAMI` 回答 `OK player <id>`，并在首次使用时创建玩家。已登录但世界已无空位时回答 `ERR world full`。
+- 同一条连接重新登录会把它重置为“尚未分配身份”；下一条游戏命令会为新登录分配玩家。
+
+### 所有权、存在性与内容
+
+每条命令在世界应用它时校验，拒绝会说明违反了哪条规则：
+
+| 情况 | 回答 |
+| --- | --- |
+| 实体或建筑不存在、已死亡、或种类不对（例如把建筑 id 放进 `ORDER MOVE`） | `ERR unknown entity` |
+| 实体或建筑属于另一个玩家 | `ERR not yours` |
+| 参数个数不对，或 id/坐标不是十进制数字 | `ERR bad arguments` |
+| `BUILD` 的建筑路径不在服务器提供的内容里 | `ERR unknown building` |
+| `TRAIN` 的单位路径不在服务器提供的内容里 | `ERR unknown unit` |
+| `TRAIN` 指向一个尚未完工的工地 | `ERR building not finished` |
+| `TRAIN` 指向一个没有生产标签的建筑 | `ERR building cannot produce` |
+| `TRAIN` 的单位在该建筑里没有任何配方 | `ERR no recipe for <unit> in <building>` |
+| `BUILD` 无法从玩家的仓库付款 | `ERR cannot afford <building> (needs <cost>)` |
+
+### 成本、生产与世界步
+
+- `BUILD` 在**放置工地时一次性**从玩家的仓库网络扣除建筑类型的成本。预留与扣款和放置发生在同一个世界步里，
+  生产任务无法在中间花掉同一批物资。玩家付不起时什么也不放置、什么也不扣；放置失败会释放预留。
+- `TRAIN` 在属于自己的、已完工的生产建筑里排入一个单位。建筑等级够不够由引擎的生产系统决定，而不是由命令
+  解析器决定：在 t1 兵营里训练 t4 单位会得到带生产系统理由的 `ERR ...`，队列保持不变。
+- **世界步边界。** 客户端命令在 socket 线程到达，但世界在自己的线程上 tick。每条游戏命令都进入一个队列，
+  并在**下一个固定步的起点**、引擎推进模拟之前被应用。队列是 FIFO：命令按提交顺序逐条应用，回答在命令
+  被应用时产生（而不是在解析时）。因此命令永远不会在世界 tick 时改动世界，相同的命令顺序总是产生相同的
+  模拟。如果世界在服务器的命令超时内没有应用命令，客户端得到 `ERR world busy`；没有世界在托管、或世界没有
+  在 tick 时，回答是 `ERR world not available` 或 `ERR world not running`。
+
+### 兼容性
+
+游戏命令是增量扩展。它们不改变任何已有命令、回答、帧规则或握手：`PING`、`REGISTER`、`LOGIN`、`COUNT`、
+`REQ` 与 `QUIT` 的回答和以前完全一样，协议仍然是 `OC/1`。从不发送这些命令的旧客户端不受影响。
 
 ## base64 约定
 
@@ -166,10 +240,15 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 
 | 回答 | 含义 |
 | --- | --- |
-| `ERR login first` | 这条连接没有成功 `LOGIN`，`REQ` 被拒绝 |
+| `ERR login first` | 这条连接没有成功 `LOGIN`，`REQ` 或游戏命令被拒绝 |
 | `ERR unknown request` | `REQ` 的名字没有注册，或请求形状/base64 不合法 |
 | `ERR request failed` | 处理器抛异常或返回了 `null` |
-| `ERR <message>` / `ERR <reason>` | `REGISTER`、`LOGIN`、`REQ` 的其它拒绝，文案由服务器或处理器给出 |
+| `ERR bad arguments` | 游戏命令参数个数不对，或 id/坐标不是十进制数字 |
+| `ERR unknown entity` | 游戏命令指向不存在、已死亡或种类不对的实体/建筑 |
+| `ERR not yours` | 游戏命令指向另一个玩家的实体/建筑 |
+| `ERR unknown building` / `ERR unknown unit` | `BUILD`/`TRAIN` 的内容路径不在服务器提供的目录里 |
+| `ERR world not available` / `ERR world not running` / `ERR world stopped` / `ERR world full` / `ERR world busy` | 没有托管世界、世界没有在 tick、世界在应用命令前停止、没有空余玩家位、或世界没有及时应用命令 |
+| `ERR <message>` / `ERR <reason>` | `REGISTER`、`LOGIN`、`REQ` 与游戏命令的其它拒绝，文案由服务器、引擎或处理器给出 |
 
 信封里的错误是另一层，不会变成传输层错误：
 
@@ -237,7 +316,8 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 
 **本文的版本号就是协议的版本号。** 当前版本是 `1`，线上写作 `HELLO 1` 与 `OK OC/1`。
 
-- 本文改动帧规则、命令表、任一回答、base64 约定、信封布局、密钥长度、窗口长度或 magic 时，版本号必须增加（`2`、`OK OC/2`，以此类推），并同步修改本文、服务器与客户端。
+- 本文改动已有帧规则、已有命令、任一已有回答、base64 约定、信封布局、密钥长度、窗口长度或 magic 时，版本号必须增加（`2`、`OK OC/2`，以此类推），并同步修改本文、服务器与客户端。
+- 增加一条旧客户端永远不会发送的新命令是向后兼容的，本身不需要增加版本号。游戏命令就是这样的增量：它们保持 OC/1，并让每一条已有命令的字节保持不变。
 - 版本号是两端判断兼容性的**唯一**依据；不要用“字段看起来还在”“字符串能解析”来猜兼容。
 - 只增加报告字段、或只改 `REGISTER`/`LOGIN` 的人读文案，不算协议变化；客户端本来就不应依赖这些内容。
 - 旧客户端遇到新版本会收到非 `OK OC/1` 的握手回答，并按握手规则断开；新客户端遇到旧服务器同理。这是刻意的失败方式：拒绝比半兼容更安全。

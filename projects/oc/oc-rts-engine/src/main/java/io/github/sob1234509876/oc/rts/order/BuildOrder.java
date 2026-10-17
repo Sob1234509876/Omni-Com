@@ -26,9 +26,10 @@ import java.util.Objects;
  * route make an unreachable site fail instead of keeping the builder busy forever, and a site that is
  * destroyed fails the order. Nothing here reads a clock or draws a random number.
  *
- * <p><strong>Materials.</strong> The engine has no building-cost mechanic: a site is placed with
- * {@link io.github.sob1234509876.oc.rts.World#placeBuilding} and carries no price. Content that wants a
- * building to cost something charges the warehouses itself, at the moment it places the site.
+ * <p><strong>Materials.</strong> A site is paid for when it is placed, not while it is raised: the
+ * director reserves the type's {@link io.github.sob1234509876.oc.rts.content.BuildingType#cost()} in the
+ * owner's warehouse network and commits it before the {@link BuildOrder} starts. This order therefore
+ * never touches the economy; the builder only supplies the work.
  */
 public final class BuildOrder implements Order {
 

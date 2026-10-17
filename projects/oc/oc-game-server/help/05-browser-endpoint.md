@@ -98,6 +98,7 @@ TCP 命令循环完全相同。因此这条端点上的命令、参数规则、�
 | `LOGIN <名字> <密码>` | `OK <文案>` / `ERR <文案>` | 成功后把**这条连接**标成已认证 |
 | `COUNT` | `OK <账号数>` | 跨连接共享 |
 | `REQ <名字> <base64 载荷>` | `OK <base64 载荷>` / `ERR <文案>` | 需要同一条连接上成功 `LOGIN` |
+| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用 |
 | `QUIT` | 先 `OK bye`，再关闭连接 | 关闭码是 `1000` |
 | 其它任何东西 | `ERR unknown command` | 空行也是这一条 |
 

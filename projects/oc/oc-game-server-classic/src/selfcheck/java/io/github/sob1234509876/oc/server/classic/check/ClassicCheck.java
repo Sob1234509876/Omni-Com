@@ -183,6 +183,17 @@ public final class ClassicCheck {
                 "普通兵营带 armory 生产标签（等级由 level 区分，不靠标签）");
         check.equal(1, armoryT1.level(), "普通兵营等级 1");
         check.equal(2, armoryT2.level(), "强化兵营等级 2");
+        check.equal(100L, asLong(armoryT1.cost().amount(registry.item(ClassicContent.GOLD))),
+                "普通兵营造价 100 金币（与文档表一致）");
+        check.equal(20L, asLong(armoryT1.cost().amount(registry.item(ClassicContent.WOOD))),
+                "普通兵营造价 20 木材（与文档表一致）");
+        check.equal(240L, asLong(armoryT2.cost().amount(registry.item(ClassicContent.GOLD))),
+                "强化兵营造价 240 金币（与文档表一致）");
+        check.equal(60L, asLong(armoryT2.cost().amount(registry.item(ClassicContent.WOOD))),
+                "强化兵营造价 60 木材（与文档表一致）");
+        check.equal(60L, asLong(registry.building(ClassicContent.WAREHOUSE).cost()
+                        .amount(registry.item(ClassicContent.WOOD))),
+                "仓库造价 60 木材（与文档表一致）");
         check.that(armoryT2.cost().totalUnits().compareTo(armoryT1.cost().totalUnits()) > 0,
                 "强化兵营比普通兵营更贵");
         BuildingType warehouse = registry.building(ClassicContent.WAREHOUSE);

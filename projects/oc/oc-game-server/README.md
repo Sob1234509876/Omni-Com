@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (513 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (593 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,17 +33,19 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 513 checks passed.
+game server self check: all 593 checks passed.
 ```
 
-513 is the sum of eight check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+593 is the sum of ten check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 63
 (upgrade, the version handshake, frame rules and origin rules), `HttpCheck` 47 (static files, traversal,
 caching, a missing static root), `PluginAssetsCheck` 80 (manifest merging and the asset route over real
-plugin jars) and `WorldHostCheck` 82 (the daemon tick thread, the snapshot JSON, seed determinism, and the
-`/world/snapshot` 200/503/405 answers). The check is a program in its own `selfCheck` source set
+plugin jars), `WorldHostCheck` 82 (the daemon tick thread, the snapshot JSON, seed determinism, and the
+`/world/snapshot` 200/503/405 answers), `WorldTickHookCheck` 23 (the plugin tick hook contract and its
+ordering) and `PlayerCommandCheck` 57 (`WHOAMI`, the world-thread command queue, movement orders, ownership,
+building cost and the production tier gate). The check is a program in its own `selfCheck` source set
 (`src/selfcheck/java`), so the standard `test` task stays source free.
 
 The `server` task runs `OcGameServer` with standard input attached and the repository root as its working
@@ -81,7 +83,8 @@ the new one.
 derive a 32 byte session key from the shared secret, then AES-256-GCM frames. The client hello is 37 bytes and
 the server hello 69; each direction gets its own 4 byte nonce prefix and a 64 bit counter, a frame is a 4 byte
 big endian length followed by the ciphertext and its 128 bit tag, and the counter makes a replayed frame fail
-its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `COUNT`, `REQ`, `QUIT`.
+its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `COUNT`, `REQ`, `WHOAMI`,
+`ORDER`, `BUILD`, `TRAIN`, `QUIT`.
 
 **The browser endpoint.** `GET` and `HEAD` are served from `--static-root`, the built web client; `/ws` is
 upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answered with `OK OC/1`;
@@ -102,10 +105,17 @@ lazily loading plugin would hit later. A plugin is described by `omnicom-plugin.
 **The request seam.** A plugin publishes a `RequestHandler` under a name matching `[a-z0-9-]{1,32}` in
 `RequestRegistry`; `byte[] handle(byte[] request)` is the whole contract. A client sends
 `REQ <name> <base64 payload>` and the server base64 decodes, hands the exact bytes to the handler and base64
-encodes the answer, parsing neither side. `REQ` is the one command that requires a successful `LOGIN` on the
+encodes the answer, parsing neither side. `REQ` and the gameplay commands require a successful `LOGIN` on the
 same connection: without it the answer is `ERR login first`, before the handler is ever called. An unknown
 name, an over long name or a payload that is not base64 is `ERR unknown request`, and a throwing handler is
 `ERR request failed`.
+
+**Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD` and `TRAIN` are parsed by the same `CommandDispatcher` the
+browser endpoint uses, but they are applied by `WorldHost` on the world thread at the start of the next fixed
+step. `WHOAMI` creates the connection's player lazily (the first human is player 3; player 1 is the sample
+scene and player 2 is the classic AI), `ORDER` validates ownership and existence, `BUILD` charges the
+building type's cost from the player's warehouses exactly once at placement, and `TRAIN` lets the engine's
+`ProductionSystem` decide the tier gate. See `protocol/oc-protocol.md` for the wire grammar.
 
 **Autosave and shutdown.** A daemon timer named `oc-autosave` flushes the user records every `--save-seconds`
 seconds (60 by default), which is a no-op when nothing changed. `stop()` then runs in a fixed order: stop the
@@ -132,7 +142,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 513 check self check program
+src/selfcheck/java/.../server/check/    the 593 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

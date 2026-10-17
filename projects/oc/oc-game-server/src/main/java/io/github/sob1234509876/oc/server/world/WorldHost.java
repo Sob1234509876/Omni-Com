@@ -3,6 +3,8 @@ package io.github.sob1234509876.oc.server.world;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.Player;
+import io.github.sob1234509876.oc.rts.PlayerId;
+import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
@@ -14,6 +16,7 @@ import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
@@ -24,6 +27,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The server side world: one {@link OcRtsEngine} advanced on one daemon thread and rendered by the browser.
@@ -55,6 +64,17 @@ import java.util.Objects;
  * hand out live objects for diagnostics and checks and are <em>not</em> synchronised: read them before
  * {@link #start()} or after {@link #stop()}, never while the tick thread runs.
  *
+ * <p><strong>Commands.</strong> Client commands arrive on socket threads and may never touch the engine
+ * while it is ticking. {@link #submitCommand(WorldCommand)} is the only way in: unless it is called on
+ * the world thread itself - where it applies immediately because the caller already holds the simulation
+ * - it appends the command to a {@link ConcurrentLinkedQueue}. At the <em>start</em> of every fixed step
+ * {@link #step()} drains that queue, one command at a time, before {@link OcRtsEngine#tick()} runs, so a
+ * command and the tick it affects form one deterministic sequence and the engine is never observed half
+ * mutated. The handle returned by {@code submitCommand} completes with the answer the command produced
+ * when it was applied; {@link #drainForTest()} applies the same queue without advancing the clock, which
+ * lets a check drive commands deterministically instead of waiting for a wall clock tick. Submission
+ * order is application order: commands are applied in the order the queue accepted them, one at a time.
+ *
  * <p><strong>The content paths are the client contract.</strong> {@code snapshotJson()} derives every
  * entity's {@code kind} from {@code Entity.typeKey().path()}, which is the exact path the served catalogue
  * registered: for {@link ScenarioWorldContent} that is {@code worker}, {@code soldier}, {@code medic},
@@ -84,6 +104,34 @@ public final class WorldHost {
 
     /** Seed used when the caller does not name one, matching {@code --seed}'s default. */
     public static final long DEFAULT_SEED = 1L;
+
+    /**
+     * First player id a human connection can be assigned.
+     *
+     * <p>Player {@code 1} owns the sample scene the host builds and player {@code 2} is reserved for the
+     * classic plugin's enemy AI (its bootstrap hard codes that id). Human players therefore start at
+     * {@code 3}; see {@link #joinPlayer(String)} for the exact assignment rule.
+     */
+    public static final int FIRST_HUMAN_PLAYER_ID = 3;
+
+    /**
+     * Maximum number of players one world holds, counting the scene player and the classic AI.
+     *
+     * <p>This is the "room" of {@link #joinPlayer(String)}: ids {@code 3} through {@code MAX_PLAYERS}
+     * are the human slots, so a default world admits six human connections. Player ids are never
+     * reused while the world lives, which keeps an entity's owner stable for a replay.
+     */
+    public static final int MAX_PLAYERS = 8;
+
+    /**
+     * Colours handed to human players, cycled by id.
+     *
+     * <p>The value only reaches a renderer through {@link Player#colorArgb()}; it is a fixed function of
+     * the id, never a random choice, so two runs assigning the same ids paint the same players.
+     */
+    private static final int[] HUMAN_COLORS = {
+        0xFF66BB6A, 0xFFFFA726, 0xFFAB47BC, 0xFF26A69A, 0xFF8D6E63, 0xFFEC407A
+    };
 
     /** Length of one fixed simulation step, in nanoseconds. */
     private static final long STEP_NANOS = 1_000_000_000L / TICKS_PER_SECOND;
@@ -131,7 +179,22 @@ public final class WorldHost {
     /** Guards the tick thread field and the running flag. */
     private final Object lifecycleLock = new Object();
 
+    /**
+     * Commands waiting for the start of the next fixed step, in submission order.
+     *
+     * <p>A {@link ConcurrentLinkedQueue} is the smallest structure that gives the two properties this
+     * seam needs: several client threads may append concurrently, and the world thread takes commands
+     * with {@code poll()} in the order the queue accepted them. Enqueueing is additionally serialised on
+     * {@link #stateLock} together with {@link #stopped}, so a command cannot slip into the queue after
+     * the drain of {@link #stop()} and wait forever.
+     */
+    private final ConcurrentLinkedQueue<PendingCommand> pendingCommands = new ConcurrentLinkedQueue<>();
+
     private volatile boolean running;
+
+    /** Whether {@link #stop()} has closed this host; commands submitted afterwards fail immediately. */
+    private volatile boolean stopped;
+
     private volatile Thread tickThread;
 
     /**
@@ -297,6 +360,7 @@ public final class WorldHost {
             if (running) {
                 return;
             }
+            stopped = false;
             running = true;
             Thread thread = new Thread(this::runLoop, "oc-world");
             thread.setDaemon(true);
@@ -311,13 +375,19 @@ public final class WorldHost {
      */
     public void stop() {
         Thread thread;
+        boolean wasRunning;
         synchronized (lifecycleLock) {
-            if (!running && tickThread == null) {
-                return;
-            }
+            wasRunning = running;
+            stopped = true;
             running = false;
             thread = tickThread;
             tickThread = null;
+        }
+        if (!wasRunning && thread == null) {
+            // Even a host that never started may hold queued commands (a check can submit before
+            // start()); closing it must complete them rather than leave a caller waiting forever.
+            failPendingCommands();
+            return;
         }
         if (thread != null && thread != Thread.currentThread()) {
             thread.interrupt();
@@ -327,6 +397,7 @@ public final class WorldHost {
                 Thread.currentThread().interrupt();
             }
         }
+        failPendingCommands();
     }
 
     /** Whether the tick thread is running. */
@@ -349,13 +420,74 @@ public final class WorldHost {
     }
 
     /**
-     * Advances the world by exactly one fixed step, including the plugin tick hooks.
+     * Submits one command to the world thread and returns a handle for its answer.
+     *
+     * <p>Outside the world thread the command is only enqueued; it is applied at the start of the next
+     * fixed step (or by {@link #drainForTest()}), never concurrently with a tick. Called on the world
+     * thread - a plugin hook, or a command that is already being applied - it runs immediately, because
+     * the caller already owns the simulation lock and waiting for a step would deadlock the world.
+     *
+     * <p>Submission order is application order: the queue is FIFO and a step drains it completely before
+     * the engine advances. A command submitted from a connection thread while the engine is ticking is
+     * therefore applied at the next step boundary, and two commands of one connection arrive in the
+     * order that connection sent them.
+     *
+     * @param command the command to apply on the world thread; never {@code null}
+     * @return a handle that completes with the command's answer when it is applied
+     * @throws NullPointerException when {@code command} is {@code null}
+     */
+    public CommandHandle submitCommand(WorldCommand command) {
+        Objects.requireNonNull(command, "command");
+        CompletableFuture<String> result = new CompletableFuture<>();
+        PendingCommand pending = new PendingCommand(command, result);
+        // The tick thread always holds the lock while it steps; a synchronous step() or drainForTest()
+        // caller holds it too. Either way the caller already owns the simulation, so waiting for a step
+        // would deadlock.
+        if (Thread.holdsLock(stateLock) || Thread.currentThread() == tickThread) {
+            synchronized (stateLock) {
+                apply(pending);
+            }
+            return new CommandHandle(result);
+        }
+        synchronized (stateLock) {
+            if (stopped) {
+                result.complete("ERR world stopped");
+            } else {
+                pendingCommands.add(pending);
+            }
+        }
+        return new CommandHandle(result);
+    }
+
+    /**
+     * Applies every queued command without advancing the simulation.
+     *
+     * <p>This is the deterministic counterpart of the queue drain a fixed step performs: a check can
+     * submit a command, assert that the world is untouched, then call this method and observe the command
+     * take effect without a wall clock or a tick thread being involved. It is also the explicit drain
+     * mentioned by {@link #submitCommand(WorldCommand)}.
+     *
+     * @return how many commands were applied
+     */
+    public int drainForTest() {
+        synchronized (stateLock) {
+            return applyPendingCommands();
+        }
+    }
+
+    /** Number of commands waiting for the next step; approximate while other threads submit. */
+    public int pendingCommandCount() {
+        return pendingCommands.size();
+    }
+
+    /**
+     * Advances the world by exactly one fixed step, including the queued commands and the plugin hooks.
      *
      * <p>This is the synchronous counterpart of the tick thread, and the exact work one step of it does:
-     * the engine advances by one tick, and then every {@link WorldTickHook} runs, in the order the host
-     * was constructed with, with the tick number the world has just reached. The step holds the same lock
-     * as {@link #snapshotJson()}, so a snapshot taken from another thread is never a torn picture of a
-     * step in progress.
+     * every command queued at this point is applied first, then the engine advances by one tick, and then
+     * every {@link WorldTickHook} runs, in the order the host was constructed with, with the tick number
+     * the world has just reached. The step holds the same lock as {@link #snapshotJson()}, so a snapshot
+     * taken from another thread is never a torn picture of a step in progress.
      *
      * <p>It exists for callers that must advance a world deterministically - a scripted scenario, or a
      * check proving that two runs produce the same bytes - where the wall-clock driven
@@ -363,10 +495,126 @@ public final class WorldHost {
      */
     public void step() {
         synchronized (stateLock) {
+            applyPendingCommands();
             engine.tick();
             long number = engine.tickNumber();
             for (int index = 0; index < tickHooks.size(); index++) {
                 tickHooks.get(index).tick(engine.world(), number);
+            }
+        }
+    }
+
+    /** Empties the queue and completes every waiting caller, used when the host closes. */
+    private void failPendingCommands() {
+        synchronized (stateLock) {
+            PendingCommand pending;
+            while ((pending = pendingCommands.poll()) != null) {
+                pending.result().complete("ERR world stopped");
+            }
+        }
+    }
+
+    /** Applies queued commands in order; the caller already holds {@link #stateLock}. */
+    private int applyPendingCommands() {
+        int applied = 0;
+        PendingCommand pending;
+        while ((pending = pendingCommands.poll()) != null) {
+            apply(pending);
+            applied++;
+        }
+        return applied;
+    }
+
+    /**
+     * Runs one command and completes its handle.
+     *
+     * <p>A command is ordinary code running inside the simulation; if it throws, the exception costs one
+     * answer, not the world thread. The message becomes the {@code ERR} reason so a client learns what
+     * went wrong without a stack trace on the wire.
+     */
+    private void apply(PendingCommand pending) {
+        String answer;
+        try {
+            answer = pending.command().apply(this);
+        } catch (RuntimeException failure) {
+            String message = failure.getMessage();
+            answer = "ERR " + (message == null || message.isBlank() ? "command failed" : message);
+        }
+        pending.result().complete(answer == null ? "ERR command failed" : answer);
+    }
+
+    /** A command waiting for the world thread, with the future its submitter waits on. */
+    private record PendingCommand(WorldCommand command, CompletableFuture<String> result) {
+    }
+
+    /**
+     * One piece of work to apply on the world thread.
+     *
+     * <p>The command sees the host, never a bare engine, because it may need the host's player rule
+     * ({@link #joinPlayer(String)}) as well as the engine. It runs with the simulation lock held and
+     * must not block, spawn threads or read a clock; see the class comment on commands.
+     */
+    @FunctionalInterface
+    public interface WorldCommand {
+
+        /**
+         * Applies the command.
+         *
+         * @param host the world host, never {@code null}
+         * @return the one line answer to send back
+         */
+        String apply(WorldHost host);
+    }
+
+    /**
+     * The answer of a submitted command, available as soon as the world thread applied it.
+     *
+     * <p>{@link #await()} is for the transports, which need the line before they can answer the client;
+     * {@link #await(long)} is for callers that must not block forever. A timeout is answered with
+     * {@code ERR world busy} by the handle rather than an exception, because every caller of this API is
+     * a protocol path whose failure mode is an error line.
+     */
+    public static final class CommandHandle {
+
+        private final CompletableFuture<String> result;
+
+        private CommandHandle(CompletableFuture<String> result) {
+            this.result = result;
+        }
+
+        /** Whether the command has been applied and the answer is ready. */
+        public boolean isDone() {
+            return result.isDone();
+        }
+
+        /** Waits until the command is applied and returns its answer. */
+        public String await() {
+            try {
+                return result.get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return "ERR command interrupted";
+            } catch (ExecutionException failed) {
+                return "ERR command failed";
+            }
+        }
+
+        /**
+         * Waits at most {@code timeoutMillis} for the answer.
+         *
+         * @param timeoutMillis the budget in milliseconds; negative means zero
+         * @return the answer, or {@code ERR world busy} when the world did not reach the command in time
+         */
+        public String await(long timeoutMillis) {
+            try {
+                return result.get(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException timeout) {
+                return "ERR world busy";
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return "ERR command interrupted";
+            } catch (ExecutionException failed) {
+                return "ERR command failed";
             }
         }
     }
@@ -413,6 +661,107 @@ public final class WorldHost {
      */
     public Player player() {
         return player;
+    }
+
+    /**
+     * The engine this host ticks.
+     *
+     * <p>Exposed for diagnostics and checks, exactly like {@link #player()}; it is the live engine, not a
+     * copy. It is <em>not</em> synchronised: read it before {@link #start()} or from inside a
+     * {@link WorldCommand}/{@link WorldTickHook}, never from an unrelated thread while the tick thread
+     * runs. A command should reach the world through the host rather than through this accessor.
+     *
+     * @return the live engine, never {@code null}
+     */
+    public OcRtsEngine engine() {
+        return engine;
+    }
+
+    /**
+     * Creates the player for a human connection on first use, or returns the one already assigned.
+     *
+     * <p><strong>Assignment rule.</strong> Player {@code 1} owns the sample scene and player {@code 2} is
+     * reserved for the classic plugin's AI, so a human gets the smallest unused id from
+     * {@value #FIRST_HUMAN_PLAYER_ID} to {@value #MAX_PLAYERS}, in that order. The rule is deterministic
+     * for a given sequence of joins - the first human is always {@code 3}, the next unused id is always
+     * taken next - and an id is never reused while the world lives, so an entity's owner does not change
+     * under a replay. The colour is a fixed function of the id; see the palette constant.
+     *
+     * <p>The player is added to the world with an engine logistics network and, when another player
+     * already has one, the world's hauling system. Nothing else is granted: a new player owns no
+     * entities and no stock; commands can only act on what that player already owns. The content's
+     * starting resources are applied to the host's scene player, not to every join, because goods need a
+     * warehouse to live in and a fresh player has none.
+     *
+     * <p>This method mutates the world and must therefore run on the world thread, which in practice
+     * means from a {@link WorldCommand} (the command dispatcher does exactly that). It is not a client
+     * API; it is public so the command layer and checks can call it.
+     *
+     * @param name display name of the player, normally the account name
+     * @return the new player, or empty when every human slot is taken
+     * @throws IllegalStateException when called outside a world command
+     */
+    public Optional<Player> joinPlayer(String name) {
+        if (!Thread.holdsLock(stateLock)) {
+            throw new IllegalStateException("joinPlayer must run on the world thread, inside a WorldCommand");
+        }
+        Objects.requireNonNull(name, "name");
+        for (int id = FIRST_HUMAN_PLAYER_ID; id <= MAX_PLAYERS; id++) {
+            PlayerId candidateId = PlayerId.of(id);
+            if (engine.world().findPlayer(candidateId).isPresent()) {
+                continue;
+            }
+            String displayName = name.isBlank() ? "Player " + id : name;
+            Player joined = new Player(candidateId, displayName, colorFor(id), id, true);
+            engine.world().addPlayer(joined);
+            joined.attachLogistics(new WarehouseLogistics(engine.world(), joined));
+            joinHauling(engine.world(), joined);
+            return Optional.of(joined);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * A player of this world by id, for a caller that only kept the id (a connection's identity).
+     *
+     * <p>The lookup takes the simulation lock, so it is safe from a connection thread; it never creates
+     * anything.
+     *
+     * @param id the player id
+     * @return the player, or empty when no player of that id exists
+     */
+    public Optional<Player> findPlayer(int id) {
+        synchronized (stateLock) {
+            return engine.world().findPlayer(PlayerId.of(id));
+        }
+    }
+
+    /** The deterministic colour of a human player id. */
+    private static int colorFor(int id) {
+        int index = Math.floorMod(id - FIRST_HUMAN_PLAYER_ID, HUMAN_COLORS.length);
+        return HUMAN_COLORS[index];
+    }
+
+    /**
+     * Joins a player created after the engine was built to the world's hauling system.
+     *
+     * <p>The engine wires hauling to the players it was built with, and a command cannot reach the
+     * engine's builder. It does not have to: every network exposes the hauling system attached to it, so
+     * a system that already serves the world is reachable through any existing player's network - and it
+     * is the same instance the pipeline ticks.
+     */
+    private static void joinHauling(World world, Player player) {
+        WarehouseLogistics network = WarehouseLogistics.of(player);
+        if (network == null || network.hauling().isPresent()) {
+            return;
+        }
+        for (Player other : world.players()) {
+            WarehouseLogistics existing = WarehouseLogistics.of(other);
+            if (existing != null && existing.hauling().isPresent()) {
+                network.attachHauling(existing.hauling().orElseThrow());
+                return;
+            }
+        }
     }
 
     /** Reported map width in tiles. */
@@ -481,6 +830,7 @@ public final class WorldHost {
                     LOG.log(System.Logger.Level.ERROR, "a world tick hook failed; the world thread stops",
                             failure);
                     running = false;
+                    failPendingCommands();
                     return;
                 }
                 accumulator -= STEP_NANOS;

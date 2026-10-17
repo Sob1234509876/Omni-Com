@@ -3,10 +3,12 @@ package io.github.sob1234509876.oc.server.ws;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.net.CommandDispatcher;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
+import io.github.sob1234509876.oc.server.world.WorldHost;
 
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * The game protocol over WebSocket: one text frame in, one text line out.
@@ -14,8 +16,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>This is the only game aware class in the browser package, and it contains no game rules. Every message
  * is handed to the same {@link CommandDispatcher} the encrypted TCP channel uses, so a browser speaks
  * exactly the commands a TCP client speaks - {@code PING}, {@code REGISTER}, {@code LOGIN}, {@code COUNT},
- * {@code REQ} and {@code QUIT} - with exactly the same answers and the same "REQ needs a successful LOGIN"
- * rule. In particular a browser client cannot reach a plugin request state that a TCP client could not.
+ * {@code REQ}, {@code WHOAMI}, {@code ORDER}, {@code BUILD}, {@code TRAIN} and {@code QUIT} - with exactly
+ * the same answers and the same "REQ and every gameplay command needs a successful LOGIN" rule. In
+ * particular a browser client cannot reach a plugin request state that a TCP client could not, and its
+ * gameplay commands are applied by the same world queue at the same step boundary.
  *
  * <p><strong>Two version mechanisms, on purpose.</strong> The encrypted TCP channel tells the server what
  * protocol it speaks inside the binary handshake: {@code SecureChannel} writes a version byte before any
@@ -81,7 +85,21 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
      * @param requests the plugin handlers {@code REQ} may reach
      */
     public CommandWebSocketHandler(AuthService auth, RequestRegistry requests) {
-        this(new CommandDispatcher(auth, requests));
+        this(auth, requests, () -> null);
+    }
+
+    /**
+     * Creates a handler over the game services and the world gameplay commands are applied to.
+     *
+     * <p>The browser and the TCP channel therefore share both the grammar and the world queue; a
+     * {@code BUILD} sent from a browser is applied by the same world step as one sent over TCP.
+     *
+     * @param auth     the authentication service {@code REGISTER} and {@code LOGIN} go through
+     * @param requests the plugin handlers {@code REQ} may reach
+     * @param worlds   supplies the live world, or {@code null} when the server hosts none
+     */
+    public CommandWebSocketHandler(AuthService auth, RequestRegistry requests, Supplier<WorldHost> worlds) {
+        this(new CommandDispatcher(auth, requests, worlds));
     }
 
     /**

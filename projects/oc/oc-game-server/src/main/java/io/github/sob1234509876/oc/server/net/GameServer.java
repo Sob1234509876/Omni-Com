@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.server.net;
 
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
+import io.github.sob1234509876.oc.server.world.WorldHost;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -20,6 +21,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * The OMNI COM game server: a TCP listener that speaks one command per line over a
@@ -50,6 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * LOGIN &lt;name&gt; &lt;password&gt;            -&gt; OK &lt;message&gt; | ERR &lt;message&gt;
  * COUNT                             -&gt; OK &lt;registered users&gt;
  * REQ &lt;name&gt; &lt;base64-payload&gt;        -&gt; OK &lt;base64-payload&gt; | ERR &lt;message&gt;
+ * WHOAMI                            -&gt; OK player &lt;id&gt; | ERR &lt;reason&gt;
+ * ORDER|BUILD|TRAIN ...             -&gt; OK ... | ERR &lt;reason&gt; (needs LOGIN, applied on the world thread)
  * QUIT                              -&gt; the server closes the connection
  * anything else                     -&gt; ERR unknown command
  * </pre>
@@ -118,10 +122,42 @@ public final class GameServer {
      * @param requests the handlers {@code REQ} may reach; never {@code null}
      */
     public GameServer(ServerConfig config, AuthService auth, RequestRegistry requests) {
+        this(config, auth, requests, () -> null);
+    }
+
+    /**
+     * Creates a server whose gameplay commands are applied to the supplied world.
+     *
+     * <p>The supplier is read per command, not captured once, because the server builds its world after
+     * this constructor runs. It may return {@code null} while no world is hosted, which is exactly the
+     * {@code --world off} case: gameplay commands answer {@code ERR world not available} and the old
+     * command set is unaffected.
+     *
+     * @param config   the socket and framing limits
+     * @param auth     the authentication service every {@code REGISTER} and {@code LOGIN} goes through
+     * @param requests the handlers {@code REQ} may reach; never {@code null}
+     * @param worlds   supplies the live world, or {@code null}; never {@code null}
+     */
+    public GameServer(ServerConfig config, AuthService auth, RequestRegistry requests,
+            Supplier<WorldHost> worlds) {
         this.config = Objects.requireNonNull(config, "config");
         this.commands = new CommandDispatcher(
                 Objects.requireNonNull(auth, "auth"),
-                Objects.requireNonNull(requests, "requests"));
+                Objects.requireNonNull(requests, "requests"),
+                Objects.requireNonNull(worlds, "worlds"));
+    }
+
+    /**
+     * The command grammar both transports execute.
+     *
+     * <p>Exposed so a server can hand the very same dispatcher to its browser endpoint instead of
+     * building a second one; both share the auth service, the request registry and the world supplier,
+     * so the two transports cannot drift apart.
+     *
+     * @return the live dispatcher, never {@code null}
+     */
+    public CommandDispatcher dispatcher() {
+        return commands;
     }
 
     /**

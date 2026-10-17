@@ -192,7 +192,9 @@ public final class OcGameServer {
         // in, without the server needing to know which plugin registered what.
         this.requests = new RequestRegistry();
         this.pluginLoader = new PluginLoader(this.pluginsDirectory, VERSION, this.dataDirectory, this.requests);
-        this.server = new GameServer(config, auth, this.requests);
+        // The world is built in start(), after this constructor, so the dispatcher gets a supplier that
+        // reads the volatile field per command rather than a host instance captured too early.
+        this.server = new GameServer(config, auth, this.requests, () -> this.worldHost);
     }
 
     /** The authentication service; plugins may reach it through a context of their own later. */
@@ -345,7 +347,7 @@ public final class OcGameServer {
         }
         if (webSocketConfig.port() != 0) {
             HttpWebServer browser = new HttpWebServer(webSocketConfig,
-                    new CommandWebSocketHandler(auth, requests), pluginLoader, host);
+                    new CommandWebSocketHandler(server.dispatcher()), pluginLoader, host);
             try {
                 browser.start();
             } catch (IOException failure) {

@@ -3,11 +3,13 @@ package io.github.sob1234509876.oc.rts.order;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
@@ -127,27 +129,76 @@ public final class CommandService implements UnitDirector {
     }
 
     /**
-     * Places a building site and gives the unit a {@link BuildOrder}.
+     * Places a building site, charges its cost and gives the unit a {@link BuildOrder}.
      *
      * <p>The placement is checked against the unit's own dimension before anything is created, so a
      * caller scanning candidate tiles never leaves a half placed building behind when a tile is
-     * occupied. The site is free: the engine has no building-cost mechanic, so content that wants a
-     * building to cost something charges for it itself.
+     * occupied.
+     *
+     * <p><strong>The charge.</strong> The type's {@link BuildingType#cost() cost} is reserved through
+     * the owner's {@link Logistics} network - exactly the reservation production uses for its inputs -
+     * and committed immediately after the site exists. Reserving first and committing after placement is
+     * what makes the two failure modes safe: an unaffordable building never appears, and a placement
+     * that fails after the reservation releases the claim instead of eating the stock. The reservation
+     * and the charge both happen inside this one call, with no tick in between, so nothing can spend the
+     * same goods twice.
+     *
+     * <p>The cost is charged once, at placement. A site that is later cancelled or destroyed is not
+     * refunded here; construction has simply consumed the materials.
      */
     @Override
-    public Optional<Building> build(Unit unit, BuildingType type, GridPos origin) {
+    public BuildResult tryBuild(Unit unit, BuildingType type, GridPos origin) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(origin, "origin");
         if (!isCommandable(unit)) {
-            return Optional.empty();
+            return BuildResult.refused("the builder cannot be commanded");
         }
         DimensionId dimension = unit.dimensionId();
         if (!world.canPlace(dimension, type, origin)) {
-            return Optional.empty();
+            return BuildResult.refused("cannot place " + type.key().path() + " at "
+                    + origin.x() + "," + origin.y());
         }
-        Building site = world.placeBuilding(dimension, type, unit.owner(), origin);
+        ItemBundle cost = type.cost();
+        Logistics.Reservation charge = null;
+        if (!cost.isEmpty()) {
+            Player owner = unit.owner();
+            if (!owner.hasLogistics()) {
+                return BuildResult.refused("cannot pay for " + type.key().path() + " (needs "
+                        + describe(cost) + "): the player has no warehouse network");
+            }
+            Optional<Logistics.Reservation> reserved = owner.logistics().reserve(cost);
+            if (reserved.isEmpty()) {
+                return BuildResult.refused("cannot afford " + type.key().path() + " (needs "
+                        + describe(cost) + ")");
+            }
+            charge = reserved.get();
+        }
+        Building site;
+        try {
+            site = world.placeBuilding(dimension, type, unit.owner(), origin);
+        } catch (RuntimeException failure) {
+            if (charge != null && charge.active()) {
+                charge.release();
+            }
+            return BuildResult.refused("placing " + type.key().path() + " failed: " + failure.getMessage());
+        }
+        if (charge != null) {
+            charge.commit();
+        }
         unit.orders().replace(context(unit), new BuildOrder(site));
-        return Optional.of(site);
+        return BuildResult.placed(site);
+    }
+
+    /** Renders a cost bundle the way a player reads it: {@code 100 gold, 20 wood}. */
+    private static String describe(ItemBundle bundle) {
+        StringBuilder text = new StringBuilder();
+        for (ItemBundle.Amount component : bundle.components()) {
+            if (text.length() > 0) {
+                text.append(", ");
+            }
+            text.append(component.amount()).append(' ').append(component.item().key().path());
+        }
+        return text.length() == 0 ? "nothing" : text.toString();
     }
 
     @Override

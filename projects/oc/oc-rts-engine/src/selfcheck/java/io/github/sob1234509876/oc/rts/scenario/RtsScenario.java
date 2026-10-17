@@ -6,6 +6,7 @@ import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.combat.CombatStats;
+import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
@@ -79,6 +80,7 @@ public final class RtsScenario {
         checkHugeNumbers(check);
         checkDimensions(check, content);
         checkCombat(check, content);
+        checkBuildingCosts(check, content);
 
         check.summary("RTS engine scenario");
     }
@@ -1116,6 +1118,132 @@ public final class RtsScenario {
         check.atLeast(6f, firstRun.size(), "the scripted fight produced events and unit states to compare");
         check.that(firstRun.equals(secondRun), "two runs of the same seed and order sequence are identical,"
                 + " hit for hit (" + firstRun.size() + " observations)");
+    }
+
+    // ------------------------------------------------------------------ 13) building costs
+
+    /**
+     * A placed site costs its type's {@link BuildingType#cost() cost}, charged once, out of the
+     * warehouses, at placement.
+     *
+     * <p>The assertions pin the four properties that make the charge trustworthy: an affordable build
+     * takes exactly the cost (and leaves no promise behind), an unaffordable build places nothing and
+     * charges nothing, a second build with only the remainder fails without touching the stock, and a
+     * placement that cannot happen is refused before any goods are claimed. The stock is always observed
+     * through the logistics network, never through the site, because that is where spendable goods live.
+     */
+    private static void checkBuildingCosts(Check check, ContentRegistry content) {
+        check.section("13) placing a building site charges exactly the cost once");
+        ContentRegistry freeContent = ContentRegistry.builder("free")
+                .terrain("grass").buildable()
+                .building("hut").size(1, 1).health(100)
+                .build();
+        check.equal(ItemBundle.EMPTY, freeContent.building("hut").cost(),
+                "a building with no cost(...) defaults to an empty (free) cost");
+
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        ItemType plank = content.item(ScenarioContent.PLANK);
+        BuildingType barracks = content.building(ScenarioContent.BARRACKS);
+        ItemBundle expected = ItemBundle.of(iron, 100, plank, 50);
+        check.equal(expected, barracks.cost(),
+                "the barracks cost is the catalogue's 100 iron ingot + 50 plank");
+
+        OcRtsEngine engine = costEngine(content);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        Unit worker = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(14, 14));
+        depositStock(check, player, warehouse, ItemBundle.builder().add(iron, 150).add(plank, 60).build(),
+                "the charge check starts with 150 iron and 60 plank");
+        Natural ironBefore = player.logistics().amount(iron);
+        Natural plankBefore = player.logistics().amount(plank);
+
+        var first = engine.commands().tryBuild(worker, barracks, new GridPos(20, 20));
+        check.that(first.placed(), "an affordable barracks is placed: " + first.refusal());
+        check.that(first.site() != null && !first.site().isConstructed(),
+                "the placed site is unfinished, so the charge is for placing, not for finishing");
+        check.equal(Natural.of(100), ironBefore.subtractClamped(player.logistics().amount(iron)),
+                "exactly 100 iron was charged for the barracks");
+        check.equal(Natural.of(50), plankBefore.subtractClamped(player.logistics().amount(plank)),
+                "exactly 50 plank was charged for the barracks");
+        check.equal(player.logistics().stored(), player.logistics().available(),
+                "the committed charge left no reservation behind");
+
+        int buildingsAfterFirst = world.buildingsOf(player).size();
+        var second = engine.commands().tryBuild(worker, barracks, new GridPos(26, 20));
+        check.that(!second.placed(), "a second barracks with only 50 iron and 10 plank left is refused");
+        check.that(second.refusal() != null && second.refusal().contains("cannot afford"),
+                "the refusal names the missing cost: " + second.refusal());
+        check.equal(Natural.of(50), player.logistics().amount(iron),
+                "the refused second build left the remaining iron untouched");
+        check.equal(Natural.of(10), player.logistics().amount(plank),
+                "the refused second build left the remaining plank untouched");
+        check.equal(buildingsAfterFirst, world.buildingsOf(player).size(),
+                "the refused second build placed nothing");
+
+        var blocked = engine.commands().tryBuild(worker, barracks, new GridPos(10, 10));
+        check.that(!blocked.placed(), "a site overlapping the warehouse is refused");
+        check.that(blocked.refusal() != null && blocked.refusal().contains("cannot place"),
+                "the occupied-tile refusal says it cannot place: " + blocked.refusal());
+        check.equal(Natural.of(50), player.logistics().amount(iron),
+                "a placement that cannot happen claims no iron");
+        check.equal(Natural.of(10), player.logistics().amount(plank),
+                "a placement that cannot happen claims no plank");
+
+        // Exactly the cost in stock: the build succeeds and the warehouses are empty, not negative.
+        OcRtsEngine exact = costEngine(content);
+        Player exactPlayer = exact.players().get(0);
+        Building exactWarehouse = exact.world().spawnBuilding(
+                content.building(ScenarioContent.WAREHOUSE), exactPlayer, new GridPos(10, 10));
+        Unit exactWorker = exact.world().spawnUnit(content.unit(ScenarioContent.WORKER), exactPlayer,
+                new GridPos(14, 14));
+        depositStock(check, exactPlayer, exactWarehouse, expected,
+                "the exact-cost check starts with exactly one barracks worth of goods");
+        var exactBuild = exact.commands().tryBuild(exactWorker, barracks, new GridPos(20, 20));
+        check.that(exactBuild.placed(), "a build with exactly the cost in stock succeeds");
+        check.equal(ItemBundle.EMPTY, exactPlayer.logistics().stored(),
+                "the exact cost was charged once and the warehouses are empty");
+        check.equal(ItemBundle.EMPTY, exactPlayer.logistics().available(),
+                "and nothing is still promised to the build");
+
+        // Not enough in stock: nothing appears, nothing is taken.
+        OcRtsEngine poor = costEngine(content);
+        Player poorPlayer = poor.players().get(0);
+        Building poorWarehouse = poor.world().spawnBuilding(
+                content.building(ScenarioContent.WAREHOUSE), poorPlayer, new GridPos(10, 10));
+        Unit poorWorker = poor.world().spawnUnit(content.unit(ScenarioContent.WORKER), poorPlayer,
+                new GridPos(14, 14));
+        depositStock(check, poorPlayer, poorWarehouse, ItemBundle.of(iron, 90, plank, 10),
+                "the unaffordable check starts with 90 iron and 10 plank");
+        var poorBuild = poor.commands().tryBuild(poorWorker, barracks, new GridPos(20, 20));
+        check.that(!poorBuild.placed(), "a barracks the warehouses cannot cover is not placed");
+        check.that(poorBuild.refusal() != null && poorBuild.refusal().contains("cannot afford"),
+                "the unaffordable refusal says it cannot afford the cost: " + poorBuild.refusal());
+        check.equal(Natural.of(90), poorPlayer.logistics().amount(iron),
+                "the unaffordable build charged no iron");
+        check.equal(Natural.of(10), poorPlayer.logistics().amount(plank),
+                "the unaffordable build charged no plank");
+        check.equal(1, poor.world().buildingsOf(poorPlayer).size(),
+                "the unaffordable build placed nothing (the warehouse is still the only building)");
+    }
+
+    /** A flat grass engine with direct delivery, used only by the building-cost assertions. */
+    private static OcRtsEngine costEngine(ContentRegistry content) {
+        return OcRtsEngine.builder(content)
+                .seed(11L)
+                .generator(new FlatChunkGenerator(content.terrain("grass")))
+                .chunkSize(CHUNK_SIZE)
+                .viewRadiusChunks(3)
+                .directDelivery(true)
+                .build();
+    }
+
+    /** Deposits a stock into one warehouse and asserts that all of it fits. */
+    private static void depositStock(Check check, Player player, Building warehouse, ItemBundle bundle,
+            String description) {
+        ItemBundle leftover = player.logistics().deposit(bundle, warehouse.position());
+        check.that(leftover.isEmpty(), description + " (whatever did not fit: " + leftover + ")");
     }
 
     /**

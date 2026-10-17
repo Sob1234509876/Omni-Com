@@ -10,6 +10,7 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 
 import java.util.Collection;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -75,6 +76,13 @@ public interface UnitDirector {
      * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} advances the site once per
      * tick; this method is the part that decides <em>where</em> a site appears and <em>who</em> builds it.
      *
+     * <p><strong>The site is paid for when it is placed.</strong> The type's
+     * {@link BuildingType#cost() cost} is reserved in the owner's warehouse network and committed at the
+     * moment the site appears, synchronously with the placement, so it can never be spent twice by a
+     * production job between reservation and charge. A type whose cost is empty is still free. When the
+     * owner cannot cover the cost, or the cost cannot be reserved, nothing is placed and nothing is
+     * charged; the reservation is released if the placement itself fails.
+     *
      * <p>Nothing is placed when the unit cannot be commanded or the type does not fit at the origin (the
      * same check {@link io.github.sob1234509876.oc.rts.World#canPlace(DimensionId, BuildingType, GridPos)}
      * performs), so a caller can try candidate tiles in a fixed order and take the first site it gets.
@@ -84,7 +92,58 @@ public interface UnitDirector {
      * @param origin tile of the minimum corner of the footprint
      * @return the site that was placed, or empty when nothing was placed
      */
-    Optional<Building> build(Unit unit, BuildingType type, GridPos origin);
+    default Optional<Building> build(Unit unit, BuildingType type, GridPos origin) {
+        BuildResult result = tryBuild(unit, type, origin);
+        return result.placed() ? Optional.of(result.site()) : Optional.empty();
+    }
+
+    /**
+     * Like {@link #build(Unit, BuildingType, GridPos)}, but says why nothing was placed.
+     *
+     * <p>This is the form a command channel uses: the answer to a player has to be a readable
+     * {@code ERR <reason>} rather than a silent "no", and only the director knows whether the builder
+     * could not be commanded, the tile was occupied, or the warehouse could not pay.
+     *
+     * @param unit   the builder
+     * @param type   the building to raise
+     * @param origin tile of the minimum corner of the footprint
+     * @return the placed site, or the refusal reason; never {@code null}
+     */
+    BuildResult tryBuild(Unit unit, BuildingType type, GridPos origin);
+
+    /**
+     * Outcome of one build request: either a placed site or a refusal reason.
+     *
+     * <p>At most one of the two fields is set. The reason is written for a player - it names the
+     * building type and, for an unaffordable type, the exact cost - and never contains an exception
+     * stack trace.
+     *
+     * @param site    the placed site, or {@code null} when nothing was placed
+     * @param refusal why nothing was placed, or {@code null} when the site was placed
+     */
+    record BuildResult(Building site, String refusal) {
+
+        public BuildResult {
+            if ((site == null) == (refusal == null)) {
+                throw new IllegalArgumentException("a build result is either a site or a refusal");
+            }
+        }
+
+        /** A site that was placed and charged. */
+        public static BuildResult placed(Building site) {
+            return new BuildResult(Objects.requireNonNull(site, "site"), null);
+        }
+
+        /** Nothing placed, for the given reason. */
+        public static BuildResult refused(String reason) {
+            return new BuildResult(null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether a site was placed. */
+        public boolean placed() {
+            return site != null;
+        }
+    }
 
     /**
      * Sends the unit to another dimension, walking it through the gateways of the world.

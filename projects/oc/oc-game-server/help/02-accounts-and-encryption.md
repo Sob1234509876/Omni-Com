@@ -172,8 +172,11 @@ nonce     12 字节 = 4 字节方向前缀 + 8 字节大端计数器
 | `LOGIN <名字> <密码>` | `OK <AuthResult 文案>` / `ERR <文案>` | 成功后把**这条连接**标成已认证 |
 | `COUNT` | `OK <已注册账号数>` | 跨连接共享 |
 | `REQ <名字> <base64 载荷>` | `OK <base64 载荷>` / `ERR <文案>` | **需要同一条连接上成功 `LOGIN` 过** |
+| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` | 见协议文档 | 需要同一条连接上成功 `LOGIN` 过；由世界线程在下一步起点应用 |
 | `QUIT` | 先回 `OK bye`，然后服务器关闭这条连接 | — |
 | 其他任何东西 | `ERR unknown command` | 空行也是这一条 |
+
+游戏命令的完整语法、所有权规则与世界步边界以 [`protocol/oc-protocol_zh_CN.md`](../../../../protocol/oc-protocol_zh_CN.md) 的“游戏命令”一节为准。
 
 `REQ` 的失败答案是固定短句，便于脚本判断：
 

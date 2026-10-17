@@ -9,6 +9,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD` and `TRAIN`, the login and ownership rules, and the world-step boundary.
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
 - World snapshot: ordinary HTTP content at `/world/snapshot`, likewise outside the command protocol.
@@ -53,7 +54,7 @@ On a failed handshake the server answers one error line first and then closes; t
 | `ERR malformed HELLO` | `HELLO` has no version number, has extra arguments, or the version number is not a decimal number |
 | `ERR unsupported version, this server speaks OC/1` | The version number is not `1` |
 
-The handshake's version number and this document's version number are one and the same thing: when this document changes, the version number changes (see "Version compatibility").
+The handshake's version number and this document's version number are one and the same thing: when this document changes an existing wire contract, the version number changes (see "Version compatibility"). Adding a command that old clients never send does not change an existing contract; the gameplay commands below are such an addition.
 
 ## Command table
 
@@ -63,9 +64,13 @@ After a successful handshake, one line per command, one line of answer per comma
 | --- | --- | --- |
 | `PING` | `PONG` | Connectivity probe; changes nothing |
 | `REGISTER <name> <password>` | `OK <message>` or `ERR <message>` | Registers an account; the success and failure texts come from the server |
-| `LOGIN <name> <password>` | `OK <message>` or `ERR <message>` | Authenticates **this connection**; only after success may this connection send `REQ` |
+| `LOGIN <name> <password>` | `OK <message>` or `ERR <message>` | Authenticates **this connection**; only after success may this connection send `REQ` and the gameplay commands |
 | `COUNT` | `OK <n>` | Number of registered accounts; `n` is a decimal non-negative integer |
 | `REQ <name> <base64-payload>` | `OK <base64-payload>` or `ERR <reason>` | Calls a registered read-only request; requires `LOGIN` on the same connection first |
+| `WHOAMI` | `OK player <id>` or `ERR <reason>` | The engine player id of this connection; requires `LOGIN` |
+| `ORDER ...` | `OK` or `ERR <reason>` | Movement and combat orders; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `BUILD ...` | `OK <buildingId>` or `ERR <reason>` | Places a paid building site; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `TRAIN ...` | `OK` or `ERR <reason>` | Queues one unit in an owned producer; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `QUIT` | `OK bye` | The server sends this line first, then closes the connection |
 
 `REGISTER` and `LOGIN` answer with a human-readable `<message>`; the client may rely only on the leading `OK` / `ERR` to judge success or failure, and must not parse or compare the whole sentence.
@@ -86,9 +91,92 @@ all lowercase, and `ENGINE-INFO` is not folded into it. The failure answers are 
 On success the answer is `OK <base64-payload>`. The server only base64-decodes the request payload into **opaque bytes** for the handler,
 then base64-encodes the bytes the handler returns and sends them back; it does not parse the payload, does not record the payload content, and does not understand the `oc-debug` envelope.
 
-`REQ` is the only command in the protocol that requires login. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
+`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
 
 `hello` is the sample request provided by the `oc-hello` plugin: the payload is an ordinary UTF-8 name (not an envelope like `oc-debug`'s), and the answer is ordinary UTF-8 text as well.
+
+## Gameplay commands
+
+After a successful `LOGIN`, a connection may drive a unit, a building and the game's economy with the
+commands below. They are part of OC/1: the command words, the answers and the frame rules are the same
+over the WebSocket channel and over the encrypted TCP channel, because both transports execute the same
+command dispatcher.
+
+### Grammar
+
+```text
+WHOAMI                                      -> OK player <id>            (needs LOGIN)
+ORDER MOVE <entityId> <x> <y>               -> OK                        (needs LOGIN, entity must belong to the player)
+ORDER ATTACK <entityId> <targetId>          -> OK                        (needs LOGIN, entity must belong to the player)
+ORDER ATTACKMOVE <entityId> <x> <y>         -> OK                        (needs LOGIN, entity must belong to the player)
+ORDER STOP <entityId>                       -> OK                        (needs LOGIN, entity must belong to the player)
+BUILD <engineerId> <buildingPath> <x> <y>   -> OK <buildingId> | ERR ...  (needs LOGIN, engineer must belong to the player)
+TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (needs LOGIN, building must belong to the player)
+```
+
+- `<entityId>`, `<targetId>` and `<buildingId>` are decimal entity ids from `/world/snapshot`.
+- `<x>` and `<y>` are decimal tile coordinates.
+- `<buildingPath>` and `<unitPath>` are content paths without the namespace, for example
+  `building.armory.t1` or `unit.melee.t4`.
+- The command word is case-insensitive like every other command word; the `ORDER` sub-word is
+  case-insensitive too (`MOVE` and `move` mean the same thing). Content paths and arguments are not folded.
+
+### Login and identity
+
+Every command in this section requires a **successful `LOGIN` on the same connection**. Without one the
+server answers exactly `ERR login first` and touches nothing, exactly like `REQ`. The connection's
+identity is created lazily, on its first gameplay command (including `WHOAMI`):
+
+- Player `1` owns the sample scene the server builds; player `2` is reserved for the classic plugin's
+  enemy AI. A human connection therefore receives the smallest unused id from `3` upwards. The host's
+  world ceiling is `8` players, so a default world offers human ids `3` through `8`, and keeps an id for
+  the life of the connection.
+- The id is the engine `Player` id and is the same number that appears in the `player` field of
+  `/world/snapshot` entities.
+- `WHOAMI` answers `OK player <id>`, creating the player on first use. A connection that is already
+  logged in but whose world cannot accept another player answers `ERR world full`.
+- A new login on the same connection resets its identity to "not yet assigned"; the next gameplay
+  command gets a player for the new login.
+
+### Ownership, existence and content
+
+Each command is validated when the world applies it, and a rejection names the rule:
+
+| Case | Answer |
+| --- | --- |
+| The entity or building does not exist, is dead, or is the wrong kind (for example a building id in `ORDER MOVE`) | `ERR unknown entity` |
+| The entity or building belongs to another player | `ERR not yours` |
+| Wrong argument count, or an id/coordinate that is not a decimal number | `ERR bad arguments` |
+| `BUILD` names a building path that is not in the served content | `ERR unknown building` |
+| `TRAIN` names a unit path that is not in the served content | `ERR unknown unit` |
+| `TRAIN` targets a building site (not finished) | `ERR building not finished` |
+| `TRAIN` targets a building that has no producer tags | `ERR building cannot produce` |
+| `TRAIN` names a unit no recipe produces in that building | `ERR no recipe for <unit> in <building>` |
+| `BUILD` cannot be paid from the player's warehouses | `ERR cannot afford <building> (needs <cost>)` |
+
+### Cost, production and the world step
+
+- `BUILD` charges the building type's cost from the player's warehouse network **once, when the site is
+  placed**. The reservation and the charge happen in the same world step as the placement, so a
+  production job cannot spend the same goods in between. A building the player cannot afford places
+  nothing and charges nothing; a placement that fails releases its reservation.
+- `TRAIN` queues one unit in an owned, finished producer. Whether the building's tier is high enough is
+  decided by the engine's production system, not by the command parser: a tier four recipe in a tier one
+  armory therefore answers `ERR ...` with the production system's reason and leaves the queue unchanged.
+- **The step boundary.** Client commands arrive on socket threads, but the world ticks on its own
+  thread. Every gameplay command is put on a queue and applied at the **start of the next fixed step**,
+  before the engine advances the simulation. The queue is FIFO: commands are applied in submission
+  order, one at a time, and the answer is produced when the command is applied (not when it is parsed).
+  A command can therefore never mutate the world while it is ticking, and the same command order always
+  produces the same simulation. If the world does not apply a command within the server's command
+  timeout, the client gets `ERR world busy`; if no world is hosted or it is not ticking, the answer is
+  `ERR world not available` or `ERR world not running`.
+
+### Compatibility
+
+The gameplay commands are additive. They change no existing command, answer, frame rule or handshake:
+`PING`, `REGISTER`, `LOGIN`, `COUNT`, `REQ` and `QUIT` answer exactly as before, and the protocol stays
+`OC/1`. An old client that never sends these commands is unaffected.
 
 ## base64 convention
 
@@ -166,10 +254,15 @@ Transport-layer error answers all start with `ERR `, and one command gets only o
 
 | Answer | Meaning |
 | --- | --- |
-| `ERR login first` | This connection has not successfully `LOGIN`ed, so `REQ` was rejected |
+| `ERR login first` | This connection has not successfully `LOGIN`ed, so `REQ` or a gameplay command was rejected |
 | `ERR unknown request` | `REQ`'s name is not registered, or the request shape/base64 is invalid |
 | `ERR request failed` | The handler threw, or returned `null` |
-| `ERR <message>` / `ERR <reason>` | Other rejections of `REGISTER`, `LOGIN`, `REQ`, with wording given by the server or the handler |
+| `ERR bad arguments` | A gameplay command has the wrong argument count or a non-numeric id/coordinate |
+| `ERR unknown entity` | A gameplay command names an entity or building that does not exist, is dead, or is the wrong kind |
+| `ERR not yours` | A gameplay command names an entity or building owned by another player |
+| `ERR unknown building` / `ERR unknown unit` | A `BUILD`/`TRAIN` content path is not in the served catalogue |
+| `ERR world not available` / `ERR world not running` / `ERR world stopped` / `ERR world full` / `ERR world busy` | No world is hosted, it is not ticking, it stopped before applying the command, it has no free player slot, or it did not apply the command in time |
+| `ERR <message>` / `ERR <reason>` | Other rejections of `REGISTER`, `LOGIN`, `REQ` and the gameplay commands, with wording given by the server, the engine or the handler |
 
 Errors inside the envelope are another layer, and never become transport-layer errors:
 
@@ -237,7 +330,8 @@ The server can also publish a live world for the browser view. The snapshot is *
 
 **This document's version number is the protocol's version number.** The current version is `1`, written on the wire as `HELLO 1` and `OK OC/1`.
 
-- When this document changes the frame rules, the command table, any answer, the base64 convention, the envelope layout, the key length, the window length, or the magic, the version number must increase (`2`, `OK OC/2`, and so on), and this document, the server, and the client must be changed together.
+- When this document changes an existing frame rule, an existing command, any existing answer, the base64 convention, the envelope layout, the key length, the window length, or the magic, the version number must increase (`2`, `OK OC/2`, and so on), and this document, the server, and the client must be changed together.
+- Adding a command that an old client never sends is backward compatible and does not by itself require a version increase. The gameplay commands are such an addition: they keep OC/1 and leave every existing command byte-identical.
 - The version number is the **only** basis on which the two ends judge compatibility; do not guess compatibility from "the field still looks present" or "the string still parses".
 - Adding report fields only, or changing only the human-readable text of `REGISTER`/`LOGIN`, is not a protocol change; the client should not depend on that content anyway.
 - An old client meeting a new version receives a handshake answer other than `OK OC/1` and disconnects under the handshake rules; a new client meeting an old server does the same. This is the deliberate failure mode: refusing is safer than half-compatibility.

@@ -13,7 +13,7 @@
 | 基础包 | `io.github.sob1234509876.oc.server`，其下是 `.auth`、`.net`、`.plugin`、`.ws`、`.world` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖**（托管的 RTS 世界来自仓库内的引擎模块） |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（513 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（593 项检查，无测试框架，无网络） |
 | TCP 信道 | 加密，默认 `25566`（`--port`） |
 | 浏览器端点 | HTTP/WebSocket，默认 `25567`（`--http-port`；`0` 关闭它） |
 | 帮助 | [`help/README.md`](help/README.md) —— 五章，中文 |
@@ -28,10 +28,10 @@
 自检末尾打印一行：
 
 ```text
-game server self check: all 513 checks passed.
+game server self check: all 593 checks passed.
 ```
 
-513 条是 `ServerCheck` 依次调用的八个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（升级、版本握手、帧规则与来源规则）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、快照 JSON、种子确定性、`/world/snapshot` 的 200/503/405）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
+593 条是 `ServerCheck` 依次调用的十个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（升级、版本握手、帧规则与来源规则）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、快照 JSON、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 57 条（`WHOAMI`、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
 
 `server` 任务用 `JavaExec` 运行 `OcGameServer`，标准输入接到进程，工作目录是仓库根，所以 `Ctrl+C` 能走到 shutdown hook，默认的 `--static-root web-client/dist` 也能解析到构建好的浏览器客户端。
 
@@ -56,13 +56,15 @@ game server self check: all 513 checks passed.
 
 **账号。** `LocalUserStore` 在 `data/users.txt` 里一行存一个账号：名字、十六进制哈希、十六进制盐、迭代次数、注册时间与最近登录时间，每个字段里的 `%`、制表符、CR 和 LF 都做了百分号转义。密码用 PBKDF2-HMAC-SHA256 哈希，派生密钥 256 位，盐是 `SecureRandom` 取的 16 字节，默认迭代 210000 次；迭代次数跟着记录一起存，所以调高默认值只影响新注册。`flush()` 先写同目录的 `users.txt.tmp`，再用原子移动覆盖整个文件，注册与登录成功时都当场落盘，因此崩溃后留下的要么是旧的完整文件，要么是新的完整文件。
 
-**加密信道。** 一条普通 TCP socket 上走三步：临时 X25519 密钥交换、用 HKDF-SHA256 从共享秘密导出 32 字节会话密钥、然后 AES-256-GCM 分帧。客户端 hello 是 37 字节，服务器 hello 是 69 字节；每个方向各有 4 字节 nonce 前缀与 64 位计数器，一帧是 4 字节大端长度加上密文与它的 128 位认证标签，计数器让重放的帧通不过标签校验。帧之上是行协议：`PING`、`REGISTER`、`LOGIN`、`COUNT`、`REQ`、`QUIT`。
+**加密信道。** 一条普通 TCP socket 上走三步：临时 X25519 密钥交换、用 HKDF-SHA256 从共享秘密导出 32 字节会话密钥、然后 AES-256-GCM 分帧。客户端 hello 是 37 字节，服务器 hello 是 69 字节；每个方向各有 4 字节 nonce 前缀与 64 位计数器，一帧是 4 字节大端长度加上密文与它的 128 位认证标签，计数器让重放的帧通不过标签校验。帧之上是行协议：`PING`、`REGISTER`、`LOGIN`、`COUNT`、`REQ`、`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`QUIT`。
 
 **浏览器端点。** `GET` 与 `HEAD` 从 `--static-root`（构建好的浏览器客户端）发出；`/ws` 升级成 RFC 6455 WebSocket，第一个文本帧必须是 `HELLO 1`，服务器答 `OK OC/1`；`/plugin-assets/...` 从插件 jar 里发 `assets/`，所有插件的 `assets/manifest.json` 在 `/plugin-assets/manifest.json` 合并成一个数组；`GET /world/snapshot` 用 `application/json; charset=utf-8` 与 `Cache-Control: no-store` 发布托管世界的快照，世界关闭时回答 `503 the world is not running`。它是明文 HTTP/WS 监听器、没有 TLS，适合本机或放在反向代理后面；`--http-port 0` 会把它（以及世界）整个去掉。
 
 **插件加载器。** `PluginLoader` 按文件名顺序扫描 `plugins/*.jar`，给每个 jar 一个自己的 `URLClassLoader`。URL 列表先是这个 jar 自己，然后是目录里其他所有 jar（按文件名排序），所以把依赖 jar 丢进同一目录就算装好依赖，而插件自带的库副本又赢过目录里的那份。类加载器有意**永不关闭**：关掉的 `URLClassLoader` 再也不能定义它此前没碰过的类、也读不出没读过的资源，那正是按需加载的插件以后会撞上的 `NoClassDefFoundError`。插件由 `omnicom-plugin.properties`（`id`、`version`、`main`、`description`）描述，生命周期是 `onLoad` → `onEnable` → `onDisable`。
 
-**只读请求缝。** 插件用匹配 `[a-z0-9-]{1,32}` 的名字把 `RequestHandler` 发布进 `RequestRegistry`；`byte[] handle(byte[] request)` 就是全部合同。客户端发 `REQ <名字> <base64 载荷>`，服务器 base64 解码、把确切字节交给处理器、再把答复 base64 编码，两边都不解析。`REQ` 是唯一要求同一条连接上成功 `LOGIN` 过的命令：没登录时直接回 `ERR login first`，处理器根本不会被调用。名字没注册、名字过长或载荷不是合法 base64 都是 `ERR unknown request`，处理器抛异常是 `ERR request failed`。
+**只读请求缝。** 插件用匹配 `[a-z0-9-]{1,32}` 的名字把 `RequestHandler` 发布进 `RequestRegistry`；`byte[] handle(byte[] request)` 就是全部合同。客户端发 `REQ <名字> <base64 载荷>`，服务器 base64 解码、把确切字节交给处理器、再把答复 base64 编码，两边都不解析。`REQ` 和游戏命令都要求同一条连接上成功 `LOGIN` 过：没登录时直接回 `ERR login first`，处理器根本不会被调用。名字没注册、名字过长或载荷不是合法 base64 都是 `ERR unknown request`，处理器抛异常是 `ERR request failed`。
+
+**游戏命令。** `WHOAMI`、`ORDER`、`BUILD`、`TRAIN` 与浏览器端点共用同一个 `CommandDispatcher`，但由 `WorldHost` 在下一个固定步的起点、在世界线程上应用。`WHOAMI` 惰性创建连接的玩家（第一个真人是玩家 3；玩家 1 是样例场景，玩家 2 留给经典 AI），`ORDER` 校验所有权与存在性，`BUILD` 在放置时从玩家仓库一次性扣除建筑成本，`TRAIN` 让引擎的 `ProductionSystem` 决定等级门槛。线上语法见 `protocol/oc-protocol_zh_CN.md`。
 
 **定时保存与关闭顺序。** 名为 `oc-autosave` 的 daemon 定时器每 `--save-seconds` 秒（默认 60）把用户记录写盘一次，没有改动时是空操作。`stop()` 随后按固定顺序执行：先停定时器，在 socket 还开着时调每个插件的 `onDisable()`，关掉 TCP 监听与它的客户端，关掉浏览器端点（给活着的 WebSocket 发关闭码 `1001`），在没有任何请求能再读世界之后停掉 tick 线程，最后再写一次用户记录。
 
@@ -82,7 +84,7 @@ game server self check: all 513 checks passed.
 ```text
 src/main/java/module-info.java          导出六个包，requires RTS 引擎
 src/main/java/.../server/               上面那六个包
-src/selfcheck/java/.../server/check/    513 条检查的自检程序
+src/selfcheck/java/.../server/check/    593 条检查的自检程序
 help/                                   五章中文文档
 ```
 

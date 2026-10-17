@@ -4,7 +4,7 @@
 
 ## 这一篇讲什么
 
-- 怎么构建、怎么跑自校验，以及 513 条断言分别落在哪八组。
+- 怎么构建、怎么跑自校验，以及 593 条断言分别落在哪十组。
 - 启动器的全部命令行选项、默认值，以及解析器的脾气。
 - 插件目录、数据目录与浏览器静态根的默认位置，谁往里写什么。
 - 一次启动打印什么、一次关闭按什么顺序发生。
@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 513 checks passed.
+game server self check: all 593 checks passed.
 debug plugin self check: all 82 checks passed.
 ```
 
-513 条来自 `ServerCheck` 依次调用的八个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（真实 socket 上的升级、版本握手、帧规则、来源规则）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、JSON 形状、种子确定性、`/world/snapshot` 的 200/503/405）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
+593 条来自 `ServerCheck` 依次调用的十个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（真实 socket 上的升级、版本握手、帧规则、来源规则）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、JSON 形状、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 57 条（`WHOAMI`、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 
