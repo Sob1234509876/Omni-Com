@@ -5,11 +5,14 @@ import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
+import io.github.sob1234509876.oc.rts.combat.CombatStats;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
+import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
+import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
@@ -26,6 +29,7 @@ import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
+import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.rts.visual.AnimationClips;
@@ -74,6 +78,7 @@ public final class RtsScenario {
         checkDeterminism(check, content);
         checkHugeNumbers(check);
         checkDimensions(check, content);
+        checkCombat(check, content);
 
         check.summary("RTS engine scenario");
     }
@@ -848,6 +853,362 @@ public final class RtsScenario {
                     + " (reservation offered = " + reservable + ")");
         }
         check.note("cross dimension deliveries are shipped through gateways; hazards are still data only");
+    }
+
+    // ------------------------------------------------------------------ 12) combat
+
+    /** 10 damage, 3 tile range, 10 tick cooldown, 100 hit points: the attacker most cases use. */
+    private static final String DUELIST = "duelist";
+    /** Unarmed, 30 hit points: dies from three hits of 10. */
+    private static final String DUMMY = "dummy";
+    /** The same 30 hit points with armour 5, so a hit deals 5 and it needs six. */
+    private static final String TANK = "tank";
+    /** Fast armed unit used by the chase and attack-move checks. */
+    private static final String BRAWLER = "brawler";
+    /** Unarmed 20 hit point unit: two hits of 10. */
+    private static final String SENTINEL = "sentinel";
+    /** 3 hit points against a 50 armour attacker: the damage floor of one is what kills it. */
+    private static final String SLAB = "slab";
+    /** 5 hit points, so a 10 damage hit overkills it and the event has to report 5. */
+    private static final String FLEDGLING = "fledgling";
+    /** Deals exactly one damage per hit. */
+    private static final String PINPRICK = "pinprick";
+    /** Cannot attack at all. */
+    private static final String WEAKLING = "weakling";
+    /** Has damage but a range of zero, so it still cannot attack. */
+    private static final String STATUE = "statue";
+
+    /**
+     * Combat: damage, armour, range, deterministic target selection, the attack orders and the kill
+     * bookkeeping.
+     *
+     * <p>Every case gets a fresh flat world with two players, so a failure cannot leak into the next
+     * case. The numbers are exact integers, so the tick a unit dies on is predictable and is asserted
+     * explicitly instead of "eventually".
+     */
+    private static void checkCombat(Check check, ContentRegistry scenarioContent) {
+        check.section("12) combat: damage, armour, range, targeting and attack orders");
+        ContentRegistry content = combatContent();
+        Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
+        Player red = Player.of(2, "Red", 0xFFEF5350);
+
+        // --- the combat view is a projection of the catalogue, not a second copy of its numbers
+        CombatStats soldier = CombatStats.of(scenarioContent.unit(ScenarioContent.SOLDIER));
+        check.equal(12L, soldier.attackDamage(), "the combat view reuses the catalogue's attack damage");
+        check.close(4.5f, soldier.attackRange(), 1e-6f, "the combat view reuses the catalogue's attack range");
+        check.equal(20, soldier.attackCooldownTicks(), "the combat view reuses the catalogue's attack cooldown");
+        check.equal(120L, soldier.maxHealth(), "the combat view reuses the catalogue's hit points");
+        check.equal(0, soldier.armour(), "armour defaults to zero when content does not set it");
+        check.that(soldier.canAttack(), "a soldier can attack");
+
+        // --- two units of different players in range fight, and exactly one dies on a known tick
+        OcRtsEngine duel = combatEngine(content, blue, red);
+        World duelWorld = duel.world();
+        List<Natural> duelAmounts = new ArrayList<>();
+        List<Events.EntityKilled> kills = new ArrayList<>();
+        duelWorld.events().subscribe(Events.DamageDealt.class, event -> duelAmounts.add(event.amount()));
+        duelWorld.events().subscribe(Events.EntityKilled.class, kills::add);
+        Unit fighter = duelWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit victim = duelWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.5f, 10.5f));
+        duel.tick(60);
+        check.that(fighter.isAlive() && !victim.isAlive(),
+                "of two units in range exactly the unarmed one dies");
+        check.equal(1, kills.size(), "exactly one kill was published");
+        if (kills.size() == 1) {
+            check.equal(fighter.id(), kills.get(0).killer().id(), "the duelist is recorded as the killer");
+            check.equal(victim.id(), kills.get(0).victim().id(), "the dummy is recorded as the victim");
+            check.equal(21L, kills.get(0).tick(),
+                    "30 hit points at 10 damage every 10 ticks die on tick 21");
+        }
+        check.equal(List.of(Natural.of(10), Natural.of(10), Natural.of(10)), duelAmounts,
+                "the DamageDealt events carry the three hits of ten");
+
+        // --- overkill: the event reports what was subtracted, not what the attacker could have dealt
+        OcRtsEngine overkill = combatEngine(content, blue, red);
+        World overkillWorld = overkill.world();
+        List<Natural> overkillAmounts = new ArrayList<>();
+        overkillWorld.events().subscribe(Events.DamageDealt.class, event -> overkillAmounts.add(event.amount()));
+        overkillWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit fledgling = overkillWorld.spawnUnit(content.unit(FLEDGLING), red, new Vec2(11.5f, 10.5f));
+        overkill.tick(2);
+        check.equal(List.of(Natural.of(5)), overkillAmounts,
+                "a 10 damage hit on 5 hit points reports the 5 that were subtracted");
+        check.that(!fledgling.isAlive(), "and the overkill still kills the target");
+
+        // --- armour reduces damage: the same hit points with armour 5 need twice as many hits
+        long unarmouredDeath = deathTick(content, blue, red, DUMMY);
+        long armouredDeath = deathTick(content, blue, red, TANK);
+        check.equal(21L, unarmouredDeath, "without armour the 30 hit point dummy dies on tick 21");
+        check.equal(51L, armouredDeath, "armour 5 halves a 10 damage hit, so six hits: tick 51");
+        check.that(armouredDeath > unarmouredDeath,
+                "more armour dies later (" + unarmouredDeath + " -> " + armouredDeath + ")");
+        check.equal(5L, CombatStats.of(content.unit(DUELIST))
+                        .damageAgainst(CombatStats.of(content.unit(TANK))),
+                "armour 5 turns 10 damage into 5");
+
+        // --- range is real: out of range means no damage, exactly at the range means a hit
+        OcRtsEngine far = combatEngine(content, blue, red);
+        World farWorld = far.world();
+        List<Events.DamageDealt> farDamage = new ArrayList<>();
+        farWorld.events().subscribe(Events.DamageDealt.class, farDamage::add);
+        Unit watcher = farWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit outOfReach = farWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(16.5f, 10.5f));
+        far.tick(60);
+        check.equal(0, farDamage.size(), "a unit out of range deals no damage at all");
+        check.equal(30L, outOfReach.health().current(), "and the enemy keeps every hit point");
+        check.that(!watcher.hasTarget(), "and no target is acquired outside the attack range");
+
+        OcRtsEngine edge = combatEngine(content, blue, red);
+        edge.world().spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit edgeTarget = edge.world().spawnUnit(content.unit(DUMMY), red, new Vec2(13.5f, 10.5f));
+        edge.tick(1);
+        check.equal(20L, edgeTarget.health().current(),
+                "an enemy standing exactly on the attack range of 3 tiles is hit");
+
+        // --- target selection: nearest wins, equal distances are broken by entity id
+        OcRtsEngine nearest = combatEngine(content, blue, red);
+        World nearestWorld = nearest.world();
+        Unit hunter = nearestWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit fartherLowerId = nearestWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(13.5f, 10.5f));
+        Unit nearerHigherId = nearestWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.5f, 10.5f));
+        nearest.tick(1);
+        check.that(nearerHigherId.id().compareTo(fartherLowerId.id()) > 0,
+                "the nearer enemy really has the higher id");
+        check.equal(nearerHigherId.id(), hunter.targetId(),
+                "the nearest enemy is chosen even when it has the higher id");
+        check.equal(20L, nearerHigherId.health().current(), "the nearer enemy took the hit");
+        check.equal(30L, fartherLowerId.health().current(), "the farther enemy is untouched");
+
+        OcRtsEngine tie = combatEngine(content, blue, red);
+        World tieWorld = tie.world();
+        Unit tieHunter = tieWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit tieFirst = tieWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(8.5f, 10.5f));
+        Unit tieSecond = tieWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(12.5f, 10.5f));
+        tie.tick(1);
+        check.that(tieFirst.id().compareTo(tieSecond.id()) < 0,
+                "the first spawned enemy of the tie has the lower id");
+        check.equal(tieFirst.id(), tieHunter.targetId(),
+                "equal distances are broken by entity id, lower id first");
+        check.equal(20L, tieFirst.health().current(), "the lower id enemy took the hit");
+        check.equal(30L, tieSecond.health().current(), "the equal distance enemy with the higher id did not");
+
+        // --- an attack-move engages en route, stands still for the fight, then resumes
+        OcRtsEngine march = combatEngine(content, blue, red);
+        World marchWorld = march.world();
+        List<Events.DamageDealt> marchHits = new ArrayList<>();
+        List<Vec2> hitPositions = new ArrayList<>();
+        marchWorld.events().subscribe(Events.DamageDealt.class, event -> {
+            marchHits.add(event);
+            if (event.source() instanceof Unit source) {
+                hitPositions.add(source.position());
+            }
+        });
+        Unit marcher = marchWorld.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        Unit sentinel = marchWorld.spawnUnit(content.unit(SENTINEL), red, new Vec2(20.5f, 10.5f));
+        GridPos marchTarget = new GridPos(30, 10);
+        march.commands().attackMove(marcher, marchTarget);
+        boolean finished = march.tickUntil(engine -> !marcher.orders().hasCurrent()
+                && marcher.position().distance(marchTarget.center()) <= 2.5f, 1200);
+        check.that(!sentinel.isAlive(), "the attack-move unit kills the enemy standing on its path");
+        check.equal(2, marchHits.size(), "it needed exactly two hits for the 20 hit point sentinel");
+        check.that(finished && !marcher.orders().hasCurrent(),
+                "and the order still finishes at its destination");
+        if (hitPositions.size() == 2) {
+            check.atMost(0.5f, hitPositions.get(0).distance(hitPositions.get(1)),
+                    "it stood still between the two hits instead of walking past the fight");
+            check.atMost(20.5f, hitPositions.get(0).x(),
+                    "the fight happened before it reached the enemy (x " + round(hitPositions.get(0).x()) + ")");
+            check.atLeast(5f, marcher.position().x() - hitPositions.get(1).x(),
+                    "it resumed the march after the enemy died");
+        }
+
+        // --- an explicit attack order chases a target that starts out of range
+        OcRtsEngine chase = combatEngine(content, blue, red);
+        World chaseWorld = chase.world();
+        List<Events.EntityKilled> chaseKills = new ArrayList<>();
+        chaseWorld.events().subscribe(Events.EntityKilled.class, chaseKills::add);
+        Unit chaser = chaseWorld.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        Unit runner = chaseWorld.spawnUnit(content.unit(SENTINEL), red, new Vec2(20.5f, 10.5f));
+        chase.commands().attack(chaser, runner.id());
+        chase.tick(400);
+        check.that(!runner.isAlive(), "an attack order chases a target that starts out of range");
+        check.equal(1, chaseKills.size(), "and publishes exactly one kill");
+        check.that(!chaser.orders().hasCurrent(), "the order ends when the target dies");
+
+        OcRtsEngine ghost = combatEngine(content, blue, red);
+        List<Events.OrderFinished> ghostFinishes = new ArrayList<>();
+        ghost.world().events().subscribe(Events.OrderFinished.class, ghostFinishes::add);
+        Unit confused = ghost.world().spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        ghost.commands().attack(confused, EntityId.of(999_999L));
+        ghost.tick(2);
+        check.that(!confused.orders().hasCurrent(), "an attack order for an unknown id fails instead of hanging");
+        check.equal(1, ghostFinishes.size(), "it reports exactly one finished order");
+        if (ghostFinishes.size() == 1) {
+            check.equal(OrderState.FAILED, ghostFinishes.get(0).state(),
+                    "and reports it as FAILED, like a move order that cannot reach its destination");
+        }
+
+        // --- a kill removes the unit and drops its id from every other unit's target
+        OcRtsEngine pack = combatEngine(content, blue, red);
+        World packWorld = pack.world();
+        List<Unit> aimedAtVictim = new ArrayList<>();
+        packWorld.events().subscribe(Events.EntityKilled.class, event -> {
+            for (Unit unit : packWorld.units()) {
+                if (event.victim().id().equals(unit.targetId())) {
+                    aimedAtVictim.add(unit);
+                }
+            }
+        });
+        Unit first = packWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        Unit second = packWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 11.5f));
+        Unit prey = packWorld.spawnUnit(content.unit(SENTINEL), red, new Vec2(11.5f, 11.5f));
+        EntityId preyId = prey.id();
+        pack.tick(2);
+        check.that(!prey.isAlive(), "the focused unit is killed");
+        check.equal(2, aimedAtVictim.size(),
+                "both attackers had it in their target slot when it died");
+        check.that(packWorld.findEntity(preyId).isEmpty(), "the killed unit is removed from the world");
+        check.that(packWorld.spatial().inRadius(new Vec2(11.5f, 11.5f), 2f).stream()
+                        .noneMatch(entity -> entity.id().equals(preyId)),
+                "and its body left the spatial index");
+        check.that(packWorld.units().stream().noneMatch(unit -> preyId.equals(unit.targetId())),
+                "and its id is dropped from every surviving unit's target");
+        check.equal(2, packWorld.units().size(), "the two attackers remain");
+
+        // --- damage is never below one: 1 damage against 50 armour still hits for 1
+        OcRtsEngine flail = combatEngine(content, blue, red);
+        World flailWorld = flail.world();
+        List<Natural> amounts = new ArrayList<>();
+        flailWorld.events().subscribe(Events.DamageDealt.class, event -> amounts.add(event.amount()));
+        flailWorld.spawnUnit(content.unit(PINPRICK), blue, new Vec2(10.5f, 10.5f));
+        Unit slab = flailWorld.spawnUnit(content.unit(SLAB), red, new Vec2(11.5f, 10.5f));
+        flail.tick(20);
+        check.equal(3, amounts.size(), "a 1 damage hit against 50 armour still lands: three hits, three events");
+        boolean neverBelowOne = true;
+        for (Natural amount : amounts) {
+            neverBelowOne &= amount.compareTo(Natural.ONE) >= 0;
+        }
+        check.that(neverBelowOne, "no hit ever deals less than one damage " + amounts);
+        check.equal(List.of(Natural.ONE, Natural.ONE, Natural.ONE), amounts, "each hit deals exactly one");
+        check.that(!slab.isAlive(), "three hits of one kill the 3 hit point target");
+
+        // --- a unit without attack damage never attacks
+        OcRtsEngine peaceful = combatEngine(content, blue, red);
+        World peacefulWorld = peaceful.world();
+        List<Events.DamageDealt> peacefulDamage = new ArrayList<>();
+        peacefulWorld.events().subscribe(Events.DamageDealt.class, peacefulDamage::add);
+        Unit unarmed = peacefulWorld.spawnUnit(content.unit(WEAKLING), blue, new Vec2(10.5f, 10.5f));
+        Unit bully = peacefulWorld.spawnUnit(content.unit(DUELIST), red, new Vec2(11.5f, 10.5f));
+        peaceful.tick(30);
+        check.that(!unarmed.combat().canAttack(), "a unit without attack damage cannot attack");
+        check.that(unarmed.targetId() == null, "and it never acquires a target");
+        boolean onlyBullyHit = !peacefulDamage.isEmpty()
+                && peacefulDamage.stream().allMatch(event -> event.source() == bully);
+        check.that(onlyBullyHit, "it publishes no damage event while the armed enemy does the hitting");
+        check.equal(70L, unarmed.health().current(),
+                "the unarmed unit only loses hit points (three hits of 10 by tick 30)");
+        check.that(!CombatStats.of(content.unit(STATUE)).canAttack(),
+                "damage with an attack range of zero cannot attack either");
+
+        // --- the same seed and the same order sequence produce the same fight twice
+        List<String> firstRun = combatFingerprint(content, blue, red, 707L);
+        List<String> secondRun = combatFingerprint(content, blue, red, 707L);
+        check.atLeast(6f, firstRun.size(), "the scripted fight produced events and unit states to compare");
+        check.that(firstRun.equals(secondRun), "two runs of the same seed and order sequence are identical,"
+                + " hit for hit (" + firstRun.size() + " observations)");
+    }
+
+    /**
+     * Damage, range, armour and cooldown of the units the combat checks use. Deliberately tiny: a
+     * separate catalogue proves the engine reads combat numbers as data and lets each case pick exact
+     * values, so death ticks are arithmetic instead of guesswork. Speeds are near zero for the units
+     * that must stand still (a unit is only ever pushed by neighbours once their bodies touch, and a
+     * speed of 0.05 makes even that drift negligible).
+     */
+    private static ContentRegistry combatContent() {
+        return ContentRegistry.builder("combat")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .unit(DUELIST).name("Duelist").role(UnitRole.COMBAT).health(100).speed(0.05f).radius(0.35f)
+                .attack(10f, 3f).attackCooldown(10).armour(0).spriteSet(DUELIST)
+                .unit(DUMMY).name("Dummy").role(UnitRole.SUPPORT).health(30).speed(0.05f).radius(0.35f)
+                .spriteSet(DUMMY)
+                .unit(TANK).name("Tank").role(UnitRole.SUPPORT).health(30).speed(0.05f).radius(0.35f)
+                .armour(5).spriteSet(TANK)
+                .unit(BRAWLER).name("Brawler").role(UnitRole.COMBAT).health(100).speed(2f).radius(0.35f)
+                .attack(10f, 2f).attackCooldown(20).spriteSet(BRAWLER)
+                .unit(SENTINEL).name("Sentinel").role(UnitRole.SUPPORT).health(20).speed(0.05f).radius(0.35f)
+                .spriteSet(SENTINEL)
+                .unit(FLEDGLING).name("Fledgling").role(UnitRole.SUPPORT).health(5).speed(0.05f).radius(0.35f)
+                .spriteSet(FLEDGLING)
+                .unit(SLAB).name("Slab").role(UnitRole.SUPPORT).health(3).speed(0.05f).radius(0.35f)
+                .armour(50).spriteSet(SLAB)
+                .unit(PINPRICK).name("Pinprick").role(UnitRole.COMBAT).health(100).speed(0.05f).radius(0.35f)
+                .attack(1f, 3f).attackCooldown(5).spriteSet(PINPRICK)
+                .unit(WEAKLING).name("Weakling").role(UnitRole.SUPPORT).health(100).speed(0.05f).radius(0.35f)
+                .spriteSet(WEAKLING)
+                .unit(STATUE).name("Statue").role(UnitRole.COMBAT).health(50).speed(0.05f).radius(0.35f)
+                .attack(5f, 0f).spriteSet(STATUE)
+                .build();
+    }
+
+    /** Flat two player world used by the combat checks. */
+    private static OcRtsEngine combatEngine(ContentRegistry content, Player blue, Player red) {
+        return combatEngine(content, blue, red, 5150L);
+    }
+
+    private static OcRtsEngine combatEngine(ContentRegistry content, Player blue, Player red, long seed) {
+        return OcRtsEngine.builder(content)
+                .seed(seed)
+                .generator(new FlatChunkGenerator(content.terrain("grass")))
+                .chunkSize(CHUNK_SIZE)
+                .viewRadiusChunks(2)
+                .directDelivery(true)
+                .player(blue)
+                .player(red)
+                .build();
+    }
+
+    /** Tick one duelist kills a unit type of, or {@code -1} when nothing died. */
+    private static long deathTick(ContentRegistry content, Player blue, Player red, String victimUnit) {
+        OcRtsEngine engine = combatEngine(content, blue, red);
+        List<Long> ticks = new ArrayList<>();
+        engine.world().events().subscribe(Events.EntityKilled.class, event -> ticks.add(event.tick()));
+        engine.world().spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        engine.world().spawnUnit(content.unit(victimUnit), red, new Vec2(11.5f, 10.5f));
+        engine.tick(80);
+        return ticks.isEmpty() ? -1L : ticks.get(0);
+    }
+
+    /**
+     * Runs one scripted skirmish and reports everything observable about it: the damage and kill events
+     * in order, then the state of every unit. Two calls with the same seed must produce the same list;
+     * float positions are compared bit for bit so a tiny drift cannot hide.
+     */
+    private static List<String> combatFingerprint(ContentRegistry content, Player blue, Player red, long seed) {
+        OcRtsEngine engine = combatEngine(content, blue, red, seed);
+        World world = engine.world();
+        List<String> result = new ArrayList<>();
+        world.events().subscribe(Events.DamageDealt.class,
+                event -> result.add("hit " + event.tick() + " " + event.source().id() + "->"
+                        + event.target().id() + " " + event.amount()));
+        world.events().subscribe(Events.EntityKilled.class,
+                event -> result.add("kill " + event.tick() + " " + event.victim().id()));
+        List<Unit> units = new ArrayList<>();
+        units.add(world.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f)));
+        units.add(world.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 11.5f)));
+        units.add(world.spawnUnit(content.unit(SENTINEL), red, new Vec2(20.5f, 10.5f)));
+        units.add(world.spawnUnit(content.unit(SENTINEL), red, new Vec2(20.5f, 11.5f)));
+        engine.commands().attackMove(units.get(0), new GridPos(30, 10));
+        engine.commands().attackMove(units.get(1), new GridPos(30, 11));
+        engine.tick(300);
+        for (Unit unit : units) {
+            result.add(unit.id() + " alive=" + unit.isAlive()
+                    + " hp=" + unit.health().current()
+                    + " target=" + unit.targetId()
+                    + " x=" + Float.floatToIntBits(unit.position().x())
+                    + " y=" + Float.floatToIntBits(unit.position().y()));
+        }
+        return result;
     }
 
     private static void checkHugeNumbers(Check check) {

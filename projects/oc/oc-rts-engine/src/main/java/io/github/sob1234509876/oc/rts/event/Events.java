@@ -40,6 +40,17 @@ public final class Events {
     public record DamageDealt(Entity target, Entity source, Natural amount, long tick) {
     }
 
+    /**
+     * A living entity's health reached zero because something hit it.
+     *
+     * <p>Published by {@link io.github.sob1234509876.oc.rts.combat.CombatSystem} immediately before
+     * {@link io.github.sob1234509876.oc.rts.World#destroy} marks the victim dead, so a subscriber still
+     * sees it in the world. {@code killer} is the attacker that landed the last hit and may be
+     * {@code null} when the source is unknown. {@code EntityDestroyed} follows, as for every removal.
+     */
+    public record EntityKilled(Entity victim, Entity killer, long tick) {
+    }
+
     /** A building was placed under construction and finished it. */
     public record ConstructionCompleted(Building building, long tick) {
     }

@@ -329,6 +329,10 @@ public final class World {
      * units it left behind and becomes one of the units it arrives among. {@code EntitySpawned} is published
      * for the arrival - subscribers index entities by that fact - followed by
      * {@link Events.EntityTransferred}, which is the one that says "same entity, new map".
+     *
+     * <p>Combat targets do not survive the trip: coordinates are local to a dimension, so an enemy left
+     * behind is neither reachable nor meaningfully aimed at. The moving unit's target is cleared and its id
+     * is dropped from every other unit's target.
      */
     public void transfer(Entity entity, DimensionId to, Vec2 position) {
         Objects.requireNonNull(entity, "entity");
@@ -343,7 +347,24 @@ public final class World {
         dimension(from).detach(entity);
         entity.setPosition(position);
         dimension(to).register(entity);
+        clearCombatTargets(entity);
         events.publish(new Events.EntityTransferred(entity, from, to, tickNumber));
+    }
+
+    /** Drops an entity from the combat target of every unit, including its own; see {@link #transfer}. */
+    private void clearCombatTargets(Entity moved) {
+        EntityId movedId = moved.id();
+        if (moved instanceof Unit unit) {
+            unit.clearTarget();
+        }
+        for (Dimension dimension : dimensions.values()) {
+            List<Unit> units = dimension.units();
+            for (int i = 0; i < units.size(); i++) {
+                if (movedId.equals(units.get(i).targetId())) {
+                    units.get(i).clearTarget();
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ clock

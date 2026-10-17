@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
@@ -41,6 +42,26 @@ public interface UnitDirector {
 
     /** Cancels the current order of the unit and tells it to stand still. */
     void stop(Unit unit);
+
+    /**
+     * Orders the unit to attack one specific entity and keep chasing it until it dies or the order is
+     * replaced.
+     *
+     * <p>The order walks the unit into range and holds it there; the damage is dealt by
+     * {@link io.github.sob1234509876.oc.rts.combat.CombatSystem} every time the unit's cooldown elapses.
+     * The target is resolved by id on every tick, so a target that was killed or removed ends the order
+     * instead of leaving the unit chasing nothing.
+     */
+    void attack(Unit unit, EntityId target);
+
+    /**
+     * Sends the unit towards the position, engaging any enemy that comes within its attack range on the
+     * way, then continuing to the position.
+     */
+    void attackMove(Unit unit, Vec2 destination);
+
+    /** Convenience for {@link #attackMove(Unit, Vec2)} with the centre of the tile. */
+    void attackMove(Unit unit, GridPos destination);
 
     /**
      * Sends the unit to another dimension, walking it through the gateways of the world.

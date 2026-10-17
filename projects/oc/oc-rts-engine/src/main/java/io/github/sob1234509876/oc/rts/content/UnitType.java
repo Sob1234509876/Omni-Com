@@ -8,11 +8,18 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Definition of one kind of unit: everything the simulation needs to spawn it, move it and later
- * fight with it.
+ * Definition of one kind of unit: everything the simulation needs to spawn it, move it and fight with
+ * it.
  *
- * <p>The attack values are part of the data model but no combat system reads them yet; they are
- * reserved for the combat layer so that scenarios do not have to be rewritten once it lands.
+ * <p>The combat values are data: {@link #attackDamage()}, {@link #attackRange()},
+ * {@link #attackCooldownTicks()} and {@link #armour()} are read by
+ * {@link io.github.sob1234509876.oc.rts.combat.CombatStats} and used by
+ * {@link io.github.sob1234509876.oc.rts.combat.CombatSystem}. A unit without attack damage, or with a
+ * range of zero, never attacks.
+ *
+ * <p>Armour is a flat damage reduction: an attack deals {@code max(1, damage - armour)}. It is a real
+ * field and the source of truth; content may additionally publish a tag (the classic catalogue writes
+ * {@code armour_<n>}) for display and content tooling, but no system reads the tag.
  */
 public final class UnitType implements Comparable<UnitType> {
 
@@ -30,6 +37,7 @@ public final class UnitType implements Comparable<UnitType> {
     private final Natural attackDamage;
     private final float attackRange;
     private final int attackCooldownTicks;
+    private final int armour;
 
     UnitType(
             ResourceKey key,
@@ -45,7 +53,8 @@ public final class UnitType implements Comparable<UnitType> {
             Set<String> tags,
             Natural attackDamage,
             float attackRange,
-            int attackCooldownTicks) {
+            int attackCooldownTicks,
+            int armour) {
         this.key = Objects.requireNonNull(key, "key");
         this.displayName = displayName == null ? key.path() : displayName;
         this.role = Objects.requireNonNull(role, "role");
@@ -60,6 +69,10 @@ public final class UnitType implements Comparable<UnitType> {
         this.attackDamage = attackDamage;
         this.attackRange = attackRange;
         this.attackCooldownTicks = attackCooldownTicks;
+        if (armour < 0) {
+            throw new IllegalArgumentException("armour must not be negative, was " + armour);
+        }
+        this.armour = armour;
     }
 
     public ResourceKey key() {
@@ -129,6 +142,17 @@ public final class UnitType implements Comparable<UnitType> {
 
     public int attackCooldownTicks() {
         return attackCooldownTicks;
+    }
+
+    /**
+     * Flat damage reduction of this unit: an attacker deals {@code max(1, damage - armour)}.
+     *
+     * <p>{@code 0} when the content did not set it, which is the default for every unit of the sample
+     * catalogue. This field is the source of truth; the classic catalogue additionally keeps an
+     * {@code armour_<n>} tag for display, and no system reads that tag.
+     */
+    public int armour() {
+        return armour;
     }
 
     public boolean canAttack() {

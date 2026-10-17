@@ -5,6 +5,7 @@ module oc.projects.oc.rts.engine {
     requires transitive oc.projects.oc.googology;
 
     exports io.github.sob1234509876.oc.rts;
+    exports io.github.sob1234509876.oc.rts.combat;
     exports io.github.sob1234509876.oc.rts.core;
     exports io.github.sob1234509876.oc.rts.content;
     exports io.github.sob1234509876.oc.rts.dimension;

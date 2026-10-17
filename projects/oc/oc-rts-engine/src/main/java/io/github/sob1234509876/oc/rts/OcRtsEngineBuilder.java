@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts;
 
+import io.github.sob1234509876.oc.rts.combat.CombatSystem;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
@@ -47,8 +48,8 @@ import java.util.Objects;
  * }</pre>
  *
  * <p>The pipeline is wired with the documented phases: chunk streaming (100), orders (200), path
- * requests (300), movement (400), construction (500), production (600), hauling (700) and animation
- * (800).
+ * requests (300), movement (400), combat (450), construction (500), production (600), hauling (700) and
+ * animation (800).
  */
 public final class OcRtsEngineBuilder {
 
@@ -239,6 +240,9 @@ public final class OcRtsEngineBuilder {
         PathService pathService = new PathService(world, pathRequestsPerTick, pathNodeBudgetPerTick);
         pipeline.add(pathService);
         pipeline.add(new MovementSystem(world, pathService));
+        // Combat sits directly after movement: it sees the positions the units actually reached this tick
+        // and the orders have already decided where they wanted to go.
+        pipeline.add(new CombatSystem(world));
 
         CommandService commands = new CommandService(world);
         world.setDirector(commands);

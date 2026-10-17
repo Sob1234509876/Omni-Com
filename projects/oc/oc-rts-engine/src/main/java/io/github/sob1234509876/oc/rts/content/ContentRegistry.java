@@ -423,7 +423,27 @@ public final class ContentRegistry {
         }
 
         public Builder attackCooldown(int ticks) {
+            if (ticks < 0) {
+                throw new IllegalArgumentException("an attack cooldown must not be negative, was " + ticks);
+            }
             draft(UnitDraft.class, "unit").attackCooldownTicks = ticks;
+            return this;
+        }
+
+        /**
+         * Flat damage reduction of the current unit: every hit against it deals
+         * {@code max(1, damage - armour)}. {@code 0} (the default) means no reduction.
+         *
+         * <p>This sets the real {@link UnitType#armour()} field the combat system reads. Content may keep
+         * publishing an {@code armour_<n>} tag for display, but the tag is not a mechanic.
+         *
+         * @throws IllegalArgumentException when the value is negative
+         */
+        public Builder armour(int value) {
+            if (value < 0) {
+                throw new IllegalArgumentException("armour must not be negative, was " + value);
+            }
+            draft(UnitDraft.class, "unit").armour = value;
             return this;
         }
 
@@ -591,7 +611,8 @@ public final class ContentRegistry {
                             unit.tags,
                             unit.attackDamage,
                             unit.attackRange,
-                            unit.attackCooldownTicks);
+                            unit.attackCooldownTicks,
+                            unit.armour);
                     if (type.speed() <= 0f) {
                         throw new IllegalStateException("unit " + type.key() + " must have a positive speed");
                     }
@@ -776,6 +797,7 @@ public final class ContentRegistry {
         Natural attackDamage = Natural.ZERO;
         float attackRange;
         int attackCooldownTicks = 60;
+        int armour;
         int buildTimeTicks = 100;
         Natural cargoCapacity = Natural.ZERO;
         String spriteSet = "unit/unknown";

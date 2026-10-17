@@ -31,10 +31,11 @@ import java.util.Objects;
  * </table>
  *
  * <p>The engineer is a {@link UnitRole#SUPPORT} unit with the {@code builder} tag and a cargo hold, so a
- * later stage can make it build and haul. <strong>Armour is content data, not a mechanic</strong>: the engine
- * has no damage reduction model yet (its attack values are likewise reserved for the combat layer), so the
- * armour column is published by {@link #meleeTiers()} and carried as the tag {@code armour_<n>} on the unit.
- * The check asserts it ascends; no system consumes it yet.
+ * later stage can make it build and haul. <strong>Armour is a real engine field</strong>:
+ * {@link io.github.sob1234509876.oc.rts.content.UnitType#armour()} is damage reduction, set here with
+ * {@code .armour(n)}, and the combat layer turns it into {@code max(1, damage - armour)} per hit. The
+ * {@code armour_<n>} tag is kept alongside the field for display and content tooling; no system reads the
+ * tag.
  *
  * <p><strong>Buildings and the tier rule.</strong> {@code building.armory.t1} is level 1 and
  * {@code building.armory.t2} is level 2; both carry the producer tag {@code armory}, so the recipes are
@@ -118,14 +119,14 @@ public final class ClassicContent implements WorldContent {
     private static final String WATER = "water";
 
     /**
-     * One melee tier: the numbers the engine takes from it and the two the engine has no field for.
+     * One melee tier: the numbers the engine takes from it.
      *
      * @param tier the tier number, 1 to 5
      * @param unitPath content path of the unit
      * @param displayName Chinese display name
      * @param health hit points
      * @param damage damage per hit
-     * @param armour armour value; content data until a combat stage reads it
+     * @param armour flat damage reduction, applied by the engine's combat layer
      * @param costGold cost in gold
      * @param buildTimeTicks production time in ticks
      */
@@ -236,6 +237,7 @@ public final class ClassicContent implements WorldContent {
                     .buildTime(tier.buildTimeTicks())
                     .attack((float) tier.damage(), 0.9f)
                     .attackCooldown(30)
+                    .armour(tier.armour())
                     .spriteSet(tier.unitPath())
                     .tag("melee")
                     .tag("tier_" + tier.tier())
@@ -254,6 +256,7 @@ public final class ClassicContent implements WorldContent {
                 .cargo(60)
                 .attack(2f, 0.6f)
                 .attackCooldown(30)
+                .armour(0)
                 .spriteSet(ENGINEER)
                 .tag("builder")
                 .tag("armour_0");

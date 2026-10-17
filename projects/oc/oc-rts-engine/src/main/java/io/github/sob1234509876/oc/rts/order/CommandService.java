@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.rts.order;
 
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
+import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -96,6 +97,30 @@ public final class CommandService implements UnitDirector {
             return;
         }
         unit.orders().replace(context(unit), new TransferOrder(target));
+    }
+
+    @Override
+    public void attack(Unit unit, EntityId target) {
+        Objects.requireNonNull(target, "target");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().replace(context(unit), new AttackOrder(target));
+    }
+
+    @Override
+    public void attackMove(Unit unit, Vec2 destination) {
+        Objects.requireNonNull(destination, "destination");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().replace(context(unit), new AttackMoveOrder(destination));
+    }
+
+    @Override
+    public void attackMove(Unit unit, GridPos destination) {
+        Objects.requireNonNull(destination, "destination");
+        attackMove(unit, destination.center());
     }
 
     @Override

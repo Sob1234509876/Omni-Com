@@ -20,7 +20,7 @@ public interface SimulationSystem {
 
     /**
      * Phase of this system; lower runs earlier. Suggested values: 100 map streaming, 200 orders,
-     * 300 path requests, 400 movement, 500 construction, 600 production, 700 logistics,
+     * 300 path requests, 400 movement, 450 combat, 500 construction, 600 production, 700 logistics,
      * 800 animation, 900 cleanup.
      */
     default int order() {
