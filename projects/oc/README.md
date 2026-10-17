@@ -1,3 +1,5 @@
+English | [简体中文](README_zh_CN.md)
+
 # Omni Com (project group)
 
 Modules of the `projects:oc` group.

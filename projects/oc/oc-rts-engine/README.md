@@ -1,3 +1,5 @@
+English | [简体中文](README_zh_CN.md)
+
 # Omni Com RTS Engine
 
 `projects:oc:oc-rts-engine` — the headless engine for the Omni Com real-time strategy game: world,

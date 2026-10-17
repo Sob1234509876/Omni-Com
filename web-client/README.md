@@ -1,37 +1,39 @@
+English | [简体中文](README_zh_CN.md)
+
 # oc-web-client
 
-> Omni Com 的可选浏览器客户端。它通过 WebSocket 与 Java 服务器对话，只使用 DOM、Canvas 2D 与 WebCrypto，不依赖前端框架。
+> Omni Com's optional browser client. It talks to the Java server over WebSocket and uses only DOM, Canvas 2D, and WebCrypto; it depends on no frontend framework.
 
-## 并行工具链
+## Parallel toolchains
 
-这个仓库的 Java 侧与 Web 侧是**完全并行**的两套工具链，谁也不调用谁：
+The Java side and the Web side of this repository are two **completely parallel** toolchains, and neither calls the other:
 
-| | Java 侧 | Web 侧 |
+| | Java side | Web side |
 | --- | --- | --- |
-| 构建工具 | Gradle wrapper（`gradlew` / `gradlew.bat`） | pnpm |
-| 第三方依赖 | **零**；只用 JDK 17 与 JPMS | `typescript`、`vite` 两个 devDependencies |
-| 网络 | 不需要；`./gradlew build --offline` 可构建并跑自校验 | 第一次 `pnpm install` **需要网络**；之后可离线 dev/build |
-| 谁调用谁 | Gradle **从不**调用 npm 或 pnpm | pnpm **从不**调用 Gradle |
+| Build tool | Gradle wrapper (`gradlew` / `gradlew.bat`) | pnpm |
+| Third-party dependencies | **Zero**; only JDK 17 and JPMS | the two devDependencies `typescript` and `vite` |
+| Network | Not needed; `./gradlew build --offline` builds and runs the self-checks | the first `pnpm install` **needs the network**; dev/build works offline afterwards |
+| Who calls whom | Gradle **never** calls npm or pnpm | pnpm **never** calls Gradle |
 
-由此得到两条硬规则：
+That gives two hard rules:
 
-1. `./gradlew build --offline` 必须始终是绿的，且它的输出与 `web-client/` 无关；没有 `node_modules` 也照样能构建 Java。
-2. Web 客户端坏了、没装、没网，都不会影响 Java 侧；反过来 Java 服务器没起，也只会让这个页面连不上。
+1. `./gradlew build --offline` must always be green, and its output has nothing to do with `web-client/`; Java still builds without `node_modules`.
+2. A broken, missing, or offline Web client never affects the Java side; conversely, a Java server that is not running only means this page cannot connect.
 
-## 前置条件
+## Prerequisites
 
-| 需要 | 版本 |
+| Requirement | Version |
 | --- | --- |
-| Node.js | 18+（Vite 6 的要求；建议 20+；`pnpm check:render` 直接执行 TypeScript，需要 24+） |
-| pnpm | 9+；`package.json` 里写的是 `packageManager: "pnpm@9"` |
-| 浏览器 | 支持原生 ES modules、WebSocket、WebCrypto 的现代浏览器 |
+| Node.js | 18+ (required by Vite 6; 20+ recommended; `pnpm check:render` executes TypeScript directly and needs 24+) |
+| pnpm | 9+; `package.json` declares `packageManager: "pnpm@9"` |
+| Browser | a modern browser with native ES modules, WebSocket, and WebCrypto |
 
-依赖范围固定在 `package.json` 里：`typescript` **^6.0.3**，`vite` **^6.0.0**（解析到 Vite 6.x）。
+Dependency ranges are pinned in `package.json`: `typescript` **^6.0.3** and `vite` **^6.0.0** (resolving to Vite 6.x).
 
-## 跑起来
+## Running it
 
-先启动 Java 服务器，并确认它在 `25567` 上提供 `/ws` 与静态页面（启动方式与端口以服务器文档和启动输出为准：
-[oc-game-server 快速上手](../projects/oc/oc-game-server/help/01-getting-started.md)）。
+Start the Java server first, and confirm that it serves `/ws` and the static page on `25567` (how to start it and the port are governed by the server documentation and its startup output:
+[oc-game-server quick start](../projects/oc/oc-game-server/help/01-getting-started.md)).
 
 ```shell
 cd web-client
@@ -39,167 +41,165 @@ pnpm install
 pnpm dev
 ```
 
-打开 Vite 打印的地址（通常是 `http://localhost:5173/`）。页面上的**主机与端口都留空**时，客户端连接同源的
-`/ws`，由 Vite 的 dev proxy 转发到 `ws://127.0.0.1:25567`；填上主机与端口则直连。同一条 dev proxy 也把
-`/plugin-assets` 转发到 Java 服务器，所以开发时贴图同样来自插件，而不是 `public/`。
+Open the address Vite prints (usually `http://localhost:5173/`). When **both the host and the port on the page are left empty**, the client connects to the same-origin
+`/ws`, which Vite's dev proxy forwards to `ws://127.0.0.1:25567`; fill in a host and port to connect directly. The same dev proxy also forwards
+`/plugin-assets` to the Java server, so during development the textures likewise come from plugins rather than from `public/`.
 
-连接成功后页面会先发 `HELLO 1`，并且只在收到 `OK OC/1` 时启用命令按钮。然后：
+After connecting, the page sends `HELLO 1` first and enables the command buttons only once it receives `OK OC/1`. Then:
 
-1. 填用户名与密码，点 `REGISTER` 创建账号（注册不会登录），再点 `LOGIN`；成功后 `REQ` 才可用。
-2. 把服务器的 `data/oc-debug/debug.key` 内容粘进 `debug.key` 文本框。
-3. 点 `engine-info`：页面用 `INFO json` 封一个信封，发 `REQ engine-info <base64>`，再打开回答并格式化 JSON。
-4. 在 `hello` 名字框里填一个名字（默认 `world`），点 `hello`：页面发 `REQ hello <base64(UTF-8 名字)>`，
-   把回答的 base64 解码成 UTF-8 文本显示在日志里。这需要先按下一节安装 `oc-hello` 插件。
-5. `PING`、`COUNT` 与 `QUIT` 按协议表工作。
+1. Fill in a username and password, click `REGISTER` to create an account (registering does not log in), then click `LOGIN`; only after that is `REQ` available.
+2. Paste the contents of the server's `data/oc-debug/debug.key` into the `debug.key` text box.
+3. Click `engine-info`: the page seals an envelope with `INFO json`, sends `REQ engine-info <base64>`, then opens the reply and formats the JSON.
+4. Type a name into the `hello` name box (default `world`) and click `hello`: the page sends `REQ hello <base64(UTF-8 name)>`,
+   decodes the reply's base64 into UTF-8 text, and shows it in the log. This requires installing the `oc-hello` plugin described in the next section first.
+5. `PING`, `COUNT`, and `QUIT` work as the protocol table says.
 
-创建账号只有两步：先点一次 `REGISTER`（用户名 3-32 个字符，只能用字母、数字、`_`、`.`、`-`；密码至少 6 个字符，两条规则都由服务器校验），再点 `LOGIN` 登录；注册成功**不会**自动登录。服务器回答 `OK …` 表示账号已建好；重名会回答 `ERR …`，页面把服务器给出的消息原样显示在状态行和日志里。
+Creating an account takes only two steps: click `REGISTER` once (the username is 3-32 characters and may use only letters, digits, `_`, `.`, and `-`; the password is at least 6 characters; the server validates both rules), then click `LOGIN` to sign in; a successful registration does **not** log in automatically. A reply of `OK …` from the server means the account was created; a duplicate name gets `ERR …`, and the page shows the message the server gave verbatim in the status line and the log.
 
-OC/1 只使用文本帧。若服务端发来二进制帧，页面只记录一行“服务端发来二进制帧，已忽略（协议只使用文本帧）”，
-**不关闭连接**，也不丢弃还在等待回答的命令；这与服务端“回 `ERR binary frames are not commands` 并保持连接”
-的行为一致。
+OC/1 uses text frames only. If the server sends a binary frame, the page just logs one line, "the server sent a binary frame, ignored (the protocol uses text frames only)",
+**without closing the connection**, and it does not drop commands still waiting for a reply; this matches the server's behavior of replying `ERR binary frames are not commands` and keeping the connection.
 
-## 游戏画面
+## The game view
 
-页面左侧是整块 Canvas 2D 世界画面，右侧（窄屏时在下方）是原来的协议面板；协议面板的
-`connect`、`REGISTER`、`LOGIN`、`PING`、`COUNT`、`engine-info`、`hello`、`QUIT` 与日志行为都与以前完全一样。
-不需要安装新依赖：仍然是 `typescript` 与 `vite` 两个 devDependencies。
+The left side of the page is the whole Canvas 2D world view, and the right side (below it on narrow screens) is the original protocol panel; the panel's
+`connect`, `REGISTER`, `LOGIN`, `PING`, `COUNT`, `engine-info`, `hello`, `QUIT`, and log behavior are exactly as before.
+No new dependencies are installed: still the two devDependencies `typescript` and `vite`.
 
 ```shell
 cd web-client
 pnpm dev
 ```
 
-打开 Vite 打印的地址即可；Java 服务器没起也能看画面，只是协议面板连不上。右侧协议面板顶部的
-**隐藏游戏画面 / 显示游戏画面** 按钮会把 Canvas 收起，让协议面板占满整页，方便读日志。
+Just open the address Vite prints; the view can be seen even when the Java server is not running, only the protocol panel cannot connect. The
+**Hide game view / Show game view** button at the top of the right-hand protocol panel collapses the Canvas, letting the protocol panel fill the whole page and making the log easier to read. (The page's own interface is currently Chinese — `index.html` has `lang="zh-CN"` — so the on-screen labels differ from these English names.)
 
-HUD 固定在画面左上角，实时显示：
+The HUD is pinned to the top-left corner of the view and shows, in real time:
 
-- 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
-- 鼠标下的瓦片坐标；
-- 缩放倍率（0.5× 到 2.5×）；
-- 平滑后的 FPS；
-- 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`。
+- Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
+- the tile coordinates under the mouse;
+- the zoom factor (0.5× to 2.5×);
+- the smoothed FPS;
+- the id, kind, and ground coordinates of the selected entity; `Selected: none` when nothing is selected.
 
-操作（首次点击画面后生效，键盘事件只挂在 canvas 上，不会抢协议输入框的按键）：
+Controls (they take effect after the first click on the view; keyboard events are bound only to the canvas and never steal keystrokes from the protocol input fields):
 
-| 操作 | 效果 |
+| Action | Effect |
 | --- | --- |
-| 左键单击 | 选中光标下的实体；点空地取消选中 |
-| 左键拖拽 | 平移镜头（移动小于 4 像素算点击） |
-| 滚轮 | 以光标为中心缩放，光标下的瓦片保持不动 |
-| `WASD` / 方向键 | 平移镜头 |
-| `+` / `-` | 以画面中心放大 / 缩小 |
-| `F` | 复位镜头（居中、1×） |
-| `Esc` | 取消选中 |
+| Left click | selects the entity under the cursor; clicking empty ground clears the selection |
+| Left drag | pans the camera (movements under 4 pixels count as a click) |
+| Wheel | zooms around the cursor, keeping the tile under the cursor fixed |
+| `WASD` / arrow keys | pan the camera |
+| `+` / `-` | zoom in / out around the center of the view |
+| `F` | resets the camera (centered, 1×) |
+| `Esc` | clears the selection |
 
-**纹理由插件提供**：每个插件把 `assets/manifest.json` 和图片打进自己的 jar，服务器把它们合并成
-`GET /plugin-assets/manifest.json`，客户端启动时读取并按 `atlasUrl` 加载每张图片。多个插件同时提供时按数组顺序
-合并，**后者覆盖前者**（同名地形路径或实体 kind）。本地 `public/textures/atlas.json` 不再是来源；这个目录只保留
-[契约文档](public/textures/README.md)（清单格式、示例、脚底锚点、每种实体一行动画）。
-清单缺失、请求失败、图片载入失败或返回 `[]` 时，客户端自动退回程序化绘制：每种地形有独立颜色和细节，
-单位是圆形、建筑是带屋顶线的方块，放大后还有 1 像素格线。
+**Textures are provided by plugins**: each plugin packs `assets/manifest.json` and images into its own jar, the server merges them into
+`GET /plugin-assets/manifest.json`, and the client reads that on startup and loads each image by its `atlasUrl`. When several plugins provide textures at once they are merged in array order,
+**the later one overriding the earlier one** (same-named terrain path or entity kind). The local `public/textures/atlas.json` is no longer a source; this directory keeps only the
+[contract document](public/textures/README.md) (manifest format, examples, foot anchor, one row of animation per entity).
+When the manifest is missing, the request fails, an image fails to load, or the response is `[]`, the client automatically falls back to procedural drawing: every terrain type gets its own color and detail,
+units are circles, buildings are blocks with a roof line, and at higher zoom there is a 1-pixel grid.
 
-> 当前地图由 `demoWorld(seed)` 生成，只是一个确定性的占位岛屿；等 Vanilla 插件通过同一个
-> `WorldView` 形状推送真实快照后，渲染层不需要改。
+> The current map is generated by `demoWorld(seed)` and is only a deterministic placeholder island; once the Vanilla plugin pushes real snapshots through the same
+> `WorldView` shape, the render layer will not need to change.
 
-渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、图集越界帧拒绝、插件图集合并与回退）可以离线检查：
+The rendering math (camera clamping, cursor-centered zoom, placeholder map determinism, rejection of out-of-bounds atlas frames, plugin atlas merging and fallback) can be checked offline:
 
 ```shell
 pnpm check:render
 ```
 
-它先做类型检查，再用 Node 24 的 TypeScript 类型擦除直接运行
-[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line.
 
-## hello 插件演示
+## hello plugin demo
 
-`hello` 是示例插件 `oc-hello` 提供的请求，用来演示“插件回答请求”这一最小闭环。它不需要 `debug.key`，
-但和所有 `REQ` 一样要求先 `LOGIN`。它只回答问候，不读写任何游戏状态。
+`hello` is the request provided by the example plugin `oc-hello`, used to demonstrate the smallest closed loop of "a plugin answers a request". It needs no `debug.key`,
+but like every `REQ` it requires `LOGIN` first. It only answers a greeting and reads or writes no game state.
 
-构建插件 jar、放进服务器的插件目录、启动服务器，再启动浏览器客户端：
+Build the plugin jar, put it into the server's plugin directory, start the server, then start the browser client:
 
 ```shell
 ./gradlew --offline :projects:oc:oc-game-server-hello:jar
-# 把 projects/oc/oc-game-server-hello/build/libs/oc-game-server-hello-2.0a.jar 复制到 plugins/
+# copy projects/oc/oc-game-server-hello/build/libs/oc-game-server-hello-2.0a.jar into plugins/
 ./gradlew --offline :projects:oc:oc-game-server:server
-# 然后在 web-client/ 里：
+# then, in web-client/:
 pnpm install && pnpm dev
 ```
 
-`oc-game-server-hello-2.0a.jar` 是模块 `version = '2.0a'` 的默认产物名；如果 Gradle 产出的名字不同，
-以 `projects/oc/oc-game-server-hello/build/libs/` 里的文件为准。
+`oc-game-server-hello-2.0a.jar` is the default artifact name for the module with `version = '2.0a'`; if Gradle produces a different name,
+the file in `projects/oc/oc-game-server-hello/build/libs/` is authoritative.
 
-这个 jar 还带着 `assets/manifest.json` 和一张 256×80 的 `assets/atlas.png`：把 jar 放进 `plugins/`、启动服务器后，
-浏览器画面会自动用它的六种地形和两帧工人动画渲染——插件资源从 jar 到服务器路由再到画面的完整链路，就是这一步在演示。
-不需要往 `public/` 里放任何图片。
+This jar also carries `assets/manifest.json` and a 256×80 `assets/atlas.png`: with the jar in `plugins/` and the server started, the
+browser view automatically renders with its six terrains and two-frame worker animation — this step demonstrates the whole chain from a plugin resource in the jar to the server route to the screen.
+No images need to be put into `public/`.
 
-`plugins/` 是操作员的投放区：插件 jar 与它们的依赖 jar 都放在这一层，说明见
-[`plugins/README.md`](../plugins/README.md)。插件生成的状态在服务器的 `data/` 下，不在 `plugins/` 里。
-第一次 `pnpm install` 需要网络；装好之后的 `pnpm dev` 可以离线。
+`plugins/` is the operator drop zone: plugin jars and the jars they depend on all live at this level; see
+[`plugins/README.md`](../plugins/README.md). Plugin-generated state lives under the server's `data/`, not in `plugins/`.
+The first `pnpm install` needs the network; after that, `pnpm dev` works offline.
 
-页面把名字按 UTF-8 编码再 base64（标准字母表，带 `=` 补齐）；服务器把请求载荷解码成原始字节交给插件，
-再把插件返回的字节 base64 编码回送；浏览器最后把回答解码成 UTF-8 文本。`oc-hello` 自己不做 base64，
-也不加任何信封。名字超过 64 字节时，插件会截断并加上省略号。
+The page encodes the name as UTF-8 and then base64 (standard alphabet, with `=` padding); the server decodes the request payload into raw bytes and hands them to the plugin,
+then base64-encodes the bytes the plugin returns; the browser finally decodes the reply into UTF-8 text. `oc-hello` does no base64 itself
+and adds no envelope. Names longer than 64 bytes are truncated by the plugin with an ellipsis appended.
 
-## 构建
+## Building
 
 ```shell
 pnpm build
 ```
 
-`build` 执行 `tsc --noEmit && vite build`，产物在 `web-client/dist/`。Java 服务器在
-`http://<host>:25567/` 提供这份静态文件。构建结束后可以用下面的命令本地预览：
+`build` runs `tsc --noEmit && vite build`, and the output is in `web-client/dist/`. The Java server serves this static build at
+`http://<host>:25567/`. After a build you can preview it locally with:
 
 ```shell
 pnpm preview
 ```
 
-`pnpm install` 会生成 `node_modules/` 与 lockfile；`node_modules/`、`web-client/dist/` 与
-`web-client/.vite/` 已在 `.gitignore` 里。首次安装需要网络，这是整个仓库唯一需要下载依赖的步骤。
+`pnpm install` creates `node_modules/` and a lockfile; `node_modules/`, `web-client/dist/`, and
+`web-client/.vite/` are already in `.gitignore`. The first install needs the network, the only step in the whole repository that downloads dependencies.
 
 ## `debug.key`
 
-- 服务器首次启用 `oc-debug` 插件时生成 `<数据目录>/oc-debug/debug.key`，默认是 `data/oc-debug/debug.key`。
-- 内容是 64 个十六进制字符，也就是 32 字节的 AES-256 密钥；可以带一个结尾换行。
-- 操作员**手工**把这份文件复制到浏览器所在的机器，再粘进页面上的文本框。密钥不通过 HTTP/WebSocket 下发，也不由页面生成。
-- 服务器**永不覆盖**这份文件；删掉它再让插件重新生成，会让所有旧副本同时失效。
-- 不要把 `debug.key` 提交进仓库、贴进 issue 或写进日志。
-- `engine-info` 的信封有 60 秒防重放窗口，两台机器的时钟差超过 60 秒就会失败。
+- On first enabling the `oc-debug` plugin the server generates `<data directory>/oc-debug/debug.key`, by default `data/oc-debug/debug.key`.
+- Its content is 64 hexadecimal characters, that is a 32-byte AES-256 key; it may end with a newline.
+- The operator **manually** copies this file to the machine running the browser, then pastes it into the text box on the page. The key is not delivered over HTTP/WebSocket and is not generated by the page.
+- The server **never overwrites** this file; deleting it and letting the plugin regenerate it invalidates every old copy at once.
+- Do not commit `debug.key` to the repository, paste it into an issue, or write it into a log.
+- The `engine-info` envelope has a 60-second anti-replay window, so a clock difference of more than 60 seconds between two machines makes it fail.
 
-`engine-info` 使用 `crypto.subtle`。浏览器只在**安全上下文**里提供它：`http://127.0.0.1:25567/` 与
-`http://localhost:5173/` 可以；直接用 `http://<局域网 IP>:25567/` 打开页面时通常不行，请用 localhost、
-SSH 端口转发或 HTTPS 反向代理。
+`engine-info` uses `crypto.subtle`. Browsers provide it only in **secure contexts**: `http://127.0.0.1:25567/` and
+`http://localhost:5173/` are fine; opening the page directly at `http://<LAN IP>:25567/` usually is not, so use localhost,
+SSH port forwarding, or an HTTPS reverse proxy.
 
-## 只读声明
+## Read-only statement
 
-**这个页面改不了游戏状态。** 它只提供 `PING`、`COUNT`、`REGISTER`、`LOGIN`、`REQ engine-info`、
-`REQ hello` 与 `QUIT`：除了 `REGISTER` 会在服务器上创建一个新账号，没有修改游戏、服务器配置或插件状态的命令。
+**This page cannot change game state.** It offers only `PING`, `COUNT`, `REGISTER`, `LOGIN`, `REQ engine-info`,
+`REQ hello`, and `QUIT`: apart from `REGISTER` creating a new account on the server, no command modifies the game, the server configuration, or plugin state.
 
-- `engine-info` 是 `oc-debug` 注册的只读报告；处理器不持有任何可写引用，报告由常量与临时对象拼成。
-- `hello` 是 `oc-hello` 注册的只读问候；处理器只读取请求里的名字，不持有任何引擎、配置或网络引用。
-- `REGISTER` 只创建新账号（重名会回答 `ERR …`），不登录，也不改已有账号的密码或权限。
-- `LOGIN` 只在这条连接上标记身份，并刷新服务器记录的最近登录时间；它不改密码、不改权限，也没有改密入口。
+- `engine-info` is a read-only report registered by `oc-debug`; the handler holds no writable reference, and the report is assembled from constants and temporary objects.
+- `hello` is a read-only greeting registered by `oc-hello`; the handler only reads the name from the request and holds no engine, configuration, or network reference.
+- `REGISTER` only creates a new account (a duplicate name gets `ERR …`); it does not log in and does not change an existing account's password or permissions.
+- `LOGIN` only marks the identity on this connection and refreshes the last-login time recorded by the server; it changes no password, changes no permissions, and there is no password-change entry point.
 
-## 文件
+## Files
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `index.html` | 页面结构（Canvas 画面 + HUD + 协议面板），不内联脚本；模块入口是 `src/main.ts` |
-| `src/protocol.ts` | OC/1 命令、base64 辅助函数、AES-256-GCM 信封的封/开 |
-| `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
-| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，以及画面/HUD 的启动 |
-| `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
-| `src/render/atlas.ts` | 插件清单解析、合成图集（last wins）与图片加载；失败时返回 `null` |
-| `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
-| `src/render/view.ts` | `WorldView` / `EntityView` 形状与确定性 `demoWorld(seed)` 占位地图 |
-| `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序与动画帧 |
-| `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作与实体拾取 |
-| `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验与插件图集合并的离线自检 |
-| `vite.config.ts` | `/ws` 与 `/plugin-assets` dev proxy、`dist` 输出目录 |
+| `index.html` | page structure (Canvas view + HUD + protocol panel), no inline scripts; the module entry is `src/main.ts` |
+| `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
+| `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
+| `src/main.ts` | DOM wiring: connect, handshake, buttons, log, `engine-info`, and starting the view/HUD |
+| `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, and clamping |
+| `src/render/atlas.ts` | plugin manifest parsing, composite atlas (last wins), and image loading; returns `null` on failure |
+| `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, and selection ring when there is no atlas |
+| `src/render/view.ts` | `WorldView` / `EntityView` shapes and the deterministic `demoWorld(seed)` placeholder map |
+| `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, and animation frames |
+| `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, and entity picking |
+| `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
+| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, and plugin atlas merging |
+| `vite.config.ts` | `/ws` and `/plugin-assets` dev proxies, `dist` output directory |
 
-## 相关文档
+## Related documents
 
-- 线上协议（本文的上游）：[`protocol/oc-protocol.md`](../protocol/oc-protocol.md)
-- 仓库总览与并行工具链：[`README.md`](../README.md)
-- 服务器启动、端口与数据目录：[`01-getting-started.md`](../projects/oc/oc-game-server/help/01-getting-started.md)
+- Online protocol (the upstream of this document): [`protocol/oc-protocol.md`](../protocol/oc-protocol.md)
+- Repository overview and parallel toolchains: [`README.md`](../README.md)
+- Server startup, port, and data directory: [`01-getting-started.md`](../projects/oc/oc-game-server/help/01-getting-started.md)

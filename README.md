@@ -1,3 +1,5 @@
+English | [简体中文](README_zh_CN.md)
+
 # Omni Com
 
 Monorepo for the Omni Com project. The Java modules are built with Gradle and use no third-party

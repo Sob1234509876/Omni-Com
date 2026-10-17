@@ -1,3 +1,5 @@
+English | [简体中文](README_zh_CN.md)
+
 # Omni Com Googology
 
 `projects:oc:oc-googology` — a small library of very large natural numbers, and of the ordinals used as

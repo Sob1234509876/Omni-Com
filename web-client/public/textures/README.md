@@ -1,32 +1,34 @@
-# 纹理图集契约（插件资源）
+English | [简体中文](README_zh_CN.md)
 
-**贴图现在由插件提供，不再由这个目录提供。** 客户端启动时向服务器要
-`GET /plugin-assets/manifest.json`，再按清单里的 `atlasUrl` 逐张加载图片；本地的
-`public/textures/atlas.json` 不再被读取。这个目录只保留本文，作为插件清单的格式说明。
+# Texture Atlas Contract (Plugin Assets)
 
-## 贴图放在哪里
+**Textures are now provided by plugins, not by this directory.** On startup the client asks the server for
+`GET /plugin-assets/manifest.json`, then loads each image according to the `atlasUrl` in the manifest; the local
+`public/textures/atlas.json` is no longer read. This directory keeps only this document, as the format description for plugin manifests.
 
-把两个文件打进**插件 jar** 的 `assets/` 目录：
+## Where the textures live
 
-| 路径（jar 内） | 作用 |
+Pack the two files into the **plugin jar**'s `assets/` directory:
+
+| Path (inside the jar) | Purpose |
 | --- | --- |
-| `assets/manifest.json` | 图集清单，本文下面的格式 |
-| `assets/atlas.png` | 清单 `image` 指向的图片，与清单同目录 |
+| `assets/manifest.json` | the atlas manifest, in the format described below |
+| `assets/atlas.png` | the image the manifest's `image` points to, in the same directory as the manifest |
 
-用 Gradle 构建的插件把它们放在 `src/main/resources/assets/` 即可，`jar` 任务会自动打包。例如示例插件：
+For plugins built with Gradle, just put them in `src/main/resources/assets/`; the `jar` task packages them automatically. For example, the example plugin:
 
 ```text
 projects/oc/oc-game-server-hello/src/main/resources/assets/manifest.json
 projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 ```
 
-把构建出的 jar 放进服务器的 `plugins/`，重启服务器，浏览器客户端就会自动用上它——不需要重新构建
-`web-client`，也不需要往 `public/` 里放任何文件。插件夹在 `plugins/<插件>/assets/` 下的散文件**不会**被
-服务：路由只通过插件自己的类加载器读 jar 内的资源。
+Put the built jar into the server's `plugins/`, restart the server, and the browser client automatically uses it — no need to rebuild
+`web-client`, and no need to put any file into `public/`. Loose files sitting in `plugins/<plugin>/assets/` are **not**
+served: the route only reads resources inside the jar through the plugin's own class loader.
 
-## 服务器发布的内容
+## What the server publishes
 
-服务器把每个带 `assets/manifest.json` 的已加载插件合并成一个数组，顺序就是插件加载顺序（jar 文件名排序）：
+The server merges every loaded plugin that has an `assets/manifest.json` into one array, in plugin load order (jar file name order):
 
 ```json
 [
@@ -40,69 +42,69 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 ]
 ```
 
-- `plugin` 是插件的 `Plugin#name()`，通常与插件描述文件的 `id` 相同；它也是 URL 里的插件 id。
-- `atlasUrl` 由服务器根据清单里的 `image` 改写，**清单本身不得包含绝对 URL**。
-- 没有插件发布清单时，这个路由回 `200` 和 `[]`；客户端于是使用程序化绘制。
-- 所有 `/plugin-assets` 响应都是 `Cache-Control: no-cache`，替换插件后刷新页面即可看到新图。
-- 客户端按数组顺序合并，**后面的插件覆盖前面的插件**（同名地形路径或同名实体 kind）。数组顺序就是
-  服务器返回的顺序，客户端不重新排序。
+- `plugin` is the plugin's `Plugin#name()`, usually the same as the `id` in the plugin descriptor; it is also the plugin id in the URL.
+- `atlasUrl` is rewritten by the server from the manifest's `image`; **the manifest itself must not contain absolute URLs**.
+- When no plugin publishes a manifest, this route returns `200` and `[]`; the client then uses procedural drawing.
+- All `/plugin-assets` responses are `Cache-Control: no-cache`, so after replacing a plugin just refresh the page to see the new images.
+- The client merges in array order, **later plugins overriding earlier ones** (same-named terrain path or same-named entity kind). The array order is
+  the order the server returns; the client does not re-sort.
 
-原始文件由 `GET /plugin-assets/<插件 id>/<文件>` 提供，例如
-`/plugin-assets/oc-hello/atlas.png`。这个路由只允许 `GET`/`HEAD`，不需要登录，也不属于 OC/1 协议；
-细节见 [`protocol/oc-protocol.md`](../../../protocol/oc-protocol.md)。
+The raw files are served by `GET /plugin-assets/<plugin id>/<file>`, for example
+`/plugin-assets/oc-hello/atlas.png`. This route only allows `GET`/`HEAD`, needs no login, and is not part of the OC/1 protocol;
+the details are in [`protocol/oc-protocol.md`](../../../protocol/oc-protocol.md).
 
-## 基本约定
+## Basic conventions
 
-- **任意图集尺寸都可以**，例如 256×256、512×512、1024×1024。
-- 推荐 `tilePixels` 为 **32**：地形帧按 32×32 绘制最容易对齐。客户端会把地形帧拉伸到屏幕上的一个格子，所以 16、32、64 也能用。
-- 所有帧坐标都是图集图片内的**像素**，原点在左上角，向右 x 增大，向下 y 增大。
-- 地形帧可以是任意矩形；建议每格一个矩形。
-- **每种实体占一行动画帧**，从左到右是播放顺序。帧矩形不要求等宽等高，但同一行动画里保持一致最省心。
-- 实体帧里的 `anchor` 是**脚底锚点**：`[0.5, 0.75]` 表示帧宽 50%、帧高 75% 的位置贴在地面位置上。人物/建筑从锚点向上生长，所以帧可以比一个格子高。
+- **Any atlas size works**, for example 256×256, 512×512, 1024×1024.
+- A `tilePixels` of **32** is recommended: terrain frames drawn at 32×32 are the easiest to align. The client stretches terrain frames to one cell on screen, so 16, 32, and 64 work too.
+- All frame coordinates are **pixels** inside the atlas image, with the origin at the top-left, x increasing to the right and y increasing downwards.
+- Terrain frames may be any rectangle; one rectangle per cell is recommended.
+- **Each entity kind occupies one row of animation frames**, played left to right. Frame rectangles need not be the same width and height, but keeping them consistent within one row is the least trouble.
+- The `anchor` in an entity frame is the **foot anchor**: `[0.5, 0.75]` means the point at 50% of the frame width and 75% of the frame height sits on the ground position. Units/buildings grow upwards from the anchor, so frames may be taller than one cell.
 
-## 清单结构
+## Manifest structure
 
-`assets/manifest.json` 就是原来的 `atlas.json` 格式，只有一个字段的含义被服务器接管：`image` 必须是本插件
-`assets/` 目录里的**文件名**（不能带 `/`、`..`、盘符或绝对 URL）。
+`assets/manifest.json` is the old `atlas.json` format, with the meaning of exactly one field taken over by the server: `image` must be a
+**file name** inside this plugin's `assets/` directory (it may not contain `/`, `..`, a drive letter, or an absolute URL).
 
 ```text
 {
-  "image": "atlas.png",          // 本插件 assets/ 里的图片文件名
-  "tilePixels": 32,              // 推荐的美术格尺寸，仅作元数据
+  "image": "atlas.png",          // the image file name inside this plugin's assets/
+  "tilePixels": 32,              // recommended art cell size, metadata only
   "tiles": {
-    "<TerrainType 名称>": [x, y, w, h]
+    "<TerrainType name>": [x, y, w, h]
   },
   "entities": {
-    "<实体 kind>": {
-      "frames": [[x, y, w, h], ...],  // 至少一帧，按播放顺序
-      "fps": 4,                       // 可选，默认 4
-      "anchor": [0.5, 0.75],          // 可选，默认 [0.5, 0.75]
-      "scale": 1                      // 可选，默认 1，叠在相机缩放之上
+    "<entity kind>": {
+      "frames": [[x, y, w, h], ...],  // at least one frame, in play order
+      "fps": 4,                       // optional, default 4
+      "anchor": [0.5, 0.75],          // optional, default [0.5, 0.75]
+      "scale": 1                      // optional, default 1, stacked on top of the camera zoom
     }
   }
 }
 ```
 
-字段说明：
+Field reference:
 
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 | --- | --- | --- |
-| `image` | 是 | 本插件 `assets/` 内的图片文件名；通常就是 `atlas.png` |
-| `tilePixels` | 否 | 建议的美术格像素；缺失或非法时按 32 处理 |
-| `tiles` | 否 | 地形帧表；缺失时全部地形使用程序化绘制 |
-| `tiles.<name>` | — | 引擎的地形内容路径，见下表 |
-| `entities` | 否 | 实体动画表；缺失时实体使用程序化图形 |
-| `entities.<kind>.frames` | 是 | 至少一个 `[x, y, w, h]` |
-| `entities.<kind>.fps` | 否 | 正数，默认 4 |
-| `entities.<kind>.anchor` | 否 | 两个数字，默认 `[0.5, 0.75]`（脚底） |
-| `entities.<kind>.scale` | 否 | 正数，默认 1；与相机缩放相乘 |
+| `image` | Yes | image file name inside this plugin's `assets/`; usually `atlas.png` |
+| `tilePixels` | No | suggested art cell size in pixels; treated as 32 when missing or invalid |
+| `tiles` | No | terrain frame table; when missing, all terrain uses procedural drawing |
+| `tiles.<name>` | — | the engine's terrain content path, see the table below |
+| `entities` | No | entity animation table; when missing, entities use procedural shapes |
+| `entities.<kind>.frames` | Yes | at least one `[x, y, w, h]` |
+| `entities.<kind>.fps` | No | positive number, default 4 |
+| `entities.<kind>.anchor` | No | two numbers, default `[0.5, 0.75]` (feet) |
+| `entities.<kind>.scale` | No | positive number, default 1; multiplied with the camera zoom |
 
-服务器不解释 `tiles` 和 `entities`，只转发给客户端；帧的合法性由客户端按下面“校验与失败行为”检查。
+The server does not interpret `tiles` and `entities`; it only forwards them to the client. Frame validity is checked by the client as described under "Validation and failure behavior" below.
 
-## 完整示例
+## Complete example
 
-下面的 JSON 对应一张 256×320 的 `atlas.png`。地形帧占最上面一行，每种实体各占一行；建筑只用一帧。
-把这段 JSON 写成 `assets/manifest.json`、图片写成 `assets/atlas.png`，打进插件 jar 即可发布。
+The JSON below corresponds to a 256×320 `atlas.png`. The terrain frames occupy the top row, each entity kind gets its own row, and buildings use a single frame.
+Write this JSON as `assets/manifest.json` and the image as `assets/atlas.png`, pack them into the plugin jar, and it is ready to publish.
 
 ```json
 {
@@ -167,59 +169,54 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 }
 ```
 
-## 地形名称
+## Terrain names
 
-`tiles` 的键就是引擎 `TerrainType.key().path()`。当前自检场景定义的是：
+The keys of `tiles` are the engine's `TerrainType.key().path()`. The current self-check scene defines:
 
-| 键 | 说明 |
+| Key | Description |
 | --- | --- |
-| `water` | 水 |
-| `sand` | 沙 / 海岸 |
-| `grass` | 草地 |
-| `forest` | 森林 |
-| `hill` | 丘陵 |
-| `rock` | 岩石 / 不可通行 |
-| `void` | 地图外 / 引擎兜底地形 |
+| `water` | water |
+| `sand` | sand / coast |
+| `grass` | grassland |
+| `forest` | forest |
+| `hill` | hills |
+| `rock` | rock / impassable |
+| `void` | off-map / engine fallback terrain |
 
-程序化绘制还认识这些别名：`deep_water`、`shallow_water`、`grassland`、`meadow`、`trees`、`hills`、`mountain`、`rocky`、`stone`、`desert`、`dirt`、`soil`、`snow`、`ice`、`road`、`bridge`。图集里写这些键也会生效；不认识的键会得到程序化生成的颜色。
+Procedural drawing also recognizes these aliases: `deep_water`, `shallow_water`, `grassland`, `meadow`, `trees`, `hills`, `mountain`, `rocky`, `stone`, `desert`, `dirt`, `soil`, `snow`, `ice`, `road`, `bridge`. These keys also work in an atlas; unknown keys get a procedurally generated color.
 
-## 实体 kind
+## Entity kind
 
-`entities` 的键要匹配 `EntityView.kind`，即实体的内容路径。自检场景和占位地图使用：
+The keys of `entities` must match `EntityView.kind`, i.e. the entity's content path. The self-check scene and the placeholder map use:
 
-| kind | 类型 |
+| kind | Type |
 | --- | --- |
-| `worker` | 工人（单位） |
-| `soldier` | 士兵（单位） |
-| `medic` | 医疗兵（单位） |
-| `warehouse` | 仓库（3×3 建筑） |
-| `barracks` | 兵营（3×3 建筑） |
+| `worker` | worker (unit) |
+| `soldier` | soldier (unit) |
+| `medic` | medic (unit) |
+| `warehouse` | warehouse (3×3 building) |
+| `barracks` | barracks (3×3 building) |
 
-带命名空间的路径（例如 `oc:soldier`）也能匹配到 `soldier`。没有对应条目的实体使用程序化图形。
+Namespaced paths (for example `oc:soldier`) also match `soldier`. Entities without a matching entry use procedural shapes.
 
-## 多个插件同时提供图集
+## Several plugins providing atlases at once
 
-- 客户端按服务器数组的顺序加载，**最后一个定义某个地形路径或实体 kind 的插件获胜**；它没有定义的名字
-  继续由更早的插件提供。不同插件可以各画一部分地形，也可以整张覆盖。
-- 每个获胜的帧都会连同它所属插件的图片一起记录，渲染器不会把 A 插件的坐标画到 B 插件的图片上。
-  所以多个插件可以各自维护自己的图集，不需要拼成一张大图。
-- HUD 的来源标签显示 `atlas · <插件 id>`（最多三个插件时列出全部 id）或 `atlas · N plugins`；回退到
-  程序化绘制时显示 `procedural`。
+- The client loads in the order of the server's array, and **the last plugin that defines a given terrain path or entity kind wins**; names it does not define keep coming from earlier plugins. Different plugins can each draw part of the terrain, or one can override the whole atlas.
+- Every winning frame is recorded together with the image of the plugin it came from, and the renderer never draws plugin A's coordinates onto plugin B's image. So several plugins can each maintain their own atlas without stitching one big image.
+- The HUD's source label shows `atlas · <plugin id>` (all ids are listed when there are at most three plugins) or `atlas · N plugins`; when it falls back to procedural drawing it shows `procedural`.
 
-## 校验与失败行为
+## Validation and failure behavior
 
-- 服务器要求清单是 JSON 对象、`image` 是非空且安全的文件名；`tiles` / `entities` 只要出现就必须是对象。
-  不符合的清单会被跳过并在服务器日志里留一行原因，其它插件不受影响。
-- 客户端要求每个条目有同源的 `atlasUrl`；没有、不是本服务器路径或不是对象的条目会被**跳过并警告**，
-  其余条目照常加载。
-- 顶部必须是 JSON 对象；每个帧必须是恰好四个有限数字的数组，`w` 和 `h` 必须大于 0。
-- 帧必须完全落在图片内。越界的帧会被**静默丢弃**，并在控制台用一次 `console.warn` 汇总报告；同一实体的其他合法帧继续使用。
-- 没有任何合法帧的实体条目会被丢弃；一个没有任何可用地形帧和实体帧的条目会被判为不可用，只跳过该插件。
-- 图片载入失败只跳过该插件；`fps`、`anchor`、`scale` 非法时按默认值处理，并给出警告。
-- 清单请求失败、返回 `[]`、或所有条目都不可用时，客户端回到程序化绘制，不会阻止页面加载，也不会影响协议面板。
+- The server requires the manifest to be a JSON object and `image` to be a non-empty, safe file name; `tiles` / `entities` must be objects whenever they appear. Non-conforming manifests are skipped with one line of reason in the server log, and other plugins are unaffected.
+- The client requires every entry to have a same-origin `atlasUrl`; entries that lack one, are not this server's path, or are not objects are **skipped with a warning**, and the remaining entries load as usual.
+- The top level must be a JSON object; every frame must be an array of exactly four finite numbers, and `w` and `h` must be greater than 0.
+- Frames must lie entirely inside the image. Out-of-bounds frames are **silently dropped** and reported in one summarized `console.warn` in the console; other valid frames of the same entity keep being used.
+- Entity entries with no valid frame are dropped; an entry with no usable terrain frame and no usable entity frame counts as unusable, and only that plugin is skipped.
+- An image load failure only skips that plugin; invalid `fps`, `anchor`, and `scale` values are handled with the defaults, with a warning.
+- When the manifest request fails, returns `[]`, or all entries are unusable, the client falls back to procedural drawing; this never blocks page load and never affects the protocol panel.
 
-## 动画与选中
+## Animation and selection
 
-- 客户端用每秒 `fps` 帧循环播放该 kind 的 `frames`。不同实体按 id 有轻微相位差，避免整屏单位同步踏步。
-- 将来的快照可以在 `EntityView.frames` 里给出一个帧索引序列（例如 `[2, 3, 4, 5]`），用来在同一条图集行里选择“行走”片段；不提供时播放整行。
-- 选中环、阴影和血条由客户端绘制，不需要画进 `atlas.png`。
+- The client loops that kind's `frames` at `fps` frames per second. Different entities get a slight phase offset by id, so units across the screen do not step in unison.
+- Future snapshots may provide a frame index sequence in `EntityView.frames` (for example `[2, 3, 4, 5]`) to select a "walking" segment within the same atlas row; when absent, the whole row is played.
+- The selection ring, shadows, and health bars are drawn by the client and do not need to be painted into `atlas.png`.
