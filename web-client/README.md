@@ -40,7 +40,8 @@ pnpm dev
 ```
 
 打开 Vite 打印的地址（通常是 `http://localhost:5173/`）。页面上的**主机与端口都留空**时，客户端连接同源的
-`/ws`，由 Vite 的 dev proxy 转发到 `ws://127.0.0.1:25567`；填上主机与端口则直连。
+`/ws`，由 Vite 的 dev proxy 转发到 `ws://127.0.0.1:25567`；填上主机与端口则直连。同一条 dev proxy 也把
+`/plugin-assets` 转发到 Java 服务器，所以开发时贴图同样来自插件，而不是 `public/`。
 
 连接成功后页面会先发 `HELLO 1`，并且只在收到 `OK OC/1` 时启用命令按钮。然后：
 
@@ -73,7 +74,7 @@ pnpm dev
 
 HUD 固定在画面左上角，实时显示：
 
-- 当前图集名（例如 `atlas.png`），没有图集时显示 `绘制：程序化`；
+- 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
 - 鼠标下的瓦片坐标；
 - 缩放倍率（0.5× 到 2.5×）；
 - 平滑后的 FPS；
@@ -91,15 +92,17 @@ HUD 固定在画面左上角，实时显示：
 | `F` | 复位镜头（居中、1×） |
 | `Esc` | 取消选中 |
 
-**纹理放在 `public/textures/`**：一张 `atlas.png` 加一份 `atlas.json`。完整契约（JSON 结构、示例、
-脚底锚点、每种实体一行动画）见 [`public/textures/README.md`](public/textures/README.md)。
-图集缺失或损坏时客户端自动退回程序化绘制：每种地形有独立颜色和细节，单位是圆形、建筑是带屋顶线的方块，
-放大后还有 1 像素格线。
+**纹理由插件提供**：每个插件把 `assets/manifest.json` 和图片打进自己的 jar，服务器把它们合并成
+`GET /plugin-assets/manifest.json`，客户端启动时读取并按 `atlasUrl` 加载每张图片。多个插件同时提供时按数组顺序
+合并，**后者覆盖前者**（同名地形路径或实体 kind）。本地 `public/textures/atlas.json` 不再是来源；这个目录只保留
+[契约文档](public/textures/README.md)（清单格式、示例、脚底锚点、每种实体一行动画）。
+清单缺失、请求失败、图片载入失败或返回 `[]` 时，客户端自动退回程序化绘制：每种地形有独立颜色和细节，
+单位是圆形、建筑是带屋顶线的方块，放大后还有 1 像素格线。
 
 > 当前地图由 `demoWorld(seed)` 生成，只是一个确定性的占位岛屿；等 Vanilla 插件通过同一个
 > `WorldView` 形状推送真实快照后，渲染层不需要改。
 
-渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、图集越界帧拒绝）可以离线检查：
+渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、图集越界帧拒绝、插件图集合并与回退）可以离线检查：
 
 ```shell
 pnpm check:render
@@ -125,6 +128,10 @@ pnpm install && pnpm dev
 
 `oc-game-server-hello-2.0a.jar` 是模块 `version = '2.0a'` 的默认产物名；如果 Gradle 产出的名字不同，
 以 `projects/oc/oc-game-server-hello/build/libs/` 里的文件为准。
+
+这个 jar 还带着 `assets/manifest.json` 和一张 256×80 的 `assets/atlas.png`：把 jar 放进 `plugins/`、启动服务器后，
+浏览器画面会自动用它的六种地形和两帧工人动画渲染——插件资源从 jar 到服务器路由再到画面的完整链路，就是这一步在演示。
+不需要往 `public/` 里放任何图片。
 
 `plugins/` 是操作员的投放区：插件 jar 与它们的依赖 jar 都放在这一层，说明见
 [`plugins/README.md`](../plugins/README.md)。插件生成的状态在服务器的 `data/` 下，不在 `plugins/` 里。
@@ -182,14 +189,14 @@ SSH 端口转发或 HTTPS 反向代理。
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
 | `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`，以及画面/HUD 的启动 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
-| `src/render/atlas.ts` | `atlas.json` 校验与图片加载；失败时返回 `null` |
+| `src/render/atlas.ts` | 插件清单解析、合成图集（last wins）与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
 | `src/render/view.ts` | `WorldView` / `EntityView` 形状与确定性 `demoWorld(seed)` 占位地图 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序与动画帧 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作与实体拾取 |
-| `public/textures/README.md` | 用户画图时要遵守的图集契约 |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验的离线自检 |
-| `vite.config.ts` | `/ws` dev proxy 与 `dist` 输出目录 |
+| `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验与插件图集合并的离线自检 |
+| `vite.config.ts` | `/ws` 与 `/plugin-assets` dev proxy、`dist` 输出目录 |
 
 ## 相关文档
 

@@ -186,9 +186,18 @@ final class StaticFiles {
      *
      * <p>Raw characters are re-encoded as UTF-8 as they are appended, so a client that sends a raw UTF-8
      * name and a client that percent-encodes it produce the same path. A truncated escape, a non-hexadecimal
-     * escape or a byte sequence that is not UTF-8 is a {@code 400}, never a guess.
+     * escape or a byte sequence that is not UTF-8 is a {@code 400}, never a guess. A raw or decoded
+     * backslash and a NUL byte are refused for the same reason.
+     *
+     * <p>The plugin asset route reuses this decoder, so both routes agree on what an escape means and on
+     * which bytes a request path may not contain. It deliberately stops there: the additional rule that a
+     * dot must not be encoded belongs to that route, because only a resource name can be climbed with dots.
+     *
+     * @param rawPath the request path, query string already removed
+     * @return the decoded path
+     * @throws HttpError with status {@code 400} when the path cannot be decoded or contains refused bytes
      */
-    private static String decode(String rawPath) throws HttpError {
+    static String decode(String rawPath) throws HttpError {
         if (rawPath.indexOf('\\') >= 0) {
             throw new HttpError(400, "the request path must not contain a backslash");
         }

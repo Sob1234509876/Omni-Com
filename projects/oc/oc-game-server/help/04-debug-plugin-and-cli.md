@@ -287,7 +287,7 @@ The plugin answers only read-only information; it cannot change the server or th
 
 ## 还没有实现
 
-- **没有 WebSocket / HTTP 传输**：CLI 用的是和玩家一样的加密 TCP 协议，浏览器不能直接连；没有第二个监听端口。
+- **浏览器端还没有世界快照**：WebSocket / HTTP 端点已经有了（见 [05-browser-endpoint.md](05-browser-endpoint.md)），浏览器能连、能注册登录、也能查这个插件，但它跑的是同一套命令（`PING` / `REGISTER` / `LOGIN` / `COUNT` / `REQ` / `QUIT`），**没有**世界快照、实体列表或对局状态——所以画面目前只能来自客户端内置的演示世界。
 - **还没有原版（vanilla）插件 jar**：服务器的空壳已经就位，但"原版游戏"这个插件还不存在，所以现在开服只能靠第三方插件填内容。
 - **没有大厅与匹配（lobby / matchmaking）**：没有排队、房间、对局分配，调试插件也没有"列出对局"这种东西可报。
 - **除了用户记录没有持久化**：`data/users.txt` 是唯一落盘的游戏相关状态；世界、对局、插件内存里的进度在进程退出后全部消失，`plugin-requests-served` 也是这样，重启从 0 开始。

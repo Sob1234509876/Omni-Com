@@ -1,12 +1,22 @@
 /**
- * The texture atlas contract.
+ * The texture atlas contract, now published by plugins.
  *
- * `atlas.json` and `atlas.png` live in `public/textures/`. The JSON is parsed defensively: a broken
- * atlas must never stop the client, because the procedural fallback is a complete renderer. Frames
- * that fall outside the image are dropped and reported once, and any failure makes `loadAtlas`
- * resolve to `null`.
+ * Textures are no longer a folder the page ships. Every loaded plugin may put `assets/manifest.json` and
+ * its image inside its own jar; the server merges those manifests into `GET /plugin-assets/manifest.json`
+ * and serves the images under `/plugin-assets/<plugin>/<file>`. The client fetches that array on start,
+ * loads each entry's image, and composes the per-plugin atlases into one `Atlas`.
  *
- * The parsing half is free of DOM calls so `scripts/check-render-math.ts` can exercise it directly.
+ * The merge rule is **last wins**: entries are applied in the order the server sent them, which is plugin
+ * load order, so a later plugin overrides an earlier one for the same tile path or entity kind. Every tile
+ * and every entity keeps a reference to the image it came from, so the renderer always draws from the plugin
+ * that won that name.
+ *
+ * The document is parsed defensively: a malformed entry, an image that does not decode, a server that
+ * publishes nothing or a failed fetch all resolve to "no atlas" and the procedural renderer takes over. A
+ * broken plugin must never stop the page, and one broken entry is skipped without discarding the others.
+ *
+ * The parsing and merging half is free of DOM calls so `scripts/check-render-math.ts` can exercise it
+ * directly; only `loadPluginAtlas` touches `fetch`, `Image` and `document`.
  */
 
 export interface SpriteRect {
@@ -27,9 +37,13 @@ export interface EntitySprite {
   readonly scale: number;
 }
 
-/** Everything parsed out of `atlas.json`, before the image is attached. */
+/** Everything parsed out of one manifest entry, before its image is attached. */
 export interface AtlasData {
-  /** The `image` field as written in the JSON, for example `atlas.png`. */
+  /** The plugin that published the entry; empty only for a legacy document without one. */
+  readonly plugin: string;
+  /** The URL the entry named; empty when the document only had an `image` file name. */
+  readonly atlasUrl: string;
+  /** The image file name, for example `atlas.png`. */
   readonly imageName: string;
   /** Recommended source tile size in pixels (metadata; tiles are stretched to the camera). */
   readonly tilePixels: number;
@@ -37,15 +51,63 @@ export interface AtlasData {
   readonly entities: ReadonlyMap<string, EntitySprite>;
 }
 
-/** A loaded atlas: parsed data plus the decoded image and a short label for the HUD. */
-export interface Atlas extends AtlasData {
+/** One plugin's parsed atlas with its decoded image. */
+export interface AtlasSource extends AtlasData {
   readonly image: HTMLImageElement;
-  readonly label: string;
+}
+
+/** A tile frame together with the plugin image it must be drawn from. */
+export interface AtlasTile {
+  readonly rect: SpriteRect;
+  readonly source: AtlasSource;
+}
+
+/** An entity animation together with the plugin image it must be drawn from. */
+export interface AtlasEntity {
+  readonly sprite: EntitySprite;
+  readonly source: AtlasSource;
+}
+
+/** The composite of every plugin atlas: last wins per tile path and entity kind. */
+export interface Atlas {
+  readonly tiles: ReadonlyMap<string, AtlasTile>;
+  readonly entities: ReadonlyMap<string, AtlasEntity>;
+  /** The entries that contributed, in the order the server sent them. */
+  readonly sources: readonly AtlasSource[];
 }
 
 export type AtlasParseResult =
   | { readonly ok: true; readonly data: AtlasData; readonly warnings: readonly string[] }
   | { readonly ok: false; readonly reason: string; readonly warnings: readonly string[] };
+
+/** One entry of the server's manifest array, before its image is loaded. */
+export interface ManifestEntry {
+  readonly plugin: string;
+  readonly atlasUrl: string;
+}
+
+/** The result of reading one manifest array entry; a refusal explains what was wrong with it. */
+export type ManifestEntryResult =
+  | { readonly ok: true; readonly entry: ManifestEntry }
+  | { readonly ok: false; readonly warning: string };
+
+/**
+ * The pure result of applying every entry in order.
+ *
+ * The maps hold the index of the entry that won each name, which is what lets the image be attached later
+ * without holding two copies of the frame data.
+ */
+export interface MergedLayers {
+  /** Tile path to the index of the entry that owns it; the last entry that defines it wins. */
+  readonly tiles: ReadonlyMap<string, number>;
+  /** Entity kind to the index of the entry that owns it; the last entry that defines it wins. */
+  readonly entities: ReadonlyMap<string, number>;
+  /** The contributing plugin ids, in entry order, without duplicates or blank ids. */
+  readonly plugins: readonly string[];
+}
+
+/** The merged manifest path; the Vite dev proxy forwards this prefix to the Java server. */
+export const PLUGIN_MANIFEST_URL = "/plugin-assets/manifest.json";
 
 const DEFAULT_TILE_PIXELS = 32;
 const DEFAULT_FPS = 4;
@@ -94,10 +156,12 @@ function readRect(
 }
 
 /**
- * Validates one parsed `atlas.json` object against an image size.
+ * Validates one parsed manifest entry against the size of its image.
  *
- * Never throws. Out-of-bounds and malformed entries are collected in `warnings` and skipped; the
- * caller decides whether to log them. A result with no usable tile and no usable entity is a failure.
+ * Never throws. Out-of-bounds and malformed entries are collected in `warnings` and skipped; the caller
+ * decides whether to log them. A result with no usable tile and no usable entity is a failure. The entry
+ * either names its image with `image` (the schema an artist writes) or with `atlasUrl` (what the server
+ * publishes); the file name is derived from whichever is present.
  */
 export function parseAtlas(
   source: unknown,
@@ -106,16 +170,22 @@ export function parseAtlas(
 ): AtlasParseResult {
   const warnings: string[] = [];
   if (!isRecord(source)) {
-    return { ok: false, reason: "atlas.json 的顶层必须是 JSON 对象", warnings };
+    return { ok: false, reason: "图集清单的顶层必须是 JSON 对象", warnings };
   }
   if (!Number.isFinite(imageWidth) || !Number.isFinite(imageHeight) || imageWidth <= 0 || imageHeight <= 0) {
     return { ok: false, reason: `图集图片尺寸无效：${imageWidth}×${imageHeight}`, warnings };
   }
 
+  const pluginValue = source["plugin"];
+  const plugin = typeof pluginValue === "string" ? pluginValue.trim() : "";
+  const atlasValue = source["atlasUrl"];
+  const atlasUrl = typeof atlasValue === "string" ? atlasValue.trim() : "";
   const imageValue = source["image"];
-  const imageName = typeof imageValue === "string" ? imageValue.trim() : "";
+  const declaredImage = typeof imageValue === "string" ? imageValue.trim() : "";
+  const slash = atlasUrl.lastIndexOf("/");
+  const imageName = declaredImage !== "" ? declaredImage : atlasUrl.slice(slash + 1);
   if (imageName === "") {
-    return { ok: false, reason: "atlas.json 缺少非空的 image 字段", warnings };
+    return { ok: false, reason: "图集清单缺少非空的 image 字段或 atlasUrl 字段", warnings };
   }
 
   const tilePixelsValue = readNumber(source["tilePixels"]);
@@ -141,7 +211,7 @@ export function parseAtlas(
       }
     }
   } else if (tilesValue === undefined) {
-    warnings.push("atlas.json 没有 tiles 对象，所有地形都会使用程序化绘制");
+    warnings.push("图集清单没有 tiles 对象，所有地形都会使用程序化绘制");
   } else {
     warnings.push("tiles 必须是对象，已忽略整个 tiles 字段");
   }
@@ -210,12 +280,14 @@ export function parseAtlas(
   }
 
   if (tiles.size === 0 && entities.size === 0) {
-    return { ok: false, reason: "atlas.json 里没有任何可用的地形帧或实体帧", warnings };
+    return { ok: false, reason: "图集清单里没有任何可用的地形帧或实体帧", warnings };
   }
 
   return {
     ok: true,
     data: {
+      plugin,
+      atlasUrl,
       imageName,
       tilePixels,
       tiles,
@@ -225,16 +297,114 @@ export function parseAtlas(
   };
 }
 
-function withTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
+/**
+ * Reads one entry of the server's manifest array, before its image is loaded.
+ *
+ * The URL rule is deliberately strict: only an absolute path on this origin is accepted. The server
+ * rewrites the plugin's `image` into such a path, so an entry with a scheme or a protocol relative URL is
+ * either not from this server or not something the client should fetch, and it is skipped with a warning
+ * rather than being followed. A missing `plugin` is tolerated - the image can still be drawn - while a
+ * missing URL cannot.
+ */
+export function readManifestEntry(value: unknown): ManifestEntryResult {
+  if (!isRecord(value)) {
+    return { ok: false, warning: "条目必须是 JSON 对象" };
+  }
+  const urlValue = value["atlasUrl"];
+  const atlasUrl = typeof urlValue === "string" ? urlValue.trim() : "";
+  if (atlasUrl === "") {
+    return { ok: false, warning: "条目缺少非空的 atlasUrl 字段" };
+  }
+  if (!atlasUrl.startsWith("/") || atlasUrl.startsWith("//") || atlasUrl.includes("://")) {
+    return { ok: false, warning: `atlasUrl 必须是同源的绝对路径，当前是 '${atlasUrl}'` };
+  }
+  const pluginValue = value["plugin"];
+  const plugin = typeof pluginValue === "string" ? pluginValue.trim() : "";
+  return { ok: true, entry: { plugin, atlasUrl } };
 }
 
-function imageNameOf(source: unknown): string | null {
-  if (!isRecord(source)) {
+/**
+ * Applies every entry in order and reports which entry won each name.
+ *
+ * This is the whole merge rule of the feature: a later entry overrides an earlier one for the same tile
+ * path or entity kind, and names an entry does not define are left to the earlier ones. Entries are the
+ * same array the server sent, so plugin load order is the only ordering that matters.
+ */
+export function mergeLayers(entries: readonly AtlasData[]): MergedLayers {
+  const tiles = new Map<string, number>();
+  const entities = new Map<string, number>();
+  const plugins: string[] = [];
+  for (let layer = 0; layer < entries.length; layer += 1) {
+    const data = entries[layer];
+    if (data === undefined) {
+      continue;
+    }
+    if (data.plugin !== "" && !plugins.includes(data.plugin)) {
+      plugins.push(data.plugin);
+    }
+    for (const name of data.tiles.keys()) {
+      tiles.set(name, layer);
+    }
+    for (const name of data.entities.keys()) {
+      entities.set(name, layer);
+    }
+  }
+  return { tiles, entities, plugins };
+}
+
+/**
+ * Builds the composite atlas from the entries whose images loaded.
+ *
+ * Returns `null` when no entry contributed anything, which is the case for an empty manifest array and for
+ * a run in which every entry failed; the caller then keeps the procedural renderer. Each name is resolved
+ * to the entry that won it, so a tile or an entity can never be drawn with another plugin's image.
+ */
+export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
+  if (sources.length === 0) {
     return null;
   }
-  const value = source["image"];
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  const layers = mergeLayers(sources);
+  const tiles = new Map<string, AtlasTile>();
+  for (const [name, layer] of layers.tiles) {
+    const source = sources[layer];
+    const rect = source?.tiles.get(name);
+    if (source !== undefined && rect !== undefined) {
+      tiles.set(name, { rect, source });
+    }
+  }
+  const entities = new Map<string, AtlasEntity>();
+  for (const [name, layer] of layers.entities) {
+    const source = sources[layer];
+    const sprite = source?.entities.get(name);
+    if (source !== undefined && sprite !== undefined) {
+      entities.set(name, { sprite, source });
+    }
+  }
+  if (tiles.size === 0 && entities.size === 0) {
+    return null;
+  }
+  return { tiles, entities, sources };
+}
+
+/**
+ * The HUD label for the source of the current art.
+ *
+ * `procedural` when nothing was loaded; the plugin ids when at most three contributed, because they fit and
+ * are the useful answer; a count otherwise. A plugin without an id (a legacy document) counts as a plugin
+ * but cannot be named, which is why the count form is also the fallback.
+ */
+export function atlasLabel(plugins: readonly string[]): string {
+  const ids = [...new Set(plugins.filter((plugin) => plugin !== ""))];
+  if (ids.length === 0) {
+    if (plugins.length === 0) {
+      return "procedural";
+    }
+    return `atlas · ${plugins.length} plugin${plugins.length === 1 ? "" : "s"}`;
+  }
+  if (ids.length <= 3) {
+    return `atlas · ${ids.join(", ")}`;
+  }
+  return `atlas · ${ids.length} plugins`;
 }
 
 function loadImage(url: string): Promise<HTMLImageElement | null> {
@@ -251,55 +421,80 @@ function loadImage(url: string): Promise<HTMLImageElement | null> {
   });
 }
 
-/** Logs every parse warning in one `console.warn` call, so a bad atlas is reported once. */
+/** Logs every parse warning in one `console.warn` call, so a bad entry is reported once. */
 function reportWarnings(warnings: readonly string[]): void {
   if (warnings.length === 0) {
     return;
   }
-  console.warn(`atlas.json：忽略了 ${warnings.length} 个条目：\n${warnings.join("\n")}`);
+  console.warn(`插件图集：忽略了 ${warnings.length} 个条目：\n${warnings.join("\n")}`);
+}
+
+/** Resolves the server supplied path against the page, which keeps it on this origin. */
+function resolveAtlasUrl(atlasUrl: string): string {
+  return new URL(atlasUrl, document.baseURI).href;
 }
 
 /**
- * Loads `<baseUrl>/atlas.json` and its image.
+ * Fetches the merged plugin manifest and builds the composite atlas.
  *
- * Resolves to `null` for every failure: missing files, invalid JSON, an image that does not decode,
- * or an atlas with no usable frames. It never rejects, so the caller can always fall back.
+ * Resolves to `null` for every failure - an unreachable server, a non-200 answer, a body that is not an
+ * array, an empty array, an entry that is malformed, an image that does not decode, or an entry with no
+ * usable frames. A single bad entry is logged and skipped, and the remaining entries still load. The
+ * promise never rejects, so the caller can always fall back to the procedural renderer.
  */
-export async function loadAtlas(baseUrl: string): Promise<Atlas | null> {
+export async function loadPluginAtlas(
+  manifestUrl: string = PLUGIN_MANIFEST_URL,
+): Promise<Atlas | null> {
   try {
-    const jsonUrl = new URL("atlas.json", withTrailingSlash(baseUrl));
-    const response = await fetch(jsonUrl);
+    const response = await fetch(manifestUrl, { headers: { Accept: "application/json" } });
     if (!response.ok) {
-      console.info(`没有找到 ${jsonUrl.href}（HTTP ${response.status}），使用程序化绘制`);
+      console.info(`没有取到插件图集清单 ${manifestUrl}（HTTP ${response.status}），使用程序化绘制`);
+      return null;
+    }
+    const payload: unknown = await response.json();
+    if (!Array.isArray(payload)) {
+      console.warn("插件图集清单不是 JSON 数组，使用程序化绘制");
+      return null;
+    }
+    const entries: readonly unknown[] = payload;
+    if (entries.length === 0) {
+      console.info("服务器没有发布任何插件图集，使用程序化绘制");
       return null;
     }
 
-    const source: unknown = await response.json();
-    const imageName = imageNameOf(source);
-    if (imageName === null) {
-      console.warn("atlas.json 缺少 image 字段，使用程序化绘制");
-      return null;
+    const sources: AtlasSource[] = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const raw = entries[index];
+      const read = readManifestEntry(raw);
+      if (!read.ok) {
+        console.warn(`插件图集第 ${index + 1} 条已跳过：${read.warning}`);
+        continue;
+      }
+      const url = resolveAtlasUrl(read.entry.atlasUrl);
+      const image = await loadImage(url);
+      if (image === null) {
+        console.warn(`插件图集图片 ${url} 载入失败，已跳过该插件`);
+        continue;
+      }
+      const parsed = parseAtlas(raw, image.naturalWidth, image.naturalHeight);
+      reportWarnings(parsed.warnings);
+      if (!parsed.ok) {
+        const name = read.entry.plugin === "" ? url : read.entry.plugin;
+        console.warn(`插件图集 ${name} 不可用：${parsed.reason}，已跳过该插件`);
+        continue;
+      }
+      sources.push({ ...parsed.data, image });
     }
 
-    const imageUrl = new URL(imageName, jsonUrl);
-    const image = await loadImage(imageUrl.href);
-    if (image === null) {
-      console.warn(`图集图片 ${imageUrl.href} 载入失败，使用程序化绘制`);
+    const atlas = compositeAtlas(sources);
+    if (atlas === null) {
+      console.warn("所有插件图集条目都不可用，使用程序化绘制");
       return null;
     }
-
-    const parsed = parseAtlas(source, image.naturalWidth, image.naturalHeight);
-    reportWarnings(parsed.warnings);
-    if (!parsed.ok) {
-      console.warn(`atlas.json 不可用：${parsed.reason}；使用程序化绘制`);
-      return null;
-    }
-
-    const label = imageName.split("/").pop() ?? imageName;
-    return { ...parsed.data, image, label };
+    return atlas;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`载入图集失败（${message}），使用程序化绘制`);
+    console.warn(`载入插件图集失败（${message}），使用程序化绘制`);
     return null;
   }
 }

@@ -17,7 +17,7 @@ import {
   sealEnvelope,
 } from "./protocol";
 import { connect, type CommandSocket } from "./socket";
-import { loadAtlas, type Atlas } from "./render/atlas";
+import { atlasLabel, loadPluginAtlas, type Atlas } from "./render/atlas";
 import { Camera, type TileCoord } from "./render/camera";
 import { InputController } from "./render/input";
 import { WorldRenderer } from "./render/renderer";
@@ -553,7 +553,8 @@ function updateHud(force = false, now = performance.now()): void {
     return;
   }
   lastHudUpdate = now;
-  hudAtlas.textContent = atlas === null ? "绘制：程序化" : `图集：${atlas.label}`;
+  hudAtlas.textContent =
+    atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
@@ -633,11 +634,11 @@ toggleViewButton.addEventListener("click", () => {
 
 async function loadArtwork(): Promise<void> {
   try {
-    const texturesUrl = new URL("textures/", document.baseURI).href;
-    atlas = await loadAtlas(texturesUrl);
+    // The server merges every plugin's assets/manifest.json, so one request describes every plugin atlas.
+    atlas = await loadPluginAtlas();
   } catch (error: unknown) {
-    // loadAtlas promises never to reject; this is only a belt-and-braces guard.
-    console.warn("图集载入异常，继续使用程序化绘制", error);
+    // loadPluginAtlas promises never to reject; this is only a belt-and-braces guard.
+    console.warn("插件图集载入异常，继续使用程序化绘制", error);
     atlas = null;
   }
   updateHud(true);
@@ -652,7 +653,7 @@ updateHud(true);
 log(
   "info",
   `游戏画面已启用：${world.width}×${world.height} 格，${world.entities.length} 个实体` +
-    "（占位地图；图集缺失时使用程序化绘制）。",
+    "（占位地图；插件没有提供图集时使用程序化绘制）。",
 );
 
 window.addEventListener("beforeunload", () => {

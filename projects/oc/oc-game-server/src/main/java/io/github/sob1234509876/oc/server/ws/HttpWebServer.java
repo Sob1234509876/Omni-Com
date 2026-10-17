@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.server.ws;
 
+import io.github.sob1234509876.oc.server.plugin.PluginLoader;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -51,6 +53,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * when one is configured. An empty allowlist permits any origin and is documented in
  * {@link WebSocketConfig} as a development default only.
  *
+ * <p><strong>Plugin assets.</strong> When the endpoint is constructed with a {@link PluginLoader}, it also
+ * answers {@code /plugin-assets/manifest.json} and {@code /plugin-assets/<plugin>/<file>} from the loaded
+ * plugins' jars; see {@link PluginAssets}. That route is a second file style handler next to the static
+ * root, not a change to it: a request that does not start with the prefix still goes through the static
+ * route exactly as before, and an endpoint built without a loader has no plugin asset route at all. Nothing
+ * on that route touches the filesystem - every byte comes from a plugin's class loader.
+ *
  * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
  * uses; callers that want to know the port read {@link #port()} after {@link #start()}.
  */
@@ -73,6 +82,7 @@ public final class HttpWebServer implements AutoCloseable {
     private final WebSocketConfig config;
     private final WebSocketHandler handler;
     private final StaticFiles staticFiles;
+    private final PluginAssets pluginAssets;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong connectionIds = new AtomicLong();
 
@@ -90,13 +100,33 @@ public final class HttpWebServer implements AutoCloseable {
      * Creates an endpoint. Nothing binds until {@link #start()} is called, so a server can be configured,
      * inspected and discarded without touching a port.
      *
+     * <p>This form has no plugin asset route: {@code /plugin-assets/...} is not a route, and such a request
+     * is served by the static route like every other path. It is what a standalone endpoint (a check, an
+     * embedded static server) wants; a server that loads plugins uses the three argument form.
+     *
      * @param config  the port, path, static root and limits
      * @param handler the callbacks every upgraded connection delivers its messages to
      */
     public HttpWebServer(WebSocketConfig config, WebSocketHandler handler) {
+        this(config, handler, null);
+    }
+
+    /**
+     * Creates an endpoint that also publishes the loaded plugins' assets.
+     *
+     * <p>The loader is not copied: the asset route reads its plugins on every request, so a plugin that
+     * was never enabled is not served and a plugin unloaded at shutdown stops being served immediately.
+     * Passing {@code null} is the same as the two argument form and keeps the endpoint static only.
+     *
+     * @param config  the port, path, static root and limits
+     * @param handler the callbacks every upgraded connection delivers its messages to
+     * @param plugins the loader whose plugins publish assets, or {@code null} for no asset route
+     */
+    public HttpWebServer(WebSocketConfig config, WebSocketHandler handler, PluginLoader plugins) {
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
         this.staticFiles = new StaticFiles(config.staticRoot());
+        this.pluginAssets = plugins == null ? null : new PluginAssets(plugins);
     }
 
     /**
@@ -280,6 +310,8 @@ public final class HttpWebServer implements AutoCloseable {
             }
             if (request.isWebSocketAttempt() || request.path().equals(config.path())) {
                 serveWebSocket(socket, request, peer);
+            } else if (pluginAssets != null && PluginAssets.isRoute(request.path())) {
+                servePluginAssets(socket, request);
             } else {
                 serveStatic(socket, request);
             }
@@ -311,6 +343,27 @@ public final class HttpWebServer implements AutoCloseable {
             return;
         }
         HttpResponse response = staticFiles.get(request.path());
+        response.writeTo(out, "HEAD".equals(request.method()));
+    }
+
+    /**
+     * Serves one request of the plugin asset route.
+     *
+     * <p>The method rule is the same one the static route applies and is repeated here rather than shared,
+     * because the two routes must be able to disagree later without one silently changing the other. The
+     * route itself answers every other refusal - a bad path, a missing plugin, a missing file - so this
+     * method only decides whether the request is allowed to reach it.
+     */
+    private void servePluginAssets(Socket socket, HttpRequest request) throws IOException {
+        OutputStream out = socket.getOutputStream();
+        if (!"GET".equals(request.method()) && !"HEAD".equals(request.method())) {
+            HttpResponse.text(405, "Method Not Allowed", "only GET and HEAD are served by the plugin"
+                    + " asset route")
+                    .withHeader("Allow", "GET, HEAD")
+                    .writeTo(out, false);
+            return;
+        }
+        HttpResponse response = pluginAssets.get(request.path());
         response.writeTo(out, "HEAD".equals(request.method()));
     }
 

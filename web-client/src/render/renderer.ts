@@ -7,9 +7,13 @@
  *
  * Draw order is terrain, tile grid (fallback only), hover tile, ground shadows and selection rings,
  * then entities sorted by y so lower entities overlap higher ones, then health bars.
+ *
+ * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
+ * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
+ * the winning plugin's `tilePixels`, which keeps a 16, 32 and 64 pixel plugin aligned on the same map.
  */
 
-import type { Atlas, EntitySprite, SpriteRect } from "./atlas";
+import type { Atlas, AtlasEntity, AtlasSource, AtlasTile, EntitySprite, SpriteRect } from "./atlas";
 import type { Camera, TileCoord } from "./camera";
 import {
   drawBuildingShape,
@@ -46,11 +50,11 @@ interface PreparedEntity {
   readonly screenY: number;
 }
 
-function lookupTile(atlas: Atlas, terrain: string): SpriteRect | undefined {
+function lookupTile(atlas: Atlas, terrain: string): AtlasTile | undefined {
   return atlas.tiles.get(terrain) ?? atlas.tiles.get(kindName(terrain));
 }
 
-function lookupEntity(atlas: Atlas, kind: string): EntitySprite | undefined {
+function lookupEntity(atlas: Atlas, kind: string): AtlasEntity | undefined {
   return atlas.entities.get(kind) ?? atlas.entities.get(kindName(kind));
 }
 
@@ -75,7 +79,7 @@ function frameFor(sprite: EntitySprite, entity: EntityView, clockSeconds: number
 
 function drawEntitySprite(
   context: CanvasRenderingContext2D,
-  atlas: Atlas,
+  source: AtlasSource,
   sprite: EntitySprite,
   entity: EntityView,
   screenX: number,
@@ -88,16 +92,16 @@ function drawEntitySprite(
   if (frame === null) {
     return;
   }
-  // `tilePixels` is the size the art was drawn at; normalise it to the camera's tile size so an
-  // atlas authored at 16, 32 or 64 pixels per tile fills the same ground footprint.
-  const artScale = tileSize / atlas.tilePixels;
+  // `tilePixels` is the size the winning plugin drew its art at; normalise it to the camera's tile size so
+  // an atlas authored at 16, 32 or 64 pixels per tile fills the same ground footprint.
+  const artScale = tileSize / source.tilePixels;
   const scale = sprite.scale * zoom * artScale;
   const drawWidth = frame.width * scale;
   const drawHeight = frame.height * scale;
   const drawX = screenX - drawWidth * sprite.anchor[0];
   const drawY = screenY - drawHeight * sprite.anchor[1];
   context.drawImage(
-    atlas.image,
+    source.image,
     frame.x,
     frame.y,
     frame.width,
@@ -168,10 +172,11 @@ export class WorldRenderer {
         const screenX = origin.x + (tileX - range.minX) * tileOnScreen;
         const screenY = origin.y + (tileY - range.minY) * tileOnScreen;
         const terrain = terrainAt(world, tileX, tileY);
-        const frame = atlas === null ? undefined : lookupTile(atlas, terrain);
-        if (atlas !== null && frame !== undefined) {
+        const tile = atlas === null ? undefined : lookupTile(atlas, terrain);
+        if (tile !== undefined) {
+          const frame = tile.rect;
           context.drawImage(
-            atlas.image,
+            tile.source.image,
             frame.x,
             frame.y,
             frame.width,
@@ -250,12 +255,12 @@ export class WorldRenderer {
     for (const item of prepared) {
       const entity = item.entity;
       const building = isBuildingKind(entity.kind);
-      const sprite = atlas === null ? undefined : lookupEntity(atlas, entity.kind);
-      if (atlas !== null && sprite !== undefined) {
+      const entry = atlas === null ? undefined : lookupEntity(atlas, entity.kind);
+      if (entry !== undefined) {
         drawEntitySprite(
           context,
-          atlas,
-          sprite,
+          entry.source,
+          entry.sprite,
           entity,
           item.screenX,
           item.screenY,

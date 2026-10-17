@@ -12,6 +12,8 @@ import io.github.sob1234509876.oc.server.ws.CommandWebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -92,6 +94,7 @@ public final class HelloPluginCheck {
         try {
             checkPlugin(check, root);
             checkDescriptor(check);
+            checkAssets(check);
             checkOverWebSocket(check, root);
         } finally {
             deleteRecursively(root);
@@ -187,7 +190,66 @@ public final class HelloPluginCheck {
         }
     }
 
-    // ------------------------------------------------------------------ 3) end to end over a socket
+    // ------------------------------------------------------------------ 3) the bundled assets
+
+    /**
+     * The example plugin ships real art, because the plugin asset route can only be demonstrated end to end
+     * when a plugin jar actually contains a manifest and an image.
+     *
+     * <p>The resources are read through the plugin's own class loader - the same call the HTTP route makes -
+     * so a file that is missing from the jar fails here instead of in a browser. The manifest is compared
+     * with all whitespace removed, which keeps the assertions about the mapping rather than about how the
+     * file happens to be indented.
+     */
+    private static void checkAssets(Check check) {
+        check.section("hello 插件：资源清单与图集");
+        String raw = resourceText("assets/manifest.json");
+        check.that(raw != null, "插件自己的 classpath 上有 assets/manifest.json");
+        if (raw != null) {
+            String manifest = raw.replaceAll("\\s+", "");
+            check.that(manifest.contains("\"image\":\"atlas.png\""), "清单的 image 指向同目录的 atlas.png");
+            check.that(manifest.contains("\"tilePixels\":32"), "清单声明 tilePixels 为 32");
+            for (String terrain : new String[] {"water", "sand", "grass", "forest", "hill", "rock",
+                    "void"}) {
+                check.that(manifest.contains("\"" + terrain + "\":["),
+                        "清单映射了地形 " + terrain);
+            }
+            check.that(manifest.contains("\"worker\":{\"frames\":[[0,32,32,48],[32,32,32,48]]"),
+                    "worker 的两帧各自映射到自己的位置");
+            check.that(manifest.contains("\"fps\":4"), "worker 的动画帧率是 4");
+            check.that(manifest.contains("\"anchor\":[0.5,0.75]"), "worker 使用脚底锚点 [0.5, 0.75]");
+            check.that(!manifest.contains("atlasUrl"),
+                    "插件清单里没有绝对 URL：atlasUrl 由服务器改写");
+        }
+
+        try (InputStream in = HelloPlugin.class.getClassLoader()
+                .getResourceAsStream("assets/atlas.png")) {
+            check.that(in != null, "插件自己的 classpath 上有 assets/atlas.png");
+            if (in == null) {
+                return;
+            }
+            BufferedImage image = ImageIO.read(in);
+            check.that(image != null, "atlas.png 可以被 ImageIO 解码");
+            if (image == null) {
+                return;
+            }
+            check.equal(256, image.getWidth(), "图集宽度是 256 像素（8 列 32 像素）");
+            check.equal(80, image.getHeight(), "图集高度是 80 像素（32 地形 + 48 实体）");
+        } catch (IOException failure) {
+            check.that(false, "读取 assets/atlas.png 失败: " + failure);
+        }
+    }
+
+    /** Reads a UTF-8 text resource of the plugin's own class loader, or returns null when absent. */
+    private static String resourceText(String name) {
+        try (InputStream in = HelloPlugin.class.getClassLoader().getResourceAsStream(name)) {
+            return in == null ? null : new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException failure) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ 4) end to end over a socket
 
     private static void checkOverWebSocket(Check check, Path root) {
         check.section("hello 插件：真实 WebSocket 端到端");

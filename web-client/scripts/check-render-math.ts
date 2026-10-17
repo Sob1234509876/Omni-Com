@@ -9,7 +9,14 @@
  */
 
 import { Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
-import { parseAtlas } from "../src/render/atlas.ts";
+import {
+  atlasLabel,
+  compositeAtlas,
+  mergeLayers,
+  parseAtlas,
+  readManifestEntry,
+  type AtlasSource,
+} from "../src/render/atlas.ts";
 import { TERRAIN_COLORS, terrainColor } from "../src/render/fallback.ts";
 import {
   demoWorld,
@@ -285,6 +292,133 @@ check(
   "无效图片尺寸被拒绝",
   parseAtlas({ image: "atlas.png", tiles: { grass: [0, 0, 1, 1] } }, 0, 0).ok === false,
 );
+
+// ---------------------------------------------------------------------------------------------
+// Composite atlas: the server's manifest array, last wins
+// ---------------------------------------------------------------------------------------------
+
+// Node has no HTMLImageElement and the merge never reads the pixels, so one placeholder is enough for
+// the checks that only need the attachment step.
+const PLACEHOLDER_IMAGE = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
+
+const firstEntry = parseAtlas(
+  {
+    plugin: "oc-hello",
+    atlasUrl: "/plugin-assets/oc-hello/atlas.png",
+    image: "atlas.png",
+    tilePixels: 32,
+    tiles: { grass: [0, 0, 32, 32], water: [32, 0, 32, 32] },
+    entities: { worker: { frames: [[0, 32, 32, 48]] } },
+  },
+  256,
+  80,
+);
+const secondEntry = parseAtlas(
+  {
+    plugin: "oc-forest",
+    atlasUrl: "/plugin-assets/oc-forest/atlas.png",
+    image: "atlas.png",
+    tilePixels: 16,
+    tiles: { grass: [16, 0, 16, 16], sand: [0, 0, 16, 16] },
+    entities: {
+      worker: { frames: [[0, 16, 16, 24]], fps: 8 },
+      soldier: { frames: [[16, 16, 16, 24]] },
+    },
+  },
+  128,
+  64,
+);
+check("两个插件条目都解析成功", firstEntry.ok && secondEntry.ok);
+
+if (firstEntry.ok && secondEntry.ok) {
+  const merged = mergeLayers([firstEntry.data, secondEntry.data]);
+  check("后面的插件覆盖同名地形（last wins）", merged.tiles.get("grass") === 1,
+    String(merged.tiles.get("grass")));
+  check("只在前一条目出现的地形仍然保留", merged.tiles.get("water") === 0,
+    String(merged.tiles.get("water")));
+  check("只在后一条目出现的地形被加入", merged.tiles.get("sand") === 1,
+    String(merged.tiles.get("sand")));
+  check("后面的插件覆盖同名实体（last wins）", merged.entities.get("worker") === 1,
+    String(merged.entities.get("worker")));
+  check("只在前一条目出现的实体仍然保留", merged.entities.get("soldier") === 1,
+    String(merged.entities.get("soldier")));
+  check("贡献插件按出现顺序去重", merged.plugins.join(",") === "oc-hello,oc-forest",
+    merged.plugins.join(","));
+
+  const sources: readonly AtlasSource[] = [
+    { ...firstEntry.data, image: PLACEHOLDER_IMAGE },
+    { ...secondEntry.data, image: PLACEHOLDER_IMAGE },
+  ];
+  const composite = compositeAtlas(sources);
+  check(
+    "合成图集用胜出插件的帧与图片",
+    composite?.tiles.get("grass")?.rect.x === 16 &&
+      composite.tiles.get("grass")?.source.plugin === "oc-forest",
+    String(composite?.tiles.get("grass")?.rect.x),
+  );
+  check(
+    "合成图集里每个名字都记住自己的来源条目",
+    composite?.entities.get("worker")?.source.plugin === "oc-forest" &&
+      composite?.entities.get("soldier")?.source.plugin === "oc-forest",
+  );
+
+  const single = compositeAtlas([{ ...firstEntry.data, image: PLACEHOLDER_IMAGE }]);
+  check(
+    "只有一个插件时合成图集照常工作",
+    single?.tiles.get("water")?.rect.x === 32 &&
+      single.tiles.get("water")?.source.plugin === "oc-hello" &&
+      single.entities.get("worker")?.source.plugin === "oc-hello",
+  );
+}
+
+check("空数组没有图集，客户端因此回退到程序化绘制", compositeAtlas([]) === null);
+
+const urlOnly = parseAtlas(
+  { atlasUrl: "/plugin-assets/oc-hello/atlas.png", tiles: { grass: [0, 0, 32, 32] } },
+  32,
+  32,
+);
+check(
+  "只有 atlasUrl 的条目也能解析，并从 URL 得到文件名",
+  urlOnly.ok && urlOnly.data.imageName === "atlas.png" && urlOnly.data.plugin === "",
+);
+
+const goodEntry = readManifestEntry({
+  plugin: "oc-hello",
+  atlasUrl: "/plugin-assets/oc-hello/atlas.png",
+});
+check(
+  "合法条目给出 plugin 与 atlasUrl",
+  goodEntry.ok &&
+    goodEntry.entry.plugin === "oc-hello" &&
+    goodEntry.entry.atlasUrl === "/plugin-assets/oc-hello/atlas.png",
+);
+const malformedEntries = [
+  readManifestEntry(null),
+  readManifestEntry("atlas.png"),
+  readManifestEntry({}),
+  readManifestEntry({ atlasUrl: 7 }),
+  readManifestEntry({ atlasUrl: "plugin-assets/atlas.png" }),
+  readManifestEntry({ atlasUrl: "http://evil.example/atlas.png" }),
+  readManifestEntry({ atlasUrl: "//evil.example/atlas.png" }),
+];
+check(
+  "畸形条目被跳过并各自给出警告",
+  malformedEntries.every((result) => !result.ok && result.warning !== ""),
+);
+check(
+  "缺少 plugin 的条目仍可加载它的图片",
+  readManifestEntry({ atlasUrl: "/plugin-assets/x/atlas.png" }).ok === true,
+);
+
+check("没有图集时 HUD 显示 procedural", atlasLabel([]) === "procedural");
+check("一个插件时 HUD 直接列出插件 id", atlasLabel(["oc-hello"]) === "atlas · oc-hello");
+check(
+  "三个插件时 HUD 列出全部 id",
+  atlasLabel(["oc-hello", "oc-forest", "oc-debug"]) === "atlas · oc-hello, oc-forest, oc-debug",
+);
+check("超过三个插件时 HUD 显示数量", atlasLabel(["a", "b", "c", "d"]) === "atlas · 4 plugins");
+check("重复插件只算一次", atlasLabel(["a", "a", "b"]) === "atlas · a, b");
 
 // ---------------------------------------------------------------------------------------------
 // Fallback palette

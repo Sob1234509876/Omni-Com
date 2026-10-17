@@ -39,9 +39,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><strong>The browser endpoint is optional.</strong> When a {@link WebSocketConfig} with a non-zero port
  * is supplied, this server also starts an {@link HttpWebServer} on its own port so a browser can fetch the
- * static web client and speak the same commands over a WebSocket. When that port is {@code 0} no HTTP socket
- * is bound at all, and the server behaves exactly as it did before the endpoint existed. {@link #stop()}
- * closes both sockets in the same shutdown step.
+ * static web client, the loaded plugins' assets under {@code /plugin-assets/} and speak the same commands
+ * over a WebSocket. When that port is {@code 0} no HTTP socket is bound at all, and the server behaves
+ * exactly as it did before the endpoint existed. {@link #stop()} closes both sockets in the same shutdown
+ * step.
  */
 public final class OcGameServer {
 
@@ -203,7 +204,7 @@ public final class OcGameServer {
         server.start();
         if (webSocketConfig.port() != 0) {
             HttpWebServer browser = new HttpWebServer(webSocketConfig,
-                    new CommandWebSocketHandler(auth, requests));
+                    new CommandWebSocketHandler(auth, requests), pluginLoader);
             try {
                 browser.start();
             } catch (IOException failure) {

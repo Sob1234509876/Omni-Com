@@ -17,9 +17,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
@@ -117,6 +119,21 @@ public final class PluginLoader {
     private final List<URLClassLoader> classLoaders = new ArrayList<>();
 
     private final List<Plugin> plugins = new ArrayList<>();
+
+    /**
+     * The loader of every enabled plugin, keyed by the name the plugin reports.
+     *
+     * <p>The name is the only identity a plugin exposes that a browser can safely put in a URL: it is what
+     * {@link #plugin(String)} looks up and what names the plugin's data directory. For a conventionally
+     * packaged plugin it equals the {@code id} of {@link PluginDescriptor}, but the name is authoritative
+     * here because it comes from the live object rather than from a file the plugin might forget to update.
+     *
+     * <p>The order is the load order, which is also the order the asset manifest is merged in. A plugin
+     * whose {@code onLoad} or {@code onEnable} failed never appears: it is not part of the server, so it
+     * must not publish content either.
+     */
+    private final Map<String, URLClassLoader> classLoadersByPlugin = new LinkedHashMap<>();
+
     private final List<DiscoveryResult> discoveries = new ArrayList<>();
     private final List<String> problems = new ArrayList<>();
 
@@ -241,6 +258,12 @@ public final class PluginLoader {
             Plugin plugin = instantiate(jar, className, loader, context, jarProblems);
             if (plugin != null) {
                 plugins.add(plugin);
+                // A jar may hold more than one plugin, and they legitimately share one loader: every class
+                // of the jar must resolve against the same class path, and the assets of the jar are the
+                // same bytes for each of them.
+                synchronized (classLoadersByPlugin) {
+                    classLoadersByPlugin.put(plugin.name(), loader);
+                }
             }
         }
         return new DiscoveryResult(jar, descriptor, pluginClasses, jarProblems);
@@ -480,6 +503,29 @@ public final class PluginLoader {
     }
 
     /**
+     * The class loader of every enabled plugin, keyed by {@link Plugin#name()}, in load order.
+     *
+     * <p>This is the mapping the {@code /plugin-assets} route resolves a request's plugin id against. The
+     * route asks this map for the loader and then reads the asset through it, so the HTTP layer never needs
+     * a plugin's jar path, folder or any other filesystem handle: it only ever sees a loader the server
+     * already owns and never closes (see the field documentation above).
+     *
+     * <p>The map is an unmodifiable snapshot that preserves the load order, because the merged asset
+     * manifest is built in that order and a caller that sorted it would change which plugin wins a tile.
+     * The copy is taken under the map's monitor: the asset route reads this mapping from connection threads
+     * while shutdown may be clearing it, and a snapshot that could observe a half cleared map would turn a
+     * teardown into an exception in an unrelated request. Plugin lifecycle calls themselves stay single
+     * threaded, as documented above.
+     *
+     * @return the enabled plugins' loaders by plugin name, in load order; empty before {@link #loadAll()}
+     */
+    public Map<String, URLClassLoader> classLoadersByPlugin() {
+        synchronized (classLoadersByPlugin) {
+            return Collections.unmodifiableMap(new LinkedHashMap<>(classLoadersByPlugin));
+        }
+    }
+
+    /**
      * The request surface this loader handed to its plugins, which is the registry a server must give to the
      * component that serves clients.
      *
@@ -497,6 +543,10 @@ public final class PluginLoader {
      * dynamic loading described in the field documentation. The JVM therefore keeps the classes of a
      * disabled plugin alive until the process ends; that is the accepted price of a plugin being able to
      * load its own classes at any time, and a server process outlives its plugins anyway.
+     *
+     * <p>The plugin-to-loader map is cleared, however. A disabled plugin is no longer part of the server,
+     * so its assets must stop being served the moment its lifecycle ends; a later {@link #loadAll()} adds
+     * the mapping again for whatever it loads.
      */
     public void unloadAll() {
         for (Plugin plugin : plugins) {
@@ -512,6 +562,9 @@ public final class PluginLoader {
             }
         }
         plugins.clear();
+        synchronized (classLoadersByPlugin) {
+            classLoadersByPlugin.clear();
+        }
     }
 
     private static boolean isConcrete(Class<?> type) {

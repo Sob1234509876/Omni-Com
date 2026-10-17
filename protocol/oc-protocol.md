@@ -8,6 +8,7 @@
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
+- 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
 - 版本兼容规则，以及怎么用 pnpm 起浏览器客户端。
 
 ## 传输
@@ -15,7 +16,7 @@
 | 项 | 约定 |
 | --- | --- |
 | WebSocket 地址 | `ws://<host>:25567/ws` |
-| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件 |
+| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件，以及 `/plugin-assets` 下的插件资源 |
 | 帧类型 | 只使用 **TEXT** 帧；二进制帧不是命令，服务端回 ERR 并保持连接，客户端忽略并提示 |
 | 帧内容 | 每个 TEXT 帧**恰好一条命令行**，UTF-8，不含 CR/LF |
 | 回答 | 每条命令**恰好一行**回答；客户端不得把多条命令塞进一个帧 |
@@ -175,6 +176,31 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 | `ERR bad request` | 信封没打开：magic、长度、标签或时间窗口不合法 |
 
 客户端必须分开报告这两层：`ERR bad request` 通常是 `debug.key` 不对或两台机器时钟差太多，`ERR unsupported request` 通常是请求行写错。
+
+## 插件资源
+
+贴图和其它插件资源是**普通 HTTP 内容**，不是 OC/1 消息：客户端用 `fetch` 读取，与 WebSocket 无关，也不需要登录。
+
+| 路由 | 内容 |
+| --- | --- |
+| `GET /plugin-assets/manifest.json` | 所有已加载插件的图集清单合并成的 JSON 数组 |
+| `GET /plugin-assets/<插件 id>/<文件>` | 该插件 jar 内 `assets/<文件>` 的原始字节 |
+
+- 清单是数组，顺序就是插件加载顺序；每个元素是
+  `{"plugin": "<插件 id>", "atlasUrl": "...", "tilePixels": ..., "tiles": {...}, "entities": {...}}`。
+  `atlasUrl` 由服务器根据插件清单里的 `image` 改写，插件清单本身不含绝对 URL。
+- 没有插件发布清单时，清单路由回 `200` 和 `[]`，不是 `404`。
+- 清单的 `Content-Type` 是 `application/json; charset=utf-8`；文件按扩展名给 MIME 类型（`image/png`、
+  `application/json` 等），未知扩展名是 `application/octet-stream`。两者都带 `Content-Length`，
+  并且一律 `Cache-Control: no-cache`。
+- 只允许 `GET` 和 `HEAD`；其它方法回 `405`，并带 `Allow: GET, HEAD`。
+- 含 `..`、编码点（`%2e`）、反斜杠、NUL、盘符或空插件 id 的路径回 `400`；规范化后不在 `assets/` 下的路径回
+  `403`；未知插件、缺失文件、没有 `assets/` 的插件都回 `404`。
+- 服务器只通过插件自己的类加载器读取资源，从不为这个路由访问磁盘上的插件目录，所以插件无法借它读到服务器文件。
+- 这条路由和静态页面共用 `--http-port` 的端口；`--http-port 0` 时两者都不存在。
+- **它不改变本文的任何命令、回答、帧规则或版本号。** 客户端拿不到图集时退回程序化绘制，协议面板照常工作。
+- 多个插件提供同一地形或实体时，客户端按数组顺序**后者覆盖前者**；清单格式见
+  [`web-client/public/textures/README.md`](../web-client/public/textures/README.md)。
 
 ## 版本兼容
 
