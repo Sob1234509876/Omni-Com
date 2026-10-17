@@ -4,9 +4,9 @@
 
 ## 这一篇讲什么
 
-- 这是一份**索引**，不是教程：讲解在 01~13 篇里，这里只回答"该看哪一篇、该碰哪个类型"。
-- 类型清单是**扫描 `src/main/java` 下全部 100 个源文件**得到的，共 117 个 public 类型（含嵌套 public 类型）。包私有类型（如 `economy.ReservationPool`、`logistics.HaulOrder.Phase`、各类 `Draft`）不在清单里，因为它们不是导出 API。维度与旅行功能之前是 98 个文件 / 114 个 public 类型（旧版这里写的 113 少算了一个），现在多了 `dimension/Gateway.java` 与 `order/TransferOrder.java` 两个文件，以及 `DimensionId` / `DimensionProfile` / `Dimension` / `Gateway` / `TransferOrder` / `Events.EntityTransferred` 六个类型，所以是 **100 个文件 / 117 个类型**。
-- 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，12 个源文件）的 11 个 public 类型：`Natural` / `HyperOperation` / `NaturalFormat` / `ComparisonResult`，以及库新增的序数层 `Ordinal` / `OrdinalNotation` / `CantorNormalForm` / `CantorOrdinal`（含嵌套 public 类型 `CantorOrdinal.Term`）/ `EpsilonZero` / `TransfiniteHyperoperation`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上；引擎本身不使用序数层，也不使用四值比较（它的数量永远落在精确区间）。
+- 这是一份**索引**，不是教程：讲解在 01~14 篇里，这里只回答"该看哪一篇、该碰哪个类型"。
+- 类型清单是**扫描 `src/main/java` 下全部 108 个源文件**（不含 `module-info.java`；含它是 109 个）得到的，共 **106 个 public 顶层类型**（把 25 个嵌套 public 类型也算上是 131 个），分布在 16 个包里。包私有类型（如 `economy.ReservationPool`、`logistics.HaulOrder.Phase`、各类 `Draft`）不在清单里，因为它们不是导出 API。
+- 末尾另有兄弟模块 `oc.projects.oc.googology`（`projects/oc/oc-googology`，11 个源文件，不含 `module-info.java`；含它是 12 个）的 10 个 public 顶层类型（含嵌套 public 类型 `CantorOrdinal.Term` 共 11 个）：`Natural` / `HyperOperation` / `NaturalFormat` / `ComparisonResult`，以及库新增的序数层 `Ordinal` / `OrdinalNotation` / `CantorNormalForm` / `CantorOrdinal` / `EpsilonZero` / `TransfiniteHyperoperation`。它通过 `api project(':projects:oc:oc-googology')` 进入引擎，因为 `Natural` 出现在引擎导出包的公开签名上；引擎本身不使用序数层，也不使用四值比较（它的数量永远落在精确区间）。
 - 每个包一节，逐行给出：类型 → 一句话作用 → 关键方法/字段 → 详见的文档。
 - 常量值全部从源码读出，包含默认参数与枚举成员；`throws` 列只写源码里真实存在的校验与异常。
 - 约定：`Foo#bar()` 表示实例方法，`Foo.bar()` 表示静态方法，`Foo.CONST` 表示常量。所有引擎类型都在模块 `oc.projects.oc.rts.engine` 的 16 个导出包里（`combat` 与 `dimension` 是新增的两个）；大数与序数类型在模块 `oc.projects.oc.googology` 的包 `io.github.sob1234509876.oc.googology` 里。
@@ -25,7 +25,7 @@
 | 让一组单位排成楔形 | [05](05-formations.md) | `CommandService#moveGroup`、`FormationShape#WEDGE` |
 | 拖拽时实时改队形落点 | [05](05-formations.md) | `CommandService#updateFormationAnchor`、`FormationMoveOrder#updateAnchor` |
 | 把材料送进工厂 | [06](06-economy-logistics-and-production.md) | `Logistics#requestDelivery`、`DeliveryJob` |
-| 让工厂产出物品并送回仓库 | [06](06-economy-logistics-and-production.md) | `ProductionJob#pendingOutput`、`Logistics#deposit`、`Logistics#store` |
+| 让工厂产出物品并送回仓库 | [06](06-economy-logistics-and-production.md) | `ProductionJob#pendingOutput`、`Logistics#deposit`、`WarehouseLogistics#store` |
 | 不要搬运工，用定时传送代替 | [06](06-economy-logistics-and-production.md) | `OcRtsEngineBuilder#directDelivery`、`HaulingSystem#directDelivery` |
 | 换掉地形生成算法 | [03](03-map-and-pathfinding.md) | `ChunkGenerator`、`OcRtsEngineBuilder#generator` |
 | 调噪声地形的海平面/森林线/山线 | [03](03-map-and-pathfinding.md) | `NoiseSettings#withSeaThreshold`、`NoiseSettings#withPaths` |
@@ -40,7 +40,7 @@
 | 追一个指定目标 / 边走边打 | [14](14-combat.md) | `UnitDirector#attack`、`UnitDirector#attackMove`、`AttackOrder`、`AttackMoveOrder` |
 | 给单位加一个自定义订单 | [04](04-units-orders-and-movement.md) / [10](10-cookbook.md) | `Order`、`OrderContext`、`OrderQueue#push` |
 | 把动画接到真实图集 | [07](07-sprites-and-animation.md) | `VisualLibrary.Builder`、`SpriteSheet`、`SpriteFrame` |
-| 做八方向行走动画 | [07](07-sprites-and-animation.md) | `VisualLibrary.ClipBuilder#direction`、`AnimationSet#clip(String,Direction)`、`Direction` |
+| 做八方向行走动画 | [07](07-sprites-and-animation.md) | `VisualLibrary.SetBuilder.ClipBuilder#direction`、`AnimationSet#clip(String,Direction)`、`Direction` |
 | 用快照写渲染循环 | [08](08-snapshots-and-rendering.md) | `SnapshotFactory#capture`、`WorldSnapshot`、`EntitySnapshot` |
 | 采集某一张图的快照 | [08](08-snapshots-and-rendering.md) / [13](13-dimensions.md) | `SnapshotFactory#capture(DimensionId,...)`、`WorldSnapshot#dimension`、`WorldSnapshot#dimensionName` |
 | 在一个世界里放多张地图（月球/火星） | [13](13-dimensions.md) | `OcRtsEngineBuilder#dimension`、`OcRtsEngineBuilder#moonAndMars`、`DimensionId`、`DimensionProfile`、`World#dimension` |
@@ -75,7 +75,7 @@
 | `OcRtsEngineBuilder` | 链式装配 `OcRtsEngine`，每个子系统都有可用默认值 | `seed()`、`ticksPerSecond()`、`generator()`、`chunkStore()`、`visuals()`、`player()`、`build()` | [01](01-getting-started.md) |
 | `Player` | 一个参赛方：拥有实体，其仓库构成一张后勤网 | `id()`、`colorArgb()`、`team()`、`logistics()`、`attachLogistics()` | [06](06-economy-logistics-and-production.md) |
 | `PlayerId` | 玩家身份，全场比赛稳定 | `of(int)`、`value()` | [06](06-economy-logistics-and-production.md) |
-| `World` | 模拟状态本体：多个维度、实体、玩家与各服务 | `dimensions()`、`dimension()`、`addDimension()`、`spawnUnit()`、`spawnBuilding()`、`canPlace()`、`destroy()`、`flush()`、`spatial()`、`spatial(DimensionId)`、`events()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
+| `World` | 模拟状态本体：多个维度、实体、玩家与各服务 | `dimensions()`、`dimension()`、`addDimension()`、`spawnUnit()`、`spawnBuilding()`、`canPlace()`、`production()`、`destroy()`、`flush()`、`spatial()`、`spatial(DimensionId)`、`events()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
 
 ### `io.github.sob1234509876.oc.googology`（兄弟模块 `oc.projects.oc.googology`）
 
@@ -105,16 +105,21 @@
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
 | `ContentRegistry` | 一份游戏的全部定义目录，按 `ResourceKey` 寻址 | `namespace()`、`terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`recipesFor()`、`builder()` | [02](02-content-and-items.md) |
-| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`storage()`、`warehouse()`、`producer()`、`build()` | [02](02-content-and-items.md) |
+| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`cost(...)`、`storage()`、`warehouse()`、`producer()`、`armour(int)`、`level(int)`、`requiredBuildingLevel(int)`、`build()` | [02](02-content-and-items.md) |
+| `WorldContent` | 一份完整游戏目录的接缝：身份、说明、命名空间与填充目录的方法 | `id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)`、`startingResources()` | [02](02-content-and-items.md) |
+| `ScenarioWorldContent` | 把示例目录 `ScenarioContent` 包装成 `WorldContent`，作为引擎默认内容 | `ID`、`id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
+| `ScenarioContent` | 示例场景的内容目录：地形、物品、兵种、建筑与配方 | `NAMESPACE`、`omniCom()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
 | `TerrainType` | 一种地形的定义 | `passable()`、`buildable()`、`moveCost()`、`spriteId()`、`mapColor()` | [02](02-content-and-items.md) |
 | `ItemType` | 一种物品/资源的定义 | `key()`、`maxStack()`（`Natural`）、`hasTag()`、`hasAnyTag()` | [02](02-content-and-items.md) |
 | `ItemBundle` | 不可变、有序的物品多重集（成本、产出、库存通用） | `EMPTY`、`of()`、`plus()`、`minus()`、`minusClamped()`、`components()`、`builder()` | [02](02-content-and-items.md) |
 | `ItemBundle.Amount` | 一条 (物品, 数量) 分量，数量是 `Natural` | `item()`、`amount()` | [02](02-content-and-items.md) |
 | `ItemBundle.Builder` | 累加式构建 `ItemBundle`；拒绝负数与 `BEYOND` | `add()`、`addAll()`、`build()` | [02](02-content-and-items.md) |
-| `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`（`Natural`）、`speed()`、`radius()`、`cost()`、`cargoCapacity()`（`Natural`）、`canHaul()`、`attackDamage()`（`Natural`）、`attackRange()`、`canAttack()` | [02](02-content-and-items.md) |
+| `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`（`Natural`）、`speed()`、`radius()`、`cost()`、`cargoCapacity()`（`Natural`）、`canHaul()`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`canAttack()` | [02](02-content-and-items.md) |
 | `UnitRole` | 兵种大类，供生产和后勤判断用途 | `COMBAT`/`WORKER`/`SUPPORT`、`id()` | [02](02-content-and-items.md) |
-| `BuildingType` | 一种建筑的定义：占地、成本、血、仓储、生产标签 | `sizeX()`/`sizeY()`、`footprint()`、`maxHealth()`（`Natural`）、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
-| `Recipe` | 一条生产配方：消耗什么、产出什么、要多久 | `inputs()`、`itemOutputs()`、`unitOutput()`、`isUnitRecipe()`、`durationTicks()`、`producerTags()` | [06](06-economy-logistics-and-production.md) |
+| `BuildingType` | 一种建筑的定义：占地、成本、血、仓储、生产标签 | `sizeX()`/`sizeY()`、`footprint()`、`maxHealth()`（`Natural`）、`level()`、`cost()`、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
+| `Recipe` | 一条生产配方：消耗什么、产出什么、要多久 | `inputs()`、`itemOutputs()`、`unitOutput()`、`isUnitRecipe()`、`durationTicks()`、`requiredBuildingLevel()`、`isUnlockedAt(int)`、`producerTags()` | [06](06-economy-logistics-and-production.md) |
+| `StartingResources` | 新玩家的开局物品：按物品路径索引的 `Natural` 数量，不可变且保持插入顺序 | `EMPTY`、`of(Map)`、`builder()`、`isEmpty()`、`size()`、`amounts()`、`amount(path)` | [02](02-content-and-items.md) |
+| `StartingResources.Builder` | 累加式构建开局物品；拒绝空路径、负数与 `BEYOND` | `add(path, amount)`、`isEmpty()`、`build()` | [02](02-content-and-items.md) |
 | `ResourceKey` | 带命名空间的内容标识，如 `oc:iron_ore` | `namespace()`、`path()`、`of(String)`、`of(ns, path)` | [02](02-content-and-items.md) |
 
 ### `...oc.rts.core`
@@ -128,7 +133,7 @@
 | `EntityId` | 实体身份，按创建顺序发放 | `of(long)`、`value()`、`compareTo()` | [09](09-architecture-and-tick-pipeline.md) |
 | `Tick` | 一个固定步长；引擎只按整 tick 前进 | `number()`、`ticksPerSecond()`、`deltaSeconds()`、`elapsedSeconds()`、`next()`、`first(int)` | [09](09-architecture-and-tick-pipeline.md) |
 | `Direction` | 八向罗盘，供精灵、队形和粗略朝向使用 | `dx()`、`dy()`、`id()`、`angle()`、`opposite()`、`fromAngle()`、`fromVector()` | [07](07-sprites-and-animation.md) |
-| `DeterministicRandom` | splitmix64 确定性随机源，地形与散布都靠它 | `forStream(seed, stream)`、`nextInt()`、`nextFloat()`、`chance()`、`fork()`、`state()`/`setState()` | [09](09-architecture-and-tick-pipeline.md) |
+| `DeterministicRandom` | splitmix64 确定性随机源，地形与散布都靠它 | `forStream(seed, stream)`、`nextInt(int)`、`nextFloat()`、`chance()`、`fork()`、`state()`/`setState()` | [09](09-architecture-and-tick-pipeline.md) |
 
 ### `...oc.rts.economy`
 
@@ -145,7 +150,7 @@
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
 | `Entity` | 世界里的一切：身份、归属、位置、生命、动画状态 | `id()`、`owner()`、`position()`、`health()`、`isUnit()`、`asUnit()`、`visual()`、`dimensionId()`、`dimensionIfAny()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
-| `Unit` | 可移动实体：士兵、工人、载具 | `type()`、`role()`、`motion()`、`orders()`、`cargo()`、`tile()`、`setSelected()` | [04](04-units-orders-and-movement.md) |
+| `Unit` | 可移动实体：士兵、工人、载具 | `type()`、`role()`、`combat()`、`attackCooldown()`、`canAttackNow()`、`targetId()`、`setTargetId(EntityId)`、`clearTarget()`、`hasTarget()`、`motion()`、`orders()`、`cargo()`、`tile()`、`setSelected()` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) |
 | `Building` | 带占地面积的静态实体：仓库、兵营、工厂 | `origin()`、`inventory()`、`entrance()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()` | [06](06-economy-logistics-and-production.md) |
 | `Health` | 生命值小值对象，承接伤害与治疗；血量与伤害都是 `Natural`，`fraction()` 仍是 `float` 比例 | `max()`、`current()`、`fraction()`、`damage()`、`heal()`、`restore()`、`setCurrent()` | [09](09-architecture-and-tick-pipeline.md) |
 | `SpatialIndex` | 宽阶段空间查询接口（不是位置感知的） | `inRadius()`、`inRect()`、`nearest()`、`insert()`/`update()`/`remove()` | [04](04-units-orders-and-movement.md) |
@@ -187,7 +192,7 @@
 | --- | --- | --- | --- |
 | `DeliveryJob` | 一次运输任务：把一批货从仓库送进目标建筑缓冲 | `target()`、`bundle()`、`reservation()`、`state()`、`pendingTicks()`、`delivered()`、`missing()`、`hauler()` | [06](06-economy-logistics-and-production.md) |
 | `DeliveryJob.State` | 运输任务状态 | `WAITING_HAULER`/`IN_TRANSIT`/`COMPLETED`/`FAILED`、`isPending()`、`isFinished()` | [06](06-economy-logistics-and-production.md) |
-| `HaulingSystem` | 把任务变成真的搬运工（或定时传送） | `SYSTEM_ORDER`、`DEFAULT_TIMEOUT_TICKS`、`submit()`、`jobs()`、`pendingCount()`、`directDelivery()` | [06](06-economy-logistics-and-production.md) |
+| `HaulingSystem` | 把任务变成真的搬运工（或定时传送） | `SYSTEM_ORDER`、`DEFAULT_TIMEOUT_TICKS`、`submit()`、`jobs()`、`pendingCount(Player)`、`directDelivery()` | [06](06-economy-logistics-and-production.md) |
 | `HaulOrder` | 一名搬运工跑一个任务的订单：取货→送达，按背包容积往返多趟 | `TIMEOUT_TICKS`、`job()`、`name()`（返回 `"haul"`）、`tick()` | [06](06-economy-logistics-and-production.md) |
 
 ### `...oc.rts.map`
@@ -230,6 +235,7 @@
 | `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()` | [04](04-units-orders-and-movement.md) |
 | `OrderSystem` | 推进每个单位的订单队列 | `order()`（返回 200） | [04](04-units-orders-and-movement.md) |
 | `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
+| `UnitDirector.BuildResult` | 一次建造请求的结果：已放置的工地或拒绝原因，两者恰有其一 | `placed()`、`refused()`、`site()`、`refusal()` | [06](06-economy-logistics-and-production.md) |
 | `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder` | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
 | `MoveOrder` | 把单个单位走到某个位置 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`destination()` | [04](04-units-orders-and-movement.md) |
 | `HoldOrder` | 让单位留在原地 | `name()`（返回 `"hold"`） | [04](04-units-orders-and-movement.md) |
@@ -264,7 +270,7 @@
 | `VisualLibrary.Builder` | 图集与动画集的流式构建器 | `sheet(id)`、`set(spriteSetId)`、`build()` | [07](07-sprites-and-animation.md) |
 | `VisualLibrary.SheetBuilder` | 描述一张图集：图片、格宽高、行列、锚点 | `image()`、`frameSize()`、`columns()`、`rows()`、`frameCount()`、`pivot()`、`frame(index)`、`toSheet()` | [07](07-sprites-and-animation.md) |
 | `VisualLibrary.SetBuilder` | 声明或扩展一个 `spriteSetId` 的动画 | `spriteSetId()`、`clip(name)`、`set(other)`、`sheet(id)`、`build()` | [07](07-sprites-and-animation.md) |
-| `VisualLibrary.ClipBuilder` | 拼装单个动画片段，可在中途切到方向变体 | `name()`、`frames(sheetId,start,count)`、`frame(...)`、`ticksPerFrame()`、`loop()`/`once()`、`direction(facing)`、`noDirection()` | [07](07-sprites-and-animation.md) |
+| `VisualLibrary.SetBuilder.ClipBuilder` | 拼装单个动画片段，可在中途切到方向变体 | `name()`、`frames(sheetId,start,count)`、`frame(...)`、`ticksPerFrame()`、`loop()`/`once()`、`direction(facing)`、`noDirection()` | [07](07-sprites-and-animation.md) |
 | `SpriteSheet` | 一张按均匀网格切分的精灵图 | `frameWidth()`/`frameHeight()`、`columns()`/`rows()`、`frame(index)`、`pixelX()`/`pixelY()`、`pivotX()`/`pivotY()`、`frameWithDuration()` | [07](07-sprites-and-animation.md) |
 | `SpriteFrame` | 一帧：像素矩形 + 锚点 + 可选时长 | `of()`、`withPivot()`、`withDuration()`、`effectiveDuration()`、`pixelRect()` | [07](07-sprites-and-animation.md) |
 | `AnimationClip` | 具名帧序列，例如八帧行走循环 | `frames()`、`ticksPerFrame()`、`loop()`、`frameAt(elapsedTicks)`、`framePositionAt()`、`finishedAt()`、`durationTicks()` | [07](07-sprites-and-animation.md) |
@@ -351,7 +357,7 @@
 | `AsciiMapRenderer.UNKNOWN_SYMBOL` / `OTHER_SYMBOL` | `'?'` / `'%'` |
 | `ItemBundle.EMPTY`、`Vec2.ZERO` | 空 bundle / `new Vec2(0f, 0f)` |
 | `OcRtsEngineBuilder` 默认值 | `seed=20240101L`、`ticksPerSecond=20`、`chunkSize=16`、`viewRadiusChunks=4`、`chunkStore=new InMemoryChunkStore()`、`visuals=VisualLibrary.empty()`、`directDelivery=false`、`directDeliveryTicks=60`、`pathRequestsPerTick=32`、`pathNodeBudgetPerTick=200_000`；`build()` 时若没有任何玩家，自动加入 `Player.of(1, "Player 1", 0xFF4FC3F7)` |
-| `SimulationSystem.order()` 建议阶段 | `100` 地图流式、`200` 订单、`300` 寻路请求、`400` 移动、`450` 战斗、`500` 建造、`600` 生产、`700` 后勤、`800` 动画、`900` 清理；接口默认 `1000` |
+| `SimulationSystem.order()` 建议阶段 | `100` 地图流式、`200` 订单、`300` 寻路请求、`400` 移动、`450` 战斗、`500` 建造、`600` 生产、`700` 后勤、`800` 动画；接口默认 `1000`，`900` 清理是预留槽位（当前没有内置系统占用） |
 | `World` 内部默认 | **每个维度**各自用 `new GridSpatialIndex(4f)`；事件总线用 `SimpleEventBus`；维度用 `LinkedHashMap` 按创建顺序保存 |
 
 ## 门面类方法速查
@@ -366,7 +372,7 @@
 | `commands()` / `production()` / `pathService()` / `pathFinder()` / `visuals()` / `pipeline()` | 取服务（指挥、生产、寻路预算、寻路器、动画库、管线） | 否 |
 | `map()` / `streaming()` | 取地形与区块流式控制（默认维度的同一 `ChunkedMap` 的两个视图） | 否 |
 | `dimensions()` / `dimension(DimensionId)` / `defaultDimensionId()` | 维度清单、按 id 取一张图、单地图 API 指向哪张图 | 维度不存在 → `IllegalArgumentException` |
-| `tick()` / `tick(int ticks)` | 前进一格 / 若干格 | 系统内部异常原样冒泡（例如世界未设地图时 `World#map()` 抛 `IllegalStateException`） |
+| `tick()` / `tick(int ticks)` | 前进一格 / 若干格 | 系统内部异常原样冒泡（例如世界未设地图时 `World#map()` 抛 `IllegalArgumentException`） |
 | `tickUntil(Predicate<OcRtsEngine>, int maxTicks)` | 反复 tick 直到条件成立；返回是否达成 | 条件为 `null` → `NullPointerException` |
 | `focus(Vec2)` / `focus(GridPos)` | 移动**默认维度**的兴趣点，下一 tick 会流式载入附近区块 | 参数为 `null` → `NullPointerException`（经 `ChunkedMap#focus`） |
 | `focus(DimensionId, Vec2, int radiusChunks)` | 移动指定维度的兴趣点**并改它的流式半径** | 维度不存在 → `IllegalArgumentException`；参数为 `null` → `NullPointerException` |
@@ -378,7 +384,7 @@
 | `render(GridPos, int)` | 快照 → ASCII 文本（**只有默认维度**这个重载） | 同 `snapshot` |
 | `describe()` | 多行摘要（tick、实体数、区块数、待处理路径/交付、系统清单） | 否 |
 
-### `OcRtsEngineBuilder`（273 行）
+### `OcRtsEngineBuilder`（280 行）
 
 | 方法 | 作用 | 是否可能抛异常 |
 | --- | --- | --- |
@@ -398,13 +404,14 @@
 | `player(Player)` / `players(List<Player>)` | 加入玩家 | 元素为 `null` → `NullPointerException` |
 | `build()` | 接线世界与全部子系统（每个维度一张地图、一个区块存储与寻路器；区块流 100 → 订单 200 → 寻路 300 → 移动 400 → 战斗 450 → 建造 500 → 生产 600 → 后勤 700 → 动画 800） | 内容目录非法在构造 `ContentRegistry` 时已抛；玩家列表为空时自动补一个默认玩家 |
 
-### `World`（425 行，直接 `new` 或从 `OcRtsEngine#world()` 取）
+### `World`（581 行，直接 `new` 或从 `OcRtsEngine#world()` 取）
 
 | 方法 | 作用 | 是否可能抛异常 |
 | --- | --- | --- |
 | `World(long seed, ContentRegistry)` | 构造世界（含 `DeterministicRandom.forStream(seed,"world")`） | `content` 为 `null` → `NullPointerException` |
-| `seed()` / `content()` / `random()` / `events()` / `spatial()` | 环境与随机源；`spatial()` 是**默认维度**的索引（位置相关的代码用 `spatial(DimensionId)`） | 否 |
-| `map()` / `pathFinder()` / `director()` | 取注入的服务（`map()`/`pathFinder()` 也是默认维度的） | 未注入 → `IllegalStateException` |
+| `seed()` / `content()` / `random()` / `events()` / `spatial()` | 环境与随机源；`spatial()` 是**默认维度**的索引（位置相关的代码用 `spatial(DimensionId)`） | `spatial()` 在还没有维度时 → `IllegalArgumentException`（经 `defaultDimension()`） |
+| `map()` / `pathFinder()` / `director()` | 取注入的服务（`map()`/`pathFinder()` 也是默认维度的） | `director()` 未注入 → `IllegalStateException`；`map()`/`pathFinder()` 在还没有维度时 → `IllegalArgumentException`（经 `defaultDimension()`） |
+| `production()` / `setProduction(ProductionSystem)` | 取/安装生产系统；`production()` 返回引擎 tick 的同一个实例 | 未安装 → `IllegalStateException`；参数为 `null` → `NullPointerException` |
 | `setMap(TerrainMap)` / `setPathFinder(PathFinder)` / `setDirector(UnitDirector)` | 注入服务 | `null` → `NullPointerException` |
 | `defaultDimensionId()` / `setDefaultDimension(DimensionId)` / `defaultDimension()` | 单地图 API 指向哪张图 | `setDefaultDimension` 的目标不存在 → `IllegalArgumentException`；`defaultDimension()` 在还没有地图时 → `IllegalArgumentException` |
 | `addDimension(DimensionId, DimensionProfile, TerrainMap)` | 注册新维度；第一张注册的成为默认维度 | `null` → `NullPointerException`；id 重复 → `IllegalArgumentException` |
