@@ -1,0 +1,40 @@
+{
+  "image": "atlas.png",
+  "tilePixels": 16,
+  "tiles": {
+    "grass": [0, 0, 16, 16],
+    "dirt": [16, 0, 16, 16],
+    "stone": [32, 0, 16, 16],
+    "cobblestone": [48, 0, 16, 16],
+    "sand": [64, 0, 16, 16],
+    "gravel": [80, 0, 16, 16],
+    "water": [0, 16, 16, 16],
+    "bedrock": [16, 16, 16, 16],
+    "planks": [32, 16, 16, 16],
+    "log": [48, 16, 16, 16],
+    "leaves": [64, 16, 16, 16],
+    "snow": [80, 16, 16, 16],
+    "clay": [0, 32, 16, 16],
+    "coal_ore": [16, 32, 16, 16],
+    "iron_ore": [32, 32, 16, 16],
+    "mossy_cobblestone": [48, 32, 16, 16],
+    "forest": [64, 32, 16, 16],
+    "hill": [80, 32, 16, 16],
+    "rock": [0, 48, 16, 16],
+    "void": [16, 48, 16, 16]
+  },
+  "entities": {
+    "unit.melee.t1": { "frames": [[0, 0, 16, 16], [0, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "unit.melee.t2": { "frames": [[16, 0, 16, 16], [16, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "unit.melee.t3": { "frames": [[32, 0, 16, 16], [32, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "unit.melee.t4": { "frames": [[48, 0, 16, 16], [48, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "unit.melee.t5": { "frames": [[64, 0, 16, 16], [64, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "unit.engineer": { "frames": [[80, 0, 16, 16], [80, 16, 16, 16]], "fps": 4, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.armory.t1": { "frames": [[0, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.armory.t2": { "frames": [[32, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.mine.t1": { "frames": [[64, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.mine.t2": { "frames": [[0, 64, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.mine.t3": { "frames": [[32, 64, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 },
+    "building.warehouse": { "frames": [[0, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1 }
+  }
+}

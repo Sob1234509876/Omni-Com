@@ -10,10 +10,18 @@ import java.util.regex.Pattern;
  * an arbitrary number of items, resources, terrain kinds, units, buildings and recipes: the engine
  * never names a concrete item itself, it only ever handles the keys and definitions a scenario
  * registered.
+ *
+ * <p>A <em>path</em> is one or more dot separated segments, each written in lower case letters, digits and
+ * underscores, so a catalogue can spell out a tier inside a name ({@code unit.melee.t1}) and a renderer can
+ * use the path as-is. The namespace stays a single segment: it names the catalogue, not a thing in it.
  */
 public record ResourceKey(String namespace, String path) implements Comparable<ResourceKey> {
 
+    /** One namespace segment: lower case letters, digits and underscores. */
     private static final Pattern VALID_SEGMENT = Pattern.compile("[a-z0-9_]+");
+
+    /** One path: dot separated segments, each of which is a valid segment. */
+    private static final Pattern VALID_PATH = Pattern.compile("[a-z0-9_]+(\\.[a-z0-9_]+)*");
 
     public ResourceKey {
         Objects.requireNonNull(namespace, "namespace");
@@ -21,8 +29,9 @@ public record ResourceKey(String namespace, String path) implements Comparable<R
         if (!VALID_SEGMENT.matcher(namespace).matches()) {
             throw new IllegalArgumentException("invalid namespace '" + namespace + "', expected [a-z0-9_]+");
         }
-        if (!VALID_SEGMENT.matcher(path).matches()) {
-            throw new IllegalArgumentException("invalid path '" + path + "', expected [a-z0-9_]+");
+        if (!VALID_PATH.matcher(path).matches()) {
+            throw new IllegalArgumentException(
+                    "invalid path '" + path + "', expected dot separated [a-z0-9_]+ segments");
         }
     }
 

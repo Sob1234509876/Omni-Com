@@ -5,4 +5,5 @@ include 'projects:oc:oc-googology'
 include 'projects:oc:oc-game-server'
 include 'projects:oc:oc-game-server-debug'
 include 'projects:oc:oc-game-server-hello'
+include 'projects:oc:oc-game-server-classic'
 

@@ -16,6 +16,12 @@ import java.util.Set;
  * <p>A building whose {@link #storageSlots()} is not zero is a warehouse: only inventories of
  * such buildings take part in a player's logistics network, which is what makes stored goods the only
  * usable goods.
+ *
+ * <p>{@link #level()} is the upgrade step of the building. It gates recipes through
+ * {@link Recipe#requiredBuildingLevel()}: a building only runs recipes whose required level it reaches, so
+ * a tier one workshop cannot train the units a tier two one unlocks while both may still share a producer
+ * tag. It is a plain integer with no upgrade mechanic attached - content spells out one building type per
+ * level.
  */
 public final class BuildingType implements Comparable<BuildingType> {
 
@@ -25,6 +31,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int sizeY;
     private final Natural maxHealth;
     private final int buildTimeTicks;
+    private final int level;
     private final ItemBundle cost;
     private final Natural storageSlots;
     private final Set<String> storageTags;
@@ -40,6 +47,7 @@ public final class BuildingType implements Comparable<BuildingType> {
             int sizeY,
             Natural maxHealth,
             int buildTimeTicks,
+            int level,
             ItemBundle cost,
             Natural storageSlots,
             Set<String> storageTags,
@@ -53,6 +61,7 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.sizeY = sizeY;
         this.maxHealth = maxHealth;
         this.buildTimeTicks = buildTimeTicks;
+        this.level = level;
         this.cost = cost;
         this.storageSlots = storageSlots;
         this.storageTags = Collections.unmodifiableSet(new LinkedHashSet<>(storageTags));
@@ -84,6 +93,17 @@ public final class BuildingType implements Comparable<BuildingType> {
 
     public int buildTimeTicks() {
         return buildTimeTicks;
+    }
+
+    /**
+     * Upgrade step this building represents; {@code 1} unless the content says otherwise.
+     *
+     * <p>It is matched against {@link Recipe#requiredBuildingLevel()}, so it is what decides whether a
+     * building may run an advanced recipe at all. The engine never upgrades a building in place: content
+     * declares one building type per level.
+     */
+    public int level() {
+        return level;
     }
 
     public ItemBundle cost() {

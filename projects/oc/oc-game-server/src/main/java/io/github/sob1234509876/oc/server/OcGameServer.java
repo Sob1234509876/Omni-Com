@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.server;
 
+import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
+import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.auth.LocalUserStore;
 import io.github.sob1234509876.oc.server.net.GameServer;
@@ -53,6 +55,11 @@ import java.util.concurrent.TimeUnit;
  * built before any socket opens, started with the rest of the server and stopped after the endpoint that
  * reads it; {@code --world off}, or {@code --http-port 0}, leaves it unstarted and the snapshot route answers
  * {@code 503}.
+ *
+ * <p><strong>Which game the world runs.</strong> A plugin claims the world by registering a
+ * {@link WorldContent} in {@link Plugin#onLoad(PluginContext)}; the server serves the first registration in
+ * load order and falls back to {@link ScenarioWorldContent} when there is none. The rule, and why it is
+ * "first" instead of "last", is documented on {@link #selectWorldContent(java.util.List)}.
  */
 public final class OcGameServer {
 
@@ -249,6 +256,32 @@ public final class OcGameServer {
     }
 
     /**
+     * Chooses the catalogue the hosted world will run.
+     *
+     * <p><strong>First one wins, deliberately.</strong> When several plugins register world content, the one
+     * that registered first is served and the later ones are ignored; when none registers,
+     * {@link ScenarioWorldContent} keeps the historical sample world alive.
+     *
+     * <p>Why first and not last: registration order is load order, load order is the sorted jar-file order of
+     * the plugin folder, and that makes "which plugin owns this server's world" a visible, reviewable property
+     * of the installation - the plugin folder shows it, and an operator can pin a world by naming its jar so
+     * that it sorts first. Last-one-wins would hide the decision inside load timing: adding an unrelated
+     * content plugin whose jar happens to sort later would silently swap the whole game a running server
+     * serves, with nothing in the installation that says so. First-wins also means a server that keeps its
+     * existing plugin folder keeps its existing world when new content is added beside it.
+     *
+     * <p>The decision is made once, in {@link #start()}, before any socket is bound; a content that cannot
+     * build its catalogue therefore fails startup instead of serving a half world.
+     *
+     * @param registered the content the plugins registered, in load order
+     * @return the first registered catalogue, or a fresh {@link ScenarioWorldContent} when none was registered
+     */
+    public static WorldContent selectWorldContent(List<WorldContent> registered) {
+        Objects.requireNonNull(registered, "registered");
+        return registered.isEmpty() ? new ScenarioWorldContent() : registered.get(0);
+    }
+
+    /**
      * Loads the plugins and starts listening. Loading happens before the socket opens so a plugin that fails
      * to come up cannot leave clients talking to half a server.
      */
@@ -261,8 +294,12 @@ public final class OcGameServer {
             LOG.log(System.Logger.Level.WARNING, "plugin problem: " + problem);
         }
         // Build the world before any socket opens: a broken catalogue is then a startup failure that leaves
-        // no half listening server, exactly like a plugin that cannot load.
-        WorldHost host = worldEnabled && webSocketConfig.port() != 0 ? new WorldHost(worldSeed) : null;
+        // no half listening server, exactly like a plugin that cannot load. The catalogue is the one the
+        // plugins offered, or the engine's sample catalogue when no plugin claimed the world.
+        WorldContent content = selectWorldContent(pluginLoader.worldContents());
+        WorldHost host = worldEnabled && webSocketConfig.port() != 0
+                ? new WorldHost(worldSeed, content)
+                : null;
         server.start();
         if (host != null) {
             try {

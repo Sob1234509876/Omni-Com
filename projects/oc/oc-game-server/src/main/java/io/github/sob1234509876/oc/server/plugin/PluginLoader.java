@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.server.plugin;
 
+import io.github.sob1234509876.oc.rts.content.WorldContent;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -121,6 +123,21 @@ public final class PluginLoader {
     private final List<Plugin> plugins = new ArrayList<>();
 
     /**
+     * The game world catalogues the loaded plugins registered, in load order.
+     *
+     * <p>One list for the whole startup is handed to every plugin through
+     * {@link PluginContext#registerWorldContent(WorldContent)}, so the order here is exactly the order in
+     * which the plugins were loaded - which is the order of their jars in the folder, because discovery
+     * sorts by file name. The server picks the first entry; see {@code OcGameServer} for why first and not
+     * last. A plugin whose lifecycle failed never appends anything, because a plugin that is not part of the
+     * server must not publish content either.
+     *
+     * <p>Like the plugin list, this is startup state and is not thread safe: it is written while plugins are
+     * loaded and read once, before the sockets open.
+     */
+    private final List<WorldContent> worldContents = new ArrayList<>();
+
+    /**
      * The loader of every enabled plugin, keyed by the name the plugin reports.
      *
      * <p>The name is the only identity a plugin exposes that a browser can safely put in a URL: it is what
@@ -209,7 +226,7 @@ public final class PluginLoader {
     public List<Plugin> loadAll() {
         List<Path> jars = pluginJars();
         PluginContext context = new PluginContext(pluginsDirectory, dataDirectory, serverVersion, logger,
-                requests);
+                requests, worldContents);
         for (Path jar : jars) {
             DiscoveryResult result = loadJar(jar, jars, context);
             discoveries.add(result);
@@ -474,6 +491,23 @@ public final class PluginLoader {
         return List.copyOf(plugins);
     }
 
+    /**
+     * The game world catalogues the loaded plugins registered, in load order.
+     *
+     * <p>The order is the order in which the jars were loaded, and therefore the order in which their
+     * {@link Plugin#onLoad(PluginContext)} calls ran: a jar whose name sorts first registers first. The
+     * server takes the first entry, which makes "which plugin owns the world" a visible property of the
+     * installation rather than a race; see {@code OcGameServer#selectWorldContent(java.util.List)}.
+     *
+     * <p>The list is emptied by {@link #unloadAll()}, like the plugin list: a disabled plugin is no longer
+     * part of the server, so a later startup must not inherit its content.
+     *
+     * @return the registered catalogues in load order; empty before {@link #loadAll()}
+     */
+    public List<WorldContent> worldContents() {
+        return List.copyOf(worldContents);
+    }
+
     /** What each jar of the folder turned out to contain, including the jars that produced nothing. */
     public List<DiscoveryResult> discoveries() {
         return List.copyOf(discoveries);
@@ -562,6 +596,9 @@ public final class PluginLoader {
             }
         }
         plugins.clear();
+        // The content a plugin registered is content of the disabled plugin: a later loadAll() must start
+        // from what the folder offers then, not from what an unloaded plugin left behind.
+        worldContents.clear();
         synchronized (classLoadersByPlugin) {
             classLoadersByPlugin.clear();
         }

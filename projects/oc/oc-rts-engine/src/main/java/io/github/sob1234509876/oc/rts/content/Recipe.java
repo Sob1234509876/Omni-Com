@@ -13,6 +13,12 @@ import java.util.Set;
  * storage and pushed into the owner's logistics network right away, so they become usable as soon as a
  * warehouse can take them; whatever does not fit stays in the buffer. Units are spawned at the
  * building's entrance and sent to its rally point.
+ *
+ * <p><strong>Building levels.</strong> Producer tags say <em>which kind</em> of building may run a recipe;
+ * {@link #requiredBuildingLevel()} says <em>how far upgraded</em> that building has to be. A recipe with a
+ * required level of {@code 0} is not gated at all, and a building whose
+ * {@link BuildingType#level()} is below the recipe's required level cannot select or enqueue it. This is
+ * the smallest possible gate: one integer per recipe, one per building, no new mechanic.
  */
 public final class Recipe implements Comparable<Recipe> {
 
@@ -22,6 +28,7 @@ public final class Recipe implements Comparable<Recipe> {
     private final ItemBundle itemOutputs;
     private final UnitType unitOutput;
     private final int durationTicks;
+    private final int requiredBuildingLevel;
     private final Set<String> producerTags;
     private final Set<String> tags;
 
@@ -32,6 +39,7 @@ public final class Recipe implements Comparable<Recipe> {
             ItemBundle itemOutputs,
             UnitType unitOutput,
             int durationTicks,
+            int requiredBuildingLevel,
             Set<String> producerTags,
             Set<String> tags) {
         this.key = Objects.requireNonNull(key, "key");
@@ -40,6 +48,7 @@ public final class Recipe implements Comparable<Recipe> {
         this.itemOutputs = itemOutputs;
         this.unitOutput = unitOutput;
         this.durationTicks = durationTicks;
+        this.requiredBuildingLevel = requiredBuildingLevel;
         this.producerTags = Collections.unmodifiableSet(new LinkedHashSet<>(producerTags));
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(tags));
     }
@@ -73,6 +82,22 @@ public final class Recipe implements Comparable<Recipe> {
 
     public int durationTicks() {
         return durationTicks;
+    }
+
+    /**
+     * Minimum {@link BuildingType#level()} a building needs to run this recipe; {@code 0} means the recipe
+     * is not gated by a level at all.
+     *
+     * <p>This is what keeps a basic workshop from training the units an upgraded one unlocks: the producer
+     * tags still have to match, and on top of that the building has to be at least this far upgraded.
+     */
+    public int requiredBuildingLevel() {
+        return requiredBuildingLevel;
+    }
+
+    /** Whether a building of the given level may run this recipe, ignoring producer tags. */
+    public boolean isUnlockedAt(int buildingLevel) {
+        return buildingLevel >= requiredBuildingLevel;
     }
 
     /** Building tags required to run this recipe. */

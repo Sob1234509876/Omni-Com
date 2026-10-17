@@ -8,6 +8,7 @@ import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
+import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;

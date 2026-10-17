@@ -1,17 +1,24 @@
-package io.github.sob1234509876.oc.rts.scenario;
-
-import io.github.sob1234509876.oc.rts.content.ContentRegistry;
-import io.github.sob1234509876.oc.rts.content.UnitRole;
+package io.github.sob1234509876.oc.rts.content;
 
 /**
- * Content catalogue of the self check scenario: terrain kinds, a deliberately large set of items and
+ * Content catalogue of the engine's sample scenario: terrain kinds, a deliberately large set of items and
  * resources, units, buildings and recipes.
  *
  * <p>It exists to prove that the engine itself never names an item: everything below is data handed to
  * the engine through a {@link ContentRegistry}, and the same engine would run an entirely different
- * game with another catalogue.
+ * game with another catalogue. It is also the default catalogue of the server's world host (wrapped by
+ * {@link ScenarioWorldContent}), so a host that was given no content of its own still serves a world.
+ *
+ * <p>The catalogue was originally part of the self check source set. It lives on the main source path
+ * now because it is content a host may serve, not an assertion: production code must never be compiled
+ * out of a test source set. Behaviour is unchanged - {@link #omniCom()} returns exactly the registry it
+ * always did, and {@link #populate(ContentRegistry.Builder)} is the same chain minus the final
+ * {@code build()}, so other content can compose it into a catalogue of its own.
  */
 public final class ScenarioContent {
+
+    /** Namespace of every key of this catalogue. */
+    public static final String NAMESPACE = "oc";
 
     private ScenarioContent() {
     }
@@ -48,7 +55,23 @@ public final class ScenarioContent {
 
     /** Builds the catalogue. */
     public static ContentRegistry omniCom() {
-        return ContentRegistry.builder("oc")
+        ContentRegistry.Builder registry = ContentRegistry.builder(NAMESPACE);
+        populate(registry);
+        return registry.build();
+    }
+
+    /**
+     * Registers the whole catalogue into a builder the caller owns.
+     *
+     * <p>This is the registration API of the engine: a catalogue is written as a fluent chain on
+     * {@link ContentRegistry.Builder} and becomes an immutable {@link ContentRegistry} when
+     * {@link ContentRegistry.Builder#build()} runs. Content that wants to be composable - a plugin's
+     * catalogue, a scenario that starts from this one - calls this method instead of {@link #omniCom()}.
+     *
+     * @param registry the builder to add to, in the namespace it was created with
+     */
+    public static void populate(ContentRegistry.Builder registry) {
+        registry
                 // ------------------------------------------------------------------ terrain
                 .terrain("water").name("Water").impassable().moveCost(1f).sprite("terrain/water").mapColor(0x2F5DA8)
                 .terrain("sand").name("Sand").buildable().moveCost(1.2f).sprite("terrain/sand").mapColor(0xD8C88A)
@@ -140,7 +163,6 @@ public final class ScenarioContent {
                 .recipe(CRAFT_RIFLE).name("Craft Rifle").producer("workshop")
                 .input(STEEL_INGOT, 10).input(PLANK, 5).itemOutput(RIFLE, 1).duration(80)
                 .recipe(BAKE_BREAD).name("Bake Bread").producer("workshop")
-                .input(FLOUR, 10).itemOutput(BREAD, 5).duration(60)
-                .build();
+                .input(FLOUR, 10).itemOutput(BREAD, 5).duration(60);
     }
 }

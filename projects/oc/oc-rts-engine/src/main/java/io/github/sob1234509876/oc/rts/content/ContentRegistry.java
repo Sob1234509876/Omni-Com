@@ -179,10 +179,20 @@ public final class ContentRegistry {
         return recipes.values();
     }
 
-    /** Recipes a building of the given type is allowed to run. */
+    /**
+     * Recipes a building of the given type may run.
+     *
+     * <p>Two rules decide membership: the recipe's producer tags have to intersect the building's, and the
+     * building's {@link BuildingType#level()} has to reach the recipe's
+     * {@link Recipe#requiredBuildingLevel()}. The level check is applied here as well as in the production
+     * system so that a UI listing "what could this building make" and the command that enqueues work agree.
+     */
     public List<Recipe> recipesFor(BuildingType building) {
         List<Recipe> matching = new ArrayList<>();
         for (Recipe recipe : recipes.values()) {
+            if (!recipe.isUnlockedAt(building.level())) {
+                continue;
+            }
             for (String tag : recipe.producerTags()) {
                 if (building.producerTags().contains(tag)) {
                     matching.add(recipe);
@@ -453,6 +463,23 @@ public final class ContentRegistry {
         }
 
         /**
+         * Upgrade step of the current building; {@code 1} when not set.
+         *
+         * <p>It is matched against {@link Recipe#requiredBuildingLevel()}: a building only runs recipes
+         * whose required level it reaches. Content declares one building type per level rather than an
+         * upgrade mechanic.
+         *
+         * @throws IllegalArgumentException when the level is not positive
+         */
+        public Builder level(int level) {
+            if (level < 1) {
+                throw new IllegalArgumentException("a building level must be at least 1, was " + level);
+            }
+            draft(BuildingDraft.class, "building").level = level;
+            return this;
+        }
+
+        /**
          * Adds a producer tag: on a building it declares what the building can run, on a recipe it
          * declares which buildings may run it.
          */
@@ -500,6 +527,23 @@ public final class ContentRegistry {
             } else {
                 draft(BuildingDraft.class, "building").buildTimeTicks = ticks;
             }
+            return this;
+        }
+
+        /**
+         * Sets the building level the current recipe requires; {@code 0} when not set, meaning the recipe
+         * is not gated by a level.
+         *
+         * <p>This is the whole tier gate: a recipe may ask for an upgraded producer, and a building whose
+         * {@link BuildingType#level()} is lower can neither select the recipe nor enqueue it.
+         *
+         * @throws IllegalArgumentException when the level is negative
+         */
+        public Builder requiredBuildingLevel(int level) {
+            if (level < 0) {
+                throw new IllegalArgumentException("requiredBuildingLevel must not be negative, was " + level);
+            }
+            draft(RecipeDraft.class, "recipe").requiredBuildingLevel = level;
             return this;
         }
 
@@ -573,6 +617,7 @@ public final class ContentRegistry {
                             building.sizeY,
                             building.maxHealth,
                             building.buildTimeTicks,
+                            building.level,
                             resolveItems(items, building.cost, "building " + building.key),
                             building.storageSlots,
                             building.storageTags,
@@ -609,6 +654,7 @@ public final class ContentRegistry {
                             resolveItems(items, recipe.itemOutputs, "recipe " + recipe.key),
                             unitOutput,
                             recipe.durationTicks,
+                            recipe.requiredBuildingLevel,
                             recipe.producerTags,
                             recipe.tags);
                     if (type.durationTicks() <= 0) {
@@ -751,6 +797,7 @@ public final class ContentRegistry {
         int sizeY = 1;
         Natural maxHealth = Natural.of(500);
         int buildTimeTicks = 200;
+        int level = 1;
         Natural storageSlots = Natural.ZERO;
         boolean warehouse;
         String spriteSet = "building/unknown";
@@ -771,6 +818,7 @@ public final class ContentRegistry {
     private static final class RecipeDraft extends Draft {
 
         int durationTicks = 100;
+        int requiredBuildingLevel;
         String unitOutput;
         final List<ItemRef> inputs = new ArrayList<>();
         final List<ItemRef> itemOutputs = new ArrayList<>();

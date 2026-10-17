@@ -42,6 +42,13 @@ import java.util.Set;
  * building site does not consume anything. One job per building is worked on at a time, in queue order,
  * so material claims cannot pile up in a way the player cannot see.
  *
+ * <p><strong>Tiers.</strong> Which recipes a building may run is decided by producer tags plus its
+ * {@link io.github.sob1234509876.oc.rts.content.BuildingType#level()}: a recipe may require an upgraded
+ * producer ({@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}), and a building
+ * below that level can neither list nor enqueue it. The gate is checked in both
+ * {@link io.github.sob1234509876.oc.rts.content.ContentRegistry#recipesFor} and {@link #enqueue}, so what
+ * a UI offers and what the system accepts cannot drift apart.
+ *
  * <p>State changes are published as {@link Events.ProductionStateChanged}, but only when the state
  * really changed or when a job has been waiting long enough to be worth reporting again. Publishing
  * every tick would flood the bus with thousands of identical events and make a replay's event log
@@ -93,8 +100,16 @@ public final class ProductionSystem implements SimulationSystem {
     /**
      * Queues the recipe a number of times in the given building.
      *
+     * <p>Two things are checked before anything is queued: the recipe's producer tags have to match the
+     * building, and the building's {@link io.github.sob1234509876.oc.rts.content.BuildingType#level()} has
+     * to reach the recipe's
+     * {@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}. A basic building
+     * therefore cannot be talked into running work an upgraded one unlocks, even by a caller that has the
+     * recipe object in hand.
+     *
      * @throws IllegalArgumentException when the building cannot produce at all, when the recipe's
-     *     producer tags do not match the building, or when the count is not positive
+     *     producer tags do not match the building, when the building's level is too low, or when the count
+     *     is not positive
      */
     public void enqueue(Building building, Recipe recipe, int count) {
         Objects.requireNonNull(building, "building");
@@ -104,13 +119,17 @@ public final class ProductionSystem implements SimulationSystem {
         }
         if (!matches(building, recipe)) {
             throw new IllegalArgumentException("recipe " + recipe.key() + " cannot be run in "
-                    + building.type().key() + " (producer tags " + recipe.producerTags() + " vs "
+                    + building.type().key() + " (level " + building.type().level() + " needs at least "
+                    + recipe.requiredBuildingLevel() + ", producer tags " + recipe.producerTags() + " vs "
                     + building.type().producerTags() + ")");
         }
         queueOf(building).enqueue(recipe, count);
     }
 
     private static boolean matches(Building building, Recipe recipe) {
+        if (!recipe.isUnlockedAt(building.type().level())) {
+            return false;
+        }
         for (String tag : recipe.producerTags()) {
             if (building.type().producerTags().contains(tag)) {
                 return true;
