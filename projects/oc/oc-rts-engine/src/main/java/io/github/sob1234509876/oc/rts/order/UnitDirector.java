@@ -1,13 +1,16 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 
 import java.util.Collection;
+import java.util.Optional;
 
 /**
  * The single entry point for giving units something to do.
@@ -62,6 +65,26 @@ public interface UnitDirector {
 
     /** Convenience for {@link #attackMove(Unit, Vec2)} with the centre of the tile. */
     void attackMove(Unit unit, GridPos destination);
+
+    /**
+     * Places a building site on the map and orders the unit to build it.
+     *
+     * <p>The site is created unfinished in the unit's own dimension - coordinates are local to a
+     * dimension, so building on the map the builder stands on is the only meaningful placement - and the
+     * unit is given a {@link BuildOrder} that keeps it at the site until the building is operational.
+     * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} advances the site once per
+     * tick; this method is the part that decides <em>where</em> a site appears and <em>who</em> builds it.
+     *
+     * <p>Nothing is placed when the unit cannot be commanded or the type does not fit at the origin (the
+     * same check {@link io.github.sob1234509876.oc.rts.World#canPlace(DimensionId, BuildingType, GridPos)}
+     * performs), so a caller can try candidate tiles in a fixed order and take the first site it gets.
+     *
+     * @param unit   the builder, normally a unit with the content's builder role
+     * @param type   the building to raise
+     * @param origin tile of the minimum corner of the footprint
+     * @return the site that was placed, or empty when nothing was placed
+     */
+    Optional<Building> build(Unit unit, BuildingType type, GridPos origin);
 
     /**
      * Sends the unit to another dimension, walking it through the gateways of the world.

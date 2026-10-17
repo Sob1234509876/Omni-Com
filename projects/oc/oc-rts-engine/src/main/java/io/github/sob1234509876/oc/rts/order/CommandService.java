@@ -2,11 +2,13 @@ package io.github.sob1234509876.oc.rts.order;
 
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
+import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
 import io.github.sob1234509876.oc.rts.formation.FormationPlanner;
@@ -20,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The one place a player, an AI or a scenario turns an intention into unit orders.
@@ -121,6 +124,30 @@ public final class CommandService implements UnitDirector {
     public void attackMove(Unit unit, GridPos destination) {
         Objects.requireNonNull(destination, "destination");
         attackMove(unit, destination.center());
+    }
+
+    /**
+     * Places a building site and gives the unit a {@link BuildOrder}.
+     *
+     * <p>The placement is checked against the unit's own dimension before anything is created, so a
+     * caller scanning candidate tiles never leaves a half placed building behind when a tile is
+     * occupied. The site is free: the engine has no building-cost mechanic, so content that wants a
+     * building to cost something charges for it itself.
+     */
+    @Override
+    public Optional<Building> build(Unit unit, BuildingType type, GridPos origin) {
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(origin, "origin");
+        if (!isCommandable(unit)) {
+            return Optional.empty();
+        }
+        DimensionId dimension = unit.dimensionId();
+        if (!world.canPlace(dimension, type, origin)) {
+            return Optional.empty();
+        }
+        Building site = world.placeBuilding(dimension, type, unit.owner(), origin);
+        unit.orders().replace(context(unit), new BuildOrder(site));
+        return Optional.of(site);
     }
 
     @Override

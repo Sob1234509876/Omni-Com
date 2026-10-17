@@ -1,6 +1,7 @@
 package io.github.sob1234509876.oc.server.plugin;
 
 import io.github.sob1234509876.oc.rts.content.WorldContent;
+import io.github.sob1234509876.oc.server.world.WorldTickHook;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -13,7 +14,8 @@ import java.util.Objects;
 /**
  * What the server hands to a plugin while it is loaded: where the plugins live, where this plugin may keep
  * its own files, the server version it was built against, the server's logger, the request surface the
- * plugin may publish into and the content seam it may claim the world with.
+ * plugin may publish into, the content seam it may claim the world with and the tick hook it may attach
+ * to that world.
  *
  * <p>The context is deliberately small. A plugin gets no reference to the server object graph, so the server
  * stays free to change internals without breaking plugins, and an unloaded plugin cannot keep the server
@@ -21,9 +23,18 @@ import java.util.Objects;
  * registry holds opaque byte-in/byte-out handlers and gives no route from a request to a socket, a user
  * record or a running game. {@link #registerWorldContent(WorldContent)} is the other: it hands the server a
  * catalogue to serve, which is data the engine already knows how to run, not a way into the running world.
+ * {@link #registerWorldTickHook(WorldTickHook)} is the third and the narrowest reading of the world: a
+ * callback that runs after each fixed step, with the world the server is already simulating.
  *
  * <p>A plugin <em>receives</em> a context and never builds one itself; the constructors exist for the loader
  * and for the self check, which assembles a context to drive a plugin directly over no socket at all.
+ *
+ * <p><strong>Ownership of the registered lists.</strong> The content list and the tick hook list are owned
+ * by whoever created the context - the {@link PluginLoader} passes the ones it exposes through
+ * {@link PluginLoader#worldContents()} and {@link PluginLoader#worldTickHooks()} to every context of one
+ * startup - so a plugin can only ever append, and the server reads the same order the plugins were loaded
+ * in. A context built by a test gets lists of its own, which is what makes both seams testable without a
+ * jar.
  */
 public final class PluginContext {
 
@@ -36,12 +47,19 @@ public final class PluginContext {
     /**
      * The world content registered so far, in registration order.
      *
-     * <p>The list is owned by whoever created the context - the {@link PluginLoader} passes the one list it
-     * exposes through {@link PluginLoader#worldContents()} to every context of one startup - so a plugin can
-     * only ever append, and the server reads the same order the plugins were loaded in. A context built by a
-     * test gets a list of its own, which is what makes the seam testable without a jar.
+     * <p>The list is owned by whoever created the context; see the class comment.
      */
     private final List<WorldContent> worldContents;
+
+    /**
+     * The world tick hooks registered so far, in registration order.
+     *
+     * <p>The list is owned by whoever created the context, exactly like {@link #worldContents}: the
+     * {@link PluginLoader} hands one list to every context of a startup and exposes it afterwards, so
+     * the order here is the plugin load order. The server runs <em>all</em> of them; see
+     * {@code OcGameServer#selectWorldTickHooks(java.util.List)}.
+     */
+    private final List<WorldTickHook> worldTickHooks;
 
     /**
      * Creates a context for a server that publishes no requests and serves no registered content.
@@ -85,6 +103,9 @@ public final class PluginContext {
      * to every plugin's context, and exposes it afterwards through {@link PluginLoader#worldContents()}, so
      * the load order of the plugins is the order of the content they registered.
      *
+     * <p>The tick hook list is this context's own; use the seven argument form to share one with the
+     * loader.
+     *
      * @param pluginsDirectory the folder the jars were read from
      * @param dataDirectory the root of the per plugin data directories
      * @param serverVersion the version of the running server
@@ -94,12 +115,35 @@ public final class PluginContext {
      */
     public PluginContext(Path pluginsDirectory, Path dataDirectory, String serverVersion,
             System.Logger logger, RequestRegistry requests, List<WorldContent> worldContents) {
+        this(pluginsDirectory, dataDirectory, serverVersion, logger, requests, worldContents,
+                new ArrayList<>());
+    }
+
+    /**
+     * Creates a context that appends to the content and tick hook lists the caller also owns.
+     *
+     * <p>This is the form the {@link PluginLoader} uses, so that a plugin's
+     * {@link #registerWorldTickHook(WorldTickHook)} reaches the list the loader exposes through
+     * {@link PluginLoader#worldTickHooks()} - and that {@link PluginLoader#unloadAll()} clears.
+     *
+     * @param pluginsDirectory the folder the jars were read from
+     * @param dataDirectory the root of the per plugin data directories
+     * @param serverVersion the version of the running server
+     * @param logger the logger to use
+     * @param requests the registry a plugin publishes its read-only request handlers into
+     * @param worldContents the live list content registrations are appended to
+     * @param worldTickHooks the live list tick hook registrations are appended to
+     */
+    public PluginContext(Path pluginsDirectory, Path dataDirectory, String serverVersion,
+            System.Logger logger, RequestRegistry requests, List<WorldContent> worldContents,
+            List<WorldTickHook> worldTickHooks) {
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory");
         this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory");
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
         this.logger = Objects.requireNonNull(logger, "logger");
         this.requests = Objects.requireNonNull(requests, "requests");
         this.worldContents = Objects.requireNonNull(worldContents, "worldContents");
+        this.worldTickHooks = Objects.requireNonNull(worldTickHooks, "worldTickHooks");
     }
 
     /**
@@ -184,6 +228,43 @@ public final class PluginContext {
      */
     public List<WorldContent> worldContents() {
         return List.copyOf(worldContents);
+    }
+
+    /**
+     * Attaches a callback that runs after every fixed step of the server's world.
+     *
+     * <p>This is how a plugin gets access to the running world: the server builds one
+     * {@link io.github.sob1234509876.oc.server.world.WorldHost} from the selected content and hands the
+     * hook the world after each engine tick. Registering is not a claim on the world - the content seam
+     * is - so unlike {@link #registerWorldContent(WorldContent)} <em>every</em> registered hook runs, in
+     * plugin load order; see {@code OcGameServer#selectWorldTickHooks(java.util.List)}.
+     *
+     * <p>A hook is part of the simulation and must respect its rules: it runs on the world thread, must
+     * not block, and must be deterministic. See {@link WorldTickHook} for the full contract.
+     *
+     * <p>Registration belongs in {@link Plugin#onLoad(PluginContext)}, together with the content that
+     * gives the hook something to do. A plugin that registers a hook but loses the content selection race
+     * should make the hook a no-op for a world that is not its own game rather than fail the world.
+     *
+     * @param hook the callback to run after each fixed step, never {@code null}
+     * @throws NullPointerException when the hook is {@code null}
+     */
+    public void registerWorldTickHook(WorldTickHook hook) {
+        worldTickHooks.add(Objects.requireNonNull(hook, "hook"));
+    }
+
+    /**
+     * The tick hooks registered through this context so far, in registration order.
+     *
+     * <p>An unmodifiable snapshot of the live list: the loader exposes the same registrations through
+     * {@link PluginLoader#worldTickHooks()} after the whole folder was loaded, and the server runs them
+     * in exactly this order. A plugin should treat this as read-only information - what other plugins
+     * attached - and never as a way to remove or reorder a hook.
+     *
+     * @return the registered hooks, in registration order; empty when none was registered
+     */
+    public List<WorldTickHook> worldTickHooks() {
+        return List.copyOf(worldTickHooks);
     }
 
     /**

@@ -62,8 +62,16 @@ import java.util.Objects;
  * path in the same shape as units. The browser renderer reads these strings as {@code EntityView.kind}
  * (see {@code web-client/src/render/view.ts}); renaming a catalogue entry therefore renames the kind on
  * the wire, and the client is expected to fall back to its procedural shape for a kind it does not know.
+ *
+ * <p><strong>Plugin tick hooks.</strong> The host also owns the end of a step: after
+ * {@link OcRtsEngine#tick()} it calls every {@link WorldTickHook} it was given, in the order it was given
+ * them, on the same thread and under the same lock. The hooks are the plugin seam into the running
+ * world - a plugin cannot reach the engine itself - so the host documents the contract here and the
+ * interface documents the rules; see {@link WorldTickHook}.
  */
 public final class WorldHost {
+
+    private static final System.Logger LOG = System.getLogger("oc.world");
 
     /** Side length of the reported map, in tiles. */
     public static final int MAP_SIZE = 64;
@@ -107,6 +115,16 @@ public final class WorldHost {
     private final Player player;
     private final OcRtsEngine engine;
 
+    /**
+     * The plugin hooks that run at the end of every fixed step, in this order.
+     *
+     * <p>Immutable, and deliberately copied at construction: the list the loader exposes is startup
+     * state that {@code unloadAll()} clears, while a running host must keep the hooks it started with
+     * until it is rebuilt. The host is the only caller, which is why the order is simply the order the
+     * list was handed over in.
+     */
+    private final List<WorldTickHook> tickHooks;
+
     /** Guards the mutable engine; every tick and every read holds it. */
     private final Object stateLock = new Object();
 
@@ -120,16 +138,29 @@ public final class WorldHost {
      * Builds the flat world and its sample scene from the engine's own sample catalogue.
      *
      * <p>Kept for callers written before content was a seam; it is exactly
-     * {@code new WorldHost(seed, new ScenarioWorldContent())}.
+     * {@code new WorldHost(seed, new ScenarioWorldContent(), List.of())}.
      *
      * @param seed seed of the world and of the flat ground choice
      */
     public WorldHost(long seed) {
-        this(seed, new ScenarioWorldContent());
+        this(seed, new ScenarioWorldContent(), List.of());
     }
 
     /**
-     * Builds the flat world and its sample scene from the given content.
+     * Builds the flat world and its sample scene from the given content, without plugin tick hooks.
+     *
+     * <p>Kept for callers written before plugins could hook the tick; it is exactly
+     * {@code new WorldHost(seed, content, List.of())}.
+     *
+     * @param seed    seed of the world and of the flat ground choice
+     * @param content the catalogue to serve, for example the one a plugin registered
+     */
+    public WorldHost(long seed, WorldContent content) {
+        this(seed, content, List.of());
+    }
+
+    /**
+     * Builds the flat world and its sample scene from the given content and the given tick hooks.
      *
      * <p>The scene is derived from the catalogue, never from constants in this class: one finished
      * building of every declared building type on a grid, one unit of every declared unit type in a row
@@ -138,16 +169,22 @@ public final class WorldHost {
      * deposited into the player's warehouses after the scene exists, because a stock has to live in a
      * warehouse to be spendable.
      *
+     * <p>The hooks run at the end of every fixed step, after the engine tick, in the order given; see
+     * {@link #step()}. The list is copied, so a caller may change its own list afterwards without
+     * affecting a running host.
+     *
      * <p>No thread is started until {@link #start()}.
      *
-     * @param seed    seed of the world and of the flat ground choice
-     * @param content the catalogue to serve, for example the one a plugin registered
+     * @param seed      seed of the world and of the flat ground choice
+     * @param content   the catalogue to serve, for example the one a plugin registered
+     * @param tickHooks the plugin hooks to run after every fixed step, in order; never {@code null}
      * @throws IllegalStateException when the content declares starting resources no warehouse accepts, or
      *     defines no buildable terrain to put the world on
      */
-    public WorldHost(long seed, WorldContent content) {
+    public WorldHost(long seed, WorldContent content, List<WorldTickHook> tickHooks) {
         this.seed = seed;
         this.worldContent = Objects.requireNonNull(content, "content");
+        this.tickHooks = List.copyOf(Objects.requireNonNull(tickHooks, "tickHooks"));
         this.content = registryOf(this.worldContent);
         TerrainType ground = flatGround(this.content, this.worldContent, seed);
         this.player = Player.of(1, "Player 1", 0xFF4FC3F7);
@@ -311,6 +348,42 @@ public final class WorldHost {
         }
     }
 
+    /**
+     * Advances the world by exactly one fixed step, including the plugin tick hooks.
+     *
+     * <p>This is the synchronous counterpart of the tick thread, and the exact work one step of it does:
+     * the engine advances by one tick, and then every {@link WorldTickHook} runs, in the order the host
+     * was constructed with, with the tick number the world has just reached. The step holds the same lock
+     * as {@link #snapshotJson()}, so a snapshot taken from another thread is never a torn picture of a
+     * step in progress.
+     *
+     * <p>It exists for callers that must advance a world deterministically - a scripted scenario, or a
+     * check proving that two runs produce the same bytes - where the wall-clock driven
+     * {@link #start()} thread would make the tick count depend on how fast the machine is.
+     */
+    public void step() {
+        synchronized (stateLock) {
+            engine.tick();
+            long number = engine.tickNumber();
+            for (int index = 0; index < tickHooks.size(); index++) {
+                tickHooks.get(index).tick(engine.world(), number);
+            }
+        }
+    }
+
+    /**
+     * The plugin tick hooks of this host, in the order they run after every fixed step.
+     *
+     * <p>An immutable snapshot handed over at construction; a hook that was unloaded after the host was
+     * built does not disappear from a running world, which is why the server builds the host from the
+     * loader's list rather than the host polling it.
+     *
+     * @return the hooks, in running order; empty when no plugin registered one
+     */
+    public List<WorldTickHook> worldTickHooks() {
+        return tickHooks;
+    }
+
     /** Seed this host was built with. */
     public long seed() {
         return seed;
@@ -398,8 +471,17 @@ public final class WorldHost {
 
             int steps = 0;
             while (accumulator >= STEP_NANOS && steps < MAX_STEPS_PER_WAKE) {
-                synchronized (stateLock) {
-                    engine.tick();
+                try {
+                    step();
+                } catch (RuntimeException failure) {
+                    // A plugin hook is third party code running inside the simulation. If one throws, the
+                    // world cannot be advanced any further without risking the same failure on every
+                    // step, so the thread stops and the last consistent snapshot keeps being served; the
+                    // problem is logged instead of being swallowed.
+                    LOG.log(System.Logger.Level.ERROR, "a world tick hook failed; the world thread stops",
+                            failure);
+                    running = false;
+                    return;
                 }
                 accumulator -= STEP_NANOS;
                 steps++;

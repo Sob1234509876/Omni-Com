@@ -13,6 +13,7 @@ import io.github.sob1234509876.oc.server.ws.CommandWebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 import io.github.sob1234509876.oc.server.world.WorldHost;
+import io.github.sob1234509876.oc.server.world.WorldTickHook;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -60,6 +61,11 @@ import java.util.concurrent.TimeUnit;
  * {@link WorldContent} in {@link Plugin#onLoad(PluginContext)}; the server serves the first registration in
  * load order and falls back to {@link ScenarioWorldContent} when there is none. The rule, and why it is
  * "first" instead of "last", is documented on {@link #selectWorldContent(java.util.List)}.
+ *
+ * <p><strong>What runs inside the world.</strong> A plugin may also register a {@link WorldTickHook}: a
+ * callback that runs after every fixed step of that world. Unlike the content, every hook runs, in plugin
+ * load order, because a hook contributes to the world instead of claiming it; see
+ * {@link #selectWorldTickHooks(java.util.List)}.
  */
 public final class OcGameServer {
 
@@ -282,6 +288,33 @@ public final class OcGameServer {
     }
 
     /**
+     * Chooses the tick hooks the hosted world will run.
+     *
+     * <p><strong>All of them, in load order.</strong> The world content seam is first-one-wins because a
+     * world can only be one game; a tick hook is not a claim on the world but a contribution to it - the
+     * classic plugin's income and its enemy AI are two hooks that must both run - so no registration is
+     * discarded. The order is plugin load order, which is the sorted jar-file order of the plugin folder,
+     * and within one plugin the order its {@code onLoad} registered them in. That makes the hooks of a
+     * world as visible in the installation as the world itself: moving a jar moves its hooks, and a hook
+     * that must run before another one can be ordered by registering it first.
+     *
+     * <p>Every hook sees the same world and the same tick number, one after another, on the world thread.
+     * Because they share the world, a hook's writes are visible to the hooks that run after it in the same
+     * step, which is the property that lets an income hook pay into a warehouse before an AI hook spends
+     * the gold.
+     *
+     * <p>The decision is made once, in {@link #start()}, before any socket is bound: the hooks are copied
+     * into the {@link WorldHost}, so a plugin unloaded later cannot tear a hook out of a running world.
+     *
+     * @param registered the hooks the plugins registered, in load order
+     * @return every registered hook, in the same order; empty when none was registered
+     */
+    public static List<WorldTickHook> selectWorldTickHooks(List<WorldTickHook> registered) {
+        Objects.requireNonNull(registered, "registered");
+        return List.copyOf(registered);
+    }
+
+    /**
      * Loads the plugins and starts listening. Loading happens before the socket opens so a plugin that fails
      * to come up cannot leave clients talking to half a server.
      */
@@ -298,7 +331,7 @@ public final class OcGameServer {
         // plugins offered, or the engine's sample catalogue when no plugin claimed the world.
         WorldContent content = selectWorldContent(pluginLoader.worldContents());
         WorldHost host = worldEnabled && webSocketConfig.port() != 0
-                ? new WorldHost(worldSeed, content)
+                ? new WorldHost(worldSeed, content, selectWorldTickHooks(pluginLoader.worldTickHooks()))
                 : null;
         server.start();
         if (host != null) {

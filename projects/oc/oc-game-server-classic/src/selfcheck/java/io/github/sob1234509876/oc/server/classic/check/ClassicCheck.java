@@ -2,11 +2,13 @@ package io.github.sob1234509876.oc.server.classic.check;
 
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
+import io.github.sob1234509876.oc.rts.OcRtsEngineBuilder;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
+import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
 import io.github.sob1234509876.oc.rts.content.StartingResources;
@@ -16,11 +18,18 @@ import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
+import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
+import io.github.sob1234509876.oc.rts.order.AttackOrder;
+import io.github.sob1234509876.oc.rts.order.Order;
+import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.server.OcGameServer;
 import io.github.sob1234509876.oc.server.check.Check;
+import io.github.sob1234509876.oc.server.classic.ClassicAi;
 import io.github.sob1234509876.oc.server.classic.ClassicContent;
+import io.github.sob1234509876.oc.server.classic.ClassicEconomy;
 import io.github.sob1234509876.oc.server.classic.ClassicPlugin;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
@@ -111,9 +120,12 @@ public final class ClassicCheck {
         tiers(check, registry);
         tierGate(check, registry);
         mines(check, registry);
+        economy(check, classic, registry);
         startingResources(check, classic, registry);
         Map<String, Object> manifest = assets(check, registry);
         worldHost(check, classic, registry, manifest);
+        enemyAi(check, classic, registry);
+        deterministicWorld(check);
         pluginSeam(check, classic, registry);
         loaderSeam(check);
         check.summary("classic plugin self check");
@@ -313,6 +325,80 @@ public final class ClassicCheck {
             check.that(high.costGold() > low.costGold(), "矿场成本严格递增: t" + low.tier() + " " + low.costGold()
                     + " -> t" + high.tier() + " " + high.costGold());
         }
+    }
+
+    // ------------------------------------------------------------------ 4b) mine income
+
+    /**
+     * The economy hook: paid on tick multiples of 60 and only on those, once per tick, per mine, summed
+     * per player, deposited into a warehouse, and nothing for a site or a dead mine.
+     *
+     * <p>The hook is called directly instead of being ticked through an engine, because that is what makes
+     * the tick numbers in the assertions exact: a test can call {@code tick(world, 59)} and
+     * {@code tick(world, 60)} without the engine advancing construction or production in between.
+     */
+    private static void economy(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("矿场收益");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
+        Player landless = Player.of(2, "No warehouse", 0xFFEF5350);
+        OcRtsEngine engine = flatEngine(registry, player, landless);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        check.equal(0L, goldOf(player, gold), "开局仓库里没有金币");
+        Building firstMine = world.spawnBuilding(registry.building(ClassicContent.MINE_T1), player,
+                new GridPos(20, 10));
+        check.equal(30L, ClassicEconomy.incomePerMinute(firstMine.type()), "t1 矿场的收益率是 30/分钟");
+        // A second player with a mine but no warehouse: income that no warehouse can take is not paid.
+        world.spawnBuilding(registry.building(ClassicContent.MINE_T1), landless, new GridPos(40, 10));
+
+        ClassicEconomy economy = new ClassicEconomy();
+        economy.tick(world, 59);
+        check.equal(0L, goldOf(player, gold), "tick 59 不是 60 的倍数，不发钱");
+        economy.tick(world, 60);
+        check.equal(30L, goldOf(player, gold), "tick 60 发放一座 t1 矿场的 30 金币");
+        economy.tick(world, 60);
+        check.equal(30L, goldOf(player, gold), "同一个 tick 再调用一次也不会重复发放");
+        economy.tick(world, 61);
+        check.equal(30L, goldOf(player, gold), "tick 61 不发钱");
+        economy.tick(world, 120);
+        check.equal(60L, goldOf(player, gold), "tick 120 再发 30（累计 60）");
+
+        Building secondMine = world.spawnBuilding(registry.building(ClassicContent.MINE_T1), player,
+                new GridPos(24, 10));
+        economy.tick(world, 180);
+        check.equal(120L, goldOf(player, gold), "两座 t1 矿场在 tick 180 一起发放 60（累计 120）");
+
+        Building richMine = world.spawnBuilding(registry.building(ClassicContent.MINE_T2), player,
+                new GridPos(28, 10));
+        check.equal(60L, ClassicEconomy.incomePerMinute(richMine.type()), "t2 矿场的收益率是 60/分钟");
+        economy.tick(world, 240);
+        check.equal(240L, goldOf(player, gold), "t2 矿场按自己的 60/分钟发放（累计 240）");
+        check.equal(0L, goldOf(landless, gold), "没有仓库的玩家收不到矿场收益（投放点规则）");
+
+        Building site = world.placeBuilding(registry.building(ClassicContent.MINE_T3), player,
+                new GridPos(34, 10));
+        check.that(!site.isConstructed(), "新放置的矿场 T3 还是未完工的工地");
+        economy.tick(world, 300);
+        check.equal(360L, goldOf(player, gold), "未完工的矿场一分钱都不发（累计 360）");
+        site.completeConstruction();
+        economy.tick(world, 360);
+        check.equal(600L, goldOf(player, gold), "完工后的 T3 矿场按 120/分钟发放（累计 600）");
+
+        world.destroy(secondMine);
+        world.flush();
+        economy.tick(world, 420);
+        check.equal(810L, goldOf(player, gold), "被摧毁的矿场不再发钱（少 30，累计 810）");
+        check.equal(420L, economy.lastPaidTick(), "钩子记住了最后一次发放的 tick");
+
+        check.that(registry.building(ClassicContent.MINE_T1).hasTag(ClassicContent.INCOME_TAG_PREFIX + 30)
+                        && registry.building(ClassicContent.MINE_T2)
+                                .hasTag(ClassicContent.INCOME_TAG_PREFIX + 60)
+                        && registry.building(ClassicContent.MINE_T3)
+                                .hasTag(ClassicContent.INCOME_TAG_PREFIX + 120),
+                "三座矿场的 income_<n> 标签是 30/60/120（收益来自内容，不是代码里的常量）");
+        check.that(warehouse.isWarehouse(), "收益真正落进的是仓库（物流网络的投放点）");
     }
 
     // ------------------------------------------------------------------ 5) the opening stock
@@ -572,6 +658,205 @@ public final class ClassicCheck {
         }
     }
 
+    // ------------------------------------------------------------------ 7b) the enemy AI
+
+    /** The four state machine rules, each asserted against a purpose built world. */
+    private static void enemyAi(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("敌人 AI");
+        trainsEngineersFirst(check, registry);
+        buildsMissingStructures(check, registry);
+        attacksAtSix(check, registry);
+        defendsItsBase(check, registry);
+    }
+
+    /** No engineers yet: the first decision has to queue the engineer recipe, not a soldier. */
+    private static void trainsEngineersFirst(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player enemy = engine.players().get(1);
+        Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), enemy,
+                new GridPos(24, 20));
+        stock(check, registry, enemy, warehouse);
+        ClassicAi ai = new ClassicAi();
+
+        check.equal(0, countUnits(world, enemy, ClassicContent.ENGINEER), "AI 开局没有工程师");
+        check.equal(0, engine.production().totalJobs(), "开局没有排队中的生产任务");
+        ai.tick(world, 20);
+
+        ProductionQueue queue = engine.production().queue(armory).orElseThrow();
+        check.equal(1, queue.size(), "缺工程师时 AI 先排入一个生产任务");
+        check.equal(ClassicContent.TRAIN_ENGINEER, queue.current().recipe().key().path(),
+                "排入的是工程师配方，不是战斗单位");
+        check.equal(ClassicAi.Mode.ECON, ai.mode(), "基地还没建好时 AI 处于 ECON 状态");
+    }
+
+    /** No armory and no mine: the AI places the missing building with an idle engineer. */
+    private static void buildsMissingStructures(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player enemy = engine.players().get(1);
+        Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
+        Unit engineer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy, new GridPos(22, 22));
+        stock(check, registry, enemy, warehouse);
+        ClassicAi ai = new ClassicAi();
+
+        check.equal(0, countTag(world, enemy, ClassicContent.ARMORY_TAG), "AI 没有兵营");
+        ai.tick(world, 20);
+        List<Building> sites = sitesOf(world, enemy);
+        check.equal(1, sites.size(), "缺兵营时 AI 放下一个工地");
+        check.equal(ClassicContent.ARMORY_T1, sites.isEmpty() ? "<none>" : sites.get(0).type().key().path(),
+                "工地是普通兵营");
+        check.that(!sites.isEmpty() && sites.get(0).origin().chebyshevDistance(new GridPos(20, 20)) <= 6,
+                "工地就在 AI 现有建筑附近（确定性搜索半径内）");
+        check.that(!engineer.orders().isEmpty(), "空闲的工程师接到了建造命令");
+        engine.tick();
+        Order current = engineer.orders().current();
+        check.that(current != null && "build".equals(current.name()), "一个 tick 后工程师正在执行的是 build");
+
+        // Two armories but no mine: the missing structure is now a mine.
+        OcRtsEngine second = aiEngine(registry);
+        World secondWorld = second.world();
+        Player secondEnemy = second.players().get(1);
+        Building secondWarehouse = warehouse(secondWorld, registry, secondEnemy, new GridPos(20, 20));
+        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), secondEnemy, new GridPos(24, 20));
+        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), secondEnemy, new GridPos(28, 20));
+        secondWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), secondEnemy, new GridPos(22, 22));
+        stock(check, registry, secondEnemy, secondWarehouse);
+        ClassicAi secondAi = new ClassicAi();
+        secondAi.tick(secondWorld, 20);
+        boolean mineSite = false;
+        for (Building candidate : sitesOf(secondWorld, secondEnemy)) {
+            mineSite |= candidate.type().hasTag(ClassicContent.MINE_TAG);
+        }
+        check.that(mineSite, "两座兵营已就位而矿场不足时，AI 放下一个矿场工地");
+    }
+
+    /** Six fighting units: the AI marches them all at the nearest enemy building, and only once. */
+    private static void attacksAtSix(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player human = engine.players().get(0);
+        Player enemy = engine.players().get(1);
+        warehouse(world, registry, enemy, new GridPos(20, 20));
+        Building near = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), human,
+                new GridPos(40, 40));
+        world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), human, new GridPos(4, 4));
+        List<Unit> army = new ArrayList<>();
+        for (int index = 0; index < ClassicAi.ATTACK_ARMY_SIZE; index++) {
+            army.add(world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), enemy,
+                    new GridPos(30, 30 + index)));
+        }
+        army.sort(Comparator.comparing(Unit::id));
+        ClassicAi ai = new ClassicAi();
+
+        ai.tick(world, 20);
+        check.equal(ClassicAi.Mode.ATTACK, ai.mode(), "6 个战斗单位时 AI 进入 ATTACK 状态");
+        check.equal(ClassicAi.ATTACK_ARMY_SIZE, countOrders(army, "attack_move"),
+                "6 个没有命令的单位都收到 attack_move");
+        List<Order> pending = new ArrayList<>(army.get(0).orders().pending());
+        check.equal(1, pending.size(), "每个单位只有一条待执行命令");
+        check.that(pending.get(0) instanceof AttackMoveOrder, "命令是 attack_move");
+        check.equal(near.position(), ((AttackMoveOrder) pending.get(0)).destination(),
+                "单位朝最近的敌方建筑进攻（按平方距离，不是按索引）");
+
+        ai.tick(world, 40);
+        check.equal(pending, army.get(0).orders().pending(),
+                "单位已有命令时 AI 不再重复下发（待执行命令对象原样保留）");
+        engine.tick();
+        ai.tick(world, 60);
+        check.equal(1, army.get(0).orders().size(), "命令正在执行时也不会叠加第二条");
+        check.equal("attack_move", army.get(0).orders().current().name(), "执行中的命令就是 attack_move");
+    }
+
+    /** An intruder next to the base outranks everything: every idle unit attacks it. */
+    private static void defendsItsBase(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player human = engine.players().get(0);
+        Player enemy = engine.players().get(1);
+        warehouse(world, registry, enemy, new GridPos(20, 20));
+        Unit intruder = world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), human, new GridPos(24, 24));
+        List<Unit> defenders = new ArrayList<>();
+        defenders.add(world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), enemy, new GridPos(30, 30)));
+        defenders.add(world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), enemy, new GridPos(31, 31)));
+        defenders.sort(Comparator.comparing(Unit::id));
+        ClassicAi ai = new ClassicAi();
+
+        ai.tick(world, 20);
+        check.equal(ClassicAi.Mode.DEFEND, ai.mode(), "敌人进入建筑 8 格内时 AI 进入 DEFEND 状态");
+        int attacking = 0;
+        for (Unit defender : defenders) {
+            if (defender.orders().pending().isEmpty()) {
+                continue;
+            }
+            Order order = defender.orders().pending().get(0);
+            if (order instanceof AttackOrder attack && attack.targetId().equals(intruder.id())) {
+                attacking++;
+            }
+        }
+        check.equal(2, attacking, "两个空闲单位都接到攻击入侵者的命令（最近目标）");
+    }
+
+    // ------------------------------------------------------------------ 7c) determinism
+
+    /**
+     * The strongest determinism proof this module can make: two scripted 600 tick runs of a real
+     * {@link WorldHost} with the classic content, the economy and the AI, compared byte for byte.
+     *
+     * <p>The host is advanced through {@link WorldHost#step()}, not its wall clock thread, so the run is
+     * exactly 600 ticks on any machine. Everything the run contains - mine income, the AI's bootstrap,
+     * its production, the orders it issues and the movement and combat that follow - therefore has to be
+     * a pure function of the seed and the tick number for the two documents to match.
+     */
+    private static void deterministicWorld(Check check) {
+        check.section("经典世界的确定性");
+        String first = runClassicWorld(600);
+        String second = runClassicWorld(600);
+        check.that(!first.isEmpty(), "600 tick 后拿到了快照");
+        check.that(first.equals(second), "同一脚本两次 600 tick 的快照 JSON 字节完全相同");
+        check.equal(first.length(), second.length(), "两份快照长度相同");
+        check.that(first.contains("\"tick\":600"), "两次运行都停在 tick 600");
+        check.that(first.contains("\"player\":2"), "快照里有 AI 的玩家 2 实体（AI 真的进入了世界）");
+        check.note("确定性快照长度: " + first.length() + " 字节");
+
+        // How much the hooks actually did inside the real host: the bootstrap places four entities, so
+        // anything beyond that is work the AI's own decisions produced during the run.
+        Set<String> aiKinds = new LinkedHashSet<>();
+        List<String> aiEntities = new ArrayList<>();
+        try {
+            Map<String, Object> document = object(Json.parse(first));
+            for (Object raw : array(document.get("entities"))) {
+                Map<String, Object> entity = object(raw);
+                if (longOf(entity.get("player")) == ClassicAi.PLAYER_ID) {
+                    String kind = String.valueOf(entity.get("kind"));
+                    aiKinds.add(kind);
+                    aiEntities.add(kind + "#" + longOf(entity.get("id")));
+                }
+            }
+        } catch (RuntimeException failure) {
+            check.that(false, "600 tick 快照可以被解析（" + failure.getMessage() + "）");
+            return;
+        }
+        check.note("600 tick 后玩家 2 有 " + aiEntities.size() + " 个实体，种类 " + aiKinds);
+        check.note("玩家 2 的实体: " + aiEntities);
+        check.that(aiEntities.size() > 4, "600 tick 内 AI 在真实主机里自己生产或建造了新的实体（不只是开局基地）");
+    }
+
+    /** One scripted run: 600 synchronous steps of a host built with the classic content and its hooks. */
+    private static String runClassicWorld(int ticks) {
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), new ClassicAi()));
+        try {
+            for (int tick = 0; tick < ticks; tick++) {
+                host.step();
+            }
+            return host.snapshotJson();
+        } finally {
+            host.stop();
+        }
+    }
+
     // ------------------------------------------------------------------ 8) the plugin seam
 
     private static void pluginSeam(Check check, ClassicContent classic, ContentRegistry registry) {
@@ -590,6 +875,10 @@ public final class ClassicCheck {
             check.equal(1, context.worldContents().size(), "onLoad 注册了一份世界内容");
             check.equal(ClassicContent.ID, context.worldContents().get(0).id(), "注册的内容 id 是 oc-classic");
             check.that(context.worldContents().get(0) == plugin.content(), "注册的就是插件自己的目录对象");
+            check.equal(2, context.worldTickHooks().size(), "onLoad 同时注册了两个世界 tick 钩子");
+            check.that(context.worldTickHooks().get(0) == plugin.economy(),
+                    "第一个钩子是矿场收益（先发钱，后做决策）");
+            check.that(context.worldTickHooks().get(1) == plugin.ai(), "第二个钩子是敌人 AI，按注册顺序");
 
             WorldContent registered = context.worldContents().get(0);
             ContentRegistry throughSeam = registryOf(registered);
@@ -647,6 +936,11 @@ public final class ClassicCheck {
                     entry(ClassicContent.class),
                     entry(ClassicContent.MeleeTier.class),
                     entry(ClassicContent.MineTier.class),
+                    // The two world tick hooks the plugin instantiates in its own constructor: a plugin jar
+                    // that forgot them would fail at load time, which is exactly what this fixture catches.
+                    entry(ClassicEconomy.class),
+                    entry(ClassicAi.class),
+                    entry(ClassicAi.Mode.class),
                     text(PluginDescriptor.RESOURCE, descriptorText(ClassicPlugin.NAME, ClassicPlugin.VERSION,
                             ClassicPlugin.class.getName()))));
 
@@ -672,10 +966,13 @@ public final class ClassicCheck {
                     "worldContents() 按加载顺序收集注册内容");
             check.equal(ClassicContent.ID, OcGameServer.selectWorldContent(loader.worldContents()).id(),
                     "服务器从加载器的注册列表里选中第一份内容");
+            check.equal(2, loader.worldTickHooks().size(),
+                    "经典插件的两个 tick 钩子通过加载器注册进来（第二个插件不注册钩子）");
             check.that(loader.problems().isEmpty(), "两个 jar 都没有报告问题: " + loader.problems());
 
             loader.unloadAll();
             check.equal(0, loader.worldContents().size(), "unloadAll() 清空已注册的世界内容");
+            check.equal(0, loader.worldTickHooks().size(), "unloadAll() 也清空了世界 tick 钩子");
             check.equal(0, loader.plugins().size(), "unloadAll() 也清空了插件列表");
         } catch (IOException failure) {
             check.that(false, "插件加载器检查无法建立临时目录或 jar: " + failure);
@@ -765,6 +1062,95 @@ public final class ClassicCheck {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** A flat, buildable engine on the classic terrain, with the players the check needs. */
+    private static OcRtsEngine flatEngine(ContentRegistry registry, Player... players) {
+        OcRtsEngineBuilder builder = OcRtsEngine.builder(registry)
+                .seed(7L)
+                .chunkSize(16)
+                .viewRadiusChunks(2)
+                .generator(new FlatChunkGenerator(registry.terrain(GRASS)))
+                .directDelivery(true);
+        for (Player player : players) {
+            builder.player(player);
+        }
+        return builder.build();
+    }
+
+    /** An engine with a human player 1 and the AI's player 2, both with a logistics network. */
+    private static OcRtsEngine aiEngine(ContentRegistry registry) {
+        return flatEngine(registry,
+                Player.of(1, "Player 1", 0xFF4FC3F7),
+                Player.of(ClassicAi.PLAYER_ID, ClassicAi.ENEMY_NAME, ClassicAi.ENEMY_COLOR));
+    }
+
+    /** Spawns the drop off a player's stock needs. */
+    private static Building warehouse(World world, ContentRegistry registry, Player player, GridPos at) {
+        return world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), player, at);
+    }
+
+    /** Deposits the content's starting stock into a player's warehouse and asserts it all fits. */
+    private static void stock(Check check, ContentRegistry registry, Player player, Building warehouse) {
+        ItemBundle bundle = ItemBundle.builder()
+                .add(registry.item(ClassicContent.GOLD), Natural.of(300))
+                .add(registry.item(ClassicContent.WOOD), Natural.of(60))
+                .build();
+        ItemBundle leftover = player.logistics().deposit(bundle, warehouse.position());
+        check.that(leftover.isEmpty(), player.name() + " 的仓库收下了 300 金币与 60 木材");
+    }
+
+    /** Gold a player can actually spend, i.e. gold stored in a warehouse. */
+    private static long goldOf(Player player, ItemType gold) {
+        return asLong(player.logistics().amount(gold));
+    }
+
+    /** Living units of one content type owned by the player. */
+    private static int countUnits(World world, Player player, String unitPath) {
+        int count = 0;
+        for (Unit unit : world.unitsOf(player)) {
+            if (unit.isAlive() && unit.type().key().path().equals(unitPath)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Buildings carrying a content tag, sites included. */
+    private static int countTag(World world, Player player, String tag) {
+        int count = 0;
+        for (Building building : world.buildingsOf(player)) {
+            if (building.isAlive() && building.type().hasTag(tag)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Unfinished buildings of a player, in entity id order. */
+    private static List<Building> sitesOf(World world, Player player) {
+        List<Building> sites = new ArrayList<>();
+        for (Building building : world.buildingsOf(player)) {
+            if (building.isAlive() && !building.isConstructed()) {
+                sites.add(building);
+            }
+        }
+        sites.sort(Comparator.comparing(Building::id));
+        return sites;
+    }
+
+    /** How many of the units have a pending order with the given name. */
+    private static int countOrders(List<Unit> units, String orderName) {
+        int count = 0;
+        for (Unit unit : units) {
+            for (Order order : unit.orders().pending()) {
+                if (orderName.equals(order.name())) {
+                    count++;
+                    break;
+                }
+            }
+        }
+        return count;
+    }
 
     /** Melee recipes a building may run, in catalogue order. */
     private static List<String> meleeRecipesFor(ContentRegistry registry, BuildingType building) {

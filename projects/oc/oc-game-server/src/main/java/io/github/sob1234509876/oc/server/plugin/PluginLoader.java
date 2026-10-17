@@ -1,6 +1,7 @@
 package io.github.sob1234509876.oc.server.plugin;
 
 import io.github.sob1234509876.oc.rts.content.WorldContent;
+import io.github.sob1234509876.oc.server.world.WorldTickHook;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -138,6 +139,20 @@ public final class PluginLoader {
     private final List<WorldContent> worldContents = new ArrayList<>();
 
     /**
+     * The world tick hooks the loaded plugins registered, in load order.
+     *
+     * <p>One list for the whole startup is handed to every plugin through
+     * {@link PluginContext#registerWorldTickHook(WorldTickHook)}, so the order here is exactly the order
+     * in which the plugins were loaded. Unlike {@link #worldContents}, the server does not choose among
+     * these: every hook of the list runs, in this order, because a hook does not claim the world - it
+     * contributes to it.
+     *
+     * <p>Like the plugin list, this is startup state and is not thread safe: it is written while plugins
+     * are loaded and read once, when the world host is built, before the sockets open.
+     */
+    private final List<WorldTickHook> worldTickHooks = new ArrayList<>();
+
+    /**
      * The loader of every enabled plugin, keyed by the name the plugin reports.
      *
      * <p>The name is the only identity a plugin exposes that a browser can safely put in a URL: it is what
@@ -226,7 +241,7 @@ public final class PluginLoader {
     public List<Plugin> loadAll() {
         List<Path> jars = pluginJars();
         PluginContext context = new PluginContext(pluginsDirectory, dataDirectory, serverVersion, logger,
-                requests, worldContents);
+                requests, worldContents, worldTickHooks);
         for (Path jar : jars) {
             DiscoveryResult result = loadJar(jar, jars, context);
             discoveries.add(result);
@@ -508,6 +523,25 @@ public final class PluginLoader {
         return List.copyOf(worldContents);
     }
 
+    /**
+     * The world tick hooks the loaded plugins registered, in load order.
+     *
+     * <p>The order is the order in which the jars were loaded, and therefore the order in which their
+     * {@link Plugin#onLoad(PluginContext)} calls ran: a jar whose name sorts first registers first. The
+     * server runs all of them in this order after every fixed world step; see {@code WorldTickHook} and
+     * {@code OcGameServer#selectWorldTickHooks(java.util.List)} for why it is "all" here while the world
+     * content seam is "first one wins".
+     *
+     * <p>The list is handed to the {@link io.github.sob1234509876.oc.server.world.WorldHost} once, when
+     * the world is built, and is emptied by {@link #unloadAll()}: a hook of a disabled plugin must not be
+     * inherited by a later startup.
+     *
+     * @return the registered hooks in load order; empty before {@link #loadAll()}
+     */
+    public List<WorldTickHook> worldTickHooks() {
+        return List.copyOf(worldTickHooks);
+    }
+
     /** What each jar of the folder turned out to contain, including the jars that produced nothing. */
     public List<DiscoveryResult> discoveries() {
         return List.copyOf(discoveries);
@@ -599,6 +633,9 @@ public final class PluginLoader {
         // The content a plugin registered is content of the disabled plugin: a later loadAll() must start
         // from what the folder offers then, not from what an unloaded plugin left behind.
         worldContents.clear();
+        // The same holds for its tick hooks: a hook is a live callback into the world, so it must not
+        // outlive the plugin whose onDisable() just ran.
+        worldTickHooks.clear();
         synchronized (classLoadersByPlugin) {
             classLoadersByPlugin.clear();
         }

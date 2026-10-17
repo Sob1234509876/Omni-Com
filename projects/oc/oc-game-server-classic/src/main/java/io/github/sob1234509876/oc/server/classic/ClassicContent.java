@@ -47,9 +47,10 @@ import java.util.Objects;
  * {@code ProductionSystem.enqueue} refuses a recipe the building's level does not reach.
  *
  * <p>The mines are {@code building.mine.t1}/{@code .t2}/{@code .t3}, named 普通/强化/精英, with ascending
- * income rate and cost. <strong>Income is content data, not a mechanic</strong>: the engine has no passive
- * income tick, so the rate is published by {@link #mineTiers()} (gold per minute) for the economy stage that
- * will consume it, and no recipe silently mints gold here.
+ * income rate and cost. <strong>Income is content data, not an engine mechanic</strong>: the engine has no
+ * passive income tick, so each mine publishes its rate as the {@code income_<gold per minute>} tag (and as
+ * {@link #mineTiers()} for tooling), and {@link ClassicEconomy} - the plugin's world tick hook - pays it
+ * out. No recipe silently mints gold here.
  *
  * <p><strong>The drop off.</strong> The engine's logistics network is "every finished building whose type is
  * a warehouse" - there is no special drop off type. {@code building.warehouse} therefore replicates the
@@ -82,6 +83,12 @@ public final class ClassicContent implements WorldContent {
 
     /** Producer tag shared by both armory tiers; the level decides what each of them may train. */
     public static final String ARMORY_TAG = "armory";
+
+    /** Tag shared by the three mine tiers; {@link ClassicEconomy} reads their income from it. */
+    public static final String MINE_TAG = "mine";
+
+    /** Prefix of the content tag that publishes a mine's income, in gold per minute. */
+    public static final String INCOME_TAG_PREFIX = "income_";
 
     public static final String MELEE_T1 = "unit.melee.t1";
     public static final String MELEE_T2 = "unit.melee.t2";
@@ -141,7 +148,7 @@ public final class ClassicContent implements WorldContent {
      * @param buildingPath content path of the building
      * @param displayName Chinese display name
      * @param level building level, matched against recipe requirements
-     * @param goldPerMinute the documented income rate; content data until an income stage reads it
+     * @param goldPerMinute the documented income rate, paid by {@link ClassicEconomy} on every full minute
      * @param costGold cost in gold
      * @param buildTimeTicks construction time in ticks
      */
@@ -272,8 +279,8 @@ public final class ClassicContent implements WorldContent {
                     .buildTime(mine.buildTimeTicks())
                     .storage(6)
                     .spriteSet(mine.buildingPath())
-                    .tag("mine")
-                    .tag("income_" + mine.goldPerMinute());
+                    .tag(MINE_TAG)
+                    .tag(INCOME_TAG_PREFIX + mine.goldPerMinute());
         }
 
         // ------------------------------------------------------------------ armories and the drop off

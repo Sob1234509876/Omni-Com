@@ -21,6 +21,7 @@ import io.github.sob1234509876.oc.rts.event.SimpleEventBus;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
+import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -76,6 +77,7 @@ public final class World {
     private DimensionId defaultDimensionId = DimensionId.overworld();
     private final List<Gateway> gateways = new ArrayList<>();
     private UnitDirector director;
+    private ProductionSystem production;
     private long nextEntityId = 1L;
     private long tickNumber;
 
@@ -134,6 +136,28 @@ public final class World {
 
     public void setDirector(UnitDirector director) {
         this.director = Objects.requireNonNull(director, "director");
+    }
+
+    /**
+     * The production system that runs the queues of this world's buildings.
+     *
+     * <p>Exposed like {@link #director()} because it is a service rather than a system: a caller that
+     * only holds the world - a plugin tick hook, a scenario, a check - can queue a recipe without owning
+     * the engine or the pipeline. It is the same instance the engine ticks, so a job queued here really
+     * runs.
+     *
+     * @throws IllegalStateException when the world was built without a production system
+     */
+    public ProductionSystem production() {
+        if (production == null) {
+            throw new IllegalStateException("the world has no production system; enable the production system");
+        }
+        return production;
+    }
+
+    /** Installs the production system the engine ticks; called once, by the engine builder. */
+    public void setProduction(ProductionSystem production) {
+        this.production = Objects.requireNonNull(production, "production");
     }
 
     // ------------------------------------------------------------------ dimensions

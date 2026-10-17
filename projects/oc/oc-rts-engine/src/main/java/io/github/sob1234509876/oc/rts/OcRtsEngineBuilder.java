@@ -249,6 +249,9 @@ public final class OcRtsEngineBuilder {
 
         pipeline.add(new ConstructionSystem(world));
         ProductionSystem production = new ProductionSystem(world);
+        // Like the director, the production system is installed on the world itself: a caller that only
+        // holds the world (a plugin tick hook, a scenario) can then queue work without the engine object.
+        world.setProduction(production);
         pipeline.add(production);
         pipeline.add(new HaulingSystem(world, directDelivery, directDeliveryTicks));
         pipeline.add(new AnimationSystem(world, visuals));
