@@ -18,7 +18,7 @@ the engine's sample catalogue; remove it and the server falls back.
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (288 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (291 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x96 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -172,12 +172,12 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 288 checks passed.
+classic plugin self check: all 291 checks passed.
 ```
 
-288 is the sum of twelve sections: the catalogue 82, the five-tier stat ladder 40, the armory level gate 14, the
-mine income ladder 20, the mine payout 18, the starting stock 10, the manifest and atlas 15, the host and
-snapshot 27, the enemy AI 25, determinism 6, the plugin seam 17 and the plugin loader 12. The gate section is the
+291 is the sum of twelve sections: the catalogue 82, the five-tier stat ladder 40, the armory level gate 14, the
+mine income ladder 20, the mine payout 18, the starting stock 10, the manifest and atlas 17, the host and
+snapshot 30, the enemy AI 25, determinism 6, the plugin seam 17 and the plugin loader 12. The gate section is the
 strict part: it proves against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just
 that the catalogue says so.
 
@@ -192,7 +192,7 @@ that the catalogue says so.
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 288 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 291 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

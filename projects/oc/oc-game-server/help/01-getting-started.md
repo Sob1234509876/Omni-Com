@@ -4,7 +4,7 @@
 
 ## 这一篇讲什么
 
-- 怎么构建、怎么跑自校验，以及 731 条断言分别落在哪十一组。
+- 怎么构建、怎么跑自校验，以及 789 条断言分别落在哪十一组。
 - 启动器的全部命令行选项、默认值，以及解析器的脾气。
 - 插件目录、数据目录与浏览器静态根的默认位置，谁往里写什么。
 - 一次启动打印什么、一次关闭按什么顺序发生。
@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 731 checks passed.
+game server self check: all 789 checks passed.
 debug plugin self check: all 82 checks passed.
 ```
 
-731 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 105 条（daemon tick 线程、含每个玩家 `players` 资源的 JSON 形状、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 87 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
+789 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 163 条（daemon tick 线程、256×256 噪声地形、可建造出生锚点、带 `cx` / `cy` / `r` 的窗口快照、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 87 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 
@@ -147,7 +147,7 @@ browser endpoint: http://0.0.0.0:25567/ (static root web-client/dist)
 | `...server.net` | 监听、加密信道、命令解析、协议客户端 | `ServerConfig`、`SecureChannel`、`GameServer`、`GameClient`（外加一个包内测试缝 `ChannelTestSupport`） |
 | `...server.plugin` | 插件加载与只读请求缝 | `Plugin`、`PluginContext`、`PluginDescriptor`、`DiscoveryResult`、`PluginLoader`、`RequestHandler`、`RequestRegistry` |
 | `...server.ws` | 可选的浏览器端点：HTTP 静态文件、插件资源、世界快照、WebSocket 分帧、版本握手、命令适配 | `HttpWebServer`、`WebSocketConfig`、`WebSocketConnection`、`CommandWebSocketHandler`、`PluginAssets` |
-| `...server.world` | 服务器世界：一个扁平 64×64 的 `OcRtsEngine`、daemon tick 线程与快照 JSON | `WorldHost` |
+| `...server.world` | 服务器世界：一个 256×256 噪声地形的 `OcRtsEngine`、可建造出生锚点、daemon tick 线程与窗口快照 JSON | `WorldHost` |
 
 依赖方向是单向的：`auth` 与 `plugin` 互相不认识，`net` 认识这两个（它要给 `AuthService` 送凭据、向 `RequestRegistry` 查处理器），`ws` 认识 `auth`、`net`、`plugin` 与 `world`（它用 `CommandDispatcher` 执行命令、查 `RequestRegistry`、读 `WorldHost`），根包认识全部。`world` 是服务器里唯一认识 RTS 引擎的包（`module-info` 里只有一个 `requires oc.projects.oc.rts.engine`）；`plugin` 包里没有任何 `net`、`auth` 或 `world` 的引用——插件 API 不知道 socket、密码或活游戏的存在，这是"插件拿不到活游戏"的第一层保证。
 

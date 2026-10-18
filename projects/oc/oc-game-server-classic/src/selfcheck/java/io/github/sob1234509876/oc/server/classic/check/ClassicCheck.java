@@ -588,8 +588,9 @@ public final class ClassicCheck {
 
         WorldHost host = new WorldHost(1L, classic);
         try {
-            check.equal(WorldHost.MAP_SIZE, host.width(), "报出的地图宽度是 64");
-            check.equal(WorldHost.MAP_SIZE, host.height(), "报出的地图高度是 64");
+            check.equal(WorldHost.MAP_SIZE, host.width(), "报出的地图宽度是 256");
+            check.equal(WorldHost.MAP_SIZE, host.height(), "报出的地图高度是 256");
+            check.equal(256, host.width(), "地图宽度常量是 256");
             check.equal(TILE_PIXELS, host.tilePixels(), "报出的 tilePixels 是 16");
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
             check.equal(ClassicContent.ID, host.worldContent().id(), "主机服务的正是 oc-classic");
@@ -608,8 +609,14 @@ public final class ClassicCheck {
                 return;
             }
             check.equal(0L, longOf(document.get("tick")), "未启动时 tick 为 0");
-            check.equal((long) WorldHost.MAP_SIZE, longOf(document.get("width")), "快照宽度是 64");
-            check.equal((long) WorldHost.MAP_SIZE, longOf(document.get("height")), "快照高度是 64");
+            check.equal((long) (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2), longOf(document.get("width")),
+                    "快照宽度是默认窗口的 64");
+            check.equal((long) (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2), longOf(document.get("height")),
+                    "快照高度是默认窗口的 64");
+            check.equal((long) (WorldHost.MAP_SIZE / 2 - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longOf(document.get("originX")), "快照 originX 是默认窗口的左上角");
+            check.equal((long) (WorldHost.MAP_SIZE / 2 - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longOf(document.get("originY")), "快照 originY 是默认窗口的左上角");
 
             List<Object> entities;
             try {
@@ -655,11 +662,12 @@ public final class ClassicCheck {
                 check.that(false, "快照的 tiles 是数组（" + failure.getMessage() + "）");
                 return;
             }
-            check.equal(WorldHost.MAP_SIZE, tileRows.size(), "tiles 有 64 行");
+            int windowSize = WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2;
+            check.equal(windowSize, tileRows.size(), "tiles 有 64 行（默认窗口）");
             Set<String> tileKinds = new LinkedHashSet<>();
             boolean rowsShaped = true;
             for (Object row : tileRows) {
-                if (!(row instanceof List<?> values) || values.size() != WorldHost.MAP_SIZE) {
+                if (!(row instanceof List<?> values) || values.size() != windowSize) {
                     rowsShaped = false;
                     break;
                 }
@@ -668,7 +676,7 @@ public final class ClassicCheck {
                 }
             }
             check.that(rowsShaped, "每行有 64 个地形");
-            check.equal(Set.of(GRASS), tileKinds, "平坦地图完全由草地组成");
+            check.that(tileKinds.size() >= 2, "噪声地图不再只有一种地形: " + tileKinds);
             check.that(manifestTiles.keySet().containsAll(tileKinds),
                     "快照里的每种地形都在 manifest.tiles 里: " + tileKinds);
 

@@ -13,6 +13,7 @@ import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
@@ -89,8 +90,10 @@ import java.util.Objects;
  * the content's {@link ClassicContent#STARTING_RESOURCES starting stock} (300 gold, 60 wood) into its
  * warehouse. That stock is the same content data the host gives player 1 - the engine itself applies
  * starting resources to no player, and {@link WorldHost} applies them to its single player - so the AI
- * reuses the content's numbers instead of inventing its own. The opening base is placed the way the host
- * places its sample scene: finished buildings at fixed tiles, not paid for from the stock.
+ * reuses the content's numbers instead of inventing its own. The opening base starts from a fixed anchor in
+ * the opposite quadrant from the host's centre scene, but every building origin is then chosen by a
+ * deterministic search for buildable ground: the served terrain is noise, so a fixed tile would sometimes
+ * be water or rock.
  *
  * <p>If the server serves some other catalogue (the world content seam is first-one-wins, so a classic hook
  * can end up in a world another plugin claimed), the bootstrap finds no classic definitions and the hook
@@ -164,14 +167,29 @@ public final class ClassicAi implements WorldTickHook {
     /** Content tag that marks the units a builder: the engineer carries it. */
     private static final String BUILDER_TAG = "builder";
 
-    /** The opening base, kept clear of the host's sample scene (buildings at x 14..41, y 14..25). */
-    private static final GridPos BASE_WAREHOUSE = new GridPos(46, 46);
-    private static final GridPos BASE_ARMORY = new GridPos(46, 50);
-    private static final GridPos BASE_MINE = new GridPos(50, 46);
-    private static final GridPos BASE_ENGINEER = new GridPos(48, 54);
-
     /** The host's reported map side, used to keep every site inside the picture the browser receives. */
     private static final int MAP_SIZE = WorldHost.MAP_SIZE;
+
+    /**
+     * Anchor of the enemy opening base: three quarters of the way across the reported map.
+     *
+     * <p>The host places its sample scene and the human bases around the centre of the map, so the AI takes
+     * the opposite quadrant. The anchor is only a hint: {@link #findOpenOrigin} searches rings of buildable
+     * tiles around it, because the terrain is noise and the exact tile may be water or rock.
+     */
+    private static final GridPos BASE_ANCHOR = new GridPos(MAP_SIZE * 3 / 4, MAP_SIZE * 3 / 4);
+
+    /** Preferred offset of the armory from the opening warehouse, in tiles (one tile of clearance). */
+    private static final GridPos OFFSET_ARMORY = new GridPos(0, 4);
+
+    /** Preferred offset of the mine from the opening warehouse, in tiles. */
+    private static final GridPos OFFSET_MINE = new GridPos(4, 0);
+
+    /** Preferred offset of the engineer from the opening warehouse, in tiles. */
+    private static final GridPos OFFSET_ENGINEER = new GridPos(2, 4);
+
+    /** Widest ring the opening base search walks around its preferred tiles before scanning the map. */
+    private static final int OPENING_SEARCH_RADIUS = 24;
 
     private Mode mode = Mode.ECON;
 
@@ -453,7 +471,14 @@ public final class ClassicAi implements WorldTickHook {
     /**
      * Creates the enemy player and its opening base on the AI's first tick.
      *
-     * @return the player, or {@code null} when the served catalogue is not {@code oc-classic}
+     * <p>The three building origins and the engineer tile are all chosen before the player is added, by a
+     * deterministic ring search for buildable ground around {@link #BASE_ANCHOR}; a fixed tile would put a
+     * building in water on some seeds. If even a whole-map scan finds no site (a catalogue with no
+     * buildable terrain, or a map that is entirely water), the hook does nothing rather than corrupting the
+     * world.
+     *
+     * @return the player, or {@code null} when the served catalogue is not {@code oc-classic} or no
+     *     buildable opening site exists
      */
     private Player bootstrap(World world) {
         if (bootstrapped) {
@@ -468,16 +493,145 @@ public final class ClassicAi implements WorldTickHook {
         if (warehouse == null || armory == null || mine == null || engineer == null) {
             return null;
         }
+        GridPos warehouseOrigin = findOpenOrigin(world, warehouse, BASE_ANCHOR, List.of());
+        if (warehouseOrigin == null) {
+            return null;
+        }
+        TileRect warehouseArea = warehouse.footprint(warehouseOrigin.x(), warehouseOrigin.y());
+        GridPos armoryOrigin = findOpenOrigin(world, armory,
+                warehouseOrigin.plus(OFFSET_ARMORY.x(), OFFSET_ARMORY.y()), List.of(warehouseArea));
+        if (armoryOrigin == null) {
+            return null;
+        }
+        TileRect armoryArea = armory.footprint(armoryOrigin.x(), armoryOrigin.y());
+        GridPos mineOrigin = findOpenOrigin(world, mine,
+                warehouseOrigin.plus(OFFSET_MINE.x(), OFFSET_MINE.y()), List.of(warehouseArea, armoryArea));
+        if (mineOrigin == null) {
+            return null;
+        }
+        TileRect mineArea = mine.footprint(mineOrigin.x(), mineOrigin.y());
+        GridPos engineerTile = findOpenTile(world,
+                warehouseOrigin.plus(OFFSET_ENGINEER.x(), OFFSET_ENGINEER.y()),
+                List.of(warehouseArea, armoryArea, mineArea));
+        if (engineerTile == null) {
+            return null;
+        }
         Player enemy = new Player(PlayerId.of(PLAYER_ID), ENEMY_NAME, ENEMY_COLOR, PLAYER_ID, false);
         world.addPlayer(enemy);
         enemy.attachLogistics(new WarehouseLogistics(world, enemy));
         joinHauling(world, enemy);
-        Building base = world.spawnBuilding(warehouse, enemy, BASE_WAREHOUSE);
-        world.spawnBuilding(armory, enemy, BASE_ARMORY);
-        world.spawnBuilding(mine, enemy, BASE_MINE);
-        world.spawnUnit(engineer, enemy, BASE_ENGINEER);
+        Building base = world.spawnBuilding(warehouse, enemy, warehouseOrigin);
+        world.spawnBuilding(armory, enemy, armoryOrigin);
+        world.spawnBuilding(mine, enemy, mineOrigin);
+        world.spawnUnit(engineer, enemy, engineerTile);
         depositStartingResources(world, enemy, base.position());
         return enemy;
+    }
+
+    /**
+     * The first buildable origin for a building, scanning rings around a preferred tile and then the map.
+     *
+     * <p>The search order is fixed: ring by ring outward, and within one ring row-major ({@code dy} then
+     * {@code dx}). It uses {@link World#canPlace} with the AI's dimension, so the building footprint must be
+     * buildable terrain of the served catalogue and must overlap no living building - exactly the rule the
+     * later site search uses. {@code reserved} rectangles are the other openings chosen in the same
+     * bootstrap, which are not spawned yet and therefore invisible to {@code canPlace}; excluding them keeps
+     * the three buildings from collapsing onto one another when water pushes their searches together. The
+     * row-major map scan at {@code (0, 0)} is the deterministic fallback for a preferred tile that happens to
+     * sit in the middle of a lake.
+     */
+    private static GridPos findOpenOrigin(World world, BuildingType type, GridPos preferred,
+            List<TileRect> reserved) {
+        for (int ring = 0; ring <= OPENING_SEARCH_RADIUS; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos candidate = new GridPos(preferred.x() + dx, preferred.y() + dy);
+                    if (openOrigin(world, type, candidate, reserved)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                GridPos candidate = new GridPos(x, y);
+                if (openOrigin(world, type, candidate, reserved)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Whether a building origin is inside the reported map, free of reserved areas, and placeable. */
+    private static boolean openOrigin(World world, BuildingType type, GridPos origin, List<TileRect> reserved) {
+        if (origin.x() < 0 || origin.y() < 0
+                || origin.x() + type.sizeX() > MAP_SIZE || origin.y() + type.sizeY() > MAP_SIZE) {
+            return false;
+        }
+        TileRect footprint = type.footprint(origin.x(), origin.y());
+        for (TileRect area : reserved) {
+            if (area.intersects(footprint)) {
+                return false;
+            }
+        }
+        return world.canPlace(type, origin);
+    }
+
+    /** The first free buildable unit tile, scanning rings around a preferred tile and then the map. */
+    private static GridPos findOpenTile(World world, GridPos preferred, List<TileRect> reserved) {
+        for (int ring = 0; ring <= OPENING_SEARCH_RADIUS; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos candidate = new GridPos(preferred.x() + dx, preferred.y() + dy);
+                    if (openTile(world, candidate, reserved)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                GridPos candidate = new GridPos(x, y);
+                if (openTile(world, candidate, reserved)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Whether a tile is buildable ground, outside the reserved footprints, and carries no entity. */
+    private static boolean openTile(World world, GridPos tile, List<TileRect> reserved) {
+        if (tile.x() < 0 || tile.y() < 0 || tile.x() >= MAP_SIZE || tile.y() >= MAP_SIZE) {
+            return false;
+        }
+        if (!world.map().isBuildable(tile)) {
+            return false;
+        }
+        for (TileRect area : reserved) {
+            if (area.contains(tile)) {
+                return false;
+            }
+        }
+        for (Building building : world.buildings()) {
+            if (building.isAlive()
+                    && building.type().footprint(building.origin().x(), building.origin().y()).contains(tile)) {
+                return false;
+            }
+        }
+        for (Unit unit : world.units()) {
+            if (unit.isAlive() && unit.position().tile().equals(tile)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

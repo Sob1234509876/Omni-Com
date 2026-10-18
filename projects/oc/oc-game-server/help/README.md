@@ -9,7 +9,7 @@
 | 游戏服务器 | `:projects:oc:oc-game-server` | `oc.projects.oc.game.server` / `io.github.sob1234509876.oc.server` 及 `.auth`、`.net`、`.plugin`、`.ws`、`.world` | 纯 Java 17、**零第三方依赖**的 TCP 服务器，外加可选的浏览器 HTTP/WebSocket 端点与服务器世界：用户记录、加密信道、插件加载器、定时保存、只读请求缝、`/world/snapshot` |
 | 调试插件 | `:projects:oc:oc-game-server-debug` | `oc.projects.oc.game.server.debug` / `io.github.sob1234509876.oc.server.debug` 及 `.cli` | 只读调试插件 `oc-debug`，以及它的命令行客户端 |
 
-服务器刻意保持"什么都不懂"：它只拥有插件不该拥有的三样东西——监听 socket、用户记录、把记录写盘的定时器。浏览器端点旁边还有一个由 `server.world.WorldHost` 托管的扁平 64×64 世界，只通过 `/world/snapshot` 公开只读快照（见 [05-browser-endpoint.md](05-browser-endpoint.md)）；插件系统本身仍然不知道引擎、socket 或用户记录的存在（见 [03-plugins.md](03-plugins.md)）。调试插件与服务器现在都依赖 RTS 引擎，前者报告引擎的版本与构件，后者托管世界（见 [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)）。
+服务器刻意保持"什么都不懂"：它只拥有插件不该拥有的三样东西——监听 socket、用户记录、把记录写盘的定时器。浏览器端点旁边还有一个由 `server.world.WorldHost` 托管的 256×256 噪声世界（可建造出生锚点、窗口快照），只通过 `/world/snapshot` 公开只读快照（见 [05-browser-endpoint.md](05-browser-endpoint.md)）；插件系统本身仍然不知道引擎、socket 或用户记录的存在（见 [03-plugins.md](03-plugins.md)）。调试插件与服务器现在都依赖 RTS 引擎，前者报告引擎的版本与构件，后者托管世界（见 [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md)）。
 
 文中所有类型名、方法名、默认值、字节数与断言数都取自这两个模块的源码与它们的自校验输出，不是示意；每篇末尾给出「相关源码」的相对路径。
 
@@ -68,11 +68,11 @@ QUIT                            -> OK bye（随后服务器关掉这条连接）
 ## 自校验
 
 ```shell
-./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 731 checks passed.
+./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 789 checks passed.
 ./gradlew :projects:oc:oc-game-server-debug:selfcheck    # debug plugin self check: all 82 checks passed.
 ```
 
-两个自校验都不需要网络、不需要测试框架。服务器那一个 731 条断言分十一组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 88 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 105 条、插件 tick 钩子 23 条、游戏命令 87 条、玩家基地 60 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
+两个自校验都不需要网络、不需要测试框架。服务器那一个 789 条断言分十一组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 88 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 163 条、插件 tick 钩子 23 条、游戏命令 87 条、玩家基地 60 条；调试插件那一个 82 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
 
 自校验不是框架测试，所以它放在独立的 `selfCheck` 源集（`src/selfcheck/java`），由上面的任务以普通程序运行；`src/test/java` 留给以后的单元测试。调试插件的自校验复用服务器那一个的断言记录器，只在自己的 `build.gradle` 里把服务器的 selfCheck 输出挂上类路径。
 

@@ -21,7 +21,8 @@ import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
-import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.BiomeTable;
+import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,12 +41,21 @@ import java.util.concurrent.TimeoutException;
 /**
  * The server side world: one {@link OcRtsEngine} advanced on one daemon thread and rendered by the browser.
  *
- * <p>The world is a deterministic 64 x 64 slice of a flat map. {@link FlatChunkGenerator} produces one
- * terrain for every tile, so terrain never depends on a noise field and a snapshot of an unchanged tick is
- * byte for byte reproducible. The seed still matters: it selects which of the buildable flat grounds of
- * the content fills the map and it seeds the engine (world random, path service, production), so two hosts
- * with different seeds describe visibly different worlds. The map is otherwise bounded only by the
- * coordinate window this host reports; entities of the sample scene are spawned well inside it.
+ * <p>The world is a deterministic 256 x 256 reported slice of the engine's endless noise landscape.
+ * {@link NoiseTerrainGenerator} derives every tile from the seed through an integer hash field, so the same
+ * seed and the same served content always paint the same water, sand, grass, forest, hill and rock, and no
+ * chunk needs its neighbours to be generated first. A snapshot no longer sends the whole map: it serialises
+ * one square window around a requested centre (see {@link #snapshotJson(int, int, int)}), which keeps the
+ * document small however large {@link #MAP_SIZE} becomes. Entities keep absolute map coordinates and are
+ * always sent in full, so a window that does not contain an entity still lets the client track it.
+ *
+ * <p><strong>Buildable anchors.</strong> Noise terrain contains water and rock, so no fixed tile may carry
+ * the sample scene or a starting base. The host scans outward from the centre of the reported map, in a
+ * fixed ring order, for the first tile whose terrain is buildable for the served catalogue; that tile is
+ * {@link #spawnAnchor()}. The scene, the sample player's stock and every human starting base are then
+ * placed relative to that anchor by deterministic ring searches, never by randomness. The anchor depends
+ * only on the seed and the content, which is what lets two hosts with the same seed agree and lets a check
+ * assert it.
  *
  * <p><strong>Content comes from a seam, not from this class.</strong> The catalogue is a
  * {@link WorldContent} handed to the constructor. {@link #WorldHost(long)} keeps the historical behaviour
@@ -108,8 +118,17 @@ public final class WorldHost {
 
     private static final System.Logger LOG = System.getLogger("oc.world");
 
-    /** Side length of the reported map, in tiles. */
-    public static final int MAP_SIZE = 64;
+    /** Side length of the reported map, in tiles. The one place this size is stated. */
+    public static final int MAP_SIZE = 256;
+
+    /** Radius of a snapshot window when the request names none, in tiles. */
+    public static final int DEFAULT_SNAPSHOT_RADIUS = 32;
+
+    /** Smallest snapshot radius a request may ask for, in tiles. */
+    public static final int MIN_SNAPSHOT_RADIUS = 16;
+
+    /** Largest snapshot radius a request may ask for, in tiles. */
+    public static final int MAX_SNAPSHOT_RADIUS = 64;
 
     /** Pixel size of one tile the browser is told to expect; the client still scales to its camera. */
     public static final int TILE_PIXELS = 16;
@@ -167,23 +186,17 @@ public final class WorldHost {
     /** Number of human slots a starting base anchor exists for: ids 3 through 8. */
     private static final int BASE_SLOT_COUNT = MAX_PLAYERS - FIRST_HUMAN_PLAYER_ID + 1;
 
-    /** First tile of the grid of per-slot starting base anchors. */
-    private static final int BASE_ANCHOR_X = 4;
-
-    /** First tile row of the grid of per-slot starting base anchors. */
-    private static final int BASE_ANCHOR_Y = 4;
-
-    /** Anchors per row; the six human slots form a 3 x 2 grid, clear of the sample scene and the AI base. */
+    /** Anchors per row; the six human slots form a 3 x 2 grid around the spawn anchor. */
     private static final int BASE_ANCHOR_COLUMNS = 3;
 
     /** Distance between two anchor columns, in tiles. */
     private static final int BASE_ANCHOR_STRIDE_X = 24;
 
-    /** Distance between two anchor rows, in tiles. */
+    /** Distance from the spawn anchor row to the two rows of human base anchors, in tiles. */
     private static final int BASE_ANCHOR_STRIDE_Y = 48;
 
     /** How many rings around its anchor the warehouse site search visits before scanning the whole map. */
-    private static final int BASE_SITE_SEARCH_RADIUS = 12;
+    private static final int BASE_SITE_SEARCH_RADIUS = 16;
 
     /** How many rings around the warehouse the builder tile search visits before scanning the whole map. */
     private static final int BASE_UNIT_SEARCH_RADIUS = 6;
@@ -207,11 +220,11 @@ public final class WorldHost {
     /** How long {@link #stop()} waits for the tick thread to leave its loop. */
     private static final long STOP_TIMEOUT_MILLIS = 2_000L;
 
-    /** Tile the first sample building is placed on. */
-    private static final int SCENE_X = 14;
+    /** How far left of the spawn anchor the sample scene's first building column starts, in tiles. */
+    private static final int SCENE_ORIGIN_OFFSET_X = 12;
 
-    /** Tile row the first sample building row is placed on. */
-    private static final int SCENE_Y = 14;
+    /** How far above the spawn anchor the sample scene's first building row starts, in tiles. */
+    private static final int SCENE_ORIGIN_OFFSET_Y = 8;
 
     /** Distance between two sample buildings, in tiles; larger than the widest sample footprint. */
     private static final int SCENE_SPACING = 8;
@@ -219,14 +232,35 @@ public final class WorldHost {
     /** Sample buildings per row before the scene wraps to the next row. */
     private static final int SCENE_COLUMNS = 4;
 
-    /** Tile row the sample units are spawned on. */
-    private static final int SCENE_UNIT_Y = 28;
+    /** How far below the scene origin the sample units are spawned, in tiles. */
+    private static final int SCENE_UNIT_OFFSET_Y = 24;
+
+    /** How many rings a scene placement may walk around its preferred tile before scanning the whole map. */
+    private static final int SCENE_SEARCH_RADIUS = 16;
+
+    /** An empty tile rectangle, used when a unit search excludes no building footprint. */
+    private static final TileRect NO_TILES = new TileRect(0, 0, -1, -1);
+
+    /** First movement target of the sample scene, relative to the spawn anchor. */
+    private static final int SCENE_MOVE_X = 16;
+
+    /** Second coordinate of the first movement target, relative to the spawn anchor. */
+    private static final int SCENE_MOVE_Y = 20;
 
     private final long seed;
     private final WorldContent worldContent;
     private final ContentRegistry content;
     private final Player player;
     private final OcRtsEngine engine;
+
+    /**
+     * The first buildable tile the host found when scanning outwards from the map centre.
+     *
+     * <p>Every scene building and every human starting base is placed relative to this tile, which is why it
+     * is computed once, before anything spawns, and never changes. It is a pure function of the seed and the
+     * served catalogue; see {@link #spawnAnchor()}.
+     */
+    private final GridPos spawnAnchor;
 
     /**
      * Account name to player id, for every identity this host has admitted.
@@ -275,24 +309,24 @@ public final class WorldHost {
     private volatile Thread tickThread;
 
     /**
-     * Builds the flat world and its sample scene from the engine's own sample catalogue.
+     * Builds the noise world and its sample scene from the engine's own sample catalogue.
      *
      * <p>Kept for callers written before content was a seam; it is exactly
      * {@code new WorldHost(seed, new ScenarioWorldContent(), List.of())}.
      *
-     * @param seed seed of the world and of the flat ground choice
+     * @param seed seed of the noise terrain, of the spawn anchor and of the engine's own streams
      */
     public WorldHost(long seed) {
         this(seed, new ScenarioWorldContent(), List.of());
     }
 
     /**
-     * Builds the flat world and its sample scene from the given content, without plugin tick hooks.
+     * Builds the noise world and its sample scene from the given content, without plugin tick hooks.
      *
      * <p>Kept for callers written before plugins could hook the tick; it is exactly
      * {@code new WorldHost(seed, content, List.of())}.
      *
-     * @param seed    seed of the world and of the flat ground choice
+     * @param seed    seed of the noise terrain, of the spawn anchor and of the engine's own streams
      * @param content the catalogue to serve, for example the one a plugin registered
      */
     public WorldHost(long seed, WorldContent content) {
@@ -300,14 +334,15 @@ public final class WorldHost {
     }
 
     /**
-     * Builds the flat world and its sample scene from the given content and the given tick hooks.
+     * Builds the noise world and its sample scene from the given content and the given tick hooks.
      *
-     * <p>The scene is derived from the catalogue, never from constants in this class: one finished
-     * building of every declared building type on a grid, one unit of every declared unit type in a row
-     * below them, and the first two units ordered across the map so successive snapshots show the real
-     * movement pipeline working instead of a frozen picture. {@link WorldContent#startingResources()} is
-     * deposited into the player's warehouses after the scene exists, because a stock has to live in a
-     * warehouse to be spendable.
+     * <p>{@link NoiseTerrainGenerator} paints the six biomes of the served catalogue and the host scans out
+     * from the centre of {@link #MAP_SIZE} for the first buildable tile. The scene is derived from the
+     * catalogue, never from constants in this class: one finished building of every declared building type
+     * around that anchor, one unit of every declared unit type below them, and the first two units ordered
+     * across the map so successive snapshots show the real movement pipeline working instead of a frozen
+     * picture. {@link WorldContent#startingResources()} is deposited into the player's warehouses after the
+     * scene exists, because a stock has to live in a warehouse to be spendable.
      *
      * <p>The hooks run at the end of every fixed step, after the engine tick, in the order given; see
      * {@link #step()}. The list is copied, so a caller may change its own list afterwards without
@@ -315,7 +350,7 @@ public final class WorldHost {
      *
      * <p>No thread is started until {@link #start()}.
      *
-     * @param seed      seed of the world and of the flat ground choice
+     * @param seed      seed of the noise terrain, of the spawn anchor and of the engine's own streams
      * @param content   the catalogue to serve, for example the one a plugin registered
      * @param tickHooks the plugin hooks to run after every fixed step, in order; never {@code null}
      * @throws IllegalStateException when the content declares starting resources no warehouse accepts, or
@@ -326,20 +361,21 @@ public final class WorldHost {
         this.worldContent = Objects.requireNonNull(content, "content");
         this.tickHooks = List.copyOf(Objects.requireNonNull(tickHooks, "tickHooks"));
         this.content = registryOf(this.worldContent);
-        TerrainType ground = flatGround(this.content, this.worldContent, seed);
+        BiomeTable biomes = biomeTable(this.content, this.worldContent);
         this.player = Player.of(1, "Player 1", 0xFF4FC3F7);
         this.engine = OcRtsEngine.builder(this.content)
                 .seed(seed)
                 .ticksPerSecond(TICKS_PER_SECOND)
-                .chunkSize(FlatChunkGenerator.DEFAULT_CHUNK_SIZE)
+                .chunkSize(NoiseTerrainGenerator.DEFAULT_CHUNK_SIZE)
                 .viewRadiusChunks(2)
-                .generator(new FlatChunkGenerator(ground))
+                .generator(new NoiseTerrainGenerator(seed, biomes))
                 .player(player)
                 .build();
-        engine.focus(Vec2.of(MAP_SIZE / 2f, MAP_SIZE / 2f));
+        this.spawnAnchor = findSpawnAnchor(engine.world());
+        engine.focus(spawnAnchor.center());
         spawnScene(this.content, player);
         ItemBundle leftover = depositStartingResources(this.worldContent, this.content, player,
-                Vec2.of(MAP_SIZE / 2f, MAP_SIZE / 2f));
+                spawnAnchor.center());
         if (!leftover.isEmpty()) {
             throw new IllegalStateException("world content " + this.worldContent.id()
                     + " declares starting resources that no warehouse accepted: " + leftover);
@@ -354,16 +390,33 @@ public final class WorldHost {
     }
 
     /**
-     * Chooses the uniform terrain of the flat map.
+     * Resolves the six biome definitions the noise generator paints from the served catalogue.
      *
-     * <p>Only buildable terrain can carry the sample buildings, so the candidate list is exactly the
-     * buildable grounds of the catalogue, in key order. The seed then picks one of them: seed 1 maps to the
-     * first ground, an even seed to the last, and every other seed one step below its remainder. That maps
-     * the sample catalogue's {@code grass}/{@code sand} pair the way it always did while still working for
-     * a catalogue that declares a different set - which is what lets the self check prove that two seeds
-     * are not the same world.
+     * <p>A catalogue does not have to register all six canonical paths. The full sample scenario does; the
+     * classic game registers only water, sand, grass and rock, and a test fixture may register a single
+     * ground. Missing kinds therefore collapse to a documented neighbour instead of failing the world:
+     * missing <em>grass</em> (the open buildable land) falls back to the first buildable terrain in key
+     * order, missing <em>water</em> and <em>rock</em> to the first impassable terrain (or the buildable
+     * ground when the catalogue has none), missing <em>sand</em> and <em>forest</em> to the open ground,
+     * and missing <em>hill</em> to sand when it exists. A catalogue with no buildable terrain at all is a
+     * content error, because no scene or base could be placed.
+     *
+     * @throws IllegalStateException when the catalogue declares no buildable terrain
      */
-    private static TerrainType flatGround(ContentRegistry content, WorldContent worldContent, long seed) {
+    private static BiomeTable biomeTable(ContentRegistry content, WorldContent worldContent) {
+        TerrainType ground = firstBuildable(content, worldContent);
+        TerrainType impassable = firstImpassable(content).orElse(ground);
+        TerrainType water = terrainOr(content, BiomeTable.WATER_PATH, impassable);
+        TerrainType sand = terrainOr(content, BiomeTable.SAND_PATH, ground);
+        TerrainType grass = terrainOr(content, BiomeTable.GRASS_PATH, ground);
+        TerrainType forest = terrainOr(content, BiomeTable.FOREST_PATH, grass);
+        TerrainType hill = terrainOr(content, BiomeTable.HILL_PATH, sand);
+        TerrainType rock = terrainOr(content, BiomeTable.ROCK_PATH, impassable);
+        return BiomeTable.of(water, sand, grass, forest, hill, rock);
+    }
+
+    /** The first buildable terrain of the catalogue in key order. */
+    private static TerrainType firstBuildable(ContentRegistry content, WorldContent worldContent) {
         List<TerrainType> grounds = new ArrayList<>();
         for (TerrainType terrain : content.terrains()) {
             if (terrain.buildable()) {
@@ -375,40 +428,129 @@ public final class WorldHost {
                     + " declares no buildable terrain, so there is no ground to place a world on");
         }
         grounds.sort(Comparator.naturalOrder());
-        long remainder = Math.floorMod(seed, (long) grounds.size());
-        int index = remainder == 0 ? grounds.size() - 1 : (int) remainder - 1;
-        return grounds.get(index);
+        return grounds.get(0);
+    }
+
+    /** The first impassable terrain of the catalogue in key order, if it declares one. */
+    private static Optional<TerrainType> firstImpassable(ContentRegistry content) {
+        List<TerrainType> impassable = new ArrayList<>();
+        for (TerrainType terrain : content.terrains()) {
+            if (!terrain.passable()) {
+                impassable.add(terrain);
+            }
+        }
+        impassable.sort(Comparator.naturalOrder());
+        return impassable.isEmpty() ? Optional.empty() : Optional.of(impassable.get(0));
+    }
+
+    /** A terrain path of the catalogue, or the documented fallback when the catalogue omits it. */
+    private static TerrainType terrainOr(ContentRegistry content, String path, TerrainType fallback) {
+        TerrainType found = content.terrainOrNull(content.key(path));
+        return found == null ? fallback : found;
+    }
+
+    /**
+     * Finds the deterministic spawn anchor: the first buildable tile on rings growing out from the centre
+     * of the reported map.
+     *
+     * <p>The scan is a pure function of the terrain field: no random stream, no clock and no content
+     * iteration order. Within one ring the tiles are visited in row-major order ({@code dy} then {@code dx}),
+     * so two hosts with the same seed and the same catalogue answer the same anchor. "Buildable" is the same
+     * predicate the engine uses for construction ({@link io.github.sob1234509876.oc.rts.map.TerrainMap#isBuildable}),
+     * so the tile can carry a building of any served catalogue without a second rule.
+     *
+     * @return the first buildable tile near the centre; never {@code null} once the catalogue has buildable
+     *     terrain, which the constructor guarantees
+     */
+    private static GridPos findSpawnAnchor(World world) {
+        int centre = MAP_SIZE / 2;
+        for (int ring = 0; ring <= MAP_SIZE; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    int x = centre + dx;
+                    int y = centre + dy;
+                    if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) {
+                        continue;
+                    }
+                    GridPos tile = new GridPos(x, y);
+                    if (world.map().isBuildable(tile)) {
+                        return tile;
+                    }
+                }
+            }
+        }
+        // Defensive only: a catalogue without buildable terrain is rejected before the engine is built. A
+        // world that paints no buildable tile inside the reported square still has to report something.
+        return new GridPos(centre, centre);
     }
 
     /**
      * Places the sample scene: one finished building of every building type and one unit of every unit
      * type, then orders the first two units across the map.
      *
+     * <p>The preferred grid is relative to {@link #spawnAnchor}, so the scene follows the buildable ground
+     * the host found instead of a fixed patch of a flat map. A preferred tile is only a hint: each building
+     * is placed by the same deterministic ring search a starting base uses, and falls back to a row-major
+     * scan of the reported map. Noise terrain therefore cannot drop a warehouse into water, and the result
+     * is still a pure function of the seed and the catalogue.
+     *
      * <p>Building footprints differ per catalogue, so the grid spacing is a constant that is wider than any
      * plausible building rather than something computed per type; the scene is a starting picture, not a
      * city planner.
      */
     private void spawnScene(ContentRegistry content, Player player) {
+        World world = engine.world();
+        int originX = spawnAnchor.x() - SCENE_ORIGIN_OFFSET_X;
+        int originY = spawnAnchor.y() - SCENE_ORIGIN_OFFSET_Y;
         int index = 0;
         for (BuildingType type : content.buildings()) {
-            int x = SCENE_X + (index % SCENE_COLUMNS) * SCENE_SPACING;
-            int y = SCENE_Y + (index / SCENE_COLUMNS) * SCENE_SPACING;
-            engine.world().spawnBuilding(type, player, new GridPos(x, y));
+            GridPos preferred = new GridPos(
+                    originX + (index % SCENE_COLUMNS) * SCENE_SPACING,
+                    originY + (index / SCENE_COLUMNS) * SCENE_SPACING);
+            GridPos origin = scanFreeOrigin(world, type, preferred, SCENE_SEARCH_RADIUS);
+            if (origin == null) {
+                origin = scanFreeOriginMap(world, type);
+            }
+            if (origin == null) {
+                throw new IllegalStateException("world content " + worldContent.id()
+                        + " has no buildable tile for the sample " + type.key().path() + " near "
+                        + spawnAnchor + " or anywhere else in the map");
+            }
+            world.spawnBuilding(type, player, origin);
             index++;
         }
 
         List<Unit> units = new ArrayList<>();
         index = 0;
         for (UnitType type : content.units()) {
-            units.add(engine.world().spawnUnit(type, player, new GridPos(SCENE_X + index * 2, SCENE_UNIT_Y)));
+            GridPos preferred = new GridPos(originX + index * 2, originY + SCENE_UNIT_OFFSET_Y);
+            GridPos tile = scanFreeTile(world, preferred, SCENE_SEARCH_RADIUS, NO_TILES);
+            if (tile == null) {
+                tile = scanFreeTileMap(world, NO_TILES);
+            }
+            if (tile == null) {
+                throw new IllegalStateException("world content " + worldContent.id()
+                        + " has no free buildable tile for the sample " + type.key().path());
+            }
+            units.add(world.spawnUnit(type, player, tile));
             index++;
         }
         if (!units.isEmpty()) {
-            engine.commands().move(units.get(0), new GridPos(44, 34));
+            engine.commands().move(units.get(0), sceneMoveTarget(SCENE_MOVE_X, SCENE_MOVE_Y));
         }
         if (units.size() > 1) {
-            engine.commands().move(units.get(1), new GridPos(40, 28));
+            engine.commands().move(units.get(1), sceneMoveTarget(SCENE_MOVE_X - 4, SCENE_MOVE_Y - 6));
         }
+    }
+
+    /** A movement target near the anchor, clamped to the reported map so a unit never walks off it. */
+    private GridPos sceneMoveTarget(int dx, int dy) {
+        int x = Math.max(0, Math.min(MAP_SIZE - 1, spawnAnchor.x() + dx));
+        int y = Math.max(0, Math.min(MAP_SIZE - 1, spawnAnchor.y() + dy));
+        return new GridPos(x, y);
     }
 
     /**
@@ -420,12 +562,13 @@ public final class WorldHost {
      * tag, which is how the classic AI finds its engineer. A catalogue that declares neither is a sandbox:
      * the player still joins, and one log line records why no base was spawned.
      *
-     * <p>Placement is deterministic. Every human slot has an anchor tile on a fixed grid, the warehouse
-     * search visits rings of tiles around that anchor in row-major order and takes the first origin where
-     * the building fits on buildable ground and overlaps no living entity, and the builder is placed on the
-     * first free tile in rings around the warehouse. Two joins therefore never pick the same tiles: the
-     * second search sees the first base as occupied. If the anchored search exhausts its rings, a row-major
-     * scan of the whole map is the documented fallback, so a crowded map cannot make the result random.
+     * <p>Placement is deterministic. Every human slot has an anchor tile on a fixed 3 x 2 grid around
+     * {@link #spawnAnchor()}, the warehouse search visits rings of tiles around that anchor in row-major
+     * order and takes the first origin where the building fits on buildable ground and overlaps no living
+     * entity, and the builder is placed on the first free tile in rings around the warehouse. Two joins
+     * therefore never pick the same tiles: the second search sees the first base as occupied. If the
+     * anchored search exhausts its rings, a row-major scan of the whole map is the documented fallback, so a
+     * crowded or watery map cannot make the result random.
      */
     private void spawnStartingBase(Player player) {
         World world = engine.world();
@@ -483,22 +626,31 @@ public final class WorldHost {
         return best;
     }
 
-    /** The fixed anchor of one human slot on the map; ids map to a 3 x 2 grid, never to a random tile. */
-    private static GridPos baseAnchor(int playerId) {
+    /**
+     * The anchor of one human slot: a fixed 3 x 2 grid around the spawn anchor, never a random tile.
+     *
+     * <p>Columns are 24 tiles apart and the two rows lie 48 tiles above and below the spawn anchor. The
+     * order is slot order (id 3, 4, 5 in the top row; 6, 7, 8 in the bottom row), so two joins of different
+     * accounts always start from different anchors; the ring searches still make the final base positions
+     * collision free on noisy terrain.
+     */
+    private GridPos baseAnchor(int playerId) {
         int slot = Math.floorMod(playerId - FIRST_HUMAN_PLAYER_ID, BASE_SLOT_COUNT);
-        return new GridPos(
-                BASE_ANCHOR_X + (slot % BASE_ANCHOR_COLUMNS) * BASE_ANCHOR_STRIDE_X,
-                BASE_ANCHOR_Y + (slot / BASE_ANCHOR_COLUMNS) * BASE_ANCHOR_STRIDE_Y);
+        int column = slot % BASE_ANCHOR_COLUMNS;
+        int row = slot / BASE_ANCHOR_COLUMNS;
+        int dx = (column - (BASE_ANCHOR_COLUMNS / 2)) * BASE_ANCHOR_STRIDE_X;
+        int dy = (row == 0 ? -1 : 1) * BASE_ANCHOR_STRIDE_Y;
+        return spawnAnchor.plus(dx, dy);
     }
 
     /** The warehouse origin for a player: rings around the slot anchor first, then the whole map. */
-    private static GridPos findWarehouseSite(World world, BuildingType type, int playerId) {
-        GridPos site = scanWarehouseSite(world, type, baseAnchor(playerId), BASE_SITE_SEARCH_RADIUS);
-        return site != null ? site : scanWarehouseMap(world, type);
+    private GridPos findWarehouseSite(World world, BuildingType type, int playerId) {
+        GridPos site = scanFreeOrigin(world, type, baseAnchor(playerId), BASE_SITE_SEARCH_RADIUS);
+        return site != null ? site : scanFreeOriginMap(world, type);
     }
 
     /** Visits rings around an anchor in row-major order and returns the first origin the building fits. */
-    private static GridPos scanWarehouseSite(World world, BuildingType type, GridPos anchor, int radius) {
+    private static GridPos scanFreeOrigin(World world, BuildingType type, GridPos anchor, int radius) {
         for (int ring = 0; ring <= radius; ring++) {
             for (int dy = -ring; dy <= ring; dy++) {
                 for (int dx = -ring; dx <= ring; dx++) {
@@ -516,7 +668,7 @@ public final class WorldHost {
     }
 
     /** Row-major fallback of {@link #findWarehouseSite(World, BuildingType, int)}. */
-    private static GridPos scanWarehouseMap(World world, BuildingType type) {
+    private static GridPos scanFreeOriginMap(World world, BuildingType type) {
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 GridPos origin = new GridPos(x, y);
@@ -556,12 +708,12 @@ public final class WorldHost {
     private static GridPos findBuilderTile(World world, BuildingType warehouse, GridPos origin) {
         TileRect footprint = warehouse.footprint(origin.x(), origin.y());
         GridPos anchor = new GridPos(origin.x() + warehouse.sizeX() / 2, origin.y() + warehouse.sizeY() + 1);
-        GridPos tile = scanBuilderTile(world, anchor, BASE_UNIT_SEARCH_RADIUS, footprint);
-        return tile != null ? tile : scanBuilderMap(world, footprint);
+        GridPos tile = scanFreeTile(world, anchor, BASE_UNIT_SEARCH_RADIUS, footprint);
+        return tile != null ? tile : scanFreeTileMap(world, footprint);
     }
 
     /** Visits rings around an anchor in row-major order and returns the first free buildable tile. */
-    private static GridPos scanBuilderTile(World world, GridPos anchor, int radius, TileRect excluded) {
+    private static GridPos scanFreeTile(World world, GridPos anchor, int radius, TileRect excluded) {
         for (int ring = 0; ring <= radius; ring++) {
             for (int dy = -ring; dy <= ring; dy++) {
                 for (int dx = -ring; dx <= ring; dx++) {
@@ -579,7 +731,7 @@ public final class WorldHost {
     }
 
     /** Row-major fallback of {@link #findBuilderTile(World, BuildingType, GridPos)}. */
-    private static GridPos scanBuilderMap(World world, TileRect excluded) {
+    private static GridPos scanFreeTileMap(World world, TileRect excluded) {
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 GridPos tile = new GridPos(x, y);
@@ -931,6 +1083,24 @@ public final class WorldHost {
         return seed;
     }
 
+    /**
+     * The deterministic buildable tile the host found near the centre of the map.
+     *
+     * <p>The sample scene's preferred grid and every human starting base anchor are expressed relative to
+     * this tile. It is computed once at construction by {@link #findSpawnAnchor(World)}, from the seed and
+     * the served catalogue only, so two hosts built with the same seed and content answer the same tile and
+     * a different seed normally answers a different one. The tile is buildable for the served content
+     * ({@link io.github.sob1234509876.oc.rts.map.TerrainMap#isBuildable}), which is what makes it safe to put
+     * a starting base there.
+     *
+     * <p>Exposed for diagnostics and checks. It is immutable, so reading it from any thread is safe.
+     *
+     * @return the spawn anchor tile, never {@code null}
+     */
+    public GridPos spawnAnchor() {
+        return spawnAnchor;
+    }
+
     /** The content seam this host serves; the catalogue it built is {@link #content()}. */
     public WorldContent worldContent() {
         return worldContent;
@@ -1204,21 +1374,24 @@ public final class WorldHost {
     }
 
     /**
-     * Captures the current world as the JSON document the browser consumes.
+     * Captures a default snapshot window: the centre of the map with {@value #DEFAULT_SNAPSHOT_RADIUS}
+     * tiles of radius on every side.
      *
      * <p>The shape is intentionally small and stable:
      * <pre>{@code
-     * {"tick":42,"width":64,"height":64,"tilePixels":16,
+     * {"tick":42,"originX":96,"originY":96,"width":64,"height":64,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
      *  "entities":[{"id":1,"kind":"worker","x":12.5,"y":8.5,"player":1,"health":1.0}, ...],
      *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0},
      *             {"id":3,"name":"alice","gold":300,"wood":60}]}
      * }</pre>
      *
-     * <p>{@code tiles} is row major with exactly {@code width * height} terrain content paths, entities
-     * are sorted by id, and players are sorted by id as well, so an unchanged tick produces the same
-     * bytes. Coordinates are rounded to one decimal, which is the precision the renderer needs and far
-     * below one tile.
+     * <p>{@code width} and {@code height} are the <em>window</em> size, not {@link #MAP_SIZE}, and
+     * {@code originX}/{@code originY} are the window's top left tile. {@code tiles} is row major for that
+     * window and has exactly {@code width * height} terrain content paths. Entities are <em>not</em>
+     * clipped to the window: the array is the whole living entity list, each with absolute map coordinates,
+     * so the client can map an entity into the window when it is visible and still track it when it is not.
+     * Entities, players and the document itself are deterministic for an unchanged tick.
      *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
@@ -1236,15 +1409,64 @@ public final class WorldHost {
      * <p>Amounts are emitted as JSON integers saturated to {@link Long#MAX_VALUE}; the browser could not
      * use more precision than a number anyway, and a stock that large is already far past playable.
      *
-     * <p>A 64 x 64 snapshot is a few kilobytes; it is rebuilt per request rather than cached, because a
-     * cached document could disagree with the tick the browser reports in its HUD.
+     * <p>The default window is 64 x 64 tiles, about the same size as the old whole-map document, but the
+     * map it samples is {@value #MAP_SIZE} x {@value #MAP_SIZE}. The document is rebuilt per request rather
+     * than cached, because a cached document could disagree with the tick the browser reports in its HUD.
      *
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson() {
+        return snapshotJson(MAP_SIZE / 2, MAP_SIZE / 2, DEFAULT_SNAPSHOT_RADIUS);
+    }
+
+    /**
+     * Captures one square window of the world around a requested tile.
+     *
+     * <p>The window is {@code 2 * radius} tiles on a side; {@code radius} is clamped to
+     * [{@value #MIN_SNAPSHOT_RADIUS}, {@value #MAX_SNAPSHOT_RADIUS}] and defaults to
+     * {@value #DEFAULT_SNAPSHOT_RADIUS} in {@link #snapshotJson()}. The centre is clamped into the reported
+     * map and the origin is shifted inwards when the requested square would cross an edge, so a corner
+     * request still describes a full window fully inside {@code [0, MAP_SIZE)} and never reads a tile out
+     * of range. A request without parameters (see {@code HttpWebServer}) is exactly {@link #snapshotJson()},
+     * so an old client still receives a valid document.
+     *
+     * <p>Reading a window also moves the engine focus to its centre, in the same lock and on the same call,
+     * so {@code ChunkStreamer} keeps the camera area loaded. That is a cache and streaming decision only:
+     * the JSON remains a pure read of the tick and the terrain field.
+     *
+     * @param centreX requested window centre, in tiles; clamped into the map
+     * @param centreY requested window centre, in tiles; clamped into the map
+     * @param radius  requested half side, in tiles; clamped to the documented range
+     * @return the snapshot as UTF-8 JSON text, never {@code null}
+     */
+    public String snapshotJson(int centreX, int centreY, int radius) {
+        int clampedRadius = clampSnapshotRadius(radius);
+        int windowSize = clampedRadius * 2;
+        int maxOrigin = MAP_SIZE - windowSize;
+        int centreLimit = MAP_SIZE - 1;
+        int cx = Math.max(0, Math.min(centreLimit, centreX));
+        int cy = Math.max(0, Math.min(centreLimit, centreY));
+        int originX = Math.max(0, Math.min(cx - clampedRadius, maxOrigin));
+        int originY = Math.max(0, Math.min(cy - clampedRadius, maxOrigin));
         synchronized (stateLock) {
-            return buildSnapshotJson();
+            engine.focus(Vec2.of(originX + clampedRadius + 0.5f, originY + clampedRadius + 0.5f));
+            return buildSnapshotJson(originX, originY, windowSize);
         }
+    }
+
+    /**
+     * Clamps a requested snapshot radius into the documented range.
+     *
+     * <p>Exposed so the HTTP route and its checks apply exactly the same rule: a missing parameter becomes
+     * {@link #DEFAULT_SNAPSHOT_RADIUS}, and a value below {@value #MIN_SNAPSHOT_RADIUS} or above
+     * {@value #MAX_SNAPSHOT_RADIUS} is clamped rather than rejected. The bounds keep the document small
+     * (at most 128 x 128 tiles) and guarantee a full window always fits inside the reported map.
+     *
+     * @param radius the requested radius in tiles
+     * @return the radius the snapshot will actually use
+     */
+    public static int clampSnapshotRadius(int radius) {
+        return Math.max(MIN_SNAPSHOT_RADIUS, Math.min(MAX_SNAPSHOT_RADIUS, radius));
     }
 
     /** Runs the fixed step accumulator until {@link #stop()} clears {@link #running}. */
@@ -1288,25 +1510,34 @@ public final class WorldHost {
         }
     }
 
-    private String buildSnapshotJson() {
+    /**
+     * Serialises one already clamped window; the caller holds {@link #stateLock}.
+     *
+     * <p>The window is a square of {@code size} tiles with its top left at {@code (originX, originY)} and
+     * is guaranteed by {@link #snapshotJson(int, int, int)} to lie fully inside the reported map, so the
+     * terrain loop can never step outside it.
+     */
+    private String buildSnapshotJson(int originX, int originY, int size) {
         List<Entity> entities = new ArrayList<>(engine.world().entities());
         entities.removeIf(entity -> !entity.isAlive());
         entities.sort(Comparator.comparing(Entity::id));
 
-        int capacity = 64 + MAP_SIZE * MAP_SIZE * 8 + entities.size() * 96;
+        int capacity = 96 + size * size * 8 + entities.size() * 96;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
-                .append(",\"width\":").append(MAP_SIZE)
-                .append(",\"height\":").append(MAP_SIZE)
+                .append(",\"originX\":").append(originX)
+                .append(",\"originY\":").append(originY)
+                .append(",\"width\":").append(size)
+                .append(",\"height\":").append(size)
                 .append(",\"tilePixels\":").append(TILE_PIXELS)
                 .append(",\"tiles\":[");
-        for (int y = 0; y < MAP_SIZE; y++) {
-            if (y > 0) {
+        for (int y = originY; y < originY + size; y++) {
+            if (y > originY) {
                 json.append(',');
             }
             json.append('[');
-            for (int x = 0; x < MAP_SIZE; x++) {
-                if (x > 0) {
+            for (int x = originX; x < originX + size; x++) {
+                if (x > originX) {
                     json.append(',');
                 }
                 appendJsonString(json, engine.map().terrainAt(x, y).key().path());

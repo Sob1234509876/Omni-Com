@@ -11,7 +11,7 @@
 - 来源（`Origin`）规则：同源、白名单、空白名单的含义。
 - 静态文件路由：方法、路径穿越、SPA 回退、缓存与缺失的静态根。
 - 插件资源路由：`/plugin-assets/...` 与静态根的关系（细节在协议文档）。
-- 世界快照路由：`/world/snapshot` 的 JSON 形状、503 规则与 `--world` / `--seed`。
+- 世界快照路由：`/world/snapshot` 的窗口参数（`cx` / `cy` / `r`）、JSON 形状、503 规则与 `--world` / `--seed`。
 - WebSocket 帧规则、关闭码、空闲超时（`--ws-idle`）、服务端 ping 心跳，以及二进制帧的处理。
 - 常见坑：工作目录、反向代理、`--http-port 0`、关闭世界。
 
@@ -24,7 +24,7 @@
 | `GET` / `HEAD` 其它路径 | 从 `--static-root`（默认 `web-client/dist`）发静态文件，也就是构建好的浏览器客户端 |
 | `/ws` 的 WebSocket 升级 | 升级成 RFC 6455 WebSocket，之后一个文本帧就是一条命令行 |
 | `/plugin-assets/...`（端点持有 `PluginLoader` 时） | 从插件 jar 的 `assets/` 发资源，见下面的「插件资源路由」 |
-| `GET /world/snapshot` | 把 `--world` 启动的服务器世界当前 tick 的 JSON 快照发给浏览器，见下面的「世界快照」 |
+| `GET /world/snapshot[?cx=&cy=&r=]` | 把 `--world` 启动的服务器世界当前 tick 的一个窗口以 JSON 发给浏览器，见下面的「世界快照」 |
 
 它存在的原因很直接：**浏览器不会说那条加密 TCP 信道**。TCP 信道在握手阶段自己实现 X25519、HKDF-SHA256 与
 AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应的 API；WebSocket 则是浏览器原生就有的。
@@ -32,7 +32,7 @@ AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应
 
 这不是第二个游戏服务器，而是一个适配器：它不自己保存用户记录，也不解释命令里的游戏内容。`REGISTER` / `LOGIN`
 走的是同一个 `AuthService`，`REQ` 走的是同一个 `RequestRegistry`，命令语法两边都委托给 `CommandDispatcher`。
-唯一的游戏状态读取是 `/world/snapshot`，它直接转交 `server.world.WorldHost`，HTTP 层只负责加响应头。
+唯一的游戏状态读取是 `/world/snapshot`，它直接转交 `server.world.WorldHost`，HTTP 层只负责解析窗口参数与加响应头；WorldHost 在同一个锁里会把引擎焦点移到窗口中心，这只影响区块流式加载，不改变模拟结果。
 
 一个必须说清楚的前提：**这条端点是明文 HTTP/WS，不是加密 TCP 的替代品**。它默认绑 `0.0.0.0`，适合本机开发；
 把它暴露到不可信网络、或在上面输入真实密码之前，先套一层 HTTPS 反向代理或 SSH 端口转发。`oc-debug` 的
@@ -241,16 +241,35 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 | `Cache-Control` | `no-store` |
 | 正文 | 下面这个 JSON |
 
+查询参数选择窗口。三个参数都可以省略：
+
+| 参数 | 默认 | 允许范围 | 含义 |
+| --- | --- | --- | --- |
+| `cx` | `128`（地图中心） | 夹到 `0..255` | 窗口中心的 tile X |
+| `cy` | `128`（地图中心） | 夹到 `0..255` | 窗口中心的 tile Y |
+| `r` | `32` | 夹到 `16..64` | 窗口半径，单位 tile |
+
+窗口是边长 `2 * r` 的正方形，所以默认窗口是 64×64，最大是 128×128。不带任何参数就是地图中心 +
+默认半径；旧客户端不用改请求也能拿到一份合法文档。例如：
+
+```text
+GET /world/snapshot
+GET /world/snapshot?cx=128&cy=128&r=16
+GET /world/snapshot?cx=240&cy=8&r=64
+```
+
 ```json
 {
   "tick": 42,
+  "originX": 96,
+  "originY": 96,
   "width": 64,
   "height": 64,
   "tilePixels": 16,
-  "tiles": [["grass", "grass", "..."], ["...", "...", "..."]],
+  "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
-    {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
-    {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+    {"id": 1, "kind": "warehouse", "x": 117.5, "y": 127.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": 119.8, "y": 143.3, "player": 1, "health": 1.00}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
@@ -259,16 +278,24 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 }
 ```
 
-- `tiles` 是 row major，恰好 `width * height` 个条目；每个字符串是地形的内容路径（`grass`、`sand`、...），和
-  `TerrainType.key().path()` 一致。
-- `entities` 按 id 排序；`kind` 是引擎的内容路径（`worker`、`soldier`、`medic`、`warehouse`、`barracks`、
-  `workshop`、`ore_silo`），建筑与单位形状相同。`x` / `y` 是实体中心的地图坐标，保留一位小数。
+- 地图是 **256×256**（`WorldHost.MAP_SIZE`），但快照只发一个窗口。`originX` / `originY` 是窗口左上角的
+  地图 tile；`width` / `height` 是**窗口**的宽高（`2 * r`），不是整张地图。窗口贴边时原点会被整体
+  向内平移，所以它始终是完整大小并完全落在地图内，服务端不会读到越界 tile。
+- `tiles` 是窗口内的 row major 数组，恰好 `width * height` 个条目；每个字符串是地形的内容路径
+  （`water`、`sand`、`grass`、`forest`、`hill`、`rock`，取决于内容目录），和 `TerrainType.key().path()`
+  一致。地形由确定性噪声生成，同一 seed 同一内容复现同一张地图。
+- `entities` 按 id 排序，并且**不按窗口裁剪**：它仍然是整个世界所有存活实体的列表，`x` / `y` 是地图
+  **绝对坐标**（保留一位小数）。客户端用 `originX` / `originY` 把实体换算到窗口内；窗口外（但仍在
+  256×256 内）的实体照样出现在数组里，方便客户端追踪“在屏幕外但还活着”的单位。`kind` 是引擎的内容
+  路径（`worker`、`soldier`、`medic`、`warehouse`、`barracks`、`workshop`、`ore_silo`），建筑与单位形状
+  相同。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
   `name`，以及扁平的金币/木材数量 `gold` / `wood`。这两个键就是经典内容目录注册的物品路径；快照不重复
   它们的显示名，其它物品类型暂时不进快照。金额来自玩家仓库的可用数量（引擎的投放点规则，与建造/训练
   成本检查同源），所以没有仓库的玩家两项都是 `0`。旧服务器可以不带这个字段，客户端必须容错。
 - `tilePixels` 固定 `16`，只是给渲染器的建议值；浏览器仍按自己的相机缩放。
-- 64×64 的快照只有几 KB，服务器每次请求重建，不缓存。
+- 默认窗口 64×64 的 JSON 约 32 KB，最大窗口 128×128 约 130 KB；服务器每次请求重建，不缓存。
+- 一次窗口请求也会把引擎焦点移到该窗口中心（同一个锁内），让 `ChunkStreamer` 只保留相机附近的区块。
 
 ### 失败与关闭
 
@@ -290,6 +317,9 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 请求未完成就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家
 的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。Vite dev proxy 把 `/world` 转发到
 同一个 Java 服务器。
+
+本阶段只改服务端：`web-client/` 还没有读取 `originX` / `originY`，也没有把相机中心作为 `cx` / `cy` 发出去。
+它目前仍请求无参数快照，拿到的是地图中心 64×64 窗口；把窗口映射到相机、按相机请求新窗口是下一阶段的工作。
 
 ## 帧规则
 

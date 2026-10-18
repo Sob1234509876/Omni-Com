@@ -3,6 +3,7 @@ package io.github.sob1234509876.oc.server.ws;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -216,6 +217,45 @@ final class HttpRequest {
     String header(String name) {
         List<String> values = headers.get(name.toLowerCase(Locale.ROOT));
         return values == null || values.isEmpty() ? null : values.get(0);
+    }
+
+    /**
+     * Returns a query parameter of the request target, or {@code null} when it is absent.
+     *
+     * <p>The target is decoded as UTF-8 with {@code application/x-www-form-urlencoded} rules, which is what
+     * a browser sends for a {@code fetch} URL with a query string: {@code +} means space and percent escapes
+     * are decoded. Only the first value of a repeated name is returned. A malformed escape is treated as an
+     * absent value instead of failing the whole request, because the snapshot route has a documented default
+     * for every parameter and a broken optional parameter should not make the page unusable.
+     *
+     * @param name the parameter name, case sensitive as query parameter names are
+     * @return the decoded value, or {@code null} when the target has no such parameter or it cannot be
+     *     decoded
+     */
+    String queryParameter(String name) {
+        int query = target.indexOf('?');
+        if (query < 0) {
+            return null;
+        }
+        int end = target.indexOf('#', query);
+        String queryString = end < 0 ? target.substring(query + 1) : target.substring(query + 1, end);
+        for (String pair : queryString.split("&")) {
+            if (pair.isEmpty()) {
+                continue;
+            }
+            int equals = pair.indexOf('=');
+            String key = equals < 0 ? pair : pair.substring(0, equals);
+            String value = equals < 0 ? "" : pair.substring(equals + 1);
+            if (!name.equals(key)) {
+                continue;
+            }
+            try {
+                return URLDecoder.decode(value, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException malformed) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

@@ -72,10 +72,14 @@ import java.util.concurrent.atomic.AtomicLong;
  * on that route touches the filesystem - every byte comes from a plugin's class loader.
  *
  * <p><strong>World snapshot.</strong> {@code GET /world/snapshot} publishes the server side
- * {@link WorldHost}'s JSON document, unauthenticated like the plugin assets. It answers {@code 503} while
- * the host is stopped or absent (including a server started with {@code --world off}), and it is never a
- * static file route. This is the one endpoint that reads live simulation state; the host serialises it
- * against its own tick thread, so a request can never observe a half applied tick.
+ * {@link WorldHost}'s JSON document, unauthenticated like the plugin assets. The optional query string
+ * {@code ?cx=<tileX>&cy=<tileY>&r=<radiusInTiles>} selects the window: {@code r} defaults to
+ * {@value WorldHost#DEFAULT_SNAPSHOT_RADIUS} and is clamped to
+ * [{@value WorldHost#MIN_SNAPSHOT_RADIUS}, {@value WorldHost#MAX_SNAPSHOT_RADIUS}], and a missing
+ * {@code cx}/{@code cy} means the centre of the map. The route answers {@code 503} while the host is
+ * stopped or absent (including a server started with {@code --world off}), and it is never a static file
+ * route. This is the one endpoint that reads live simulation state; the host serialises it against its own
+ * tick thread, so a request can never observe a half applied tick.
  *
  * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
  * uses; callers that want to know the port read {@link #port()} after {@link #start()}.
@@ -434,9 +438,12 @@ public final class HttpWebServer implements AutoCloseable {
     /**
      * Serves the world snapshot: JSON when the world is ticking, a short {@code 503} when it is not.
      *
-     * <p>Only {@code GET} and {@code HEAD} reach this route, the same rule the plugin asset route applies.
-     * There is no authentication: a snapshot is public read-only data, just like the plugin assets. The
-     * body is rebuilt per request and marked {@code no-store}, so a browser can never show a stale tick.
+     * <p>The window is read from the query string as {@code cx}, {@code cy} and {@code r}, all optional.
+     * Missing or unparsable values fall back to the map centre and {@value WorldHost#DEFAULT_SNAPSHOT_RADIUS};
+     * the host then clamps the radius, so {@code r=999} is a valid request for the largest window rather
+     * than an error. Only {@code GET} and {@code HEAD} reach this route, the same rule the plugin asset route
+     * applies. There is no authentication: a snapshot is public read-only data, just like the plugin assets.
+     * The body is rebuilt per request and marked {@code no-store}, so a browser can never show a stale tick.
      * When the host is absent ({@code --world off}) the method still answers {@code 503} rather than
      * letting the path fall through to the static SPA fallback.
      */
@@ -456,9 +463,32 @@ public final class HttpWebServer implements AutoCloseable {
                     .writeTo(out, false);
             return;
         }
-        byte[] body = hosted.snapshotJson().getBytes(StandardCharsets.UTF_8);
+        int centreX = queryInt(request, "cx", WorldHost.MAP_SIZE / 2);
+        int centreY = queryInt(request, "cy", WorldHost.MAP_SIZE / 2);
+        int radius = queryInt(request, "r", WorldHost.DEFAULT_SNAPSHOT_RADIUS);
+        byte[] body = hosted.snapshotJson(centreX, centreY, radius).getBytes(StandardCharsets.UTF_8);
         HttpResponse.file(200, "OK", body, WORLD_JSON_CONTENT_TYPE, WORLD_CACHE_CONTROL)
                 .writeTo(out, "HEAD".equals(request.method()));
+    }
+
+    /**
+     * Reads one integer query parameter, with a default for an absent or malformed value.
+     *
+     * <p>A parameter that is present but not a decimal integer is not worth a {@code 400}: the snapshot
+     * document has a documented default for every coordinate, and a hand written client that misspells a
+     * number should still receive the map. Values outside the {@code int} range are treated the same way;
+     * an in-range but out-of-bounds value is clamped by {@link WorldHost} itself.
+     */
+    private static int queryInt(HttpRequest request, String name, int fallback) {
+        String value = request.queryParameter(name);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.strip());
+        } catch (NumberFormatException malformed) {
+            return fallback;
+        }
     }
 
     /**

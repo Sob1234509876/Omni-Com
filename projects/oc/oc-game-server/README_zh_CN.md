@@ -13,7 +13,7 @@
 | 基础包 | `io.github.sob1234509876.oc.server`，其下是 `.auth`、`.net`、`.plugin`、`.ws`、`.world` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖**（托管的 RTS 世界来自仓库内的引擎模块） |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（731 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（789 项检查，无测试框架，无网络） |
 | TCP 信道 | 加密，默认 `25566`（`--port`） |
 | 浏览器端点 | HTTP/WebSocket，默认 `25567`（`--http-port`；`0` 关闭它） |
 | 帮助 | [`help/README.md`](help/README.md) —— 五章，中文 |
@@ -28,10 +28,10 @@
 自检末尾打印一行：
 
 ```text
-game server self check: all 731 checks passed.
+game server self check: all 789 checks passed.
 ```
 
-731 条是 `ServerCheck` 依次调用的十一个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（升级、版本握手、帧规则、来源规则、可配置的空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 105 条（daemon tick 线程、含每个玩家 `players` 资源的快照 JSON、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 87 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
+789 条是 `ServerCheck` 依次调用的十一个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（升级、版本握手、帧规则、来源规则、可配置的空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 163 条（daemon tick 线程、256×256 噪声地形、可建造出生锚点、带 `cx` / `cy` / `r` 参数的窗口快照、种子确定性与 `/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 87 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
 
 `server` 任务用 `JavaExec` 运行 `OcGameServer`，标准输入接到进程，工作目录是仓库根，所以 `Ctrl+C` 能走到 shutdown hook，默认的 `--static-root web-client/dist` 也能解析到构建好的浏览器客户端。
 
@@ -59,7 +59,7 @@ game server self check: all 731 checks passed.
 
 **加密信道。** 一条普通 TCP socket 上走三步：临时 X25519 密钥交换、用 HKDF-SHA256 从共享秘密导出 32 字节会话密钥、然后 AES-256-GCM 分帧。客户端 hello 是 37 字节，服务器 hello 是 69 字节；每个方向各有 4 字节 nonce 前缀与 64 位计数器，一帧是 4 字节大端长度加上密文与它的 128 位认证标签，计数器让重放的帧通不过标签校验。帧之上是行协议：`PING`、`REGISTER`、`LOGIN`、`COUNT`、`REQ`、`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`QUIT`。
 
-**浏览器端点。** `GET` 与 `HEAD` 从 `--static-root`（构建好的浏览器客户端）发出；`/ws` 升级成 RFC 6455 WebSocket，第一个文本帧必须是 `HELLO 1`，服务器答 `OK OC/1`；`/plugin-assets/...` 从插件 jar 里发 `assets/`，所有插件的 `assets/manifest.json` 在 `/plugin-assets/manifest.json` 合并成一个数组；`GET /world/snapshot` 用 `application/json; charset=utf-8` 与 `Cache-Control: no-store` 发布托管世界的快照，世界关闭时回答 `503 the world is not running`。WebSocket 由服务器保活：每 25 秒发一个 ping 控制帧，浏览器的自动 pong 让读超时不断刷新；空闲超时默认 300 秒，可用 `--ws-idle N` 改。它是明文 HTTP/WS 监听器、没有 TLS，适合本机或放在反向代理后面；`--http-port 0` 会把它（以及世界）整个去掉。
+**浏览器端点。** `GET` 与 `HEAD` 从 `--static-root`（构建好的浏览器客户端）发出；`/ws` 升级成 RFC 6455 WebSocket，第一个文本帧必须是 `HELLO 1`，服务器答 `OK OC/1`；`/plugin-assets/...` 从插件 jar 里发 `assets/`，所有插件的 `assets/manifest.json` 在 `/plugin-assets/manifest.json` 合并成一个数组；`GET /world/snapshot` 用 `application/json; charset=utf-8` 与 `Cache-Control: no-store` 发布托管世界的一个窗口，可选的 `cx` / `cy` / `r` 查询参数选择窗口（默认地图中心、半径 32，`r` 夹在 16..64），`originX` / `originY` 是窗口左上角，实体保留地图绝对坐标；世界关闭时回答 `503 the world is not running`。WebSocket 由服务器保活：每 25 秒发一个 ping 控制帧，浏览器的自动 pong 让读超时不断刷新；空闲超时默认 300 秒，可用 `--ws-idle N` 改。它是明文 HTTP/WS 监听器、没有 TLS，适合本机或放在反向代理后面；`--http-port 0` 会把它（以及世界）整个去掉。
 
 **插件加载器。** `PluginLoader` 按文件名顺序扫描 `plugins/*.jar`，给每个 jar 一个自己的 `URLClassLoader`。URL 列表先是这个 jar 自己，然后是目录里其他所有 jar（按文件名排序），所以把依赖 jar 丢进同一目录就算装好依赖，而插件自带的库副本又赢过目录里的那份。类加载器有意**永不关闭**：关掉的 `URLClassLoader` 再也不能定义它此前没碰过的类、也读不出没读过的资源，那正是按需加载的插件以后会撞上的 `NoClassDefFoundError`。插件由 `omnicom-plugin.properties`（`id`、`version`、`main`、`description`）描述，生命周期是 `onLoad` → `onEnable` → `onDisable`。
 
@@ -78,14 +78,14 @@ game server self check: all 731 checks passed.
 | `...server.net` | 监听、加密信道、命令解析、协议客户端 | `ServerConfig`、`SecureChannel`、`GameServer`、`GameClient` |
 | `...server.plugin` | 插件加载与只读请求缝 | `Plugin`、`PluginContext`、`PluginDescriptor`、`DiscoveryResult`、`PluginLoader`、`RequestHandler`、`RequestRegistry` |
 | `...server.ws` | 可选的浏览器端点：HTTP 静态文件、插件资源、世界快照、WebSocket 分帧、版本握手 | `HttpWebServer`、`WebSocketConfig`、`WebSocketConnection`、`CommandWebSocketHandler`、`PluginAssets`、`PluginManifest` |
-| `...server.world` | 托管的服务器世界：一个扁平 64×64 的 `OcRtsEngine`、daemon tick 线程与快照 JSON | `WorldHost` |
+| `...server.world` | 托管的服务器世界：一个 256×256、确定性噪声地形的 `OcRtsEngine`、可建造出生锚点、daemon tick 线程与窗口快照 JSON | `WorldHost` |
 
 依赖方向是单向的：`auth` 与 `plugin` 互相不认识，`net` 认识这两个，`ws` 认识 `auth`、`net`、`plugin` 与 `world`，根包认识全部五个。`world` 是唯一认识 RTS 引擎的包；`plugin` 包里没有任何 `net`、`auth` 或 `world` 的引用，这是"插件永远看不到 socket、密码或活游戏"的第一层保证。
 
 ```text
 src/main/java/module-info.java          导出六个包，requires RTS 引擎
 src/main/java/.../server/               上面那六个包
-src/selfcheck/java/.../server/check/    731 条检查的自检程序
+src/selfcheck/java/.../server/check/    789 条检查的自检程序
 help/                                   五章中文文档
 ```
 

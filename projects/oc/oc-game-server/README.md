@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (731 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (789 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,18 +33,18 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 731 checks passed.
+game server self check: all 789 checks passed.
 ```
 
-731 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+789 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
 (upgrade, the version handshake, frame rules, origin rules, the configurable idle timeout and the server
 heartbeat), `HttpCheck` 47 (static files, traversal, caching, a missing static root), `PluginAssetsCheck` 80
-(manifest merging and the asset route over real plugin jars), `WorldHostCheck` 105 (the daemon tick thread, the
-snapshot JSON including the per-player `players` resources, seed determinism, and the `/world/snapshot`
-200/503/405 answers), `WorldTickHookCheck` 23 (the
+(manifest merging and the asset route over real plugin jars), `WorldHostCheck` 163 (the daemon tick thread,
+the 256 x 256 noise terrain, the buildable spawn anchor, the windowed snapshot and its `cx` / `cy` / `r`
+parameters, seed determinism, and the `/world/snapshot` 200/503/405 answers), `WorldTickHookCheck` 23 (the
 plugin tick hook contract and its ordering), `PlayerCommandCheck` 87 (`WHOAMI`, account identity, the
 world-thread command queue, movement orders, ownership, building cost and the production tier gate) and
 `JoinBaseCheck` 60 (the warehouse, engineer and starting resources a player receives when joining a world,
@@ -93,9 +93,11 @@ its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `
 **The browser endpoint.** `GET` and `HEAD` are served from `--static-root`, the built web client; `/ws` is
 upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answered with `OK OC/1`;
 `/plugin-assets/...` serves `assets/` out of plugin jars, with every plugin's `assets/manifest.json` merged
-into one array at `/plugin-assets/manifest.json`. `GET /world/snapshot` publishes the hosted world as
-`application/json; charset=utf-8` with `Cache-Control: no-store`, and answers `503 the world is not running`
-when the world is off. A WebSocket is kept alive by the server: it sends a ping control frame every 25 seconds,
+into one array at `/plugin-assets/manifest.json`. `GET /world/snapshot` publishes a window of the hosted world
+as `application/json; charset=utf-8` with `Cache-Control: no-store`: the optional `cx` / `cy` / `r` query
+parameters select the window (default: the map centre with radius 32, `r` clamped to 16..64), `originX` /
+`originY` name its top left tile, and entities keep absolute map coordinates. It answers `503 the world is not
+running` when the world is off. A WebSocket is kept alive by the server: it sends a ping control frame every 25 seconds,
 and the browser's automatic pong keeps the read timeout from expiring; the idle timeout is 300 seconds by
 default and `--ws-idle N` changes it. It is a plain HTTP/WS listener with no TLS, meant for a local machine or
 behind a reverse proxy, and `--http-port 0` removes it entirely (and with it the world).
@@ -141,7 +143,7 @@ request can read it any more, and flush the user records one last time.
 | `...server.net` | listening, the encrypted channel, command parsing, the protocol client | `ServerConfig`, `SecureChannel`, `GameServer`, `GameClient` |
 | `...server.plugin` | plugin loading and the read-only request seam | `Plugin`, `PluginContext`, `PluginDescriptor`, `DiscoveryResult`, `PluginLoader`, `RequestHandler`, `RequestRegistry` |
 | `...server.ws` | the optional browser endpoint: HTTP static files, plugin assets, the world snapshot, WebSocket framing, the version handshake | `HttpWebServer`, `WebSocketConfig`, `WebSocketConnection`, `CommandWebSocketHandler`, `PluginAssets`, `PluginManifest` |
-| `...server.world` | the hosted world: one flat 64×64 `OcRtsEngine`, its daemon tick thread and the snapshot JSON | `WorldHost` |
+| `...server.world` | the hosted world: one 256 x 256 `OcRtsEngine` with deterministic noise terrain, a buildable spawn anchor, its daemon tick thread and the windowed snapshot JSON | `WorldHost` |
 
 Dependencies run one way: `auth` and `plugin` do not know each other, `net` knows both, `ws` knows `auth`, `net`,
 `plugin` and `world`, and the root package knows all five. The `world` package is the only one that knows the
@@ -151,7 +153,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 731 check self check program
+src/selfcheck/java/.../server/check/    the 789 check self check program
 help/                                   the five chapters, in Chinese
 ```
 
