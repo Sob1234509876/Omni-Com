@@ -46,7 +46,9 @@ import {
   terrainColor,
 } from "../src/render/fallback.ts";
 import {
+  DEFAULT_MAP_SIZE_TILES,
   demoWorld,
+  entityInWindow,
   isBuildingKind,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
@@ -56,12 +58,23 @@ import {
   ownershipTag,
   snapshotOrDemo,
   TERRAIN_IDS,
+  TERRAIN_VOID,
   terrainAt,
+  tileInWindow,
   worldViewFromSnapshot,
   type EntityView,
   type TerrainId,
   type WorldView,
 } from "../src/render/view.ts";
+import {
+  SNAPSHOT_EDGE_MARGIN_TILES,
+  SNAPSHOT_RADIUS_TILES,
+  SnapshotRequestTracker,
+  shouldRequestWindow,
+  shouldStreamWindow,
+  snapshotOrigin,
+  windowCentre,
+} from "../src/render/stream.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -185,6 +198,21 @@ check(
   "地图小于视口时可见范围是整张图",
   smallRange.minX === 0 && smallRange.maxX === 4 && smallRange.minY === 0 && smallRange.maxY === 3,
   `${smallRange.minX}..${smallRange.maxX} x ${smallRange.minY}..${smallRange.maxY}`,
+);
+
+// The camera is built from the full 256 x 256 map, not from the 64 x 64 snapshot window, so panning
+// reaches the map edge even though only one window is loaded at a time.
+const mapCamera = new Camera(256, 256, 32, 1);
+mapCamera.setViewport(800, 600);
+mapCamera.pan(10_000_000, 10_000_000);
+const mapCameraFocus = mapCamera.centerTile();
+check(
+  "相机夹紧到 256×256 地图而不是 64×64 窗口",
+  near(mapCamera.centerX, 256 * 32 - 400) &&
+    near(mapCamera.centerY, 256 * 32 - 300) &&
+    mapCameraFocus.x === 243 &&
+    mapCameraFocus.y === 246,
+  `${mapCamera.centerX}, ${mapCamera.centerY} / 焦点 ${mapCameraFocus.x}, ${mapCameraFocus.y}`,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -442,6 +470,155 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// Windowed snapshot: absolute coordinates, window translation, and the map size
+// ---------------------------------------------------------------------------------------------
+
+const windowSnapshotPayload = {
+  tick: 23,
+  originX: 96,
+  originY: 64,
+  width: 4,
+  height: 3,
+  tiles: [
+    ["grass", "sand", "forest", "rock"],
+    ["water", "hill", "grass", "sand"],
+    ["rock", "water", "hill", "grass"],
+  ],
+  entities: [
+    { id: 1, kind: "worker", x: 97.5, y: 65.5, player: 1 },
+    { id: 2, kind: "soldier", x: 200.5, y: 200.5, player: 2 },
+  ],
+};
+const windowed = worldViewFromSnapshot(windowSnapshotPayload);
+check(
+  "带 originX/originY 的窗口快照解析成功，地图大小是 256",
+  windowed !== null &&
+    windowed.originX === 96 &&
+    windowed.originY === 64 &&
+    windowed.width === 4 &&
+    windowed.height === 3 &&
+    windowed.mapWidth === DEFAULT_MAP_SIZE_TILES &&
+    windowed.mapHeight === DEFAULT_MAP_SIZE_TILES &&
+    DEFAULT_MAP_SIZE_TILES === 256,
+  JSON.stringify(windowed),
+);
+if (windowed !== null) {
+  check(
+    "绝对瓦片坐标减去 origin 后索引窗口地形",
+    terrainAt(windowed, 96, 64) === "grass" &&
+      terrainAt(windowed, 97, 65) === "hill" &&
+      terrainAt(windowed, 99, 66) === "grass",
+  );
+  check(
+    "窗口外的绝对瓦片返回 void（不是窗口内的错误格子）",
+    terrainAt(windowed, 95, 64) === TERRAIN_VOID &&
+      terrainAt(windowed, 100, 64) === TERRAIN_VOID &&
+      terrainAt(windowed, 96, 67) === TERRAIN_VOID &&
+      terrainAt(windowed, 96, 63) === TERRAIN_VOID,
+  );
+  const insideEntity = windowed.entities.find((entity) => entity.id === 1);
+  const outsideEntity = windowed.entities.find((entity) => entity.id === 2);
+  check(
+    "窗口外的实体仍保留在快照里，但 entityInWindow 为 false；窗口内的实体为 true",
+    windowed.entities.length === 2 &&
+      insideEntity !== undefined &&
+      outsideEntity !== undefined &&
+      entityInWindow(windowed, insideEntity) === true &&
+      entityInWindow(windowed, outsideEntity) === false &&
+      tileInWindow(windowed, 97, 65) === true &&
+      tileInWindow(windowed, 200, 200) === false,
+  );
+}
+check(
+  "窗口起点加窗口尺寸越过地图时拒绝",
+  worldViewFromSnapshot({ ...windowSnapshotPayload, originX: 254 }) === null,
+);
+check(
+  "实体按 256×256 地图校验：地图内窗口外接受，越出地图拒绝",
+  worldViewFromSnapshot({
+    ...windowSnapshotPayload,
+    entities: [{ id: 2, kind: "soldier", x: 256, y: 200.5 }],
+  }) === null &&
+    worldViewFromSnapshot(windowSnapshotPayload)?.entities.length === 2,
+);
+check(
+  "没有 origin 的旧快照把整张图当作窗口（向后兼容）",
+  worldViewFromSnapshot(validSnapshot)?.originX === 0 &&
+    worldViewFromSnapshot(validSnapshot)?.originY === 0 &&
+    worldViewFromSnapshot(validSnapshot)?.mapWidth === 2 &&
+    worldViewFromSnapshot(validSnapshot)?.mapHeight === 2,
+);
+check(
+  "快照显式给出 mapWidth/mapHeight 时优先于 256 常量",
+  worldViewFromSnapshot({ ...windowSnapshotPayload, mapWidth: 512, mapHeight: 512 })
+    ?.mapWidth === 512 &&
+    worldViewFromSnapshot({ ...windowSnapshotPayload, mapWidth: 512, mapHeight: 512 })
+      ?.mapHeight === 512,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Camera-driven window streaming: edge trigger, map-edge clamp and request ordering
+// ---------------------------------------------------------------------------------------------
+
+const streamBounds = {
+  originX: 100,
+  originY: 100,
+  width: 64,
+  height: 64,
+  mapWidth: 256,
+  mapHeight: 256,
+};
+
+check(
+  "窗口边缘触发：距左右/上下边缘正好 8 格时请求新窗口",
+  SNAPSHOT_EDGE_MARGIN_TILES === 8 &&
+    SNAPSHOT_RADIUS_TILES === 32 &&
+    shouldStreamWindow(streamBounds, { x: 108, y: 132 }) &&
+    shouldStreamWindow(streamBounds, { x: 155, y: 132 }) &&
+    shouldStreamWindow(streamBounds, { x: 132, y: 108 }) &&
+    shouldStreamWindow(streamBounds, { x: 132, y: 155 }) &&
+    shouldRequestWindow(streamBounds, { x: 108, y: 132 }) &&
+    shouldRequestWindow(streamBounds, { x: 155, y: 132 }) &&
+    shouldRequestWindow(streamBounds, { x: 132, y: 108 }) &&
+    shouldRequestWindow(streamBounds, { x: 132, y: 155 }),
+);
+check(
+  "窗口边缘触发：距边缘 9 格时保持当前窗口",
+  !shouldStreamWindow(streamBounds, { x: 109, y: 132 }) &&
+    !shouldRequestWindow(streamBounds, { x: 109, y: 132 }) &&
+    !shouldRequestWindow(streamBounds, { x: 154, y: 132 }) &&
+    !shouldRequestWindow(streamBounds, { x: 132, y: 109 }) &&
+    !shouldRequestWindow(streamBounds, { x: 132, y: 154 }),
+);
+check(
+  "地图边缘已经夹紧的窗口不会重复请求",
+  shouldStreamWindow({ ...streamBounds, originX: 192, originY: 192 }, { x: 255, y: 255 }) &&
+    !shouldRequestWindow({ ...streamBounds, originX: 192, originY: 192 }, { x: 255, y: 255 }) &&
+    snapshotOrigin({ x: 255, y: 255 }, SNAPSHOT_RADIUS_TILES, 256, 256).x === 192 &&
+    snapshotOrigin({ x: 255, y: 255 }, SNAPSHOT_RADIUS_TILES, 256, 256).y === 192,
+);
+check(
+  "窗口中心瓦片用于没有触碰边缘时的定期刷新",
+  windowCentre(streamBounds).x === 132 && windowCentre(streamBounds).y === 132,
+  `${windowCentre(streamBounds).x}, ${windowCentre(streamBounds).y}`,
+);
+
+const requestTracker = new SnapshotRequestTracker();
+const firstRequestId = requestTracker.begin();
+const secondRequestId = requestTracker.begin();
+check(
+  "快照请求 id 单调递增",
+  secondRequestId === firstRequestId + 1 && requestTracker.latest === secondRequestId,
+  `${firstRequestId} -> ${secondRequestId}`,
+);
+check("较新的快照回答被接受", requestTracker.accept(secondRequestId) === true);
+check(
+  "乱序到达的旧快照回答被丢弃",
+  requestTracker.accept(firstRequestId) === false,
+  `next=${requestTracker.latest}`,
+);
+
+// ---------------------------------------------------------------------------------------------
 // Snapshot interpolation
 // ---------------------------------------------------------------------------------------------
 
@@ -452,7 +629,16 @@ const FRAME_GRASS: readonly TerrainId[] = Array.from({ length: FRAME_WIDTH }, ()
 /** A grass-only 16x16 map, large enough for a ten-tile jump between two frames. */
 function frameView(entities: readonly EntityView[]): WorldView {
   const tiles = Array.from({ length: FRAME_HEIGHT }, () => FRAME_GRASS);
-  return { width: FRAME_WIDTH, height: FRAME_HEIGHT, tiles, entities };
+  return {
+    originX: 0,
+    originY: 0,
+    mapWidth: FRAME_WIDTH,
+    mapHeight: FRAME_HEIGHT,
+    width: FRAME_WIDTH,
+    height: FRAME_HEIGHT,
+    tiles,
+    entities,
+  };
 }
 
 function frameEntity(

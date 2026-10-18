@@ -22,6 +22,7 @@
     "../src/heartbeat.ts",
     "../src/render/camera.ts",
     "../src/render/view.ts",
+    "../src/render/stream.ts",
     "../src/render/atlas.ts",
     "../src/render/fallback.ts",
     "../src/render/interpolate.ts"

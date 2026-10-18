@@ -15,6 +15,16 @@ export type TerrainId = string;
 /** Terrain path the engine uses outside a map. */
 export const TERRAIN_VOID: TerrainId = "void";
 
+/**
+ * Full map size in tiles used when a snapshot omits the optional `mapWidth` / `mapHeight` fields.
+ *
+ * The server's reported map is 256 x 256 today (`WorldHost.MAP_SIZE`), and the snapshot document
+ * reports only the *window* size in `width` / `height` - it does not repeat the full map size. A
+ * document that does carry the optional fields wins over this constant, so a larger world only needs
+ * a server change.
+ */
+export const DEFAULT_MAP_SIZE_TILES = 256;
+
 /** Terrain paths the scenario content defines, in the order the legend uses them. */
 export const TERRAIN_IDS: readonly TerrainId[] = [
   "water",
@@ -51,9 +61,23 @@ export interface EntityView {
 }
 
 export interface WorldView {
+  /**
+   * Absolute map tile of the window's top-left corner.
+   *
+   * The server sends a square window of the 256 x 256 map, so `width` / `height` are the *window*
+   * size. `originX` / `originY` place that window on the map; the demo map is its own window and
+   * starts at `0, 0`.
+   */
+  readonly originX: number;
+  readonly originY: number;
+  /** Full map size in tiles, not the window size. */
+  readonly mapWidth: number;
+  readonly mapHeight: number;
+  /** Window width in tiles; `tiles[0]` has exactly this many entries. */
   readonly width: number;
+  /** Window height in tiles; `tiles` has exactly this many rows. */
   readonly height: number;
-  /** Row-major terrain: `tiles[y][x]`. */
+  /** Row-major terrain for the window: `tiles[windowY][windowX]`. */
   readonly tiles: readonly (readonly TerrainId[])[];
   readonly entities: readonly EntityView[];
   /**
@@ -153,12 +177,51 @@ export function isBuildingKind(kind: string): boolean {
   return BUILDING_KINDS.has(kindName(kind));
 }
 
-/** Terrain at a tile, or `void` outside the map, so callers never index past a row. */
+/** Whether an integer tile coordinate lies inside the received window. */
+export function tileInWindow(world: WorldView, x: number, y: number): boolean {
+  if (!Number.isInteger(x) || !Number.isInteger(y)) {
+    return false;
+  }
+  const windowX = x - world.originX;
+  const windowY = y - world.originY;
+  return windowX >= 0 && windowY >= 0 && windowX < world.width && windowY < world.height;
+}
+
+/** Whether an integer tile coordinate lies inside the full map, whether or not its window is loaded. */
+export function tileInMap(world: WorldView, x: number, y: number): boolean {
+  return (
+    Number.isInteger(x) &&
+    Number.isInteger(y) &&
+    x >= 0 &&
+    y >= 0 &&
+    x < world.mapWidth &&
+    y < world.mapHeight
+  );
+}
+
+/**
+ * Terrain at an absolute map tile, or `void` outside the received window.
+ *
+ * The snapshot's `tiles` array starts at the window origin, so the absolute coordinate is translated
+ * by subtracting `originX` / `originY`. A tile outside the window is unknown (it may still be a real
+ * map tile the client has not asked for), and `void` is the engine's own fallback terrain.
+ */
 export function terrainAt(world: WorldView, x: number, y: number): TerrainId {
-  if (x < 0 || y < 0 || x >= world.width || y >= world.height) {
+  if (!tileInWindow(world, x, y)) {
     return TERRAIN_VOID;
   }
-  return world.tiles[y]?.[x] ?? TERRAIN_VOID;
+  return world.tiles[y - world.originY]?.[x - world.originX] ?? TERRAIN_VOID;
+}
+
+/**
+ * Whether an entity's ground tile lies inside the received window.
+ *
+ * Entity positions are absolute map coordinates, so an entity can be alive on the map but outside the
+ * current window; the renderer and the picker both use this rule so nothing invisible can be drawn or
+ * clicked.
+ */
+export function entityInWindow(world: WorldView, entity: EntityView): boolean {
+  return tileInWindow(world, Math.floor(entity.x), Math.floor(entity.y));
 }
 
 /** Entity lookup for the HUD and the selection ring. */
@@ -207,10 +270,19 @@ function terrainIdFromSnapshot(value: string): TerrainId {
  * renderer's terrain ids. Entity `health` becomes `healthRatio`, `player` becomes `playerId`, and
  * `kind` stays the engine content path. The optional `players` array is validated row by row into
  * `PlayerView`; a snapshot without it (an older server, or the demo path) stays valid and simply has no
- * player rows. Anything structurally wrong is rejected with `null`: a tile
- * row of the wrong length, a non-string tile, a missing id/kind/position, a non-finite coordinate, an
- * entity outside `[0, width) x [0, height)`, or a `players` row without an integer id and non-negative
- * integer gold/wood amounts. Rejecting is deliberate - a partial world would draw
+ * player rows.
+ *
+ * A windowed snapshot carries `originX` / `originY` (the window's absolute top-left tile) and a
+ * `width` / `height` that describe the window, not the map. The full map size comes from the optional
+ * `mapWidth` / `mapHeight` fields when present, otherwise from {@link DEFAULT_MAP_SIZE_TILES} (the
+ * server's 256 x 256 map today). An older document with no origin fields is treated as one window
+ * that covers the whole map, exactly as before.
+ *
+ * Anything structurally wrong is rejected with `null`: a tile row of the wrong length, a non-string
+ * tile, a missing id/kind/position, a non-finite coordinate, an entity outside
+ * `[0, mapWidth) x [0, mapHeight)` (entities are absolute and may be outside the window but inside
+ * the map), a window whose origin and size leave the map, or a `players` row without an integer id and
+ * non-negative integer gold/wood amounts. Rejecting is deliberate - a partial world would draw
  * entities at positions the simulation never had, and the caller has a deterministic demo fallback.
  */
 export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null {
@@ -227,6 +299,56 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     return null;
   }
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  // The window origin is optional so a pre-window snapshot (and every check fixture without it)
+  // still describes one full-map view. If either half is present both must be valid integers.
+  const rawOriginX = payload["originX"];
+  const rawOriginY = payload["originY"];
+  const hasWindowOrigin = rawOriginX !== undefined || rawOriginY !== undefined;
+  let originX = 0;
+  let originY = 0;
+  if (hasWindowOrigin) {
+    if (
+      typeof rawOriginX !== "number" ||
+      typeof rawOriginY !== "number" ||
+      !Number.isInteger(rawOriginX) ||
+      !Number.isInteger(rawOriginY) ||
+      rawOriginX < 0 ||
+      rawOriginY < 0
+    ) {
+      return null;
+    }
+    originX = rawOriginX;
+    originY = rawOriginY;
+  }
+
+  const rawMapWidth = payload["mapWidth"];
+  const rawMapHeight = payload["mapHeight"];
+  let mapWidth: number;
+  let mapHeight: number;
+  if (rawMapWidth === undefined && rawMapHeight === undefined) {
+    // A windowed document names no map size, so use the documented server map. A legacy document
+    // without an origin is its own full map, which keeps every old snapshot valid.
+    mapWidth = hasWindowOrigin ? DEFAULT_MAP_SIZE_TILES : width;
+    mapHeight = hasWindowOrigin ? DEFAULT_MAP_SIZE_TILES : height;
+  } else {
+    if (
+      typeof rawMapWidth !== "number" ||
+      typeof rawMapHeight !== "number" ||
+      !Number.isInteger(rawMapWidth) ||
+      !Number.isInteger(rawMapHeight) ||
+      rawMapWidth <= 0 ||
+      rawMapHeight <= 0
+    ) {
+      return null;
+    }
+    mapWidth = rawMapWidth;
+    mapHeight = rawMapHeight;
+  }
+  // A window is always a full rectangle inside the map; a shifted-out origin would be malformed.
+  if (originX + width > mapWidth || originY + height > mapHeight) {
     return null;
   }
 
@@ -268,7 +390,9 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     if (!Number.isInteger(id)) {
       return null;
     }
-    if (x < 0 || x >= width || y < 0 || y >= height) {
+    // Entity coordinates are absolute map coordinates, not window coordinates: an entity outside
+    // the window may legitimately be in the list. Validate it against the full map instead.
+    if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) {
       return null;
     }
     const player = finiteNumber(rawEntity["player"]);
@@ -325,6 +449,10 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
 
   return {
     tick,
+    originX,
+    originY,
+    mapWidth,
+    mapHeight,
     width,
     height,
     tiles,
@@ -333,17 +461,47 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
   };
 }
 
+/** One explicit snapshot window: the centre tile and the radius in tiles. */
+export interface SnapshotWindowRequest {
+  readonly cx: number;
+  readonly cy: number;
+  readonly r: number;
+}
+
+function snapshotUrl(baseUrl: string, request: SnapshotWindowRequest | null): string {
+  const prefix = baseUrl.trim().replace(/\/+$/u, "");
+  const path = prefix === "" ? WORLD_SNAPSHOT_PATH : `${prefix}${WORLD_SNAPSHOT_PATH}`;
+  if (
+    request === null ||
+    !Number.isFinite(request.cx) ||
+    !Number.isFinite(request.cy) ||
+    !Number.isFinite(request.r)
+  ) {
+    return path;
+  }
+  // The server clamps `cx` / `cy` / `r` itself; sending the camera tile keeps the client dumb.
+  return (
+    `${path}?cx=${Math.trunc(request.cx)}` +
+    `&cy=${Math.trunc(request.cy)}&r=${Math.trunc(request.r)}`
+  );
+}
+
 /**
  * Fetches `/world/snapshot` from the given base URL and converts it.
+ *
+ * A `request` asks for an explicit window around a camera tile; `null` keeps the no-parameter
+ * centre-window request that old clients use and that `--world off` answers with `503`.
  *
  * An empty base URL means the same origin, which is what the Vite dev proxy and the production
  * static build both use. Every failure - offline, a 503 `--world off`, malformed JSON, an invalid
  * document - resolves to `null` rather than rejecting, so the caller's demo fallback stays one
  * `??` away and a polling request can never produce an unhandled rejection.
  */
-export async function fetchWorldSnapshot(baseUrl = ""): Promise<ServerWorldView | null> {
-  const prefix = baseUrl.trim().replace(/\/+$/u, "");
-  const url = prefix === "" ? WORLD_SNAPSHOT_PATH : `${prefix}${WORLD_SNAPSHOT_PATH}`;
+export async function fetchWorldSnapshot(
+  baseUrl = "",
+  request: SnapshotWindowRequest | null = null,
+): Promise<ServerWorldView | null> {
+  const url = snapshotUrl(baseUrl, request);
   try {
     const response = await fetch(url, {
       headers: { Accept: "application/json" },
@@ -575,7 +733,16 @@ export function demoWorld(seed: number): WorldView {
     entities.push(entity);
   }
 
-  return { width, height, tiles, entities };
+  return {
+    originX: 0,
+    originY: 0,
+    mapWidth: width,
+    mapHeight: height,
+    width,
+    height,
+    tiles,
+    entities,
+  };
 }
 
 function terrainForTile(

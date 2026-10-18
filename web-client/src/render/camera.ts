@@ -166,6 +166,21 @@ export class Camera {
   }
 
   /**
+   * Tile the viewport is centred on.
+   *
+   * This is the camera focus the snapshot streamer follows. The camera is already clamped to the
+   * map, so the result is always a map tile; the extra clamp keeps a caller safe at an exact edge.
+   */
+  centerTile(): TileCoord {
+    const x = Math.floor(this.centerXValue / this.tileSize);
+    const y = Math.floor(this.centerYValue / this.tileSize);
+    return {
+      x: clampNumber(x, 0, this.worldWidthTiles - 1),
+      y: clampNumber(y, 0, this.worldHeightTiles - 1),
+    };
+  }
+
+  /**
    * Inclusive rectangle of tiles that may be visible.
    *
    * The range is clamped to the map, so it is always safe to index. When the whole map is smaller

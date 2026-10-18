@@ -87,6 +87,7 @@ pnpm dev
 HUD 固定在画面左上角，实时显示：
 
 - 世界来源：快照正常时显示 `世界：server · tick 42`，使用内置占位地图时显示 `世界：demo`；
+- 快照窗口的原点与完整地图大小：`窗口：96,96 · 地图 256×256`。镜头流入新窗口时原点会变，而地图始终是 256 格见方；占位地图上显示 `窗口：0,0 · 地图 44×32`；
 - 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
 - `WHOAMI` 回答的引擎玩家 id（`玩家：3`；未登录时 `玩家：—`，每次重连都会清空）；
 - 当前玩家的资源，取自 `players` 里 id 等于 `WHOAMI` 回答的那一行：`资源：alice · 金 300 · 木 60`。世界里还没有这一行时（未登录、占位地图，或旧服务器的快照没有 `players` 字段），资源行变灰并显示破折号（`资源：金 — · 木 —`）；
@@ -98,21 +99,18 @@ HUD 固定在画面左上角，实时显示：
 
 **归属环。** 每个实体脚下还有一圈细的地面环：`playerId` 等于当前玩家时是蓝色 `#3b82f6`，其他玩家是红色 `#ef4444`，没有主人、`playerId` 为 0 或还不知道 `myPlayerId` 时是灰色 `#9ca3af`（整张占位地图就是这种情况）。金色选中环保持不变，画在归属环之后、始终在最上层。分类规则在 `src/render/view.ts`（`ownershipOf`、`ownershipColor`），所以地面环和 HUD 标签不会给出不同答案。
 
-**服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
-（上一次请求未完成就跳过），并把最近两帧快照保留为动画循环的插值输入（见下文的**移动平滑**）。
-`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器 JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，`health` 变成 `healthRatio`，`player` 变成
-`playerId`，可选的 `players` 数组变成带类型的 `PlayerView` 行（没有这个字段的快照仍然合法，所以旧服务器照常
-工作）；行宽不符、字段缺失、坐标非有限值、实体越界或 `players` 行畸形时整份文档被拒绝。确定性的
-`demoWorld(seed)` 原样保留为回退，抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时
-`visibilitychange` 会取消定时器，后台标签页不会继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
+**服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次
+`GET /world/snapshot?cx=<相机 tileX>&cy=<相机 tileY>&r=32`（上一次请求未完成就跳过），并把最近两帧快照保留为动画循环的插值输入（见下文的**移动平滑**）。服务器把 256×256 的地图作为 64×64 的窗口返回：`originX` / `originY` 是窗口左上角的绝对瓦片，`width` / `height` 是**窗口**大小，实体坐标仍是绝对地图坐标。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl, request)` 把服务器 JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，保留 `originX` / `originY`，`health` 变成 `healthRatio`，`player` 变成 `playerId`，可选的 `players` 数组变成带类型的 `PlayerView` 行（没有这个字段的快照仍然合法，所以旧服务器照常工作）。`terrainAt` 会把绝对瓦片减去原点再索引窗口，窗口外返回 `void`；渲染器与实体拾取都只在实体的瓦片位于窗口内时才绘制或选中它。行宽不符、字段缺失、坐标非有限值、实体越出 256×256 地图、窗口越出地图或 `players` 行畸形时整份文档被拒绝。确定性的 `demoWorld(seed)` 原样保留为缺少快照时的回退（例如 `--world off` 会回答 503）。标签页隐藏时 `visibilitychange` 会取消定时器，后台标签页不会继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
+
+**相机驱动的窗口流送。** 画面在移动，客户端跟着走：`main.ts` 维护一个相机焦点（相机中心的瓦片），一旦它进入已加载窗口边缘 8 格以内，就请求以该焦点为中心的新窗口，而不是把镜头平移进尚未加载的地形。新窗口到达之前旧窗口一直留在屏幕上，所以加载期间不会空白、不会闪烁；请求失败时保留最后一个窗口，不会退回占位地图；单调递增的请求 id 让迟到的回答输给更新的请求。在 256 格地图边缘，服务器会把窗口原点向内夹紧，客户端因此能识别“原点不会再变”，不会每帧重复请求同一个窗口。相机夹紧到完整的 256×256 地图，**不是** 64×64 的窗口，所以平移永远不会被窗口边缘挡住，渲染器只画已加载窗口中与视野重叠的那一部分。HUD 显示窗口原点与地图大小（`窗口：96,96 · 地图 256×256`），操作员因此能看见窗口在地图下移动。今天地图是 256 格见方：快照用 `width` / `height` 报告窗口大小、并不重复地图大小，所以客户端使用文档里的常量 `DEFAULT_MAP_SIZE_TILES = 256`；如果某份快照带可选的 `mapWidth` / `mapHeight`，以快照为准。
 
 **移动平滑。** 快照每 500ms 才到一次，直接按快照绘制时单位就会一跳一跳。现在画面保留前后两帧服务器快照（各自是一个
 转换后的 `WorldView` 加它的 tick），并在每个动画帧用 [`src/render/interpolate.ts`](src/render/interpolate.ts) 里的
 `interpolate(previous, current, alphaFor(now, currentFetchedAt, WORLD_POLL_MS))` 重绘：两帧都有的实体按线性插值移动；
 只在新帧出现的实体直接出现在新位置；只在旧帧出现的实体消失；两次轮询之间移动超过 4 格、或 kind / 归属发生变化的实体
 直接吸附到新帧，不会在地图上滑过去。代价是晚一个轮询间隔：画面比最新快照落后一帧，这是服务器仍按 tick 发送绝对位置
-（协议不变）时换取平滑的代价。演示世界不受影响：它没有快照，继续用自己的动画时钟。启动或回退后的第一帧快照没有前一帧，
-直接原样绘制；标签页隐藏时轮询与动画循环都会停止。
+（协议不变）时换取平滑的代价。演示世界不受影响：它没有快照，继续用自己的动画时钟。启动后的第一帧快照、以及流送到另一个窗口后的
+第一帧快照都没有前一帧，直接原样绘制；标签页隐藏时轮询与动画循环都会停止。
 
 ### 操作
 
@@ -151,17 +149,18 @@ HUD 固定在画面左上角，实时显示：
 单位是圆形、建筑是带屋顶线的方块，放大后还有 1 像素格线。
 
 > 初始地图由 `demoWorld(seed)` 生成，是确定性的占位岛屿；Java 服务器一旦能回答 `/world/snapshot`，画面就切换到
-> 那个真实的引擎世界（64×64，地形与实体来自服务器的内容目录）。两边使用同一个 `WorldView` 形状，渲染层不需要改。
+> 那个真实的引擎世界：256×256 的地图以 64×64 的窗口跟随相机；两边使用同一个 `WorldView` 形状，渲染层不需要改。
 
-渲染数学与纯客户端规则（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、快照插值与吸附规则、
-图集越界帧拒绝、清单显示名与原始 id 回退、磁盘上的经典清单、插件图集合并与回退、心跳常量与启动规则）可以离线检查：
+渲染数学与纯客户端规则（相机夹紧到完整地图、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、
+绝对瓦片到窗口索引的平移、相机驱动的 8 格窗口触发、地图边缘夹紧与请求排序、快照插值与吸附规则、图集越界帧拒绝、
+清单显示名与原始 id 回退、磁盘上的经典清单、插件图集合并与回退、心跳常量与启动规则）可以离线检查：
 
 ```shell
 pnpm check:render
 ```
 
 它先做类型检查，再用 Node 24 的 TypeScript 类型擦除直接运行
-[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。脚本当前打印 142 项通过。
+[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。脚本当前打印 158 项通过。
 
 ## hello 插件演示
 
@@ -245,16 +244,17 @@ SSH 端口转发或 HTTPS 反向代理。
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
 | `src/commands.ts` | 纯游戏命令构建器（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`）、`parseWhoAmI`，以及游戏操作面板提供的目录 |
 | `src/heartbeat.ts` | `HEARTBEAT_MS`（20 秒）、纯函数 `shouldHeartbeat(state)` 的启动/停止规则，以及心跳说明 |
-| `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，每 500ms 的 `/world/snapshot` 轮询，以及在最近两帧之间插值的动画循环 |
-| `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
+| `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，相机驱动 `/world/snapshot` 的窗口流送（8 格边缘触发、请求 id，新窗口到达前保留旧窗口），以及在同一个窗口最近两帧之间插值的动画循环 |
+| `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放、相机焦点瓦片与夹紧到完整地图 |
 | `src/render/atlas.ts` | 插件清单解析（帧与显示名）、合成图集（last wins）、带原始 id 回退的标签函数与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影、选中环与细的归属环 |
 | `src/render/interpolate.ts` | 纯快照插值：`Frame`、单个轮询间隔内的 `alphaFor`，以及带出现/消失/吸附规则的 `interpolate` |
-| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` 形状、归属分类与颜色规则、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
+| `src/render/stream.ts` | 纯窗口流送规则：边缘距离、8 格触发、与服务器一致的原点夹紧（地图边缘因此不会重复请求）以及单调递增的请求跟踪器 |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` 形状（含窗口原点与完整地图大小）、绝对坐标到窗口索引的地形平移与窗口内实体规则、归属分类与颜色规则、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的窗口化抓取与转换 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序、动画帧与放置高亮 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作、实体拾取、右键命令与放置点击 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、快照 `players` 解析、快照插值、归属颜色、心跳规则与游戏命令构建器的离线自检 |
+| `scripts/check-render-math.ts` | 相机（含完整地图夹紧）、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、窗口快照解析与原点平移、窗口边缘触发 / 地图边缘保护 / 请求排序、快照 `players` 解析、快照插值、归属颜色、心跳规则与游戏命令构建器的离线自检 |
 | `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档

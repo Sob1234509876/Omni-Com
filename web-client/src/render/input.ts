@@ -7,7 +7,7 @@
  */
 
 import type { Camera, TileCoord } from "./camera";
-import { isBuildingKind, type WorldView } from "./view";
+import { entityInWindow, isBuildingKind, tileInMap, type WorldView } from "./view";
 
 const DRAG_THRESHOLD_PX = 4;
 const KEY_PAN_SPEED_PX_PER_SECOND = 560;
@@ -156,7 +156,9 @@ export class InputController {
   private updateHover(screenX: number, screenY: number): void {
     const world = this.hooks.getWorld();
     const tile = this.camera.tileAtScreen(screenX, screenY);
-    const inside = tile.x >= 0 && tile.y >= 0 && tile.x < world.width && tile.y < world.height;
+    // The camera is clamped to the full map, not to the loaded window, so a hovered tile may be on
+    // the map but outside the window. It is still a real tile for commands and the HUD.
+    const inside = tileInMap(world, tile.x, tile.y);
     const next: TileCoord | null = inside ? tile : null;
     if (!sameTile(next, this.hoverTileValue)) {
       this.hoverTileValue = next;
@@ -180,6 +182,10 @@ export class InputController {
     let bestDistance = Number.POSITIVE_INFINITY;
 
     for (const entity of world.entities) {
+      // An entity outside the loaded window is not drawn, so it must not be pickable either.
+      if (!entityInWindow(world, entity)) {
+        continue;
+      }
       const building = isBuildingKind(entity.kind);
       const point = this.camera.worldToScreen(
         entity.x * this.camera.tileSize,

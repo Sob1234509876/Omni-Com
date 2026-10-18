@@ -29,10 +29,12 @@ import {
   playerColor,
 } from "./fallback";
 import {
+  entityInWindow,
   isBuildingKind,
   kindName,
   ownershipColor,
   terrainAt,
+  tileInWindow,
   type EntityView,
   type WorldView,
 } from "./view";
@@ -215,7 +217,7 @@ export class WorldRenderer {
     }
 
     const hover = options.hoverTile;
-    if (hover !== null && hover.x >= 0 && hover.y >= 0 && hover.x < world.width && hover.y < world.height) {
+    if (hover !== null && tileInWindow(world, hover.x, hover.y)) {
       const hoverX = origin.x + (hover.x - range.minX) * tileOnScreen;
       const hoverY = origin.y + (hover.y - range.minY) * tileOnScreen;
       const placement = options.placementTile;
@@ -231,6 +233,12 @@ export class WorldRenderer {
     const padding = Math.max(80, tileOnScreen * 3);
     const prepared: PreparedEntity[] = [];
     for (const entity of world.entities) {
+      // Entity positions are absolute map coordinates; only an entity whose ground tile is inside
+      // the loaded window is drawn, so a stale or off-window entity can never float over unknown
+      // terrain.
+      if (!entityInWindow(world, entity)) {
+        continue;
+      }
       const point = camera.worldToScreen(entity.x * tileSize, entity.y * tileSize);
       if (
         point.x < -padding ||
