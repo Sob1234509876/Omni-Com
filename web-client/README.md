@@ -85,6 +85,8 @@ pnpm dev
 Just open the address Vite prints; the view can be seen even when the Java server is not running, only the protocol panel cannot connect. The
 **Hide game view / Show game view** button at the top of the right-hand protocol panel collapses the Canvas, letting the protocol panel fill the whole page and making the log easier to read. (The page's own interface is currently Chinese — `index.html` has `lang="zh-CN"` — so the on-screen labels differ from these English names.)
 
+**Monochrome chrome.** The page chrome — panels, buttons, headings, HUD chips, the protocol log, the gameplay panel and the status line — is deliberately greyscale, with no hue at all; the error state is bright white text with a white left bar rather than red. The canvas is the exception: it is game content, so it keeps its own colours. The tab icon comes from [`oc.png`](public/oc.png) (copied unchanged from the repository-root `oc.png`), referenced by the `icon` and `apple-touch-icon` links in `index.html`.
+
 The HUD is pinned to the top-left corner of the view and shows, in real time:
 
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
@@ -100,8 +102,9 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 **Ownership rings.** Every entity also gets a thin ground ring under its sprite: blue `#3b82f6` when its `playerId` is the local player, red `#ef4444` for any other player, and grey `#9ca3af` when the owner is missing, zero, or no `myPlayerId` is known yet (which is the whole demo map). The gold selection ring is unchanged, is drawn after the ownership ring and stays on top. The classification lives in `src/render/view.ts` (`ownershipOf`, `ownershipColor`) so the ring and the HUD tag cannot disagree.
 
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible, `main.ts` polls
-`GET /world/snapshot` every 500 ms (skipping a request while the previous one is still in flight) and replaces the rendered
-world in place. `src/render/view.ts` `fetchWorldSnapshot(baseUrl)` converts the server JSON into the same `WorldView` the
+`GET /world/snapshot` every 500 ms (skipping a request while the previous one is still in flight) and keeps the last two
+snapshots as frames for the animation loop to interpolate between (see **Movement smoothness** below).
+`src/render/view.ts` `fetchWorldSnapshot(baseUrl)` converts the server JSON into the same `WorldView` the
 renderer already consumes: terrain content paths become terrain ids, `health` becomes `healthRatio`, `player` becomes
 `playerId`, and the optional `players` array becomes typed `PlayerView` rows (a snapshot without that field stays valid, so an
 older server keeps working); a document with wrong row lengths, a missing field, a non-finite coordinate, an out-of-bounds
@@ -109,6 +112,17 @@ entity or a malformed `players` row is rejected. The procedural `demoWorld(seed)
 whenever the fetch fails (for example with `--world off`, which answers 503). The timer is cancelled on `visibilitychange`
 while the tab is hidden, so a background tab sends no snapshot requests. With `--http-port 0` nothing is polled and the page
 stays on the demo map.
+
+**Movement smoothness.** A snapshot only arrives every 500 ms, so drawing each one as it landed made units step. The view now
+keeps the previous and the current server frame (each a converted `WorldView` plus its tick) and redraws on every animation
+frame at `interpolate(previous, current, alphaFor(now, currentFetchedAt, WORLD_POLL_MS))` from
+[`src/render/interpolate.ts`](src/render/interpolate.ts). Entities present in both frames are linearly interpolated; one that
+appears only in the new frame appears at its new position; one that disappears is gone; and an entity that moved more than
+4 tiles between the two polls, or whose kind or owner changed, snaps to the new frame instead of sliding across the map. That
+costs one poll interval of latency — the picture is one snapshot behind the newest one — which is the price of smooth motion
+while the server keeps sending absolute positions per tick (the protocol does not change). The demo world is unaffected: it
+has no snapshots and keeps its own animation clock. The first snapshot after a start or a fallback has no predecessor and is
+drawn directly, and while the tab is hidden both the poll and the animation loop stop.
 
 ### Controls
 
@@ -152,14 +166,15 @@ units are circles, buildings are blocks with a roof line, and at higher zoom the
 > layer does not change because both sources use the same `WorldView` shape.
 
 The rendering math and the pure client rules (camera clamping, cursor-centered zoom, placeholder map determinism, server snapshot
-conversion and out-of-bounds rejection, rejection of out-of-bounds atlas frames, manifest display names and raw-id fallback, the
-on-disk classic manifest, plugin atlas merging and fallback, and the heartbeat constant/start rule) can be checked offline:
+conversion and out-of-bounds rejection, snapshot interpolation and snapping, rejection of out-of-bounds atlas frames, manifest
+display names and raw-id fallback, the on-disk classic manifest, plugin atlas merging and fallback, and the heartbeat
+constant/start rule) can be checked offline:
 
 ```shell
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 142 passing checks.
 
 ## hello plugin demo
 
@@ -245,15 +260,16 @@ plugin directory, or an account's password/permissions.
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
 | `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers |
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, the 500 ms `/world/snapshot` poll, and the animation loop that interpolates between the last two frames |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, and clamping |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring and the thin ownership ring when there is no atlas |
+| `src/render/interpolate.ts` | pure snapshot interpolation: `Frame`, `alphaFor` for one poll interval, and `interpolate` with the appear/disappear/snap rules |
 | `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes, the ownership classification and colour rule, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, snapshot `players` parsing, ownership colours, the heartbeat rule, and gameplay command builders |
+| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, snapshot `players` parsing, snapshot interpolation, ownership colours, the heartbeat rule, and gameplay command builders |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

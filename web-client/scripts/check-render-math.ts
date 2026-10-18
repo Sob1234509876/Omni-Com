@@ -2,8 +2,9 @@
  * Offline checks for the pure render math.
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
- * the check exercises the same `camera.ts`, `view.ts`, `atlas.ts` and `fallback.ts` the browser
- * imports - no duplicated formulas. `scripts/tsconfig.check.json` is only used for type checking.
+ * the check exercises the same `camera.ts`, `view.ts`, `atlas.ts`, `fallback.ts` and
+ * `interpolate.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is
+ * only used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
@@ -23,6 +24,12 @@ import {
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
 import { Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
+import {
+  MAX_INTERPOLATION_DISTANCE_TILES,
+  alphaFor,
+  interpolate,
+  type Frame,
+} from "../src/render/interpolate.ts";
 import {
   atlasLabel,
   compositeAtlas,
@@ -51,6 +58,8 @@ import {
   TERRAIN_IDS,
   terrainAt,
   worldViewFromSnapshot,
+  type EntityView,
+  type TerrainId,
   type WorldView,
 } from "../src/render/view.ts";
 
@@ -430,6 +439,137 @@ check(
     ...validSnapshot,
     players: [{ id: 3, name: "  ", gold: 300, wood: 60 }],
   }) === null,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Snapshot interpolation
+// ---------------------------------------------------------------------------------------------
+
+const FRAME_WIDTH = 16;
+const FRAME_HEIGHT = 16;
+const FRAME_GRASS: readonly TerrainId[] = Array.from({ length: FRAME_WIDTH }, () => "grass");
+
+/** A grass-only 16x16 map, large enough for a ten-tile jump between two frames. */
+function frameView(entities: readonly EntityView[]): WorldView {
+  const tiles = Array.from({ length: FRAME_HEIGHT }, () => FRAME_GRASS);
+  return { width: FRAME_WIDTH, height: FRAME_HEIGHT, tiles, entities };
+}
+
+function frameEntity(
+  id: number,
+  x: number,
+  y: number,
+  kind = "worker",
+  playerId = 1,
+): EntityView {
+  return { id, kind, x, y, playerId };
+}
+
+const previousSnapshot: Frame = {
+  tick: 100,
+  view: frameView([frameEntity(1, 2, 3), frameEntity(2, 5, 5)]),
+};
+const currentSnapshot: Frame = {
+  tick: 110,
+  view: frameView([frameEntity(1, 4, 3), frameEntity(3, 9, 9)]),
+};
+
+check(
+  "插值系数：在新帧到达之前和到达时刻都夹到 0",
+  alphaFor(250, 500, 500) === 0 && alphaFor(500, 500, 500) === 0,
+  `${alphaFor(250, 500, 500)}, ${alphaFor(500, 500, 500)}`,
+);
+check(
+  "插值系数：一个轮询间隔的正中间是 0.5",
+  alphaFor(750, 500, 500) === 0.5,
+  String(alphaFor(750, 500, 500)),
+);
+check(
+  "插值系数：满一个轮询间隔及之后都夹到 1",
+  alphaFor(1_000, 500, 500) === 1 && alphaFor(9_000, 500, 500) === 1,
+  `${alphaFor(1_000, 500, 500)}, ${alphaFor(9_000, 500, 500)}`,
+);
+
+const atStart = interpolate(previousSnapshot, currentSnapshot, 0);
+const atMiddle = interpolate(previousSnapshot, currentSnapshot, 0.5);
+const atEnd = interpolate(previousSnapshot, currentSnapshot, 1);
+const startMover = atStart.entities.find((entity) => entity.id === 1);
+const middleMover = atMiddle.entities.find((entity) => entity.id === 1);
+const endMover = atEnd.entities.find((entity) => entity.id === 1);
+check(
+  "插值端点：alpha 0 用旧帧位置，alpha 1 用新帧位置",
+  startMover?.x === 2 &&
+    startMover.y === 3 &&
+    endMover?.x === 4 &&
+    endMover.y === 3,
+  `${JSON.stringify(startMover)}, ${JSON.stringify(endMover)}`,
+);
+check(
+  "两帧都有的实体移动 2 格时，alpha 0.5 位于中点",
+  middleMover?.x === 3 && middleMover.y === 3,
+  JSON.stringify(middleMover),
+);
+check(
+  "只在新帧出现的实体按新位置出现",
+  atMiddle.entities.some((entity) => entity.id === 3 && entity.x === 9 && entity.y === 9),
+  JSON.stringify(atMiddle.entities),
+);
+check(
+  "只在旧帧出现的实体消失",
+  atMiddle.entities.every((entity) => entity.id !== 2) && atMiddle.entities.length === 2,
+  JSON.stringify(atMiddle.entities),
+);
+
+const jumpSnapshot: Frame = {
+  tick: 120,
+  view: frameView([frameEntity(1, 12, 3)]),
+};
+const jumped = interpolate(previousSnapshot, jumpSnapshot, 0.5).entities.find(
+  (entity) => entity.id === 1,
+);
+check(
+  "一次跳动 10 格的实体直接吸附到新帧，不在地图上滑过",
+  jumped?.x === 12 && jumped.y === 3,
+  JSON.stringify(jumped),
+);
+
+const boundarySnapshot: Frame = {
+  tick: 130,
+  view: frameView([frameEntity(1, 6, 3)]),
+};
+const atThreshold = interpolate(previousSnapshot, boundarySnapshot, 0.5).entities.find(
+  (entity) => entity.id === 1,
+);
+check(
+  "正好移动 4 格仍在中点插值（阈值是“超过 4 格”）",
+  MAX_INTERPOLATION_DISTANCE_TILES === 4 && atThreshold?.x === 4 && atThreshold.y === 3,
+  JSON.stringify(atThreshold),
+);
+
+const kindSnapshot: Frame = {
+  tick: 140,
+  view: frameView([frameEntity(1, 4, 3, "soldier")]),
+};
+const kindChanged = interpolate(previousSnapshot, kindSnapshot, 0.5).entities.find(
+  (entity) => entity.id === 1,
+);
+check(
+  "kind 变化的实体吸附到新帧",
+  kindChanged?.kind === "soldier" && kindChanged.x === 4 && kindChanged.y === 3,
+  JSON.stringify(kindChanged),
+);
+
+const ownerSnapshot: Frame = {
+  tick: 150,
+  view: frameView([frameEntity(1, 4, 3, "worker", 2)]),
+};
+const ownerChanged = interpolate(previousSnapshot, ownerSnapshot, 0.5).entities.find(
+  (entity) => entity.id === 1,
+);
+check(
+  "player 变化的实体吸附到新帧",
+  ownerChanged?.playerId === 2 && ownerChanged.x === 4 && ownerChanged.y === 3,
+  JSON.stringify(ownerChanged),
 );
 
 // ---------------------------------------------------------------------------------------------

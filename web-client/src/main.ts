@@ -37,6 +37,7 @@ import {
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord } from "./render/camera";
 import { InputController, type InputHooks } from "./render/input";
+import { alphaFor, interpolate, type Frame } from "./render/interpolate";
 import { WorldRenderer } from "./render/renderer";
 import {
   demoWorld,
@@ -709,6 +710,15 @@ let hoverTile: TileCoord | null = null;
 let viewHidden = false;
 let worldSource: WorldSource = "demo";
 let worldTick = 0;
+/**
+ * The last two server snapshots, oldest first. Every animation frame draws between them so a 500 ms
+ * poll looks continuous; both are null while the demo world is shown, which has no snapshots to
+ * interpolate and keeps its own animation clock.
+ */
+let previousFrame: Frame | null = null;
+let currentFrame: Frame | null = null;
+/** `performance.now()` when `currentFrame` arrived; this is the alpha baseline for interpolation. */
+let currentFetchedAt = 0;
 let worldPollTimer: number | null = null;
 let worldRequestInFlight = false;
 let fps = 0;
@@ -1055,25 +1065,33 @@ const inputHooks: InputHooks = {
 let input = new InputController(gameCanvas, camera, inputHooks);
 
 /**
- * Replaces the rendered world in place.
+ * Rebuilds the camera and input controller when the rendered map changes size.
  *
  * The camera bounds are immutable, so a world with different dimensions gets a fresh camera and input
  * controller (preserving the zoom); the hooks read `world` lazily, so every frame after the swap already
  * sees the new tiles. The server always reports 64x64, so this rebuild happens once, on the first
  * snapshot after the 44x32 demo map.
  */
-function useWorld(next: WorldView): void {
-  const resized = next.width !== world.width || next.height !== world.height;
-  world = next;
-  if (resized) {
-    const zoom = camera.zoom;
-    camera = new Camera(next.width, next.height, TILE_SIZE_PX, zoom);
-    input.dispose();
-    input = new InputController(gameCanvas, camera, inputHooks);
-    selectedId = null;
-    hoverTile = null;
-    placementPath = null;
+function adoptWorldSize(next: WorldView): void {
+  if (next.width === world.width && next.height === world.height) {
+    return;
   }
+  const zoom = camera.zoom;
+  camera = new Camera(next.width, next.height, TILE_SIZE_PX, zoom);
+  input.dispose();
+  input = new InputController(gameCanvas, camera, inputHooks);
+  selectedId = null;
+  hoverTile = null;
+  placementPath = null;
+}
+
+/**
+ * Draws a world that is not interpolated: the demo map, the very first server snapshot (there is no
+ * previous frame to slide from), or the demo fallback after the server stops answering.
+ */
+function useWorld(next: WorldView): void {
+  adoptWorldSize(next);
+  world = next;
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1090,7 +1108,26 @@ async function pollWorldSnapshot(): Promise<void> {
       const wasDemo = worldSource === "demo";
       worldSource = "server";
       worldTick = snapshot.tick;
-      useWorld(snapshot);
+      const fetchedAt = performance.now();
+      if (currentFrame === null) {
+        // First snapshot: nothing to interpolate from, so it is rendered exactly as received.
+        previousFrame = null;
+        currentFrame = { view: snapshot, tick: snapshot.tick };
+        currentFetchedAt = fetchedAt;
+        useWorld(snapshot);
+      } else {
+        // Keep the pair in order: the frame just received becomes `current`, and the animation loop
+        // renders from `previous` towards it as the clock advances over the next poll interval.
+        previousFrame = currentFrame;
+        currentFrame = { view: snapshot, tick: snapshot.tick };
+        currentFetchedAt = fetchedAt;
+        adoptWorldSize(snapshot);
+        // Adopt the new entity set immediately (positions already start at the previous frame) so the
+        // HUD and the gameplay panel see a dead or changed selection before the next animation frame.
+        world = interpolate(previousFrame, currentFrame, 0);
+        updateHud(true);
+        updateGameplayPanel();
+      }
       if (wasDemo) {
         log(
           "info",
@@ -1100,6 +1137,9 @@ async function pollWorldSnapshot(): Promise<void> {
     } else if (worldSource === "server") {
       worldSource = "demo";
       worldTick = 0;
+      previousFrame = null;
+      currentFrame = null;
+      currentFetchedAt = 0;
       useWorld(demoWorld(DEMO_SEED));
       log("info", "服务器世界快照不可用，回退到程序化占位地图");
     }
@@ -1138,6 +1178,15 @@ function animationFrame(now: number): void {
     fps = fps === 0 ? instant : fps * 0.88 + instant * 0.12;
   }
   if (!viewHidden) {
+    // Server mode: slide between the last two snapshots so a 500 ms poll looks like continuous motion.
+    // The demo world has no frames, so it keeps drawing its own view and animation clock unchanged.
+    if (previousFrame !== null && currentFrame !== null) {
+      world = interpolate(
+        previousFrame,
+        currentFrame,
+        alphaFor(now, currentFetchedAt, WORLD_POLL_MS),
+      );
+    }
     input.update(deltaSeconds);
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
@@ -1152,7 +1201,7 @@ function animationFrame(now: number): void {
 }
 
 function startGameLoop(): void {
-  if (rafId === 0 && !viewHidden) {
+  if (rafId === 0 && !viewHidden && !document.hidden) {
     lastFrameTime = performance.now();
     rafId = window.requestAnimationFrame(animationFrame);
   }
@@ -1264,12 +1313,15 @@ document.addEventListener("keydown", (event) => {
 
 updateGameplayPanel();
 
-// The snapshot poll is a view feature: stop it while the tab is hidden and resume it when the view is
-// shown again. `setViewVisible` covers the explicit hide button; this listener covers tab switching.
+// The snapshot poll and the animation loop are both view features: stop them while the tab is hidden
+// and resume them when the view is shown again. `setViewVisible` covers the explicit hide button; this
+// listener covers tab switching, so a hidden tab does not interpolate or draw at all.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopWorldPolling();
+    stopGameLoop();
   } else if (!viewHidden) {
+    startGameLoop();
     startWorldPolling();
   }
 });
@@ -1298,7 +1350,8 @@ updateHud(true);
 log(
   "info",
   `游戏画面已启用：先显示 ${world.width}×${world.height} 的确定性占位地图，` +
-    "每 500ms 尝试用服务器 /world/snapshot 接管；插件没有提供图集时使用程序化绘制。",
+    "每 500ms 尝试用服务器 /world/snapshot 接管，并在最近两帧快照之间插值；" +
+    "插件没有提供图集时使用程序化绘制。",
 );
 
 window.addEventListener("beforeunload", () => {

@@ -3,23 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/oc.png" />
+    <link rel="apple-touch-icon" href="/oc.png" />
     <title>Omni Com · OC/1 浏览器客户端</title>
     <style>
+      /* Page chrome is monochrome by design: every colour literal here is a grey
+         (equal red, green and blue channels). Game content is the exception; see
+         the #world-canvas rule below. */
       :root {
         color-scheme: dark;
-        --bg: #0f141b;
-        --panel: #171e28;
-        --line: #2a3542;
-        --text: #dbe4ee;
-        --muted: #8fa1b5;
-        --accent: #61b6ff;
-        --ok: #62d28a;
-        --bad: #ff7b7b;
-        --warn: #e8c46b;
+        accent-color: #e6e6e6;
+        scrollbar-color: #3a3a3a #0a0a0a;
+        --bg: #0a0a0a;
+        --panel: #161616;
+        --line: #3a3a3a;
+        --text: #e6e6e6;
+        --muted: #b0b0b0;
+        --accent: #ffffff;
+        --ok: #e6e6e6;
+        --bad: #ffffff;
+        --warn: #c8c8c8;
+        --focus: #ffffff;
       }
 
       * {
         box-sizing: border-box;
+      }
+
+      ::selection {
+        background: #3a3a3a;
+        color: #ffffff;
       }
 
       html,
@@ -49,9 +62,11 @@
         min-width: 0;
         min-height: 0;
         overflow: hidden;
-        background: #0b1016;
+        background: #000000;
       }
 
+      /* The canvas is game content, not chrome: it keeps its own colours and is
+         deliberately not filtered or recoloured here. */
       #world-canvas {
         display: block;
         width: 100%;
@@ -66,7 +81,7 @@
       }
 
       #world-canvas:focus-visible {
-        outline: 2px solid var(--accent);
+        outline: 2px solid var(--focus);
         outline-offset: -2px;
       }
 
@@ -79,11 +94,11 @@
         gap: 6px 8px;
         max-width: calc(100% - 28px);
         padding: 8px 10px;
-        border: 1px solid rgba(120, 155, 190, 0.28);
+        border: 1px solid #3a3a3a;
         border-radius: 8px;
-        background: rgba(9, 14, 20, 0.78);
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
-        color: #cfe0ef;
+        background: rgba(0, 0, 0, 0.82);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+        color: #c8c8c8;
         font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
         backdrop-filter: blur(6px);
@@ -92,28 +107,35 @@
       .hud span {
         padding: 2px 7px;
         border-radius: 4px;
-        background: rgba(255, 255, 255, 0.06);
+        background: #1f1f1f;
+        box-shadow: inset 0 0 0 1px #2a2a2a;
         white-space: nowrap;
       }
 
       #hud-atlas {
-        color: var(--accent);
+        color: #e6e6e6;
       }
 
       #hud-world {
-        color: #9fd6a8;
+        color: #c8c8c8;
       }
 
       #hud-player {
-        color: #d9b4ff;
+        color: #c8c8c8;
       }
 
       #hud-resources {
-        color: #ffd479;
+        color: #e6e6e6;
       }
 
       #hud-resources.unavailable {
-        color: #7a8794;
+        color: #b0b0b0;
+      }
+
+      #hud-tile,
+      #hud-zoom,
+      #hud-fps {
+        color: #b0b0b0;
       }
 
       #hud-selected {
@@ -121,7 +143,7 @@
       }
 
       #hud-building {
-        color: #ffd479;
+        color: #e6e6e6;
       }
 
       .controls-hint {
@@ -132,9 +154,9 @@
         max-width: calc(100% - 28px);
         margin: 0;
         padding: 6px 12px;
-        border: 1px solid rgba(120, 155, 190, 0.2);
+        border: 1px solid #3a3a3a;
         border-radius: 999px;
-        background: rgba(9, 14, 20, 0.72);
+        background: rgba(0, 0, 0, 0.82);
         color: var(--muted);
         font-size: 12px;
         white-space: nowrap;
@@ -172,7 +194,7 @@
       }
 
       .console-head h1 span {
-        color: var(--accent);
+        color: #c8c8c8;
         font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 0.72em;
       }
@@ -260,8 +282,9 @@
       }
 
       button.armed {
-        border-color: var(--warn);
-        background: #4a3c1f;
+        border-color: #ffffff;
+        background: #3a3a3a;
+        color: #ffffff;
       }
 
       .fields {
@@ -293,9 +316,22 @@
         width: 100%;
         border: 1px solid var(--line);
         border-radius: 7px;
-        background: #0c1118;
+        background: #000000;
         color: var(--text);
         padding: 8px 10px;
+      }
+
+      input::placeholder,
+      textarea::placeholder {
+        color: #9a9a9a;
+        opacity: 1;
+      }
+
+      /* Keep browser autofill from painting its own hue over the grey field. */
+      input:autofill,
+      input:-webkit-autofill {
+        -webkit-text-fill-color: #e6e6e6;
+        box-shadow: 0 0 0 1000px #000000 inset;
       }
 
       textarea {
@@ -307,8 +343,8 @@
       input:focus,
       textarea:focus,
       button:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 1px;
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
       }
 
       .row {
@@ -330,16 +366,21 @@
       }
 
       button {
-        border: 1px solid var(--line);
+        border: 1px solid #3a3a3a;
         border-radius: 7px;
-        background: #202b38;
+        background: #2a2a2a;
         color: var(--text);
         padding: 8px 14px;
         cursor: pointer;
       }
 
       button:hover:not(:disabled) {
-        border-color: var(--accent);
+        background: #3a3a3a;
+        border-color: #9a9a9a;
+      }
+
+      button:active:not(:disabled) {
+        background: #4a4a4a;
       }
 
       button:disabled {
@@ -347,38 +388,61 @@
         opacity: 0.45;
       }
 
+      /* Primary and secondary are separated by lightness only: light fill with
+         dark text versus dark fill with light text. */
       button.primary {
-        background: #1f5f8f;
-        border-color: #2f7db8;
+        background: #e6e6e6;
+        border-color: #ffffff;
+        color: #000000;
       }
 
+      button.primary:hover:not(:disabled) {
+        background: #ffffff;
+        border-color: #ffffff;
+        color: #000000;
+      }
+
+      /* The status line uses lightness, weight and a left bar only - never hue.
+         Error is bright white with a white bar, not red. */
       #status {
+        padding-left: 8px;
+        border-left: 3px solid #2a2a2a;
         color: var(--muted);
         font-size: 13px;
+        font-weight: 400;
       }
 
       #status[data-state="ok"] {
-        color: var(--ok);
-      }
-
-      #status[data-state="error"] {
-        color: var(--bad);
+        border-left-color: #c8c8c8;
+        color: #e6e6e6;
+        font-weight: 600;
       }
 
       #status[data-state="busy"] {
-        color: var(--warn);
+        border-left-color: #6b6b6b;
+        color: #c8c8c8;
+        font-weight: 500;
       }
 
+      #status[data-state="error"] {
+        border-left-color: #ffffff;
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      /* The log is a single text node written by main.ts with textContent, so the
+         direction arrows and the ERR/! lines cannot be restyled individually
+         without changing main.ts; the pane is monochrome grey as a whole. */
       .log {
         min-height: 200px;
         max-height: 360px;
         margin: 0;
         overflow: auto;
         padding: 12px;
-        border: 1px solid var(--line);
+        border: 1px solid #3a3a3a;
         border-radius: 8px;
-        background: #0a0e14;
-        color: #c7d6e5;
+        background: #000000;
+        color: #c8c8c8;
         font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace;
         white-space: pre-wrap;
         word-break: break-word;
@@ -391,7 +455,7 @@
       }
 
       code {
-        color: #cfe0ef;
+        color: #e6e6e6;
       }
 
       body.view-hidden main.app {

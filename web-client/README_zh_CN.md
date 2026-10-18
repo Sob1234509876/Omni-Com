@@ -82,6 +82,8 @@ pnpm dev
 打开 Vite 打印的地址即可；Java 服务器没起也能看画面，只是协议面板连不上。右侧协议面板顶部的
 **隐藏游戏画面 / 显示游戏画面** 按钮会把 Canvas 收起，让协议面板占满整页，方便读日志。
 
+**单色界面。** 页面外壳——面板、按钮、标题、HUD 芯片、协议日志、游戏操作面板与状态行——刻意只用灰阶，没有任何色相；错误状态是亮白文字配白色左边条，而不是红色。Canvas 是例外：它属于游戏内容，因此保留自己的颜色。站点图标来自 [`oc.png`](public/oc.png)（由仓库根目录的 `oc.png` 原样复制），由 `index.html` 的 `icon` 与 `apple-touch-icon` 链接引用。
+
 HUD 固定在画面左上角，实时显示：
 
 - 世界来源：快照正常时显示 `世界：server · tick 42`，使用内置占位地图时显示 `世界：demo`；
@@ -97,12 +99,20 @@ HUD 固定在画面左上角，实时显示：
 **归属环。** 每个实体脚下还有一圈细的地面环：`playerId` 等于当前玩家时是蓝色 `#3b82f6`，其他玩家是红色 `#ef4444`，没有主人、`playerId` 为 0 或还不知道 `myPlayerId` 时是灰色 `#9ca3af`（整张占位地图就是这种情况）。金色选中环保持不变，画在归属环之后、始终在最上层。分类规则在 `src/render/view.ts`（`ownershipOf`、`ownershipColor`），所以地面环和 HUD 标签不会给出不同答案。
 
 **服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
-（上一次请求未完成就跳过），并原地替换渲染用的世界。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器
-JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，`health` 变成 `healthRatio`，`player` 变成
+（上一次请求未完成就跳过），并把最近两帧快照保留为动画循环的插值输入（见下文的**移动平滑**）。
+`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器 JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，`health` 变成 `healthRatio`，`player` 变成
 `playerId`，可选的 `players` 数组变成带类型的 `PlayerView` 行（没有这个字段的快照仍然合法，所以旧服务器照常
 工作）；行宽不符、字段缺失、坐标非有限值、实体越界或 `players` 行畸形时整份文档被拒绝。确定性的
 `demoWorld(seed)` 原样保留为回退，抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时
 `visibilitychange` 会取消定时器，后台标签页不会继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
+
+**移动平滑。** 快照每 500ms 才到一次，直接按快照绘制时单位就会一跳一跳。现在画面保留前后两帧服务器快照（各自是一个
+转换后的 `WorldView` 加它的 tick），并在每个动画帧用 [`src/render/interpolate.ts`](src/render/interpolate.ts) 里的
+`interpolate(previous, current, alphaFor(now, currentFetchedAt, WORLD_POLL_MS))` 重绘：两帧都有的实体按线性插值移动；
+只在新帧出现的实体直接出现在新位置；只在旧帧出现的实体消失；两次轮询之间移动超过 4 格、或 kind / 归属发生变化的实体
+直接吸附到新帧，不会在地图上滑过去。代价是晚一个轮询间隔：画面比最新快照落后一帧，这是服务器仍按 tick 发送绝对位置
+（协议不变）时换取平滑的代价。演示世界不受影响：它没有快照，继续用自己的动画时钟。启动或回退后的第一帧快照没有前一帧，
+直接原样绘制；标签页隐藏时轮询与动画循环都会停止。
 
 ### 操作
 
@@ -143,15 +153,15 @@ JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id
 > 初始地图由 `demoWorld(seed)` 生成，是确定性的占位岛屿；Java 服务器一旦能回答 `/world/snapshot`，画面就切换到
 > 那个真实的引擎世界（64×64，地形与实体来自服务器的内容目录）。两边使用同一个 `WorldView` 形状，渲染层不需要改。
 
-渲染数学与纯客户端规则（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、图集越界帧拒绝、
-清单显示名与原始 id 回退、磁盘上的经典清单、插件图集合并与回退、心跳常量与启动规则）可以离线检查：
+渲染数学与纯客户端规则（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、快照插值与吸附规则、
+图集越界帧拒绝、清单显示名与原始 id 回退、磁盘上的经典清单、插件图集合并与回退、心跳常量与启动规则）可以离线检查：
 
 ```shell
 pnpm check:render
 ```
 
 它先做类型检查，再用 Node 24 的 TypeScript 类型擦除直接运行
-[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。
+[`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。脚本当前打印 142 项通过。
 
 ## hello 插件演示
 
@@ -235,15 +245,16 @@ SSH 端口转发或 HTTPS 反向代理。
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
 | `src/commands.ts` | 纯游戏命令构建器（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`）、`parseWhoAmI`，以及游戏操作面板提供的目录 |
 | `src/heartbeat.ts` | `HEARTBEAT_MS`（20 秒）、纯函数 `shouldHeartbeat(state)` 的启动/停止规则，以及心跳说明 |
-| `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
+| `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，每 500ms 的 `/world/snapshot` 轮询，以及在最近两帧之间插值的动画循环 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
 | `src/render/atlas.ts` | 插件清单解析（帧与显示名）、合成图集（last wins）、带原始 id 回退的标签函数与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影、选中环与细的归属环 |
+| `src/render/interpolate.ts` | 纯快照插值：`Frame`、单个轮询间隔内的 `alphaFor`，以及带出现/消失/吸附规则的 `interpolate` |
 | `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` 形状、归属分类与颜色规则、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序、动画帧与放置高亮 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作、实体拾取、右键命令与放置点击 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、快照 `players` 解析、归属颜色、心跳规则与游戏命令构建器的离线自检 |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、快照 `players` 解析、快照插值、归属颜色、心跳规则与游戏命令构建器的离线自检 |
 | `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档

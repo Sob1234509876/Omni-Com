@@ -30,7 +30,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 34, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 288 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
-| client render math | `node scripts/check-render-math.ts` | 131 | counted from the `check(...)` calls in [check-render-math.ts](web-client/scripts/check-render-math.ts); the script prints the passed total |
+| client render math | `node scripts/check-render-math.ts` | 142 | counted from the `check(...)` calls in [check-render-math.ts](web-client/scripts/check-render-math.ts); the script prints the passed total |
 
 **No commit may leave any of these red, and no existing check may be removed or weakened to make a new feature pass.** If a total changes, grep the old number and update every document that quotes it.
 
@@ -120,7 +120,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Extend the texture manifest with display names: `entities.<kind>.name` for entities and `tiles.<path>.name` for terrain. Because a tile entry is currently `[x, y, w, h]`, accept both the old array and a new object `{"rect": [x, y, w, h], "name": "..."}`; entity entries are already objects, so add an optional `name` beside `frames`. The server does not interpret these fields; it already forwards the manifest. `atlas.ts` carries the name through the merged atlas (last plugin wins), and `main.ts` uses it with the content path as fallback. Add names to the `oc-classic` and `oc-hello` manifests and update the texture contract documents.
 
-**Acceptance.** With the classic jar loaded, the HUD shows `e12 普通`, the TRAIN buttons show `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`, and the BUILD buttons show `兵营·普通` / `矿场·普通`; with no name in the manifest the same line falls back to `unit.melee.t1` (never `undefined`); `check-render-math` gains a name-merge and fallback check; 131 stays green.
+**Acceptance.** With the classic jar loaded, the HUD shows `e12 普通`, the TRAIN buttons show `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`, and the BUILD buttons show `兵营·普通` / `矿场·普通`; with no name in the manifest the same line falls back to `unit.melee.t1` (never `undefined`); `check-render-math` gains a name-merge and fallback check; 142 stays green.
 
 **Files.** [atlas.ts](web-client/src/render/atlas.ts), [main.ts](web-client/src/main.ts), [ClassicContent.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicContent.java), [manifest.json](projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json), [textures README](web-client/public/textures/README.md), [textures README zh](web-client/public/textures/README_zh_CN.md), [check-render-math.ts](web-client/scripts/check-render-math.ts).
 
@@ -148,7 +148,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Draw a ground ownership ring in the pre-sprite pass: blue `#3b82f6` when `playerId === myPlayerId`, red `#ef4444` for any other player, grey `#9ca3af` when `playerId` is missing or 0 or when `myPlayerId` is unknown (the demo map). Keep the gold `#ffd166` selection ring as a separate, thicker ring drawn after it so selection and ownership do not compete. Add an HUD label next to the selection (`我` / `敌` / `中立`). If the server later exposes `Player.team`, extend the classification to allies, but the snapshot has no team field today.
 
-**Acceptance.** After login, the player's warehouse and engineer have blue rings, the AI's units red, player 1's scene red (different player); clicking an enemy shows `敌`; with no atlas the procedural shapes keep their player tint and still get the ring; the demo world (no `myPlayerId`) shows grey rings only; `check-render-math` gains a pure ownership-colour check and proves the selection ring colour is unchanged; 131 stays green.
+**Acceptance.** After login, the player's warehouse and engineer have blue rings, the AI's units red, player 1's scene red (different player); clicking an enemy shows `敌`; with no atlas the procedural shapes keep their player tint and still get the ring; the demo world (no `myPlayerId`) shows grey rings only; `check-render-math` gains a pure ownership-colour check and proves the selection ring colour is unchanged; 142 stays green.
 
 **Files.** [renderer.ts](web-client/src/render/renderer.ts), [fallback.ts](web-client/src/render/fallback.ts), [main.ts](web-client/src/main.ts), [view.ts](web-client/src/render/view.ts), [check-render-math.ts](web-client/scripts/check-render-math.ts).
 
@@ -162,7 +162,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Keep the last two snapshots plus their client receive times. At render time, match entities by id and interpolate position with `alpha = (now - previousReceived) / (currentReceived - previousReceived)`, clamped to `[0, 1]`; snap rather than interpolate when an id is missing from either side, when the tick gap is implausible, or when the entity is newly spawned/dead. The protocol stays OC/1 and the JSON shape does not change. Optionally, after this works, have the server push positions/deltas over the WebSocket at 10–20 Hz and interpolate between deltas; that is a protocol change and must follow the version rules in `protocol/oc-protocol.md`.
 
-**Acceptance.** A moving unit's screen position changes every animation frame, not every 500 ms; average speed matches the server's; no overshoot when a unit reverses; a dead unit disappears on the next snapshot; `check-render-math` covers the interpolation endpoints, midpoint and id matching; 131 stays green.
+**Acceptance.** A moving unit's screen position changes every animation frame, not every 500 ms; average speed matches the server's; no overshoot when a unit reverses; a dead unit disappears on the next snapshot; `check-render-math` covers the interpolation endpoints, midpoint and id matching; 142 stays green.
 
 **Files.** [main.ts](web-client/src/main.ts), [view.ts](web-client/src/render/view.ts), [renderer.ts](web-client/src/render/renderer.ts), [check-render-math.ts](web-client/scripts/check-render-math.ts); no server change.
 
@@ -216,7 +216,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 ## 8. Handoff checklist
 
 - [ ] Run the six Java self checks from §2; all six totals match.
-- [ ] Run `tsc --noEmit` and `node scripts/check-render-math.ts`; 131/131.
+- [ ] Run `tsc --noEmit` and `node scripts/check-render-math.ts`; 142/142.
 - [ ] Open the game once by hand: classic jars in `plugins/`, server up, `pnpm dev`, REGISTER/LOGIN, see the warehouse, engineer, 300 gold and 60 wood.
 - [ ] Read [help/03-plugins.md](projects/oc/oc-game-server/help/03-plugins.md) before touching `PluginLoader` or `PluginContext`.
 - [ ] Confirm `git status` is clean before starting; do not commit jars, keys or `data/`.

@@ -30,7 +30,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 34、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 288 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
-| client render math | `node scripts/check-render-math.ts` | 131 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
+| client render math | `node scripts/check-render-math.ts` | 142 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
 
@@ -120,7 +120,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 扩展贴图清单：实体用 `entities.<kind>.name`，地形用 `tiles.<path>.name`。地形条目现在是 `[x, y, w, h]`，所以同时接受旧数组与新对象 `{"rect": [x, y, w, h], "name": "..."}`；实体条目本来就是对象，在 `frames` 旁加可选的 `name`。服务器不解释这些字段，它本来就把清单原样转发。`atlas.ts` 把名字带进合并后的图集（后加载的插件覆盖前面的），`main.ts` 用名字显示、用内容路径兜底。给 `oc-classic` 与 `oc-hello` 的清单补名字，并更新贴图契约文档。
 
-**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；131 条保持全绿。
+**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；142 条保持全绿。
 
 **涉及文件。** [atlas.ts](web-client/src/render/atlas.ts)、[main.ts](web-client/src/main.ts)、[ClassicContent.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicContent.java)、[manifest.json](projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json)、[贴图 README](web-client/public/textures/README.md)、[贴图 README 中文](web-client/public/textures/README_zh_CN.md)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -148,7 +148,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 在画精灵之前的 ground pass 里画一圈地面归属环：`playerId === myPlayerId` 用蓝色 `#3b82f6`，其他玩家用红色 `#ef4444`，`playerId` 缺失或为 0、或 `myPlayerId` 未知（占位地图）用灰色 `#9ca3af`。把金色 `#ffd166` 选中环保留为另一圈更粗的环、画在归属环之后，让“选中”和“归属”不互相抢。在选中信息旁加 HUD 标签（`我` / `敌` / `中立`）。如果服务器以后暴露 `Player.team`，再把分类扩展到盟友；今天的快照没有 team 字段。
 
-**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌`；没有图集时程序化形状仍保留玩家染色并同样有环；演示世界（没有 `myPlayerId`）只有灰环；`check-render-math` 增加纯归属颜色检查并证明选中环颜色不变；131 条保持全绿。
+**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌`；没有图集时程序化形状仍保留玩家染色并同样有环；演示世界（没有 `myPlayerId`）只有灰环；`check-render-math` 增加纯归属颜色检查并证明选中环颜色不变；142 条保持全绿。
 
 **涉及文件。** [renderer.ts](web-client/src/render/renderer.ts)、[fallback.ts](web-client/src/render/fallback.ts)、[main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -162,7 +162,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 保留最近两份快照及它们的客户端接收时间。渲染时按 id 匹配实体，用 `alpha = (now - previousReceived) / (currentReceived - previousReceived)` 插值位置，并夹在 `[0, 1]`；当某一侧缺少该 id、tick 间隔不合理、或实体刚生成/刚死亡时直接吸附，不插值。协议保持 OC/1，JSON 形状不变。等这一步稳定后，可选地让服务器通过 WebSocket 以 10–20 Hz 推送位置/增量，再在增量之间插值；那是协议变更，必须遵守 `protocol/oc-protocol.md` 的版本规则。
 
-**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；131 条保持全绿。
+**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；142 条保持全绿。
 
 **涉及文件。** [main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[renderer.ts](web-client/src/render/renderer.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)；服务器不变。
 
@@ -216,7 +216,7 @@ cd web-client; pnpm install; pnpm dev
 ## 8. 交接清单
 
 - [ ] 从 §2 跑六个 Java 自检；六个总数全部对得上。
-- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；131/131。
+- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；142/142。
 - [ ] 手工打开一次游戏：经典 jar 放进 `plugins/`，服务器起来，`pnpm dev`，REGISTER/LOGIN，看到仓库、工程师、300 金币和 60 木材。
 - [ ] 动 `PluginLoader` 或 `PluginContext` 之前先读 [help/03-plugins.md](projects/oc/oc-game-server/help/03-plugins.md)。
 - [ ] 开始前确认 `git status` 干净；不要提交 jar、密钥或 `data/`。
