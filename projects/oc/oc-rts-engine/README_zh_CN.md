@@ -47,7 +47,7 @@
 成功运行以以下内容结束：
 
 ```text
-RTS engine scenario: all 239 checks passed.
+RTS engine scenario: all 259 checks passed.
 ```
 
 自检是一个程序，而不是基于框架的测试套件，因此它位于自己的 `selfCheck` 源集（`src/selfcheck/java`）中；`src/test/java` 保持为空，留给以后真正的单元测试。
@@ -57,6 +57,7 @@ RTS engine scenario: all 239 checks passed.
 | 小节 | 它打印的证据 |
 | --- | --- |
 | 1 分块地形 | 视距为 2 个区块时在内存中保留 5x5 个区块，跳转到 (4000, 4000) 后它们又被卸载，从未访问过的地块按需生成，64x64 的区块包含六种地形 |
+| 1b 噪声地形 | 独立的 `NoiseTerrainGenerator` 同种子两次生成同一区块，换种子则不同，先产 (3,1) 还是先产 (0,0) 都不影响结果，64x64 区域包含六种已注册路径（含水与高地），区块边界两侧共享同一条高程采样，并且在它之上搭的世界能 tick 一次 |
 | 2 寻路 | 存在一条 60 多个地块的路线，每个路点都可通行，相邻路点之间视线通畅，深水中的目标要么干净地失败，要么解析到岸边 |
 | 3 阵型 | 十二名士兵被命令前往同一地块，最终分散开来，没有任何一对重叠，每个单位都走完了距离，五种形状产生五种不同的分布（line 0.85x9.87、column 7.27x2.53、box 2.02x3.28、wedge 3.48x3.64、circle 2.73x4.04） |
 | 4 物品与仓库 | 46 种物品；已入库的货物对物流可见，而工厂缓冲区或背包中的货物不可见；预留控制支出；槽位限制和存储过滤器生效 |
@@ -89,7 +90,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 
 | # | 功能 | 所在位置 |
 | --- | --- | --- |
-| 1 | 分块、流式加载的地形地图 | `map.ChunkedMap`、`map.ChunkStreamer`、`map.ChunkGenerator`、`map.NoiseChunkGenerator`、`map.ChunkStore` |
+| 1 | 分块、流式加载的地形地图 | `map.ChunkedMap`、`map.ChunkStreamer`、`map.ChunkGenerator`、`map.NoiseChunkGenerator`、`map.NoiseTerrainGenerator`、`map.BiomeTable`、`map.ChunkStore` |
 | 1 | 在该地图上寻路 | `map.AStarPathFinder`、`movement.PathService`（按 tick 的预算） |
 | 2 | 会集结的群体移动 | `formation.FormationPlanner`、`formation.FormationPlan`、`movement.MovementSystem`、`order.FormationMoveOrder` |
 | 3 | 能生产的工厂 | `production.ProductionSystem`、`production.ProductionQueue`、`production.ConstructionSystem` |

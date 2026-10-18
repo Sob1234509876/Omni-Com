@@ -128,6 +128,23 @@ return raw + (originElevation - raw) * blend;
 - `grassPath`：若声明的草地不可通行，退回 `fallbackTerrain()`（保证出生地能站人）；
 - `rockPath`：为 `null`、未定义、或声明的岩石**可通行**时，一律视为"没有岩石"——高地保持可通行，而不是用 void 把地图糊成墙。
 
+### 2.3 `NoiseTerrainGenerator`：带显式生物群系表的独立噪声世界
+
+`NoiseTerrainGenerator` 是另一份独立的 `ChunkGenerator` 实现，和 `NoiseChunkGenerator` 遵守同一契约但不共享状态。它把六种地形放进 `BiomeTable`，所以生成器自身不读 `ContentRegistry`：
+
+```java
+new NoiseTerrainGenerator(long seed);                                    // BiomeTable.scenario()
+new NoiseTerrainGenerator(long seed, BiomeTable table);                  // 16x16
+new NoiseTerrainGenerator(long seed, BiomeTable table, int chunkSize);   // 自定义区块边长
+BiomeTable table = BiomeTable.of(content);  // oc:water / oc:sand / oc:grass / oc:forest / oc:hill / oc:rock
+```
+
+两层噪声：高程（`BASE_CELL_TILES = 32`，3 个八度，`LACUNARITY = 2`，`GAIN = 0.5`）和湿度（`MOISTURE_CELL_TILES = 24`，同样 3 个八度，但用另一个 salt），格点由 64 位整数 hash 加 SplitMix64 终混得到，再用 smoothstep 做双线性插值。阈值是命名常量：`WATER_LEVEL = 0.32f`、`SAND_LEVEL = 0.36f`、`HILL_LEVEL = 0.60f`、`ROCK_LEVEL = 0.78f`、`FOREST_MOISTURE = 0.55f`；分类顺序是水 → 沙 → 岩石 → 丘陵 → 湿则森林、干则草地。
+
+`noise(int, int)` 与 `elevation(int, int)` 返回 `[0, 1]` 高程，`moisture(int, int)` 返回 `[0, 1]` 湿度，`terrainFor(int, int)` 直接给出分类结果；`biomes()`、`seed()`、`chunkSize()` 是只读诊断。它**不做原点混合，也不保证出生地可建造**；需要那层保证的宿主继续用 `NoiseChunkGenerator`。除 `Chunk` 对象外，生成一块 16x16 区块只分配它内部的 `TerrainType[]`，逐格只有标量运算；生成的唯一输入是种子与绝对坐标，所以请求顺序不影响结果。
+
+自校验第 1b 节验证：同种子两次生成逐位相同、换种子在 `chunk(3,1)` 上不同、先产 `(3,1)` 再产 `(0,0)` 与反序结果一致、64x64 区域至少四种路径且含水与丘陵/岩石、所有路径都在目录中注册、区块边界两侧是同一个高程采样且地形与 `terrainFor` 一致，以及一个用它搭的世界能 tick 一次。
+
 ## 3. `ChunkStore`：持久化接缝
 
 ```java
@@ -299,6 +316,7 @@ engine.pathService().spentNodesLastTick();  // 上一 tick 给出的节点额度
 | `TerrainMap.loadedChunks/loadedBounds/loadedChunkCount/isChunkLoaded` | 内存区块视图 |
 | `Chunk.filled/terrainAt/setTerrain/fill/rawTiles/count` / `isDirty/markClean/markDirty` | 一块地形砖的读写与脏标记 |
 | `new FlatChunkGenerator(TerrainType[, int])` / `new NoiseChunkGenerator(seed, content[, settings[, chunkSize]])` | 单地形世界 / 默认噪声世界 |
+| `new NoiseTerrainGenerator(seed[, table[, chunkSize]])` / `BiomeTable.scenario/of` / `noise/elevation/moisture/terrainFor` | 显式生物群系表的独立噪声世界与逐格采样 |
 | `NoiseSettings.defaults([namespace])` / `withOrigin` / `withSeaThreshold` / `withPaths` | 生成参数与拷贝式修改 |
 | `NoiseChunkGenerator.terrainFor/isLand/elevation/moisture/originBlendAt/guaranteedLandRadius/landFraction/resolvedPaths` | 逐格诊断与出生地保证 |
 | `ChunkStore.load/save/exists` + `InMemoryChunkStore` | 持久化接缝（`save` 要负责 `markClean()`） |
@@ -337,6 +355,7 @@ engine.pathService().spentNodesLastTick();  // 上一 tick 给出的节点额度
 - [TerrainMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/TerrainMap.java)、[Chunk.java](../src/main/java/io/github/sob1234509876/oc/rts/map/Chunk.java)、[MapStreaming.java](../src/main/java/io/github/sob1234509876/oc/rts/map/MapStreaming.java)
 - [ChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkGenerator.java)、[FlatChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/FlatChunkGenerator.java)
 - [NoiseChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java)、[NoiseSettings.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseSettings.java)
+- [NoiseTerrainGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseTerrainGenerator.java)、[BiomeTable.java](../src/main/java/io/github/sob1234509876/oc/rts/map/BiomeTable.java)
 - [ChunkStore.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStore.java)、[InMemoryChunkStore.java](../src/main/java/io/github/sob1234509876/oc/rts/map/InMemoryChunkStore.java)
 - [ChunkedMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkedMap.java)、[ChunkStreamer.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)
 - [Path.java](../src/main/java/io/github/sob1234509876/oc/rts/map/Path.java)、[PathFinder.java](../src/main/java/io/github/sob1234509876/oc/rts/map/PathFinder.java)、[PathOptions.java](../src/main/java/io/github/sob1234509876/oc/rts/map/PathOptions.java)、[AStarPathFinder.java](../src/main/java/io/github/sob1234509876/oc/rts/map/AStarPathFinder.java)

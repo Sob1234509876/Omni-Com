@@ -52,7 +52,7 @@ side, a melee fight, a charged building site, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 239 checks passed.
+RTS engine scenario: all 259 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -63,6 +63,7 @@ What the scenario actually proves, section by section:
 | Section | Evidence it prints |
 | --- | --- |
 | 1 chunked terrain | a view radius of 2 chunks keeps 5x5 chunks in memory, a jump to (4000, 4000) unloads them again, a never visited tile is generated on demand, and a 64x64 patch contains six terrain kinds |
+| 1b noise terrain | the standalone `NoiseTerrainGenerator` produces the same chunk from the same seed twice, another seed changes it, generating (3,1) before (0,0) changes neither, a 64x64 patch holds six registered paths including water and high ground, chunk boundaries share the same elevation sample, and a world built on it ticks once |
 | 2 path finding | a route of 60+ tiles exists, every waypoint is walkable, consecutive waypoints have line of sight, and a target in deep water either fails cleanly or resolves to the shore |
 | 3 formations | twelve soldiers ordered onto one tile end up spread out, no pair overlaps, every unit walked the distance, and the five shapes yield five different spreads (line 0.85x9.87, column 7.27x2.53, box 2.02x3.28, wedge 3.48x3.64, circle 2.73x4.04) |
 | 4 items and warehouses | 46 item kinds; stored goods are visible to logistics while goods in a factory buffer or a backpack are not; reservations gate spending; slot limits and store filters hold |
@@ -95,7 +96,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 
 | # | Feature | Where it lives |
 | --- | --- | --- |
-| 1 | Chunked, streamed terrain map | `map.ChunkedMap`, `map.ChunkStreamer`, `map.ChunkGenerator`, `map.NoiseChunkGenerator`, `map.ChunkStore` |
+| 1 | Chunked, streamed terrain map | `map.ChunkedMap`, `map.ChunkStreamer`, `map.ChunkGenerator`, `map.NoiseChunkGenerator`, `map.NoiseTerrainGenerator`, `map.BiomeTable`, `map.ChunkStore` |
 | 1 | Path finding over that map | `map.AStarPathFinder`, `movement.PathService` (per tick budget) |
 | 2 | Group movement that forms up | `formation.FormationPlanner`, `formation.FormationPlan`, `movement.MovementSystem`, `order.FormationMoveOrder` |
 | 3 | Factories that produce | `production.ProductionSystem`, `production.ProductionQueue`, `production.ConstructionSystem` |

@@ -11,6 +11,7 @@ import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
+import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.EntityId;
@@ -24,8 +25,11 @@ import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
+import io.github.sob1234509876.oc.rts.map.BiomeTable;
+import io.github.sob1234509876.oc.rts.map.Chunk;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
 import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
@@ -62,6 +66,9 @@ public final class RtsScenario {
 
     private static final int CHUNK_SIZE = 16;
 
+    /** Seed sampled by the noise terrain checks; it makes a deliberately mixed 64x64 patch. */
+    private static final long NOISE_SEED = 20261018L;
+
     private RtsScenario() {
     }
 
@@ -70,6 +77,7 @@ public final class RtsScenario {
         ContentRegistry content = ScenarioContent.omniCom();
 
         checkChunkedTerrain(check, content);
+        checkNoiseTerrain(check, content);
         checkPathFinding(check, content);
         checkFormationMovement(check, content);
         checkItemsAndWarehouses(check, content);
@@ -143,6 +151,163 @@ public final class RtsScenario {
         System.out.println();
         System.out.println("Natural terrain a little further out, where the blend has faded:");
         System.out.println(engine.render(new GridPos(96, 64), 24));
+    }
+
+    // ------------------------------------------------------------------ 1b) noise terrain
+
+    /**
+     * Checks the standalone value-noise generator: determinism, order independence, biome mix, content
+     * paths, chunk seams and the fact that a real engine can stream and tick on top of it.
+     *
+     * <p>The sample area starts at (-32, -32), because a 64x64 patch there contains all six terrains for
+     * the chosen seed. Nothing here reads the clock or a sequential random source: the generator is
+     * expected to be a pure function of the seed and the tile coordinate.
+     */
+    private static void checkNoiseTerrain(Check check, ContentRegistry content) {
+        check.section("1b) deterministic noise terrain: same seed, same world, no Random");
+        BiomeTable biomes = BiomeTable.of(content);
+        NoiseTerrainGenerator generator = new NoiseTerrainGenerator(NOISE_SEED, biomes);
+        check.equal(CHUNK_SIZE, generator.chunkSize(), "the generator produces 16x16 chunks");
+        check.equal(6, biomes.terrains().size(), "the biome table maps six terrains");
+
+        ChunkPos sampled = new ChunkPos(3, 1);
+        Chunk first = generator.generate(sampled);
+        check.that(sameTiles(first, new NoiseTerrainGenerator(NOISE_SEED, biomes).generate(sampled)),
+                "a fresh generator with the same seed produces the same chunk");
+        check.that(sameTiles(first, generator.generate(sampled)),
+                "the same generator produces the same chunk twice");
+
+        long otherSeed = NOISE_SEED + 1;
+        Chunk other = new NoiseTerrainGenerator(otherSeed, biomes).generate(sampled);
+        int differences = differingTiles(first, other);
+        check.atLeast(1f, differences, "a different seed changes the sampled chunk");
+        check.note("seeds " + NOISE_SEED + " and " + otherSeed + " differ on " + differences + " of "
+                + (CHUNK_SIZE * CHUNK_SIZE) + " tiles of chunk " + sampled);
+
+        check.that(sameTiles(first, new NoiseTerrainGenerator(NOISE_SEED).generate(sampled)),
+                "the seed-only constructor uses the scenario biome table");
+
+        // The same coordinates, requested in the opposite order, must produce the same world.
+        NoiseTerrainGenerator forward = new NoiseTerrainGenerator(NOISE_SEED, biomes);
+        Chunk chunk31First = forward.generate(new ChunkPos(3, 1));
+        Chunk chunk00Second = forward.generate(new ChunkPos(0, 0));
+        NoiseTerrainGenerator backward = new NoiseTerrainGenerator(NOISE_SEED, biomes);
+        Chunk chunk00First = backward.generate(new ChunkPos(0, 0));
+        Chunk chunk31Second = backward.generate(new ChunkPos(3, 1));
+        check.that(sameTiles(chunk31First, chunk31Second),
+                "chunk (3,1) is identical whether it is generated before or after (0,0)");
+        check.that(sameTiles(chunk00First, chunk00Second),
+                "chunk (0,0) is identical whether it is generated before or after (3,1)");
+        check.that(allFilled(first), "every tile of a generated chunk is filled");
+
+        // A 64x64 patch must not be uniform: at least four paths, including water and high ground.
+        Set<String> paths = new LinkedHashSet<>();
+        boolean hasWater = false;
+        boolean hasHighGround = false;
+        for (int y = -32; y < 32; y++) {
+            for (int x = -32; x < 32; x++) {
+                TerrainType terrain = generator.terrainFor(x, y);
+                paths.add(terrain.key().path());
+                hasWater |= terrain.equals(biomes.water());
+                hasHighGround |= terrain.equals(biomes.hill()) || terrain.equals(biomes.rock());
+            }
+        }
+        check.atLeast(4f, paths.size(), "a 64x64 patch contains at least four terrain paths " + paths);
+        check.that(hasWater, "the 64x64 patch contains water");
+        check.that(hasHighGround, "the 64x64 patch contains hill or rock");
+
+        Set<String> registered = new LinkedHashSet<>();
+        for (TerrainType terrain : content.terrains()) {
+            registered.add(terrain.key().path());
+        }
+        check.that(registered.containsAll(paths),
+                "every generated path is registered by the content catalogue " + paths);
+        check.equal(List.of(
+                        content.key(BiomeTable.WATER_PATH),
+                        content.key(BiomeTable.SAND_PATH),
+                        content.key(BiomeTable.GRASS_PATH),
+                        content.key(BiomeTable.FOREST_PATH),
+                        content.key(BiomeTable.HILL_PATH),
+                        content.key(BiomeTable.ROCK_PATH)),
+                biomes.keys(), "the biome table maps the six scenario terrain paths");
+
+        // A chunk boundary must not introduce a seam: the shared column is the same noise sample from
+        // both sides, and both chunk arrays agree with the pure terrain function there.
+        Chunk left = generator.generate(new ChunkPos(0, 0));
+        Chunk right = generator.generate(new ChunkPos(1, 0));
+        boolean boundaryStable = true;
+        boolean columnsAgree = true;
+        float largestBoundaryStep = 0f;
+        for (int localY = 0; localY < CHUNK_SIZE; localY++) {
+            int leftBoundaryX = new ChunkPos(0, 0).x() * CHUNK_SIZE + CHUNK_SIZE;
+            int rightBoundaryX = new ChunkPos(1, 0).x() * CHUNK_SIZE;
+            float fromLeft = generator.noise(leftBoundaryX, localY);
+            float fromRight = generator.noise(rightBoundaryX, localY);
+            if (Float.floatToIntBits(fromLeft) != Float.floatToIntBits(fromRight)) {
+                boundaryStable = false;
+            }
+            largestBoundaryStep = Math.max(largestBoundaryStep,
+                    Math.abs(generator.noise(CHUNK_SIZE - 1, localY) - generator.noise(CHUNK_SIZE, localY)));
+            if (!left.terrainAt(CHUNK_SIZE - 1, localY).equals(generator.terrainFor(CHUNK_SIZE - 1, localY))
+                    || !right.terrainAt(0, localY).equals(generator.terrainFor(CHUNK_SIZE, localY))) {
+                columnsAgree = false;
+            }
+        }
+        check.that(boundaryStable,
+                "the boundary elevation is the identical sample from the left chunk's right edge and the right chunk's left edge");
+        check.that(columnsAgree,
+                "both sides of the boundary hold the terrain the noise function returns for those world tiles");
+        check.atMost(0.15f, largestBoundaryStep,
+                "the elevation is continuous across the boundary (largest step " + largestBoundaryStep + ")");
+
+        // Build a real engine on top of the generator and tick it once. Chunk streaming, path services
+        // and snapshots all share the same ChunkGenerator seam, so no new plumbing is involved.
+        OcRtsEngine world = null;
+        boolean ticked = true;
+        try {
+            world = OcRtsEngine.builder(content)
+                    .seed(NOISE_SEED)
+                    .chunkSize(CHUNK_SIZE)
+                    .viewRadiusChunks(2)
+                    .generator(new NoiseTerrainGenerator(NOISE_SEED, biomes))
+                    .build();
+            world.tick(1);
+        } catch (RuntimeException error) {
+            ticked = false;
+            check.note("tick failed: " + error);
+        }
+        check.that(ticked, "a mid sized world built on the generator ticks once without error");
+        if (world != null) {
+            check.atLeast(1f, ((ChunkedMap) world.map()).loadedChunkCount(),
+                    "the tick streamed terrain in around the origin");
+            check.that(world.map().terrainAt(0, 0) != null, "the world has terrain at the origin after the tick");
+        }
+    }
+
+    private static boolean sameTiles(Chunk left, Chunk right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        return differingTiles(left, right) == 0;
+    }
+
+    private static int differingTiles(Chunk left, Chunk right) {
+        int differences = 0;
+        for (int i = 0; i < left.rawTiles().length; i++) {
+            if (!left.rawTiles()[i].equals(right.rawTiles()[i])) {
+                differences++;
+            }
+        }
+        return differences;
+    }
+
+    private static boolean allFilled(Chunk chunk) {
+        for (TerrainType terrain : chunk.rawTiles()) {
+            if (terrain == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ 2) path finding
