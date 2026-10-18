@@ -26,7 +26,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 239 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 633 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 63、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 82、`WorldTickHookCheck` 23、`PlayerCommandCheck` 57、`JoinBaseCheck` 40 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 708 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 82、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 34、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 286 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
@@ -92,7 +92,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 在 `WorldHost` 里加一张账号名到玩家 id 的映射，归世界线程所有。`joinPlayer` 对已知名字返回已有玩家，只有新名字才分配最小未用 id。重连时保留基地、实体和资源不动；映射随世界一起清理。如果某个名字映射到的玩家被未来的重置删除，必须显式拒绝，而不是悄悄重新分配。
 
-**验收标准。** `LOGIN alice` → `OK player 3`；断开；`LOGIN alice` → 仍然是 `OK player 3`，同一座仓库、同一名工程师、金币/木材与断开前一致，也没有第二座基地；`LOGIN bob` → `OK player 4`；第七个不同账号仍然得到 `ERR world full`。`JoinBaseCheck`（40 条）保持全绿，并新增一条重连复用断言。
+**验收标准。** `LOGIN alice` → `OK player 3`；断开；`LOGIN alice` → 仍然是 `OK player 3`，同一座仓库、同一名工程师、金币/木材与断开前一致，也没有第二座基地；`LOGIN bob` → `OK player 4`；第七个不同账号仍然得到 `ERR world full`。`JoinBaseCheck`（60 条）保持全绿，并新增重连复用断言。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[CommandDispatcher.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/net/CommandDispatcher.java)、[JoinBaseCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/JoinBaseCheck.java)。
 
@@ -106,7 +106,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 在 socket 打开期间每 20 秒发一次客户端 `PING` 并要求 `PONG`，走与其他命令相同的按序 `send` 队列，关闭时清掉定时器。给 `OcGameServer` 加 `--ws-idle N` 选项，把它传进 `WebSocketConfig`，默认五分钟（`300_000` 毫秒），并校验 `N > 0`。可选地再让服务器发 ping 帧作为第二道保险；客户端已经能容忍意外的单行回答。
 
-**验收标准。** 默认配置下页面空闲六分钟仍保持连接，HUD 继续更新；日志里大约每 20 秒出现一次 `PING`/`PONG`；`--ws-idle 60` 能复现旧的 60 秒关闭，证明确实接上了这个开关；`WebSocketCheck`（63 条）保持全绿，并新增心跳与开关检查。
+**验收标准。** 默认配置下页面空闲六分钟仍保持连接，HUD 继续更新；日志里大约每 20 秒出现一次 `PING`/`PONG`；`--ws-idle 60` 能复现旧的 60 秒关闭，证明确实接上了这个开关；`WebSocketCheck`（88 条）保持全绿，并新增心跳与开关检查。
 
 **涉及文件。** [WebSocketConfig.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/WebSocketConfig.java)、[OcGameServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/OcGameServer.java)、[HttpWebServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/HttpWebServer.java)、[main.ts](web-client/src/main.ts)、[socket.ts](web-client/src/socket.ts)、[WebSocketCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WebSocketCheck.java)。
 
@@ -134,7 +134,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 给 `/world/snapshot` 加 `players` 数组，例如 `[{"id":3,"name":"alice","resources":{"gold":300,"wood":60}}]`，从每个玩家的 `logistics().available()` bundle 构建；只发当前内容目录定义过的物品路径，让路由保持与内容无关。在 `view.ts` 解析并校验，放到 `ServerWorldView` 上，并为 `myPlayerId` 渲染一行 HUD（`金币 300 · 木材 60`）。成功的 `BUILD` / `TRAIN` 之后以及每次快照时刷新。扩展 `WorldHostCheck` 以及协议文档和它的中文孪生文件的快照一节。
 
-**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（82 条）断言 `players` 的形状与数值；633 条保持全绿。
+**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（82 条）断言 `players` 的形状与数值；708 条保持全绿。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[main.ts](web-client/src/main.ts)、[index.html](web-client/index.html)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)。
 
@@ -185,7 +185,7 @@ cd web-client; pnpm install; pnpm dev
 ## 5. 已知欠账
 
 - **没有真正的浏览器端到端运行。** `pnpm check:render` 只跑纯数学；仓库里没有任何无头/浏览器自动化去驱动真实页面、画布或 WebSocket。
-- **游戏命令只在 dispatcher 层证明过，没有走实时 socket。** `PlayerCommandCheck`（57 条）与 `JoinBaseCheck`（40 条）直接驱动 `WorldHost` / `CommandDispatcher`；没有浏览器到服务器的 socket 测试覆盖 `ORDER`、`BUILD` 或 `TRAIN`。
+- **游戏命令只在 dispatcher 层证明过，没有走实时 socket。** `PlayerCommandCheck`（87 条）与 `JoinBaseCheck`（60 条）直接驱动 `WorldHost` / `CommandDispatcher`；没有浏览器到服务器的 socket 测试覆盖 `ORDER`、`BUILD` 或 `TRAIN`。
 - **盟友玩家不会互相开火，但只断言了不同玩家的情况。** `CombatSystem.isEnemy` 使用 `Player.isAlliedWith`，但没有检查创建两个 `team` 相同的玩家并证明他们不互相瞄准。
 - **没有几千单位规模的性能测试。** 空间索引、寻路预算与 tick 管线只在场景规模上跑过，没有压力规模。
 - **世界地形单一。** 服务器只用一种平地；引擎的噪声生成器在那里没有被使用。
@@ -209,7 +209,7 @@ cd web-client; pnpm install; pnpm dev
 - **模拟内部保持确定性。** 模拟里不用 `java.util.Random`，不读墙钟（`System.currentTimeMillis`、`System.nanoTime`），不起线程。用 `DeterministicRandom`、固定 tick，并显式按 id/坐标打破平局。服务器的节拍线程是唯一允许用时钟驱动模拟的地方；传输与存储代码可以为时间戳读时钟，但模拟本身不行。
 - **服务器里只用 daemon 线程。** 插件线程必须是 daemon，并在 `onDisable` 里停掉；非 daemon 线程会让 JVM 在关闭后继续活着。
 - **一次提交只做一个已验证阶段。** 提交前跑六个 Java 检查和两个客户端检查；不要把重构和功能混在同一次提交里。
-- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如 `633`）；README、`help/` 与协议都可能提到它。
+- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如 `708`）；README、`help/` 与协议都可能提到它。
 - **文档是双语的。** 英文文件里改动的每一句话，都必须同步改它的 `_zh_CN.md` 孪生。`help/` 章节按设计是中文文档集；`protocol/oc-protocol.md` 默认英文，`protocol/oc-protocol_zh_CN.md` 是它的孪生，所以两者必须一起动。
 - **运行目录不是源码。** `plugins/` 是操作员拖放区，`data/` 是服务器状态；`plugins/*.jar` 与 `data/` 都被 gitignore。绝不提交插件 jar、密钥或账号文件。
 

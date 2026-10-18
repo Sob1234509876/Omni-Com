@@ -35,6 +35,9 @@ import java.util.Objects;
  *                         before this list is consulted, and an empty list allows any origin as a
  *                         development default only, because a page on any site could then drive a server
  *                         that listens on a developer's machine
+ * @param pingIntervalMillis how often the endpoint sends a server initiated WebSocket ping frame to every
+ *                         open connection, in milliseconds; a peer that answers with a pong produces the
+ *                         inbound traffic that keeps its read timeout from expiring
  */
 public record WebSocketConfig(
         int port,
@@ -44,7 +47,8 @@ public record WebSocketConfig(
         int maxFrameBytes,
         int maxMessageBytes,
         int idleTimeoutMillis,
-        List<String> allowedOrigins) {
+        List<String> allowedOrigins,
+        int pingIntervalMillis) {
 
     /** Default port for the browser facing endpoint. */
     public static final int DEFAULT_PORT = 25567;
@@ -61,8 +65,25 @@ public record WebSocketConfig(
     /** One MiB: a fragmented message may be larger than a single frame, but not unbounded. */
     public static final int DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024;
 
-    /** One minute, matching the TCP channel's read timeout as an idle timeout. */
-    public static final int DEFAULT_IDLE_TIMEOUT_MILLIS = 60_000;
+    /**
+     * Five minutes: long enough that an open page is not disconnected just for being idle, while still
+     * bounded so a vanished browser eventually releases its connection thread.
+     *
+     * <p>This is the default {@code --ws-idle 300}. The endpoint additionally sends a ping frame every
+     * {@value #DEFAULT_PING_INTERVAL_MILLIS} ms, so a live browser - which answers pings automatically -
+     * produces inbound pongs well inside this window and is not closed by the read timeout.
+     */
+    public static final int DEFAULT_IDLE_TIMEOUT_MILLIS = 300_000;
+
+    /**
+     * Default interval of the server initiated WebSocket ping frames: 25 seconds.
+     *
+     * <p>It is comfortably shorter than {@link #DEFAULT_IDLE_TIMEOUT_MILLIS}, so a browser that is only
+     * being kept alive by the server's own pings still sends a pong between two read timeouts. Checks lower
+     * it through {@link #withPingIntervalMillis(int)} so the heartbeat is observable without a 25 second
+     * wait; the command line does not expose it because the default is the tuning that matters.
+     */
+    public static final int DEFAULT_PING_INTERVAL_MILLIS = 25_000;
 
     /**
      * The origins a browser client normally has during development.
@@ -118,6 +139,10 @@ public record WebSocketConfig(
             throw new IllegalArgumentException("idleTimeoutMillis must be positive, was " + idleTimeoutMillis
                     + " (0 would block an idle connection thread forever)");
         }
+        if (pingIntervalMillis < 1) {
+            throw new IllegalArgumentException("pingIntervalMillis must be positive, was "
+                    + pingIntervalMillis + " (0 would schedule a ping storm)");
+        }
         Objects.requireNonNull(allowedOrigins, "allowedOrigins");
         for (String origin : allowedOrigins) {
             if (origin == null || origin.isBlank()) {
@@ -126,6 +151,27 @@ public record WebSocketConfig(
             }
         }
         allowedOrigins = List.copyOf(allowedOrigins);
+    }
+
+    /**
+     * Creates a configuration with the default server ping interval.
+     *
+     * <p>This overload is the historical eight argument shape; it keeps every caller written before server
+     * initiated pings existed compiling unchanged and gives it {@value #DEFAULT_PING_INTERVAL_MILLIS} ms.
+     *
+     * @param port              HTTP port to bind; {@code 0} asks for a free port
+     * @param bindAddress       literal address or host name to bind
+     * @param path              the exact request path that upgrades to a WebSocket
+     * @param staticRoot        directory the static file route serves
+     * @param maxFrameBytes     largest accepted WebSocket frame payload, in bytes
+     * @param maxMessageBytes   largest accepted reassembled WebSocket message, in bytes
+     * @param idleTimeoutMillis socket read timeout, which doubles as the idle timeout, in milliseconds
+     * @param allowedOrigins    glob patterns a foreign {@code Origin} must match
+     */
+    public WebSocketConfig(int port, String bindAddress, String path, String staticRoot,
+            int maxFrameBytes, int maxMessageBytes, int idleTimeoutMillis, List<String> allowedOrigins) {
+        this(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes, idleTimeoutMillis,
+                allowedOrigins, DEFAULT_PING_INTERVAL_MILLIS);
     }
 
     /**
@@ -141,7 +187,7 @@ public record WebSocketConfig(
     public static WebSocketConfig defaults() {
         return new WebSocketConfig(DEFAULT_PORT, "0.0.0.0", DEFAULT_PATH, DEFAULT_STATIC_ROOT,
                 DEFAULT_MAX_FRAME_BYTES, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_IDLE_TIMEOUT_MILLIS,
-                DEFAULT_ORIGINS);
+                DEFAULT_ORIGINS, DEFAULT_PING_INTERVAL_MILLIS);
     }
 
     /**
@@ -152,7 +198,7 @@ public record WebSocketConfig(
      */
     public WebSocketConfig withPort(int port) {
         return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
-                idleTimeoutMillis, allowedOrigins);
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
     }
 
     /**
@@ -163,7 +209,7 @@ public record WebSocketConfig(
      */
     public WebSocketConfig withBindAddress(String bindAddress) {
         return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
-                idleTimeoutMillis, allowedOrigins);
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
     }
 
     /**
@@ -174,7 +220,7 @@ public record WebSocketConfig(
      */
     public WebSocketConfig withStaticRoot(String staticRoot) {
         return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
-                idleTimeoutMillis, allowedOrigins);
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
     }
 
     /**
@@ -188,7 +234,35 @@ public record WebSocketConfig(
      */
     public WebSocketConfig withMaxFrameBytes(int maxFrameBytes) {
         return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
-                idleTimeoutMillis, allowedOrigins);
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
+    }
+
+    /**
+     * Returns a copy of this configuration with a different idle timeout.
+     *
+     * <p>{@code OcGameServer} uses this to apply {@code --ws-idle <seconds>}; a check uses it to prove the
+     * value really reaches the socket read timeout without waiting five minutes.
+     *
+     * @param idleTimeoutMillis the new read timeout, in milliseconds; must be positive
+     * @return a new configuration with {@code idleTimeoutMillis} replaced
+     */
+    public WebSocketConfig withIdleTimeoutMillis(int idleTimeoutMillis) {
+        return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
+    }
+
+    /**
+     * Returns a copy of this configuration with a different server ping interval.
+     *
+     * <p>Checks lower it so the heartbeat arrives in a fraction of a second; production uses
+     * {@value #DEFAULT_PING_INTERVAL_MILLIS} ms.
+     *
+     * @param pingIntervalMillis the new ping interval, in milliseconds; must be positive
+     * @return a new configuration with {@code pingIntervalMillis} replaced
+     */
+    public WebSocketConfig withPingIntervalMillis(int pingIntervalMillis) {
+        return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
     }
 
     /**
@@ -199,7 +273,7 @@ public record WebSocketConfig(
      */
     public WebSocketConfig withAllowedOrigins(List<String> allowedOrigins) {
         return new WebSocketConfig(port, bindAddress, path, staticRoot, maxFrameBytes, maxMessageBytes,
-                idleTimeoutMillis, allowedOrigins);
+                idleTimeoutMillis, allowedOrigins, pingIntervalMillis);
     }
 
     /**
@@ -210,7 +284,8 @@ public record WebSocketConfig(
     public String describe() {
         return bindAddress + ":" + port + " path=" + path + " staticRoot=" + staticRoot
                 + " maxFrame=" + maxFrameBytes + "B maxMessage=" + maxMessageBytes
-                + "B idleTimeout=" + idleTimeoutMillis + "ms origins="
+                + "B idleTimeout=" + idleTimeoutMillis + "ms pingInterval=" + pingIntervalMillis
+                + "ms origins="
                 + (allowedOrigins.isEmpty() ? "any (development only)" : allowedOrigins);
     }
 }

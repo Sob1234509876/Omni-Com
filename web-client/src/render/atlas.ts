@@ -26,6 +26,13 @@ export interface SpriteRect {
   readonly height: number;
 }
 
+/** One terrain frame plus the optional human readable label from the manifest. */
+export interface TileFrame {
+  readonly rect: SpriteRect;
+  /** Display name written in the manifest; empty when the entry has none. */
+  readonly name: string;
+}
+
 export interface EntitySprite {
   /** Animation frames, laid out however the artist likes. */
   readonly frames: readonly SpriteRect[];
@@ -35,6 +42,8 @@ export interface EntitySprite {
   readonly anchor: readonly [number, number];
   /** Extra multiplier on top of the camera zoom; defaults to 1. */
   readonly scale: number;
+  /** Display name written in the manifest; empty when the entry has none. */
+  readonly name: string;
 }
 
 /** Everything parsed out of one manifest entry, before its image is attached. */
@@ -47,7 +56,7 @@ export interface AtlasData {
   readonly imageName: string;
   /** Recommended source tile size in pixels (metadata; tiles are stretched to the camera). */
   readonly tilePixels: number;
-  readonly tiles: ReadonlyMap<string, SpriteRect>;
+  readonly tiles: ReadonlyMap<string, TileFrame>;
   readonly entities: ReadonlyMap<string, EntitySprite>;
 }
 
@@ -59,6 +68,8 @@ export interface AtlasSource extends AtlasData {
 /** A tile frame together with the plugin image it must be drawn from. */
 export interface AtlasTile {
   readonly rect: SpriteRect;
+  /** Display name from the winning entry; empty when that entry had none. */
+  readonly name: string;
   readonly source: AtlasSource;
 }
 
@@ -68,10 +79,20 @@ export interface AtlasEntity {
   readonly source: AtlasSource;
 }
 
+/** Human readable labels for every tile path and entity kind an atlas defines. */
+export interface AtlasNames {
+  /** Tile path to its display name; a nameless entry maps to its own path. */
+  readonly tiles: ReadonlyMap<string, string>;
+  /** Entity kind to its display name; a nameless entry maps to its own kind. */
+  readonly entities: ReadonlyMap<string, string>;
+}
+
 /** The composite of every plugin atlas: last wins per tile path and entity kind. */
 export interface Atlas {
   readonly tiles: ReadonlyMap<string, AtlasTile>;
   readonly entities: ReadonlyMap<string, AtlasEntity>;
+  /** Display labels, already resolved against the winning entries, with the id as fallback. */
+  readonly names: AtlasNames;
   /** The entries that contributed, in the order the server sent them. */
   readonly sources: readonly AtlasSource[];
 }
@@ -155,6 +176,43 @@ function readRect(
   return { x, y, width, height };
 }
 
+/** Reads an optional display name; a missing, blank or non-string value means "no name". */
+function readName(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Reads one tile entry. Both schemas are accepted: the legacy `[x, y, w, h]` array, and the named
+ * `{"rect": [x, y, w, h], "name": "..."}` object. The label is optional in either form.
+ */
+function readTileFrame(
+  value: unknown,
+  imageWidth: number,
+  imageHeight: number,
+  label: string,
+  warnings: string[],
+): TileFrame | null {
+  if (Array.isArray(value)) {
+    const rect = readRect(value, imageWidth, imageHeight, label, warnings);
+    return rect === null ? null : { rect, name: "" };
+  }
+  if (!isRecord(value)) {
+    warnings.push(`${label}：地块必须是 [x, y, w, h] 数组或 { rect, name } 对象`);
+    return null;
+  }
+  const rect = readRect(
+    value["rect"],
+    imageWidth,
+    imageHeight,
+    `${label}.rect`,
+    warnings,
+  );
+  if (rect === null) {
+    return null;
+  }
+  return { rect, name: readName(value["name"]) };
+}
+
 /**
  * Validates one parsed manifest entry against the size of its image.
  *
@@ -196,18 +254,18 @@ export function parseAtlas(
     warnings.push(`tilePixels 无效，按 ${DEFAULT_TILE_PIXELS} 处理`);
   }
 
-  const tiles = new Map<string, SpriteRect>();
+  const tiles = new Map<string, TileFrame>();
   const tilesValue = source["tiles"];
   if (isRecord(tilesValue)) {
-    for (const [rawName, rawRect] of Object.entries(tilesValue)) {
+    for (const [rawName, rawEntry] of Object.entries(tilesValue)) {
       const name = rawName.trim();
       if (name === "") {
         warnings.push("tiles 里有空名字，已忽略");
         continue;
       }
-      const rect = readRect(rawRect, imageWidth, imageHeight, `tiles.${name}`, warnings);
-      if (rect !== null) {
-        tiles.set(name, rect);
+      const frame = readTileFrame(rawEntry, imageWidth, imageHeight, `tiles.${name}`, warnings);
+      if (frame !== null) {
+        tiles.set(name, frame);
       }
     }
   } else if (tilesValue === undefined) {
@@ -219,37 +277,37 @@ export function parseAtlas(
   const entities = new Map<string, EntitySprite>();
   const entitiesValue = source["entities"];
   if (isRecord(entitiesValue)) {
-    for (const [rawName, rawEntry] of Object.entries(entitiesValue)) {
-      const name = rawName.trim();
-      if (name === "") {
+    for (const [rawKind, rawEntry] of Object.entries(entitiesValue)) {
+      const kind = rawKind.trim();
+      if (kind === "") {
         warnings.push("entities 里有空名字，已忽略");
         continue;
       }
       if (!isRecord(rawEntry)) {
-        warnings.push(`entities.${name} 必须是对象`);
+        warnings.push(`entities.${kind} 必须是对象`);
         continue;
       }
       const framesValue = rawEntry["frames"];
       if (!Array.isArray(framesValue)) {
-        warnings.push(`entities.${name}.frames 必须是数组`);
+        warnings.push(`entities.${kind}.frames 必须是数组`);
         continue;
       }
       const frames: SpriteRect[] = [];
       for (const rawFrame of framesValue) {
-        const frame = readRect(rawFrame, imageWidth, imageHeight, `entities.${name}.frames`, warnings);
+        const frame = readRect(rawFrame, imageWidth, imageHeight, `entities.${kind}.frames`, warnings);
         if (frame !== null) {
           frames.push(frame);
         }
       }
       if (frames.length === 0) {
-        warnings.push(`entities.${name} 没有可用的动画帧，已忽略`);
+        warnings.push(`entities.${kind} 没有可用的动画帧，已忽略`);
         continue;
       }
 
       const fpsValue = readNumber(rawEntry["fps"]);
       const fps = fpsValue !== null && fpsValue > 0 ? fpsValue : DEFAULT_FPS;
       if (fpsValue !== null && fpsValue <= 0) {
-        warnings.push(`entities.${name}.fps 必须大于 0，按 ${DEFAULT_FPS} 处理`);
+        warnings.push(`entities.${kind}.fps 必须大于 0，按 ${DEFAULT_FPS} 处理`);
       }
 
       let anchor: readonly [number, number] = DEFAULT_ANCHOR;
@@ -261,19 +319,19 @@ export function parseAtlas(
         if (anchorX !== null && anchorY !== null) {
           anchor = [anchorX, anchorY];
         } else {
-          warnings.push(`entities.${name}.anchor 必须是两个数字，按 [0.5, 0.75] 处理`);
+          warnings.push(`entities.${kind}.anchor 必须是两个数字，按 [0.5, 0.75] 处理`);
         }
       } else if (anchorValue !== undefined) {
-        warnings.push(`entities.${name}.anchor 必须是两个数字，按 [0.5, 0.75] 处理`);
+        warnings.push(`entities.${kind}.anchor 必须是两个数字，按 [0.5, 0.75] 处理`);
       }
 
       const scaleValue = readNumber(rawEntry["scale"]);
       const scale = scaleValue !== null && scaleValue > 0 ? scaleValue : DEFAULT_SCALE;
       if (scaleValue !== null && scaleValue <= 0) {
-        warnings.push(`entities.${name}.scale 必须大于 0，按 1 处理`);
+        warnings.push(`entities.${kind}.scale 必须大于 0，按 1 处理`);
       }
 
-      entities.set(name, { frames, fps, anchor, scale });
+      entities.set(kind, { frames, fps, anchor, scale, name: readName(rawEntry["name"]) });
     }
   } else if (entitiesValue !== undefined) {
     warnings.push("entities 必须是对象，已忽略整个 entities 字段");
@@ -367,9 +425,9 @@ export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
   const tiles = new Map<string, AtlasTile>();
   for (const [name, layer] of layers.tiles) {
     const source = sources[layer];
-    const rect = source?.tiles.get(name);
-    if (source !== undefined && rect !== undefined) {
-      tiles.set(name, { rect, source });
+    const frame = source?.tiles.get(name);
+    if (source !== undefined && frame !== undefined) {
+      tiles.set(name, { rect: frame.rect, name: frame.name, source });
     }
   }
   const entities = new Map<string, AtlasEntity>();
@@ -383,7 +441,48 @@ export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
   if (tiles.size === 0 && entities.size === 0) {
     return null;
   }
-  return { tiles, entities, sources };
+  const tileNames = new Map<string, string>();
+  for (const [name, tile] of tiles) {
+    tileNames.set(name, labelOrId(tile.name, name));
+  }
+  const entityNames = new Map<string, string>();
+  for (const [name, entity] of entities) {
+    entityNames.set(name, labelOrId(entity.sprite.name, name));
+  }
+  return { tiles, entities, names: { tiles: tileNames, entities: entityNames }, sources };
+}
+
+/** The display label for a name, or the id itself when the entry carries no usable name. */
+function labelOrId(name: string, id: string): string {
+  const trimmed = name.trim();
+  return trimmed === "" ? id : trimmed;
+}
+
+/** Strips a namespace such as `oc:` from a content path, matching the renderer's atlas lookup. */
+function bareKind(kind: string): string {
+  const separator = kind.lastIndexOf(":");
+  return separator >= 0 ? kind.slice(separator + 1) : kind;
+}
+
+/**
+ * The display label for one entity kind, with the raw content path as fallback.
+ *
+ * A kind written with a namespace (`oc:unit.melee.t1`) falls back to its bare path, matching how the
+ * renderer resolves atlas entries. `null` means no atlas is loaded, so the raw id is the only label.
+ */
+export function entityDisplayName(atlas: Atlas | null, kind: string): string {
+  if (atlas === null) {
+    return kind;
+  }
+  return atlas.names.entities.get(kind) ?? atlas.names.entities.get(bareKind(kind)) ?? kind;
+}
+
+/** The display label for one terrain path, with the raw id as fallback. */
+export function tileDisplayName(atlas: Atlas | null, terrain: string): string {
+  if (atlas === null) {
+    return terrain;
+  }
+  return atlas.names.tiles.get(terrain) ?? atlas.names.tiles.get(bareKind(terrain)) ?? terrain;
 }
 
 /**

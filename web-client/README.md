@@ -65,6 +65,12 @@ Creating an account takes only two steps: click `REGISTER` once (the username is
 OC/1 uses text frames only. If the server sends a binary frame, the page just logs one line, "the server sent a binary frame, ignored (the protocol uses text frames only)",
 **without closing the connection**, and it does not drop commands still waiting for a reply; this matches the server's behavior of replying `ERR binary frames are not commands` and keeping the connection.
 
+**Heartbeat.** While a connection is usable the page sends `PING` every 20 seconds (`HEARTBEAT_MS` in
+[`src/heartbeat.ts`](src/heartbeat.ts)) through the same in-order queue as every other command; the server answers `PONG`, and both
+lines appear in the log. The timer starts only after the `HELLO 1` / `OK OC/1` handshake succeeds, never queues a second `PING`
+while one is waiting, and is cleared on close and before a reconnect. This keeps an idle page alive against the WebSocket idle
+timeout (`/world/snapshot` is plain HTTP and does not refresh the socket); the `PING` button remains a manual one-off.
+
 ## The game view
 
 The left side of the page is the whole Canvas 2D world view, and the right side (below it on narrow screens) is the original protocol panel; the panel's
@@ -87,8 +93,8 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, kind, and ground coordinates of the selected entity; `Selected: none` when nothing is selected;
-- the kind and id of the selected building when it belongs to the player (`建筑：building.armory.t1 #42`).
+- the id, display name and ground coordinates of the selected entity (`选中：e12 普通 (12.5, 8.5)`); when the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 (…)`), and `选中：无` means nothing is selected;
+- the display name and id of the selected building when it belongs to the player (`建筑：兵工厂 1 级 #42`), again falling back to the raw kind (`建筑：building.armory.t1 #42`).
 
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible, `main.ts` polls
 `GET /world/snapshot` every 500 ms (skipping a request while the previous one is still in flight) and replaces the rendered
@@ -118,15 +124,21 @@ They take effect after the first click on the view; keyboard events are bound on
 The **Gameplay** panel below the protocol commands drives the rest of the grammar. It only enables a command when the selection belongs to the player id in the HUD (`entity.playerId === myPlayerId`), so a click on someone else's unit can never send an order by accident:
 
 - `STOP` sends `ORDER STOP <selected>` for the selected own unit.
-- With an own building selected, the panel shows one `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` … `unit.melee.t5`, `unit.engineer`). A tier the current armory cannot produce is still offered and the server's `ERR ...` is shown in red.
-- With the own engineer selected, the panel shows one `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`, `building.mine.t1`). Pressing one arms placement: the status line shows the mode, the tile under the cursor is highlighted, and the **next left click on the canvas** sends the command; the mode then clears. `Esc` cancels without deselecting the engineer.
+- With an own building selected, the panel shows one `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` … `unit.melee.t5`, `unit.engineer`). The button text is the manifest display name when one is available (`普通`, `强化`, `精英`, `将领`, `战王`, `工程师` for the classic units), with the raw path in the tooltip; without a name it falls back to the raw path. A tier the current armory cannot produce is still offered and the server's `ERR ...` is shown in red.
+- With the own engineer selected, the panel shows one `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`, `building.mine.t1`). Its text is the manifest display name (`兵工厂 1 级`, `矿井 普通`) or the raw path when there is none. Pressing one arms placement: the status line shows the mode, the tile under the cursor is highlighted, and the **next left click on the canvas** sends the command; the mode then clears. `Esc` cancels without deselecting the engineer.
 
-`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer is written to the log; an `ERR ...` answer is also shown verbatim in the red status line, while a success gets a short confirmation. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
+`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer is written to the log; an `ERR ...` answer is also shown verbatim in the red status line, while a success gets a short confirmation that uses the display name and keeps the raw id in parentheses, for example `已下训练 普通 (unit.melee.t1)` or `已在 20,40 下达 BUILD 兵工厂 1 级 (building.armory.t1)`. The wire command itself is unchanged and still carries `unit.melee.t1` / `building.armory.t1`. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
 
 **Textures are provided by plugins**: each plugin packs `assets/manifest.json` and images into its own jar, the server merges them into
 `GET /plugin-assets/manifest.json`, and the client reads that on startup and loads each image by its `atlasUrl`. When several plugins provide textures at once they are merged in array order,
-**the later one overriding the earlier one** (same-named terrain path or entity kind). The local `public/textures/atlas.json` is no longer a source; this directory keeps only the
+**the later one overriding the earlier one** (same-named terrain path or entity kind, display name included). The local `public/textures/atlas.json` is no longer a source; this directory keeps only the
 [contract document](public/textures/README.md) (manifest format, examples, foot anchor, one row of animation per entity).
+
+The manifest may also carry **display names**: `entities.<kind>.name` beside the animation fields, and a name for a terrain tile either
+as the named object form `tiles.<path>: {"rect": [x, y, w, h], "name": "草地"}` or, in the legacy array form, not at all. The client
+merges the names with the frames (last plugin wins) and the HUD, the TRAIN/BUILD button labels and the success log lines use them;
+a missing or blank name always falls back to the raw content path, so a manifest without names behaves exactly as before. Names are
+display-only: the protocol commands keep sending the content path.
 When the manifest is missing, the request fails, an image fails to load, or the response is `[]`, the client automatically falls back to procedural drawing: every terrain type gets its own color and detail,
 units are circles, buildings are blocks with a roof line, and at higher zoom there is a 1-pixel grid.
 
@@ -134,8 +146,9 @@ units are circles, buildings are blocks with a roof line, and at higher zoom the
 > the view switches to that real engine world (64×64, terrain and entities from the server content catalogue); the render
 > layer does not change because both sources use the same `WorldView` shape.
 
-The rendering math (camera clamping, cursor-centered zoom, placeholder map determinism, server snapshot conversion and
-out-of-bounds rejection, rejection of out-of-bounds atlas frames, plugin atlas merging and fallback) can be checked offline:
+The rendering math and the pure client rules (camera clamping, cursor-centered zoom, placeholder map determinism, server snapshot
+conversion and out-of-bounds rejection, rejection of out-of-bounds atlas frames, manifest display names and raw-id fallback, the
+on-disk classic manifest, plugin atlas merging and fallback, and the heartbeat constant/start rule) can be checked offline:
 
 ```shell
 pnpm check:render
@@ -226,15 +239,16 @@ plugin directory, or an account's password/permissions.
 | `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
 | `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers |
-| `src/main.ts` | DOM wiring: connect, handshake, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
+| `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, and clamping |
-| `src/render/atlas.ts` | plugin manifest parsing, composite atlas (last wins), and image loading; returns `null` on failure |
+| `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, and selection ring when there is no atlas |
 | `src/render/view.ts` | `WorldView` / `EntityView` shapes, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, plugin atlas merging, and gameplay command builders |
+| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, the heartbeat rule, and gameplay command builders |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

@@ -16,8 +16,10 @@
     "types": []
   },
   "include": [
+    "node-shims.d.ts",
     "check-render-math.ts",
     "../src/commands.ts",
+    "../src/heartbeat.ts",
     "../src/render/camera.ts",
     "../src/render/view.ts",
     "../src/render/atlas.ts",

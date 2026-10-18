@@ -72,14 +72,16 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
   "image": "atlas.png",          // 本插件 assets/ 里的图片文件名
   "tilePixels": 32,              // 推荐的美术格尺寸，仅作元数据
   "tiles": {
-    "<TerrainType 名称>": [x, y, w, h]
+    "<TerrainType 名称>": [x, y, w, h]  // 旧形式，没有显示名
+    // 命名形式： "<TerrainType 名称>": { "rect": [x, y, w, h], "name": "草地" }
   },
   "entities": {
     "<实体 kind>": {
       "frames": [[x, y, w, h], ...],  // 至少一帧，按播放顺序
       "fps": 4,                       // 可选，默认 4
       "anchor": [0.5, 0.75],          // 可选，默认 [0.5, 0.75]
-      "scale": 1                      // 可选，默认 1，叠在相机缩放之上
+      "scale": 1,                     // 可选，默认 1，叠在相机缩放之上
+      "name": "普通"                  // 可选显示名
     }
   }
 }
@@ -92,12 +94,22 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 | `image` | 是 | 本插件 `assets/` 内的图片文件名；通常就是 `atlas.png` |
 | `tilePixels` | 否 | 建议的美术格像素；缺失或非法时按 32 处理 |
 | `tiles` | 否 | 地形帧表；缺失时全部地形使用程序化绘制 |
-| `tiles.<name>` | — | 引擎的地形内容路径，见下表 |
+| `tiles.<name>` | — | 引擎的地形内容路径，见下表；值是 `[x, y, w, h]` 或 `{ "rect": [x, y, w, h], "name": "..." }` |
 | `entities` | 否 | 实体动画表；缺失时实体使用程序化图形 |
 | `entities.<kind>.frames` | 是 | 至少一个 `[x, y, w, h]` |
 | `entities.<kind>.fps` | 否 | 正数，默认 4 |
 | `entities.<kind>.anchor` | 否 | 两个数字，默认 `[0.5, 0.75]`（脚底） |
 | `entities.<kind>.scale` | 否 | 正数，默认 1；与相机缩放相乘 |
+| `entities.<kind>.name` | 否 | 显示名；缺失或为空时回退到原始 kind |
+
+## 显示名
+
+两张表都可以带人类可读的**显示名**：实体的 `entities.<kind>.name`，以及地形命名对象里的 `name` 成员。客户端按同样的
+**后者覆盖前者**规则把名字和帧一起合并，并用在 HUD 选中行、选中建筑行、TRAIN/BUILD 按钮文字和成功日志里（例如
+`已下训练 普通 (unit.melee.t1)`）。协议命令仍然发送原始内容路径。
+
+名字是可选的。没有名字的旧清单、缺失的 `name`、空白的 `name` 都会回退到原始 id，所以页面不会显示 `undefined`。
+`check-render-math` 会验证标签表、回退规则，以及经典插件在磁盘上的清单确实给每个地块和每种实体都写了名字。
 
 服务器不解释 `tiles` 和 `entities`，只转发给客户端；帧的合法性由客户端按下面“校验与失败行为”检查。
 
@@ -217,6 +229,7 @@ projects/oc/oc-game-server-hello/src/main/resources/assets/atlas.png
 - 顶部必须是 JSON 对象；每个帧必须是恰好四个有限数字的数组，`w` 和 `h` 必须大于 0。
 - 帧必须完全落在图片内。越界的帧会被**静默丢弃**，并在控制台用一次 `console.warn` 汇总报告；同一实体的其他合法帧继续使用。
 - 没有任何合法帧的实体条目会被丢弃；一个没有任何可用地形帧和实体帧的条目会被判为不可用，只跳过该插件。
+- 地块可以是旧的 `[x, y, w, h]` 数组，也可以是命名的 `{ "rect": [x, y, w, h], "name": "..." }` 对象；格式错误或缺少 `rect` 的地块会被跳过并给出警告。`name` 不是字符串、为空或只有空白时按“没有名字”处理，回退到原始路径。
 - 图片载入失败只跳过该插件；`fps`、`anchor`、`scale` 非法时按默认值处理，并给出警告。
 - 清单请求失败、返回 `[]`、或所有条目都不可用时，客户端回到程序化绘制，不会阻止页面加载，也不会影响协议面板。
 

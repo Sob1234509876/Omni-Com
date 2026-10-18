@@ -72,6 +72,15 @@ public final class OcGameServer {
     /** Version reported to clients and plugins. */
     public static final String VERSION = "2.0a";
 
+    /**
+     * Default WebSocket idle timeout in seconds: five minutes, exposed as {@code --ws-idle 300}.
+     *
+     * <p>It is long enough that an open page is not disconnected just for being idle. The browser endpoint
+     * also sends a ping frame every 25 seconds; a browser answers with a pong automatically, so a session
+     * that is only being kept alive by those pings keeps its read timeout from expiring.
+     */
+    public static final int DEFAULT_WS_IDLE_SECONDS = 300;
+
     private static final System.Logger LOG = System.getLogger("oc.server");
 
     /** Plugins live here by default; the user drops their jars (and their dependencies) into it. */
@@ -455,6 +464,38 @@ public final class OcGameServer {
         };
     }
 
+    /**
+     * Parses and validates a {@code --ws-idle} value: a positive whole number of seconds.
+     *
+     * <p>The command line speaks seconds because that is how an operator reasons about an idle timeout; the
+     * socket layer speaks milliseconds because that is what {@link java.net.Socket#setSoTimeout(int)}
+     * takes. The conversion and its range check live here so {@code main} and a self check exercise the
+     * same rule. Zero is rejected for the same reason {@link WebSocketConfig} rejects a zero timeout: it
+     * would make every connection expire immediately instead of never.
+     *
+     * @param seconds the raw option value
+     * @return the equivalent timeout in milliseconds
+     * @throws IllegalArgumentException when the value is not a positive whole number of seconds, or is so
+     *         large that the millisecond value cannot be represented as an {@code int}
+     */
+    public static int parseWsIdleMillis(String seconds) {
+        long parsed;
+        try {
+            parsed = Long.parseLong(seconds.strip());
+        } catch (NumberFormatException malformed) {
+            throw new IllegalArgumentException("--ws-idle must be a whole number of seconds, was '"
+                    + seconds + "'", malformed);
+        }
+        if (parsed < 1L) {
+            throw new IllegalArgumentException("--ws-idle must be positive, was " + parsed);
+        }
+        if (parsed > Integer.MAX_VALUE / 1_000L) {
+            throw new IllegalArgumentException("--ws-idle is too large, was " + parsed
+                    + " seconds (the socket timeout is an int of milliseconds)");
+        }
+        return (int) (parsed * 1_000L);
+    }
+
     public static void main(String[] args) throws Exception {
         Map<String, String> options = parseArguments(args);
         if (options.containsKey("help")) {
@@ -468,6 +509,7 @@ public final class OcGameServer {
                       --save-seconds N    how often user records are written (default 60)
                       --http-port N       browser facing HTTP/WebSocket port, 0 disables it (default 25567)
                       --static-root DIR   directory the HTTP route serves (default web-client/dist)
+                      --ws-idle N         WebSocket idle timeout in seconds (default 300, must be positive)
                       --world on|off      start the server side world (default on; off answers 503)
                       --seed N            seed of the server side world (default 1)
                       --help              this text
@@ -481,13 +523,16 @@ public final class OcGameServer {
         int httpPort = Integer.parseInt(options.getOrDefault("http-port",
                 Integer.toString(WebSocketConfig.DEFAULT_PORT)));
         String staticRoot = options.getOrDefault("static-root", WebSocketConfig.DEFAULT_STATIC_ROOT);
+        int wsIdleMillis = parseWsIdleMillis(options.getOrDefault("ws-idle",
+                Integer.toString(DEFAULT_WS_IDLE_SECONDS)));
         boolean worldEnabled = parseWorldOption(options.getOrDefault("world", "on")) && httpPort != 0;
         long worldSeed = Long.parseLong(options.getOrDefault("seed",
                 Long.toString(WorldHost.DEFAULT_SEED)));
         ServerConfig config = ServerConfig.defaults().withPort(port);
         WebSocketConfig webConfig = WebSocketConfig.defaults()
                 .withPort(httpPort)
-                .withStaticRoot(staticRoot);
+                .withStaticRoot(staticRoot)
+                .withIdleTimeoutMillis(wsIdleMillis);
         if (options.containsKey("bind")) {
             config = new ServerConfig(port, options.get("bind"), config.backlog(), config.maxClients(),
                     config.readTimeoutMillis(), config.maxFrameBytes(), config.maxLineLength());
@@ -505,7 +550,8 @@ public final class OcGameServer {
             System.out.println("browser endpoint: disabled (--http-port 0)");
         } else {
             System.out.println("browser endpoint: http://" + config.bindAddress() + ":" + server.httpPort()
-                    + "/ (static root " + webConfig.staticRoot() + ")");
+                    + "/ (static root " + webConfig.staticRoot() + ", ws idle "
+                    + (webConfig.idleTimeoutMillis() / 1_000) + "s)");
         }
         // The acceptor threads are daemons, so this latch is what keeps the process alive.
         new CountDownLatch(1).await();

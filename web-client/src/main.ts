@@ -28,7 +28,13 @@ import {
   train,
   whoAmI,
 } from "./commands";
-import { atlasLabel, loadPluginAtlas, type Atlas } from "./render/atlas";
+import {
+  atlasLabel,
+  entityDisplayName,
+  loadPluginAtlas,
+  type Atlas,
+} from "./render/atlas";
+import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord } from "./render/camera";
 import { InputController, type InputHooks } from "./render/input";
 import { WorldRenderer } from "./render/renderer";
@@ -105,6 +111,12 @@ let connectionSeq = 0;
 let myPlayerId: number | null = null;
 /** Building path armed for placement, or null when the canvas is not in placement mode. */
 let placementPath: string | null = null;
+/** True only between a successful HELLO/OK handshake and the matching close event. */
+let connected = false;
+/** Automatic PING timer; null while it is not running. */
+let heartbeatTimer: number | null = null;
+/** Guards the queue: never send a second PING while the previous one waits for PONG. */
+let heartbeatInFlight = false;
 
 function setStatus(text: string, state: StatusState): void {
   statusLine.textContent = text;
@@ -206,11 +218,14 @@ async function handshake(seq: number): Promise<void> {
       return;
     }
     loggedIn = false;
+    connected = true;
     clearGameplayIdentity();
     setCommandsEnabled(true);
     connectButton.textContent = "断开";
     connectButton.disabled = false;
     setStatus(`已连接 · 协议 ${PROTOCOL_NAME}`, "ok");
+    // The heartbeat starts only now: the handshake proved the command queue is usable.
+    startHeartbeat();
   } catch (error) {
     if (seq !== connectionSeq) {
       return;
@@ -224,6 +239,9 @@ function openConnection(): void {
   if (socket !== null) {
     return;
   }
+  // A reconnect replaces the connection wholesale; the old timer must never survive it.
+  stopHeartbeat();
+  connected = false;
   let url: string;
   try {
     url = buildSocketUrl();
@@ -252,6 +270,8 @@ function openConnection(): void {
           return;
         }
         socket = null;
+        connected = false;
+        stopHeartbeat();
         loggedIn = false;
         clearGameplayIdentity();
         setCommandsEnabled(false);
@@ -306,6 +326,69 @@ function disconnect(): void {
   setStatus("正在断开…", "busy");
   connectButton.disabled = true;
   active.close("user closed");
+}
+
+/**
+ * Starts the automatic `PING` timer. It may run only while a connection is usable, so the caller is
+ * the successful handshake; the close handler is its only counterpart.
+ */
+function startHeartbeat(): void {
+  if (heartbeatTimer !== null) {
+    return;
+  }
+  heartbeatTimer = window.setInterval(() => {
+    void sendHeartbeat();
+  }, HEARTBEAT_MS);
+}
+
+/** Stops the timer and forgets the in-flight flag; safe to call at any time. */
+function stopHeartbeat(): void {
+  if (heartbeatTimer !== null) {
+    window.clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  heartbeatInFlight = false;
+}
+
+/**
+ * Sends one heartbeat `PING` through the normal in-order queue.
+ *
+ * The heartbeat deliberately does not touch the status line: an idle page must not overwrite a
+ * useful message every 20 seconds. It does log the exchange, so a long-idle session visibly proves
+ * the socket is alive, and it never queues a second command behind an unanswered one.
+ */
+async function sendHeartbeat(): Promise<void> {
+  const active = socket;
+  if (
+    active === null ||
+    !active.isOpen ||
+    !shouldHeartbeat({ connected, pingInFlight: heartbeatInFlight })
+  ) {
+    return;
+  }
+  heartbeatInFlight = true;
+  const line = ping();
+  log("send", line);
+  try {
+    const answer = await active.send(line);
+    if (socket !== active) {
+      return;
+    }
+    log("recv", answer);
+    if (answer !== "PONG") {
+      log("error", `心跳收到意外回答：${answer}`);
+    }
+  } catch (error: unknown) {
+    if (socket === active) {
+      const message = error instanceof Error ? error.message : String(error);
+      log("error", `心跳失败：${message}`);
+    }
+  } finally {
+    // An old connection's failure must not clear the flag of a newer one.
+    if (socket === active) {
+      heartbeatInFlight = false;
+    }
+  }
 }
 
 async function sendAnswered(
@@ -650,6 +733,28 @@ function selectedEntity(): EntityView | undefined {
   return entityById(world, selectedId);
 }
 
+/**
+ * The human label for one content path: the manifest display name when the atlas defines one,
+ * otherwise the raw path. The wire commands always keep the path itself.
+ */
+function contentLabel(path: string): string {
+  return entityDisplayName(atlas, path);
+}
+
+/** `普通 (unit.melee.t1)` when named, plain `unit.melee.t1` when the manifest has no name. */
+function labelledContent(path: string): string {
+  const label = contentLabel(path);
+  return label === path ? path : `${label} (${path})`;
+}
+
+/** `e12 普通 (unit.melee.t1)` when named, plain `e12` when there is nothing to translate. */
+function describeEntity(entity: EntityView): string {
+  const label = contentLabel(entity.kind);
+  return label === entity.kind
+    ? `e${entity.id}`
+    : `e${entity.id} ${label} (${entity.kind})`;
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -667,10 +772,11 @@ function updateHud(force = false, now = performance.now()): void {
   hudSelected.textContent =
     selected === undefined
       ? "选中：无"
-      : `选中：e${selected.id} ${selected.kind} (${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
+      : `选中：e${selected.id} ${contentLabel(selected.kind)} ` +
+        `(${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
   hudBuilding.textContent =
     selected !== undefined && isMine(selected) && isBuildingEntity(selected)
-      ? `建筑：${kindName(selected.kind)} #${selected.id}`
+      ? `建筑：${contentLabel(selected.kind)} #${selected.id}`
       : "建筑：—";
 }
 
@@ -709,7 +815,10 @@ async function sendGameplayCommand(
     return;
   }
   const detail = answer === "OK" ? "" : `：${answer.slice(2).trim()}`;
-  setStatus(`${confirmation}${detail}`, "ok");
+  const text = `${confirmation}${detail}`;
+  setStatus(text, "ok");
+  // The answer is already logged raw above; add the human line so the translation is visible there too.
+  log("info", text);
 }
 
 function updateGameplayPanel(): void {
@@ -717,35 +826,38 @@ function updateGameplayPanel(): void {
   const ownUnit = selected !== undefined && isMine(selected) && !isBuildingEntity(selected);
   const ownBuilding = selected !== undefined && isMine(selected) && isBuildingEntity(selected);
   const ownEngineer = selected !== undefined && isMine(selected) && isEngineerEntity(selected);
-  const connected = loggedIn && socket !== null;
+  const gameplayReady = loggedIn && socket !== null;
 
-  orderStopButton.disabled = !(connected && ownUnit);
+  orderStopButton.disabled = !(gameplayReady && ownUnit);
 
-  trainSection.hidden = !(connected && ownBuilding);
+  trainSection.hidden = !(gameplayReady && ownBuilding);
   trainTarget.textContent =
-    connected && ownBuilding && selected !== undefined
-      ? `· e${selected.id} ${kindName(selected.kind)}`
+    gameplayReady && ownBuilding && selected !== undefined
+      ? `· e${selected.id} ${contentLabel(selected.kind)}`
       : "";
   for (const button of trainButtons) {
-    button.disabled = !(connected && ownBuilding);
+    button.disabled = !(gameplayReady && ownBuilding);
   }
 
-  buildSection.hidden = !(connected && ownEngineer);
+  buildSection.hidden = !(gameplayReady && ownEngineer);
   buildTarget.textContent =
-    connected && ownEngineer && selected !== undefined
-      ? `· e${selected.id} ${kindName(selected.kind)}`
+    gameplayReady && ownEngineer && selected !== undefined
+      ? `· e${selected.id} ${contentLabel(selected.kind)}`
       : "";
   for (const button of buildButtons) {
-    button.disabled = !(connected && ownEngineer);
+    button.disabled = !(gameplayReady && ownEngineer);
     const armed =
-      connected && ownEngineer && placementPath !== null && button.dataset["path"] === placementPath;
+      gameplayReady &&
+      ownEngineer &&
+      placementPath !== null &&
+      button.dataset["path"] === placementPath;
     button.classList.toggle("armed", armed);
     button.setAttribute("aria-pressed", armed ? "true" : "false");
   }
 
   if (placementPath !== null) {
-    gameplayNote.textContent = `BUILD ${placementPath}：左键点地面放置 · Esc 取消`;
-  } else if (!connected) {
+    gameplayNote.textContent = `BUILD ${labelledContent(placementPath)}：左键点地面放置 · Esc 取消`;
+  } else if (!gameplayReady) {
     gameplayNote.textContent = "先连接并 LOGIN；游戏命令都要求同一条连接已登录";
   } else if (myPlayerId === null) {
     gameplayNote.textContent = "等待 WHOAMI 回答玩家 id…";
@@ -774,7 +886,7 @@ function doOrderStop(): void {
     setStatus("STOP 只能下达给单位，不能下达给建筑", "error");
     return;
   }
-  void sendGameplayCommand("ORDER STOP", orderStop(selected.id), `已停止 e${selected.id}`);
+  void sendGameplayCommand("ORDER STOP", orderStop(selected.id), `已停止 ${describeEntity(selected)}`);
 }
 
 function doTrain(unitPath: string): void {
@@ -783,7 +895,11 @@ function doTrain(unitPath: string): void {
     setStatus("先选中自己的建筑，再训练单位", "error");
     return;
   }
-  void sendGameplayCommand("TRAIN", train(selected.id, unitPath), `已下训练 ${unitPath}`);
+  void sendGameplayCommand(
+    "TRAIN",
+    train(selected.id, unitPath),
+    `已下训练 ${labelledContent(unitPath)}`,
+  );
 }
 
 /** Arms build placement for the selected engineer; the next left click on the canvas sends BUILD. */
@@ -799,7 +915,7 @@ function armBuild(buildingPath: string): void {
   placementPath = buildingPath;
   // Moving focus to the canvas keeps the existing Escape shortcut (bound to the canvas) working.
   gameCanvas.focus({ preventScroll: true });
-  setStatus(`BUILD ${buildingPath}：左键点击地面放置，Esc 取消`, "busy");
+  setStatus(`BUILD ${labelledContent(buildingPath)}：左键点击地面放置，Esc 取消`, "busy");
   updateGameplayPanel();
   updateHud(true);
 }
@@ -811,7 +927,7 @@ function cancelPlacement(showStatus: boolean): void {
   const path = placementPath;
   placementPath = null;
   if (showStatus) {
-    setStatus(`已取消 BUILD ${path}`, "idle");
+    setStatus(`已取消 BUILD ${labelledContent(path)}`, "idle");
   }
   updateGameplayPanel();
   updateHud(true);
@@ -819,7 +935,7 @@ function cancelPlacement(showStatus: boolean): void {
 
 function doRightClick(tile: TileCoord, targetId: number | null): void {
   if (placementPath !== null) {
-    setStatus(`BUILD ${placementPath} 放置中：左键放置，Esc 取消`, "busy");
+    setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置，Esc 取消`, "busy");
     return;
   }
   if (!requireLoggedInForGameplay()) {
@@ -839,7 +955,7 @@ function doRightClick(tile: TileCoord, targetId: number | null): void {
     void sendGameplayCommand(
       "ORDER ATTACK",
       orderAttack(selected.id, target.id),
-      `已攻击 e${target.id}`,
+      `已攻击 ${describeEntity(target)}`,
     );
     return;
   }
@@ -847,7 +963,7 @@ function doRightClick(tile: TileCoord, targetId: number | null): void {
   void sendGameplayCommand(
     "ORDER MOVE",
     orderMove(selected.id, tile.x, tile.y),
-    `已移动 e${selected.id}`,
+    `已移动 ${describeEntity(selected)}`,
   );
 }
 
@@ -868,7 +984,7 @@ function doLeftClick(tile: TileCoord): boolean {
   void sendGameplayCommand(
     "BUILD",
     build(engineer.id, path, tile.x, tile.y),
-    `已在 ${tile.x},${tile.y} 下达 BUILD ${path}`,
+    `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`,
   );
   return true;
 }
@@ -1056,6 +1172,7 @@ for (const unitPath of UNIT_PATHS) {
   button.textContent = unitPath;
   button.title = `TRAIN ${unitPath}`;
   button.disabled = true;
+  button.dataset["path"] = unitPath;
   button.addEventListener("click", () => {
     doTrain(unitPath);
   });
@@ -1077,6 +1194,35 @@ for (const buildingPath of BUILDING_PATHS) {
   buildButtonHost.append(button);
   buildButtons.push(button);
 }
+
+/**
+ * Re-labels the gameplay buttons from the atlas display names.
+ *
+ * The buttons are built once, before the atlas arrives; this runs again after `loadArtwork`. A path
+ * with no name keeps showing the raw path, which is also what the page showed before names existed.
+ */
+function refreshContentLabels(): void {
+  for (const button of trainButtons) {
+    const path = button.dataset["path"];
+    if (path === undefined) {
+      continue;
+    }
+    const label = contentLabel(path);
+    button.textContent = label;
+    button.title = label === path ? `TRAIN ${path}` : `TRAIN ${label} (${path})`;
+  }
+  for (const button of buildButtons) {
+    const path = button.dataset["path"];
+    if (path === undefined) {
+      continue;
+    }
+    const label = contentLabel(path);
+    button.textContent = label;
+    button.title = label === path ? `BUILD ${path}` : `BUILD ${label} (${path})`;
+  }
+}
+
+refreshContentLabels();
 
 orderStopButton.addEventListener("click", doOrderStop);
 
@@ -1114,7 +1260,9 @@ async function loadArtwork(): Promise<void> {
     console.warn("插件图集载入异常，继续使用程序化绘制", error);
     atlas = null;
   }
+  refreshContentLabels();
   updateHud(true);
+  updateGameplayPanel();
 }
 
 void loadArtwork();
@@ -1131,6 +1279,7 @@ log(
 );
 
 window.addEventListener("beforeunload", () => {
+  stopHeartbeat();
   stopWorldPolling();
   input.dispose();
   socket?.close("page unload");

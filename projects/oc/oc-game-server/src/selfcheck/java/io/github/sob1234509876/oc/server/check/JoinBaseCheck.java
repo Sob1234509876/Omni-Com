@@ -68,6 +68,7 @@ public final class JoinBaseCheck {
     public static void run(Check check) {
         check.section("玩家基地：加入世界时的仓库、工程师与开局资源");
         firstAndSecondJoin(check);
+        rejoinKeepsBase(check);
         sandboxContent(check);
         determinism(check);
     }
@@ -129,6 +130,56 @@ public final class JoinBaseCheck {
                     "快照里有仓库内容路径");
             check.that(snapshot.contains("\"kind\":\"" + ENGINEER + "\""),
                     "快照里有工程师内容路径");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * A rejoin of the same account keeps the same player, the same base entities and the same stock.
+     *
+     * <p>This is the server side half of the identity rule: the command layer only has to pass the account
+     * name, and the host must return the old player untouched. Entity ids are compared rather than positions
+     * because "same base" means the very same warehouse and engineer, not merely a building at the same
+     * tile.
+     */
+    private static void rejoinKeepsBase(Check check) {
+        WorldHost host = new WorldHost(1L, new BaseContent());
+        try {
+            Player first = join(check, host, "Alice", WorldHost.FIRST_HUMAN_PLAYER_ID);
+            World world = host.engine().world();
+            Building warehouse = world.buildingsOf(first).get(0);
+            Unit engineer = world.unitsOf(first).get(0);
+            long warehouseId = warehouse.id().value();
+            long engineerId = engineer.id().value();
+            GridPos warehouseOrigin = warehouse.origin();
+            ItemType gold = host.content().item(GOLD);
+            ItemType wood = host.content().item(WOOD);
+            check.equal(Natural.of(300), first.logistics().amount(gold), "重连之前玩家有 300 金币");
+            check.equal(Natural.of(60), first.logistics().amount(wood), "重连之前玩家有 60 木材");
+
+            Player again = join(check, host, "Alice", WorldHost.FIRST_HUMAN_PLAYER_ID);
+            check.equal(first.id().value(), again.id().value(), "同名重连返回同一个玩家 id");
+            check.equal(2, world.players().size(), "同名重连没有在世界里多出一个玩家");
+            check.equal(1, world.buildingsOf(again).size(), "同名重连后仍然只有一座基地建筑");
+            check.equal(1, world.unitsOf(again).size(), "同名重连后仍然只有一个工程师");
+            check.equal(warehouseId, world.buildingsOf(again).get(0).id().value(),
+                    "同名重连后仓库还是同一个实体");
+            check.equal(engineerId, world.unitsOf(again).get(0).id().value(),
+                    "同名重连后工程师还是同一个实体");
+            check.equal(warehouseOrigin, world.buildingsOf(again).get(0).origin(),
+                    "同名重连后仓库还在原来的位置");
+            check.equal(1, again.logistics().warehouses().size(), "同名重连后没有多出一个物流投放点");
+            check.equal(Natural.of(300), again.logistics().amount(gold), "同名重连后金币仍是 300");
+            check.equal(Natural.of(60), again.logistics().amount(wood), "同名重连后木材仍是 60");
+            check.equal(Natural.of(300), warehouse.inventory().amount(gold),
+                    "同名重连后旧仓库里的金币没有被重新存入");
+            check.equal(1, host.accounts().size(), "世界里只记录了一个账号名");
+            check.that(host.playerFor("Alice").isPresent(), "playerFor 能按名字找到重连的玩家");
+            check.equal(WorldHost.FIRST_HUMAN_PLAYER_ID, host.playerFor("Alice").orElseThrow().id().value(),
+                    "playerFor 返回的正是第一次分配的 id");
+            check.that(host.playerFor("Bob").isEmpty(), "还没出现的名字在 playerFor 里是空的");
+            check.equal(1, host.onlinePlayers().size(), "onlinePlayers 只包含这个真人玩家");
         } finally {
             host.stop();
         }

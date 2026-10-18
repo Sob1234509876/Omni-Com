@@ -20,7 +20,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,6 +55,14 @@ import java.util.concurrent.atomic.AtomicLong;
  * it is the same origin as the request's {@code Host}, and otherwise has to match the configured allowlist
  * when one is configured. An empty allowlist permits any origin and is documented in
  * {@link WebSocketConfig} as a development default only.
+ *
+ * <p><strong>Server initiated ping frames.</strong> One daemon scheduler sends an empty WebSocket ping to
+ * every open connection every {@link WebSocketConfig#pingIntervalMillis()} ms. A browser answers that ping
+ * with a pong automatically, so a page that is only being kept alive by the server still produces inbound
+ * traffic and its read timeout never expires. The scheduler is started with the listener and shut down with
+ * it; it is one thread for the whole endpoint, not one timer per socket, so a hundred open tabs still cost
+ * one heartbeat thread. A client that does not answer pings is closed by the ordinary idle timeout with the
+ * existing {@code 1001} code.
  *
  * <p><strong>Plugin assets.</strong> When the endpoint is constructed with a {@link PluginLoader}, it also
  * answers {@code /plugin-assets/manifest.json} and {@code /plugin-assets/<plugin>/<file>} from the loaded
@@ -114,6 +124,7 @@ public final class HttpWebServer implements AutoCloseable {
     private volatile ServerSocket serverSocket;
     private volatile ThreadPoolExecutor connectionPool;
     private volatile Thread acceptorThread;
+    private volatile ScheduledExecutorService heartbeat;
 
     /**
      * Creates an endpoint. Nothing binds until {@link #start()} is called, so a server can be configured,
@@ -212,6 +223,16 @@ public final class HttpWebServer implements AutoCloseable {
         acceptor.setDaemon(true);
         acceptorThread = acceptor;
         acceptor.start();
+
+        ScheduledExecutorService pinger = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "oc-ws-ping");
+            thread.setDaemon(true);
+            return thread;
+        });
+        pinger.scheduleWithFixedDelay(this::pingConnections, config.pingIntervalMillis(),
+                config.pingIntervalMillis(), TimeUnit.MILLISECONDS);
+        heartbeat = pinger;
+
         LOG.log(System.Logger.Level.INFO, "browser endpoint listening on " + config.bindAddress() + ":"
                 + port() + " (" + config.describe() + ")");
     }
@@ -259,6 +280,11 @@ public final class HttpWebServer implements AutoCloseable {
                 LOG.log(System.Logger.Level.WARNING,
                         "failed to close the browser listener: " + failure.getMessage());
             }
+        }
+        ScheduledExecutorService pinger = heartbeat;
+        heartbeat = null;
+        if (pinger != null) {
+            pinger.shutdownNow();
         }
         for (WebSocketConnection connection : connections) {
             connection.close(1001, "server stopping");
@@ -332,6 +358,24 @@ public final class HttpWebServer implements AutoCloseable {
                 // The rejection handler above has already logged; the socket still has to be closed.
                 sockets.remove(client);
                 closeQuietly(client);
+            }
+        }
+    }
+
+    /**
+     * Sends one ping frame to every open connection.
+     *
+     * <p>Runs on the single heartbeat thread. A failure of one connection must not cancel the scheduler for
+     * every other connection, so each ping is isolated; a closed connection is removed from the set by its
+     * own {@code serveWebSocket} finally block and is simply skipped here.
+     */
+    private void pingConnections() {
+        for (WebSocketConnection connection : connections) {
+            try {
+                connection.ping();
+            } catch (RuntimeException failure) {
+                LOG.log(System.Logger.Level.DEBUG,
+                        "failed to ping browser client " + connection.id() + ": " + failure);
             }
         }
     }

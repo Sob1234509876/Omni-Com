@@ -4,7 +4,7 @@
 
 ## 这一篇讲什么
 
-- 怎么构建、怎么跑自校验，以及 633 条断言分别落在哪十一组。
+- 怎么构建、怎么跑自校验，以及 708 条断言分别落在哪十一组。
 - 启动器的全部命令行选项、默认值，以及解析器的脾气。
 - 插件目录、数据目录与浏览器静态根的默认位置，谁往里写什么。
 - 一次启动打印什么、一次关闭按什么顺序发生。
@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 633 checks passed.
+game server self check: all 708 checks passed.
 debug plugin self check: all 82 checks passed.
 ```
 
-633 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 63 条（真实 socket 上的升级、版本握手、帧规则、来源规则）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、JSON 形状、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 57 条（`WHOAMI`、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 40 条（加入世界时的仓库、工程师与开局资源）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
+708 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 82 条（daemon tick 线程、JSON 形状、种子确定性、`/world/snapshot` 的 200/503/405）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 87 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本与生产等级门槛）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。82 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 
@@ -56,6 +56,7 @@ debug plugin self check: all 82 checks passed.
 | `--save-seconds N` | `60` | 定时把用户记录写盘的间隔；必须是正数，`0` 会直接抛 |
 | `--http-port N` | `25567` | 浏览器端点的 HTTP/WebSocket 端口；`0` **关闭**这个端点（不是让系统挑端口） |
 | `--static-root DIRECTORY` | `web-client/dist` | 浏览器端点提供的静态目录；相对**进程工作目录**，`server` 任务从仓库根运行 |
+| `--ws-idle N` | `300` | WebSocket 空闲超时，整数秒；必须是正数；静默连接以 `1001` 关闭 |
 | `--world on\|off` | `on` | 是否启动服务器世界；`off` 让 `/world/snapshot` 回答 503；`--http-port 0` 时强制关闭 |
 | `--seed N` | `1` | 服务器世界的种子；同一种子生成同一张地图与同一套起始布局 |
 | `--help` | — | 打印帮助后退出 |
@@ -72,14 +73,15 @@ Omni Com game server
   --save-seconds N    how often user records are written (default 60)
   --http-port N       browser facing HTTP/WebSocket port, 0 disables it (default 25567)
   --static-root DIR   directory the HTTP route serves (default web-client/dist)
+  --ws-idle N         WebSocket idle timeout in seconds (default 300, must be positive)
   --world on|off      start the server side world (default on; off answers 503)
   --seed N            seed of the server side world (default 1)
   --help              this text
 ```
 
-解析器的规则来自 `OcGameServer` 的 `parseArguments`：参数必须以 `--` 开头，后面可以跟一个不以 `--` 开头的值；**不跟值就是 `true`**。所以 `--save-seconds` 后面忘了写数字时，值会变成 `true`，`Integer.parseInt` 抛 `NumberFormatException`；`--http-port` 也走同样的 `Integer.parseInt`。一个不认识的裸参数（比如 `plugins`）会抛 `IllegalArgumentException`。
+解析器的规则来自 `OcGameServer` 的 `parseArguments`：参数必须以 `--` 开头，后面可以跟一个不以 `--` 开头的值；**不跟值就是 `true`**。所以 `--save-seconds` 后面忘了写数字时，值会变成 `true`，`Integer.parseInt` 抛 `NumberFormatException`；`--http-port` 也走同样的 `Integer.parseInt`。`--ws-idle` 走 `OcGameServer.parseWsIdleMillis`：它要求正整数秒，`0`、负数、非数字都会抛 `IllegalArgumentException`，再把秒换算成毫秒交给 `WebSocketConfig`。一个不认识的裸参数（比如 `plugins`）会抛 `IllegalArgumentException`。
 
-`--port`、`--bind`、`--plugins`、`--data`、`--save-seconds`、`--http-port`、`--static-root`、`--world`、`--seed` 之外没有别的开关：没有配置文件，没有环境变量。`--world` 只接受 `on` / `off`（也接受 `true` / `false`），写别的值会直接抛异常。
+`--port`、`--bind`、`--plugins`、`--data`、`--save-seconds`、`--http-port`、`--static-root`、`--ws-idle`、`--world`、`--seed` 之外没有别的开关：没有配置文件，没有环境变量。`--world` 只接受 `on` / `off`（也接受 `true` / `false`），写别的值会直接抛异常。
 
 ## 目录与文件
 

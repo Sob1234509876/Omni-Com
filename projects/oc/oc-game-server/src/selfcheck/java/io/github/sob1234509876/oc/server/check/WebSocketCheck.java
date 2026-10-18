@@ -1,9 +1,12 @@
 package io.github.sob1234509876.oc.server.check;
 
+import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
+import io.github.sob1234509876.oc.server.OcGameServer;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.auth.LocalUserStore;
 import io.github.sob1234509876.oc.server.net.CommandDispatcher;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
+import io.github.sob1234509876.oc.server.world.WorldHost;
 import io.github.sob1234509876.oc.server.ws.CommandWebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
@@ -137,6 +140,9 @@ public final class WebSocketCheck {
         check.that(!server.running(), "stop() 之后端点不再运行");
         probe(check, "来源白名单", () -> originAllowlist(check, auth, registry, store));
         probe(check, "同源规则", () -> sameOrigin(check, auth, registry, store));
+        probe(check, "空闲超时参数", () -> idleConfiguration(check, auth, registry, store));
+        probe(check, "服务端 ping 心跳", () -> serverHeartbeat(check, auth, registry, store));
+        probe(check, "同账号重连", () -> sameAccountReconnect(check, auth, registry, store));
         check.note("WebSocket 检查完成；RFC 6455 示例键的期望 accept 值是 " + RFC_ACCEPT);
     }
 
@@ -450,6 +456,152 @@ public final class WebSocketCheck {
             }
         } finally {
             server.stop();
+        }
+    }
+
+    /**
+     * Proves {@code --ws-idle} is parsed and that the configured value really reaches the socket timeout.
+     *
+     * <p>The value assertions cover the command line rule (default 300, positive whole seconds, clear
+     * refusals); the socket assertion then opens a real WebSocket with a 400 ms timeout and no ping in the
+     * window, so the only way it can close with {@code 1001} is the configured read timeout.
+     */
+    private static void idleConfiguration(Check check, AuthService auth, RequestRegistry registry, Path store)
+            throws IOException {
+        check.equal(300_000, WebSocketConfig.DEFAULT_IDLE_TIMEOUT_MILLIS,
+                "WebSocket 默认空闲超时是 300 秒（300000 毫秒）");
+        check.equal(300, OcGameServer.DEFAULT_WS_IDLE_SECONDS, "--ws-idle 的默认值是 300 秒");
+        check.equal(60_000, OcGameServer.parseWsIdleMillis("60"),
+                "--ws-idle 60 被换算成 60000 毫秒");
+        check.equal(300_000, OcGameServer.parseWsIdleMillis(" 300 "),
+                "--ws-idle 接受前后带空白的整数秒");
+        check.that(rejectsBadIdle("0"), "--ws-idle 0 被拒绝（0 会让连接立刻超时）");
+        check.that(rejectsBadIdle("-5"), "--ws-idle 负数被拒绝");
+        check.that(rejectsBadIdle("abc"), "--ws-idle 非数字被拒绝");
+        check.that(rejectsBadIdle(""), "--ws-idle 空值被拒绝");
+
+        WebSocketConfig config = new WebSocketConfig(0, InetAddress.getLoopbackAddress().getHostAddress(),
+                "/ws", store + "-web", 256, 1024, 400, List.of(), 5_000);
+        check.equal(400, config.idleTimeoutMillis(), "WebSocketConfig 保存了配置的空闲超时");
+        HttpWebServer server = new HttpWebServer(config, new CommandWebSocketHandler(auth, registry));
+        try {
+            server.start();
+            try (RawClient client = RawClient.connect(server.port())) {
+                client.openWebSocket();
+                long started = System.nanoTime();
+                Frame close = client.awaitClose();
+                long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+                check.equal(1001, RawClient.closeCode(close),
+                        "配置的空闲超时到达后连接以 1001 关闭");
+                check.that(elapsedMillis >= 200L, "空闲关闭没有早于配置的窗口（实际 " + elapsedMillis + "ms）");
+                check.that(elapsedMillis <= 3_000L, "空闲关闭发生在配置的窗口附近（实际 " + elapsedMillis + "ms）");
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
+    /**
+     * Proves the server initiated heartbeat: a ping arrives inside the configured window, answering every
+     * ping with a pong keeps the session open past the idle timeout, and commands still work afterwards.
+     *
+     * <p>The ping interval is lowered to 150 ms and the idle timeout to 1500 ms, so the probe takes a few
+     * seconds instead of the production 25 s / 300 s, while proving exactly the same mechanism: inbound
+     * pongs reset the read timeout.
+     */
+    private static void serverHeartbeat(Check check, AuthService auth, RequestRegistry registry, Path store)
+            throws IOException {
+        int idleMillis = 1_500;
+        int pingMillis = 150;
+        WebSocketConfig config = new WebSocketConfig(0, InetAddress.getLoopbackAddress().getHostAddress(),
+                "/ws", store + "-web", 256, 1024, idleMillis, List.of(), pingMillis);
+        HttpWebServer server = new HttpWebServer(config, new CommandWebSocketHandler(auth, registry));
+        try {
+            server.start();
+            try (RawClient client = RawClient.connect(server.port())) {
+                client.upgrade();
+                long started = System.nanoTime();
+                Frame ping = client.awaitFrame(OPCODE_PING);
+                long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+                check.equal(0, ping.payload().length, "服务端 ping 是空载荷");
+                check.that(elapsedMillis <= 2_500L,
+                        "服务端 ping 在配置的窗口内到达（实际 " + elapsedMillis + "ms）");
+                client.sendFrame(OPCODE_PONG, ping.payload(), true, true);
+
+                int answered = 1;
+                long deadline = System.nanoTime() + 2L * idleMillis * 1_000_000L;
+                while (System.nanoTime() < deadline) {
+                    Frame next = client.awaitFrame(OPCODE_PING);
+                    client.sendFrame(OPCODE_PONG, next.payload(), true, true);
+                    answered++;
+                }
+                check.that(answered >= 3, "客户端回答了多次服务端 ping（" + answered + " 次）");
+                check.equal("PONG", command(client, "PING"),
+                        "只靠 ping/pong 维持的连接超过 idle 之后仍然能执行命令");
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
+    /**
+     * Proves a reconnect after a real WebSocket close returns the same player id.
+     *
+     * <p>This is the transport half of the identity rule: the first connection logs in, asks
+     * {@code WHOAMI}, then closes with {@code QUIT}; a brand new connection logs in with the same account
+     * and must see the same id, because the world maps the account name, not the socket.
+     */
+    private static void sameAccountReconnect(Check check, AuthService auth, RequestRegistry registry,
+            Path store) throws IOException {
+        WorldHost host = new WorldHost(1L, new ScenarioWorldContent());
+        HttpWebServer server = null;
+        try {
+            host.start();
+            WebSocketConfig config = new WebSocketConfig(0, InetAddress.getLoopbackAddress().getHostAddress(),
+                    "/ws", store + "-web", 1024, 4096, 10_000, List.of());
+            server = new HttpWebServer(config, new CommandWebSocketHandler(auth, registry, () -> host));
+            server.start();
+            int port = server.port();
+            int firstId;
+            try (RawClient client = RawClient.connect(port)) {
+                client.upgrade();
+                check.that(command(client, "LOGIN " + USER + " " + PASSWORD).startsWith("OK "),
+                        "重连检查：第一条连接登录成功");
+                String who = command(client, "WHOAMI");
+                check.that(who.startsWith("OK player "), "重连检查：第一次 WHOAMI 返回玩家 id: " + who);
+                firstId = Integer.parseInt(who.substring("OK player ".length()));
+                check.equal(WorldHost.FIRST_HUMAN_PLAYER_ID, firstId,
+                        "重连检查：第一个真人从 id 3 开始");
+                client.sendText("QUIT");
+                check.equal(CommandDispatcher.BYE, client.awaitText(), "重连检查：QUIT 得到 OK bye");
+                check.equal(1000, RawClient.closeCode(client.awaitClose()),
+                        "重连检查：QUIT 之后以 1000 正常关闭");
+            }
+            try (RawClient client = RawClient.connect(port)) {
+                client.upgrade();
+                check.that(command(client, "LOGIN " + USER + " " + PASSWORD).startsWith("OK "),
+                        "重连检查：关闭之后的新连接也能登录同一账号");
+                check.equal("OK player " + firstId, command(client, "WHOAMI"),
+                        "重连检查：关闭之后重新连接得到同一个玩家 id");
+                check.equal(2, host.engine().world().players().size(),
+                        "重连检查：世界里只有样例玩家与这个账号玩家");
+                check.that(host.playerFor(USER).isPresent(), "重连检查：世界里保留了账号名映射");
+            }
+        } finally {
+            if (server != null) {
+                server.stop();
+            }
+            host.stop();
+        }
+    }
+
+    /** Whether {@code --ws-idle} rejects a value; the helper keeps the assertions one line each. */
+    private static boolean rejectsBadIdle(String seconds) {
+        try {
+            OcGameServer.parseWsIdleMillis(seconds);
+            return false;
+        } catch (IllegalArgumentException expected) {
+            return true;
         }
     }
 

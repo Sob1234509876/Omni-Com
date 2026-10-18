@@ -46,11 +46,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class PlayerCommandCheck {
 
-    /** Account used by the two connections of the check. */
+    /** Account used by the main connection of the check. */
     private static final String USER = "player.command.user";
 
-    /** Password of that account. */
+    /** A second account, so the "second human" assertions do not collide with account identity. */
+    private static final String USER_SECOND = "player.command.user2";
+
+    /** A third account for the live-world connection. */
+    private static final String USER_THIRD = "player.command.user3";
+
+    /** Password of every account this check registers. */
     private static final String PASSWORD = "player-command-password";
+
+    /** Six distinct account names that fill the human slots 3..8 in order. */
+    private static final String[] IDENTITY_ACCOUNTS = {
+        "identity.alpha", "identity.bravo", "identity.charlie",
+        "identity.delta", "identity.echo", "identity.foxtrot"
+    };
+
+    /** A seventh account, which must be refused because every human slot is taken. */
+    private static final String IDENTITY_OVERFLOW = "identity.overflow";
 
     /** Item the catalogue uses as currency. */
     private static final String GOLD = "gold";
@@ -85,10 +100,16 @@ public final class PlayerCommandCheck {
             Files.writeString(store, "", StandardCharsets.UTF_8);
             AuthService auth = new AuthService(LocalUserStore.at(store), CheckHashers.fast());
             auth.register(USER, PASSWORD);
+            auth.register(USER_SECOND, PASSWORD);
+            auth.register(USER_THIRD, PASSWORD);
+            for (String account : IDENTITY_ACCOUNTS) {
+                auth.register(account, PASSWORD);
+            }
+            auth.register(IDENTITY_OVERFLOW, PASSWORD);
             WorldHost created = new WorldHost(1L, new CommandContent());
             host = created;
             CommandDispatcher dispatcher = new CommandDispatcher(auth, new RequestRegistry(), () -> created);
-            runAll(check, dispatcher, created);
+            runAll(check, dispatcher, created, auth);
         } catch (IOException failure) {
             check.that(false, "玩家命令检查无法准备临时用户文件: " + failure);
         } finally {
@@ -99,7 +120,8 @@ public final class PlayerCommandCheck {
         }
     }
 
-    private static void runAll(Check check, CommandDispatcher dispatcher, WorldHost host) {
+    private static void runAll(Check check, CommandDispatcher dispatcher, WorldHost host,
+            AuthService auth) {
         check.section("玩家命令：身份与登录规则");
         CommandDispatcher.Session first = new CommandDispatcher.Session();
         check.equal("ERR login first", run(dispatcher, host, first, "WHOAMI"),
@@ -185,13 +207,14 @@ public final class PlayerCommandCheck {
                         "TRAIN " + enemyBuilding.id().value() + " " + MELEE_T1),
                 "TRAIN 在别人的建筑上回答 ERR not yours");
 
-        // A second connection of the same account gets the next player id and its own, poorer base.
+        // A second account gets the next player id and its own, poorer base. The same account on a second
+        // connection is checked separately below, where it must reuse its first id instead of taking a slot.
         CommandDispatcher.Session second = new CommandDispatcher.Session();
-        check.that(run(dispatcher, host, second, "LOGIN " + USER + " " + PASSWORD).startsWith("OK "),
-                "第二条连接也能登录");
+        check.that(run(dispatcher, host, second, "LOGIN " + USER_SECOND + " " + PASSWORD).startsWith("OK "),
+                "第二个账号也能登录");
         check.equal("OK player " + (WorldHost.FIRST_HUMAN_PLAYER_ID + 1),
                 run(dispatcher, host, second, "WHOAMI"),
-                "第二个真人得到下一个 id（确定性递增）");
+                "第二个账号得到下一个 id（确定性递增）");
         Player poor = host.findPlayer(second.playerId()).orElseThrow();
         Building poorWarehouse = world.spawnBuilding(host.content().building(WAREHOUSE), poor,
                 new GridPos(40, 50));
@@ -256,7 +279,7 @@ public final class PlayerCommandCheck {
         host.start();
         try {
             CommandDispatcher.Session live = new CommandDispatcher.Session();
-            check.that(run(dispatcher, host, live, "LOGIN " + USER + " " + PASSWORD).startsWith("OK "),
+            check.that(run(dispatcher, host, live, "LOGIN " + USER_THIRD + " " + PASSWORD).startsWith("OK "),
                     "运行中的世界前先登录");
             String liveWho = dispatcher.execute("WHOAMI", live);
             check.equal("OK player " + (WorldHost.FIRST_HUMAN_PLAYER_ID + 2), liveWho,
@@ -265,6 +288,97 @@ public final class PlayerCommandCheck {
             host.stop();
         }
         check.that(!host.running(), "检查结束时世界已停止");
+
+        identityAcrossAccounts(check, auth);
+    }
+
+    /**
+     * Proves the identity rule end to end through the real dispatcher: a name is the identity, a second
+     * connection of the same name reuses the player and its base, two names get two ids and two bases, and
+     * the seventh name is refused with the existing {@code ERR world full}.
+     *
+     * <p>A separate host is used so the earlier sections' players 3 and 4 cannot hide an off-by-one in the
+     * full-world case; ids 3..8 are filled here from a clean world.
+     */
+    private static void identityAcrossAccounts(Check check, AuthService auth) {
+        check.section("玩家身份：账号名就是身份，重连不新建基地");
+        WorldHost host = new WorldHost(1L, new CommandContent());
+        try {
+            CommandDispatcher dispatcher = new CommandDispatcher(auth, new RequestRegistry(), () -> host);
+            CommandDispatcher.Session first = new CommandDispatcher.Session();
+            check.that(run(dispatcher, host, first, "LOGIN " + IDENTITY_ACCOUNTS[0] + " " + PASSWORD)
+                    .startsWith("OK "), "身份检查：第一个账号登录成功");
+            check.equal("OK player " + WorldHost.FIRST_HUMAN_PLAYER_ID,
+                    run(dispatcher, host, first, "WHOAMI"), "身份检查：第一个账号得到 id 3");
+            Player alpha = host.findPlayer(WorldHost.FIRST_HUMAN_PLAYER_ID).orElseThrow();
+            Building alphaWarehouse = host.engine().world().buildingsOf(alpha).get(0);
+            Unit alphaBuilder = host.engine().world().unitsOf(alpha).get(0);
+            long alphaWarehouseId = alphaWarehouse.id().value();
+            long alphaBuilderId = alphaBuilder.id().value();
+            GridPos alphaOrigin = alphaWarehouse.origin();
+            check.equal(1, host.accounts().size(), "身份检查：世界里记录了一个账号名");
+            check.that(host.playerFor(IDENTITY_ACCOUNTS[0]).isPresent(),
+                    "身份检查：playerFor 能按账号名找到玩家");
+            check.that(host.playerFor("identity.unknown").isEmpty(),
+                    "身份检查：playerFor 对没出现过的名字回答空");
+
+            // A second connection for the same account is what a reconnect looks like after a close.
+            CommandDispatcher.Session reconnect = new CommandDispatcher.Session();
+            check.that(run(dispatcher, host, reconnect, "LOGIN " + IDENTITY_ACCOUNTS[0] + " "
+                    + PASSWORD).startsWith("OK "), "身份检查：同一个账号在新连接上重新登录");
+            check.equal("OK player " + WorldHost.FIRST_HUMAN_PLAYER_ID,
+                    run(dispatcher, host, reconnect, "WHOAMI"),
+                    "身份检查：重连后 WHOAMI 仍是同一个玩家 id");
+            Player alphaAgain = host.findPlayer(WorldHost.FIRST_HUMAN_PLAYER_ID).orElseThrow();
+            check.equal(1, host.engine().world().buildingsOf(alphaAgain).size(),
+                    "身份检查：重连没有新建第二座基地建筑");
+            check.equal(1, host.engine().world().unitsOf(alphaAgain).size(),
+                    "身份检查：重连没有新建第二个工程师");
+            check.equal(alphaWarehouseId, host.engine().world().buildingsOf(alphaAgain).get(0).id().value(),
+                    "身份检查：重连后仓库还是同一个实体");
+            check.equal(alphaBuilderId, host.engine().world().unitsOf(alphaAgain).get(0).id().value(),
+                    "身份检查：重连后工程师还是同一个实体");
+            check.equal(2, host.engine().world().players().size(),
+                    "身份检查：重连只让世界里多出一个账号玩家和一个样例玩家");
+
+            CommandDispatcher.Session second = new CommandDispatcher.Session();
+            check.that(run(dispatcher, host, second, "LOGIN " + IDENTITY_ACCOUNTS[1] + " " + PASSWORD)
+                    .startsWith("OK "), "身份检查：第二个不同账号登录成功");
+            check.equal("OK player " + (WorldHost.FIRST_HUMAN_PLAYER_ID + 1),
+                    run(dispatcher, host, second, "WHOAMI"), "身份检查：第二个账号得到下一个 id 4");
+            Player bravo = host.findPlayer(WorldHost.FIRST_HUMAN_PLAYER_ID + 1).orElseThrow();
+            check.that(!host.engine().world().buildingsOf(bravo).isEmpty(),
+                    "身份检查：第二个账号也有自己的基地");
+            check.that(!host.engine().world().buildingsOf(bravo).get(0).origin().equals(alphaOrigin),
+                    "身份检查：两个账号的基地位置不同");
+            check.that(host.engine().world().buildingsOf(bravo).get(0).id().value() != alphaWarehouseId,
+                    "身份检查：两个账号的仓库是不同的实体");
+
+            // Fill the remaining slots 5..8 with the remaining distinct names.
+            for (int index = 2; index < IDENTITY_ACCOUNTS.length; index++) {
+                CommandDispatcher.Session session = new CommandDispatcher.Session();
+                check.that(run(dispatcher, host, session, "LOGIN " + IDENTITY_ACCOUNTS[index] + " "
+                        + PASSWORD).startsWith("OK "), "身份检查：第 " + (index + 1) + " 个账号登录成功");
+                check.equal("OK player " + (WorldHost.FIRST_HUMAN_PLAYER_ID + index),
+                        run(dispatcher, host, session, "WHOAMI"),
+                        "身份检查：第 " + (index + 1) + " 个账号得到 id "
+                                + (WorldHost.FIRST_HUMAN_PLAYER_ID + index));
+            }
+            check.equal(IDENTITY_ACCOUNTS.length, host.accounts().size(),
+                    "身份检查：六个不同账号占满 3..8");
+            check.equal(IDENTITY_ACCOUNTS.length, host.onlinePlayers().size(),
+                    "身份检查：六个真人玩家都在世界里");
+
+            CommandDispatcher.Session overflow = new CommandDispatcher.Session();
+            check.that(run(dispatcher, host, overflow, "LOGIN " + IDENTITY_OVERFLOW + " " + PASSWORD)
+                    .startsWith("OK "), "身份检查：第七个账号仍能注册并登录");
+            check.equal(CommandDispatcher.ERR_WORLD_FULL, run(dispatcher, host, overflow, "WHOAMI"),
+                    "身份检查：六个名额用完后 WHOAMI 回答 ERR world full");
+            check.that(host.playerFor(IDENTITY_OVERFLOW).isEmpty(),
+                    "身份检查：被拒绝的第七个账号没有留下身份映射");
+        } finally {
+            host.stop();
+        }
     }
 
     /**

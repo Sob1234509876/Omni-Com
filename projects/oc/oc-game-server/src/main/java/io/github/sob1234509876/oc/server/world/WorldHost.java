@@ -25,6 +25,7 @@ import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,6 +54,18 @@ import java.util.concurrent.TimeoutException;
  * is derived from the registry (one building of each type, one unit of each type), and the starting stock
  * comes from {@link WorldContent#startingResources()}. That is what lets a plugin ship a different game
  * without the server being recompiled against it.
+ *
+ * <p><strong>The account name is the identity.</strong> {@link #joinPlayer(String)} binds one account name
+ * to one player id, one base and one set of resources for the life of this host: a disconnect does not
+ * reclaim anything, and a later join with the same name - from a new connection, after a close, or after a
+ * server side reconnect - returns that very player. A name never seen before takes the smallest unused
+ * human slot, so a world still admits at most {@value #MAX_PLAYERS} players in total and answers
+ * {@code ERR world full} once ids {@value #FIRST_HUMAN_PLAYER_ID} through {@value #MAX_PLAYERS} are taken.
+ * There is deliberately <em>no</em> automatic reclaim of an idle account in this version: a player whose
+ * connection is gone keeps its base, its entities and its stock until the world itself is rebuilt, because
+ * removing a player would leave its entities ownerless and would make a rejoin lose everything the player
+ * built. {@link #joinPlayer()} keeps the older, nameless allocation for callers that have no account name;
+ * the command layer always uses the named form.
  *
  * <p><strong>Time.</strong> The simulation has no wall clock. The thread reads {@link System#nanoTime()}
  * only to fill a small accumulator and then calls {@link OcRtsEngine#tick()} a whole number of times, so
@@ -120,8 +133,9 @@ public final class WorldHost {
      * Maximum number of players one world holds, counting the scene player and the classic AI.
      *
      * <p>This is the "room" of {@link #joinPlayer(String)}: ids {@code 3} through {@code MAX_PLAYERS}
-     * are the human slots, so a default world admits six human connections. Player ids are never
-     * reused while the world lives, which keeps an entity's owner stable for a replay.
+     * are the human slots, so a default world admits six distinct account names. An id is bound to a name
+     * for the life of the world and is not reused for a different name, which keeps an entity's owner
+     * stable for a replay and lets a reconnecting account find its own base again.
      */
     public static final int MAX_PLAYERS = 8;
 
@@ -196,6 +210,18 @@ public final class WorldHost {
     private final ContentRegistry content;
     private final Player player;
     private final OcRtsEngine engine;
+
+    /**
+     * Account name to player id, for every identity this host has admitted.
+     *
+     * <p>Owned by the world thread exactly like the engine: it is only written from
+     * {@link #joinPlayer(String)}, which requires the simulation lock, and it is read from
+     * {@link #joinPlayer(String)} and, under that same lock, from the read-only lookups. The map is
+     * deliberately never trimmed: a disconnected account keeps its slot and its base until the world is
+     * rebuilt, because there is no session concept here to tell "idle" from "gone" and because reclaiming a
+     * slot would let a different account inherit an existing player's entities.
+     */
+    private final Map<String, Integer> accountIds = new HashMap<>();
 
     /**
      * The plugin hooks that run at the end of every fixed step, in this order.
@@ -929,14 +955,25 @@ public final class WorldHost {
     }
 
     /**
-     * Creates the player for a human connection on first use, or returns the one already assigned.
+     * Returns the player bound to an account name, creating that identity on first use.
      *
-     * <p><strong>Assignment rule.</strong> Player {@code 1} owns the sample scene and player {@code 2} is
-     * reserved for the classic plugin's AI, so a human gets the smallest unused id from
-     * {@value #FIRST_HUMAN_PLAYER_ID} to {@value #MAX_PLAYERS}, in that order. The rule is deterministic
-     * for a given sequence of joins - the first human is always {@code 3}, the next unused id is always
-     * taken next - and an id is never reused while the world lives, so an entity's owner does not change
-     * under a replay. The colour is a fixed function of the id; see the palette constant.
+     * <p><strong>Identity rule.</strong> The account name, not the connection, is the identity. The first
+     * join of a name takes the smallest unused id from {@value #FIRST_HUMAN_PLAYER_ID} to
+     * {@value #MAX_PLAYERS} and binds the name to it for the life of this host; every later join of the
+     * same name returns the same {@link Player} with its base, entities and stock untouched. A disconnect
+     * therefore changes nothing: the player stays in the world and a new connection with the same account
+     * finds it again, which is what makes a reconnect answer the same id and keeps a base from piling up.
+     * A different name always gets a different, still unused slot. When every slot is taken the answer is
+     * {@link Optional#empty()}, which the dispatcher reports as {@code ERR world full}.
+     *
+     * <p>The assignment order is deterministic for a given sequence of joins, and an id is never reused for
+     * another name while the world lives, so an entity's owner does not change under a replay. The colour is
+     * a fixed function of the id; see the palette constant.
+     *
+     * <p><strong>No reclaim.</strong> A player whose connection is gone keeps existing; this version does not
+     * time out, release or reassign an idle account. Reclaiming an id would either orphan the entities that
+     * still belong to the old player or silently hand them to a new account, and neither is acceptable, so
+     * the slot stays occupied until the host itself is rebuilt.
      *
      * <p>The player is added to the world with an engine logistics network and, when another player
      * already has one, the world's hauling system. A starting base is then spawned for the player: one
@@ -950,21 +987,62 @@ public final class WorldHost {
      * means from a {@link WorldCommand} (the command dispatcher does exactly that). It is not a client
      * API; it is public so the command layer and checks can call it.
      *
-     * @param name display name of the player, normally the account name
+     * <p>A blank name has no identity to bind, so it follows {@link #joinPlayer()} instead of occupying a
+     * named slot. The command layer never sends a blank name: a successful {@code LOGIN} always carries one.
+     *
+     * @param name account name that identifies the player, normally the authenticated login name
+     * @return the existing or newly created player, or empty when every human slot is taken
+     * @throws IllegalStateException when called outside a world command, or when the name is already bound
+     *         to a player that a future world reset removed (the mapping is never silently reassigned)
+     */
+    public Optional<Player> joinPlayer(String name) {
+        requireWorldThread("joinPlayer");
+        Objects.requireNonNull(name, "name");
+        if (name.isBlank()) {
+            return joinPlayer();
+        }
+        Integer boundId = accountIds.get(name);
+        if (boundId != null) {
+            Optional<Player> bound = engine.world().findPlayer(PlayerId.of(boundId));
+            if (bound.isEmpty()) {
+                // A future reset that removes a player must clear the map with it; until then, reassigning
+                // the id would silently give one account another account's base and entities.
+                throw new IllegalStateException("account '" + name + "' is bound to player " + boundId
+                        + ", which is no longer in the world; refusing to reassign that identity");
+            }
+            return bound;
+        }
+        Optional<Player> joined = allocatePlayer(name);
+        joined.ifPresent(player -> accountIds.put(name, player.id().value()));
+        return joined;
+    }
+
+    /**
+     * Creates a player without an account identity, using the historical allocation rule.
+     *
+     * <p>Kept for callers that have no name - a scripted scenario or an embedding program. It takes the
+     * smallest unused id from {@value #FIRST_HUMAN_PLAYER_ID} to {@value #MAX_PLAYERS}, spawns the base and
+     * deposits the starting stock exactly like {@link #joinPlayer(String)}, but records no name, so two
+     * calls allocate two different players and neither can be found by {@link #playerFor(String)}. The
+     * command layer and every self check use the named form; a blank name in
+     * {@link #joinPlayer(String)} is the only in-tree path that reaches this method.
+     *
      * @return the new player, or empty when every human slot is taken
      * @throws IllegalStateException when called outside a world command
      */
-    public Optional<Player> joinPlayer(String name) {
-        if (!Thread.holdsLock(stateLock)) {
-            throw new IllegalStateException("joinPlayer must run on the world thread, inside a WorldCommand");
-        }
-        Objects.requireNonNull(name, "name");
+    public Optional<Player> joinPlayer() {
+        requireWorldThread("joinPlayer");
+        return allocatePlayer(null);
+    }
+
+    /** Allocates the smallest unused human slot and spawns its base; the caller owns the identity map. */
+    private Optional<Player> allocatePlayer(String name) {
         for (int id = FIRST_HUMAN_PLAYER_ID; id <= MAX_PLAYERS; id++) {
             PlayerId candidateId = PlayerId.of(id);
             if (engine.world().findPlayer(candidateId).isPresent()) {
                 continue;
             }
-            String displayName = name.isBlank() ? "Player " + id : name;
+            String displayName = name == null || name.isBlank() ? "Player " + id : name;
             Player joined = new Player(candidateId, displayName, colorFor(id), id, true);
             engine.world().addPlayer(joined);
             joined.attachLogistics(new WarehouseLogistics(engine.world(), joined));
@@ -973,6 +1051,76 @@ public final class WorldHost {
             return Optional.of(joined);
         }
         return Optional.empty();
+    }
+
+    /** Requires the simulation lock, which is what "runs on the world thread" means for this host. */
+    private void requireWorldThread(String operation) {
+        if (!Thread.holdsLock(stateLock)) {
+            throw new IllegalStateException(operation + " must run on the world thread, inside a WorldCommand");
+        }
+    }
+
+    /**
+     * The player bound to an account name, without creating anything.
+     *
+     * <p>Read-only: a name that was never admitted, or whose player a future reset removed, answers empty.
+     * The lookup takes the simulation lock, so it is safe from a connection thread. A stale mapping is kept
+     * rather than cleared, so a later {@link #joinPlayer(String)} refuses it explicitly instead of
+     * reassigning the identity.
+     *
+     * @param name the account name
+     * @return the bound player, or empty when this world has no live player for that name
+     */
+    public Optional<Player> playerFor(String name) {
+        Objects.requireNonNull(name, "name");
+        synchronized (stateLock) {
+            Integer id = accountIds.get(name);
+            return id == null ? Optional.empty() : engine.world().findPlayer(PlayerId.of(id));
+        }
+    }
+
+    /**
+     * Every account name currently bound to a live player, sorted.
+     *
+     * <p>This is the identity map, not a session list: a disconnected account is still present, because this
+     * host deliberately keeps it (see {@link #joinPlayer(String)}). The method is cheap - one pass over at
+     * most six names - and takes the simulation lock, so it is safe from a diagnostics caller.
+     *
+     * @return the bound account names in natural order; empty when only the nameless path has been used
+     */
+    public List<String> accounts() {
+        synchronized (stateLock) {
+            List<String> names = new ArrayList<>(accountIds.size());
+            for (Map.Entry<String, Integer> entry : accountIds.entrySet()) {
+                if (engine.world().findPlayer(PlayerId.of(entry.getValue())).isPresent()) {
+                    names.add(entry.getKey());
+                }
+            }
+            names.sort(Comparator.naturalOrder());
+            return names;
+        }
+    }
+
+    /**
+     * Every human player currently admitted to the world, in id order.
+     *
+     * <p>"Online" is the wrong word for this host: there is no session object here, so a player whose
+     * connection closed is still admitted and still appears. The method is the cheap diagnostic view of the
+     * human slots; use {@link #accounts()} when the names are what matters.
+     *
+     * @return the human players (ids {@value #FIRST_HUMAN_PLAYER_ID} and above), in id order
+     */
+    public List<Player> onlinePlayers() {
+        synchronized (stateLock) {
+            List<Player> players = new ArrayList<>();
+            for (Player player : engine.world().players()) {
+                if (player.id().value() >= FIRST_HUMAN_PLAYER_ID) {
+                    players.add(player);
+                }
+            }
+            players.sort(Comparator.comparingInt((Player human) -> human.id().value()));
+            return players;
+        }
     }
 
     /**

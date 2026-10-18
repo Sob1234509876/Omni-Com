@@ -6,10 +6,10 @@ English | [简体中文](oc-protocol_zh_CN.md)
 
 ## What this document covers
 
-- Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake.
+- Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
-- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD` and `TRAIN`, the login and ownership rules, and the world-step boundary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD` and `TRAIN`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
 - World snapshot: ordinary HTTP content at `/world/snapshot`, likewise outside the command protocol.
@@ -27,6 +27,18 @@ English | [简体中文](oc-protocol_zh_CN.md)
 | Close | On the normal path only `QUIT` closes the connection; a failed handshake closes it; on a timeout or a frame-rule violation an implementation may close it, with a readable reason |
 
 A client cannot send commands right after connecting: **the first frame must be the version handshake** (see the next section). The server accepts no other command before a successful handshake. Inside a command line the command word (`PING`, `REQ`, and so on) is **case-insensitive**; arguments are passed as-is, with no case folding.
+
+### Idle timeout and heartbeat
+
+The server keeps an open WebSocket alive. It sends an empty WebSocket **ping** control frame to every open connection every **25 seconds**; per RFC 6455 a conforming client answers each ping with a pong automatically, and those pongs are the inbound traffic that keeps the connection's read timeout from expiring. This is transport framing, not an OC/1 command: no text line is sent, and the client must not display it.
+
+- The idle timeout is **300 seconds** by default. `--ws-idle <seconds>` changes it on the server; it must be a positive whole number. A connection with no inbound frame for that long is closed with code `1001`.
+- The ping interval is 25 seconds and is not a command line option. It is shorter than the default timeout, so a page that is only being kept alive by the server still sends a pong well before the timeout.
+- A client that does not answer pings is closed by the ordinary idle timeout as before. A client that answers them stays connected with no user interaction.
+- The text command `PING` -> `PONG` is separate from this heartbeat, and a client-sent ping control frame is still answered with a pong control frame carrying the same payload.
+- `--ws-idle 60` reproduces the old one-minute close; it is a diagnostic, not the default.
+
+This heartbeat adds no command, answer, text frame or version number: it only adds standard WebSocket control frames, so it stays inside OC/1.
 
 ## Version handshake
 
@@ -67,7 +79,7 @@ After a successful handshake, one line per command, one line of answer per comma
 | `LOGIN <name> <password>` | `OK <message>` or `ERR <message>` | Authenticates **this connection**; only after success may this connection send `REQ` and the gameplay commands |
 | `COUNT` | `OK <n>` | Number of registered accounts; `n` is a decimal non-negative integer |
 | `REQ <name> <base64-payload>` | `OK <base64-payload>` or `ERR <reason>` | Calls a registered read-only request; requires `LOGIN` on the same connection first |
-| `WHOAMI` | `OK player <id>` or `ERR <reason>` | The engine player id of this connection; requires `LOGIN` |
+| `WHOAMI` | `OK player <id>` or `ERR <reason>` | The engine player id bound to this connection's account; requires `LOGIN` |
 | `ORDER ...` | `OK` or `ERR <reason>` | Movement and combat orders; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `BUILD ...` | `OK <buildingId>` or `ERR <reason>` | Places a paid building site; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `TRAIN ...` | `OK` or `ERR <reason>` | Queues one unit in an owned producer; requires `LOGIN` and ownership; see "Gameplay commands" |
@@ -124,19 +136,28 @@ TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (needs 
 ### Login and identity
 
 Every command in this section requires a **successful `LOGIN` on the same connection**. Without one the
-server answers exactly `ERR login first` and touches nothing, exactly like `REQ`. The connection's
-identity is created lazily, on its first gameplay command (including `WHOAMI`):
+server answers exactly `ERR login first` and touches nothing, exactly like `REQ`. After a successful login,
+**the account name is the identity** - not the socket and not the connection. The world creates the identity
+lazily, on the first gameplay command (including `WHOAMI`):
 
 - Player `1` owns the sample scene the server builds; player `2` is reserved for the classic plugin's
-  enemy AI. A human connection therefore receives the smallest unused id from `3` upwards. The host's
-  world ceiling is `8` players, so a default world offers human ids `3` through `8`, and keeps an id for
-  the life of the connection.
+  enemy AI. A **new account name** therefore receives the smallest unused id from `3` upwards. The host's
+  world ceiling is `8` players, so a default world offers human ids `3` through `8`: six distinct account
+  names at most.
 - The id is the engine `Player` id and is the same number that appears in the `player` field of
   `/world/snapshot` entities.
-- `WHOAMI` answers `OK player <id>`, creating the player on first use. A connection that is already
-  logged in but whose world cannot accept another player answers `ERR world full`.
-- A new login on the same connection resets its identity to "not yet assigned"; the next gameplay
-  command gets a player for the new login.
+- `WHOAMI` answers `OK player <id>`, creating the player on first use. The id stays bound to that account
+  name for the life of the world, so a disconnect does not release it and a later connection with the same
+  account - after a close, a reconnect, or a new browser tab - gets the **same id, the same base, the same
+  entities and the same resources**. No second base is created, and no stock is granted twice.
+- A **different** account name always gets a different id and its own base. When all six slots are taken,
+  `WHOAMI` - and any gameplay command that would create the identity - answers `ERR world full`.
+- A player whose connection is gone keeps existing. **This version does not automatically reclaim an idle
+  account**: reclaiming the slot would either orphan that player's entities or hand them to a new account,
+  so the account stays in the world until the world itself is rebuilt.
+- A new login on the same connection resets only that connection's cached id; the next gameplay command
+  asks the world again. Logging in with the same name reuses the same player; logging in with a different
+  name gets that name's own player and leaves the previous player in the world.
 
 ### Ownership, existence and content
 

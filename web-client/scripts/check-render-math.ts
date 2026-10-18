@@ -8,6 +8,7 @@
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
 
+import { readFileSync } from "node:fs";
 import {
   BUILDING_PATHS,
   UNIT_PATHS,
@@ -20,13 +21,16 @@ import {
   train,
   whoAmI,
 } from "../src/commands.ts";
+import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
 import { Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
 import {
   atlasLabel,
   compositeAtlas,
+  entityDisplayName,
   mergeLayers,
   parseAtlas,
   readManifestEntry,
+  tileDisplayName,
   type AtlasSource,
 } from "../src/render/atlas.ts";
 import { TERRAIN_COLORS, terrainColor } from "../src/render/fallback.ts";
@@ -66,6 +70,13 @@ function tileTypes(world: WorldView): Set<string> {
     }
   }
   return types;
+}
+
+/** A JSON object as a string-keyed table, or null for every other JSON value. */
+function recordTable(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -429,6 +440,52 @@ if (minimal.ok) {
   check("缺省 scale 是 1", worker?.scale === 1);
 }
 
+// The manifest may label tiles and entity kinds. A named tile uses the {"rect": ..., "name": ...}
+// object form; the old array form stays valid and simply has no label.
+const namedFixture = parseAtlas(
+  {
+    image: "atlas.png",
+    tiles: {
+      grass: { rect: [0, 0, 16, 16], name: "草地" },
+      water: [16, 0, 16, 16],
+    },
+    entities: {
+      "unit.melee.t1": { frames: [[0, 0, 16, 16]], name: "普通" },
+      "unit.engineer": { frames: [[16, 0, 16, 16]] },
+    },
+  },
+  64,
+  64,
+);
+check("带 name 的清单解析成功", namedFixture.ok);
+if (namedFixture.ok) {
+  // The merge never reads pixels; a private placeholder keeps this block independent of the
+  // composite-atlas section's shared image further down.
+  const namedImage = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
+  const namedAtlas = compositeAtlas([{ ...namedFixture.data, image: namedImage }]);
+  check(
+    "带 name 的清单得到预期标签表（按地形路径与实体 kind 暴露）",
+    namedAtlas !== null &&
+      namedAtlas.names.tiles.get("grass") === "草地" &&
+      namedAtlas.names.tiles.get("water") === "water" &&
+      namedAtlas.names.entities.get("unit.melee.t1") === "普通" &&
+      namedAtlas.names.entities.get("unit.engineer") === "unit.engineer",
+    JSON.stringify({
+      tiles: [...(namedAtlas?.names.tiles ?? [])],
+      entities: [...(namedAtlas?.names.entities ?? [])],
+    }),
+  );
+  check(
+    "没有 name 时标签函数回退到原始 id，带命名空间的 kind 也能命中",
+    entityDisplayName(namedAtlas, "unit.engineer") === "unit.engineer" &&
+      entityDisplayName(namedAtlas, "oc:unit.melee.t1") === "普通" &&
+      entityDisplayName(null, "unit.melee.t1") === "unit.melee.t1" &&
+      tileDisplayName(namedAtlas, "water") === "water" &&
+      tileDisplayName(namedAtlas, "oc:grass") === "草地" &&
+      tileDisplayName(null, "water") === "water",
+  );
+}
+
 check("非对象图集被拒绝", parseAtlas(null, 64, 64).ok === false);
 check(
   "缺少 image 的图集被拒绝",
@@ -528,6 +585,54 @@ const urlOnly = parseAtlas(
 check(
   "只有 atlasUrl 的条目也能解析，并从 URL 得到文件名",
   urlOnly.ok && urlOnly.data.imageName === "atlas.png" && urlOnly.data.plugin === "",
+);
+
+// The checked-in classic manifest is the one the game view actually receives, so prove from disk
+// that every tile and every entity kind carries a usable name, not just that the parser accepts it.
+const CLASSIC_MANIFEST_URL = new URL(
+  "../../projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json",
+  import.meta.url,
+);
+let classicManifestText = "";
+try {
+  classicManifestText = readFileSync(CLASSIC_MANIFEST_URL, "utf8");
+} catch (error: unknown) {
+  console.error(
+    `读取经典插件清单失败：${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+let classicManifest: unknown = null;
+try {
+  classicManifest = JSON.parse(classicManifestText) as unknown;
+} catch (error: unknown) {
+  console.error(
+    `经典插件清单不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+const classicAtlas = parseAtlas(classicManifest, 96, 96);
+check("经典插件的 manifest.json 可以被解析", classicAtlas.ok);
+const classicRoot = recordTable(classicManifest);
+const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
+const classicEntities = classicRoot === null ? null : recordTable(classicRoot["entities"]);
+check(
+  "经典清单的每个地块都有非空 name",
+  classicAtlas.ok &&
+    classicTiles !== null &&
+    classicAtlas.data.tiles.size === Object.keys(classicTiles).length &&
+    [...classicAtlas.data.tiles.values()].every((tile) => tile.name.trim() !== ""),
+  classicAtlas.ok
+    ? `${classicAtlas.data.tiles.size} tiles / ${classicTiles === null ? "?" : Object.keys(classicTiles).length} parsed`
+    : classicAtlas.reason,
+);
+check(
+  "经典清单的每个实体 kind 都有非空 name",
+  classicAtlas.ok &&
+    classicEntities !== null &&
+    classicAtlas.data.entities.size === Object.keys(classicEntities).length &&
+    [...classicAtlas.data.entities.values()].every((entity) => entity.name.trim() !== ""),
+  classicAtlas.ok
+    ? `${classicAtlas.data.entities.size} entities / ${classicEntities === null ? "?" : Object.keys(classicEntities).length} parsed`
+    : classicAtlas.reason,
 );
 
 const goodEntry = readManifestEntry({
@@ -711,6 +816,18 @@ check(
   "目录里每条路径都能原样交给对应的构建器",
   UNIT_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
     BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Heartbeat
+// ---------------------------------------------------------------------------------------------
+
+check("心跳间隔常量是 20 秒", HEARTBEAT_MS === 20_000, String(HEARTBEAT_MS));
+check(
+  "心跳只在连接成功后发送，且同一时刻最多一个 PING 在途",
+  shouldHeartbeat({ connected: false, pingInFlight: false }) === false &&
+    shouldHeartbeat({ connected: true, pingInFlight: false }) === true &&
+    shouldHeartbeat({ connected: true, pingInFlight: true }) === false,
 );
 
 // ---------------------------------------------------------------------------------------------

@@ -63,6 +63,11 @@ OC/1 只使用文本帧。若服务端发来二进制帧，页面只记录一行
 **不关闭连接**，也不丢弃还在等待回答的命令；这与服务端“回 `ERR binary frames are not commands` 并保持连接”
 的行为一致。
 
+**心跳。** 连接可用时，页面每 20 秒通过与其他命令相同的按序队列发送一次 `PING`（常量 `HEARTBEAT_MS` 在
+[`src/heartbeat.ts`](src/heartbeat.ts) 里），服务器回答 `PONG`，两条都会写进日志。定时器只在 `HELLO 1` / `OK OC/1`
+握手成功之后才启动，上一个 `PING` 没回答完不会再排一个；关闭连接和重连之前都会清掉它。这样空闲页面就不会被
+WebSocket 的空闲超时切断（`/world/snapshot` 是普通 HTTP，不会刷新 WebSocket）；`PING` 按钮仍然是手动单次。
+
 ## 游戏画面
 
 页面左侧是整块 Canvas 2D 世界画面，右侧（窄屏时在下方）是原来的协议面板；协议面板的
@@ -85,8 +90,8 @@ HUD 固定在画面左上角，实时显示：
 - 鼠标下的瓦片坐标；
 - 缩放倍率（0.5× 到 2.5×）；
 - 平滑后的 FPS；
-- 选中实体的 id、kind 与地面坐标；没有选中时显示 `选中：无`；
-- 选中的建筑属于自己时，显示它的 kind 与 id（`建筑：building.armory.t1 #42`）。
+- 选中实体的 id、显示名与地面坐标（`选中：e12 普通 (12.5, 8.5)`）；贴图清单里没有这种 kind 的名字时回退到原始 kind（`选中：e12 unit.melee.t1 (…)`）；没有选中时显示 `选中：无`；
+- 选中的建筑属于自己时，显示它的显示名与 id（`建筑：兵工厂 1 级 #42`），没有名字时同样回退到原始 kind（`建筑：building.armory.t1 #42`）。
 
 **服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
 （上一次请求未完成就跳过），并原地替换渲染用的世界。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器
@@ -114,23 +119,28 @@ JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id
 协议命令下面的**游戏操作**面板驱动剩下的语法。只有选中的实体属于 HUD 里的玩家 id 时（`entity.playerId === myPlayerId`）命令才可用，所以点中别人的单位不会误发命令：
 
 - `STOP` 对选中的自己的单位发 `ORDER STOP <selected>`。
-- 选中自己的建筑时，面板按目录中的每条单位路径显示一个 `TRAIN <buildingId> <unitPath>` 按钮（`unit.melee.t1` … `unit.melee.t5`、`unit.engineer`）。当前兵营等级不够的单位也会显示，服务器回答的 `ERR ...` 会原样变红显示。
-- 选中自己的工程师时，面板按目录中的每条建筑路径显示一个 `BUILD <engineerId> <buildingPath> <tileX> <tileY>` 按钮（`building.armory.t1`、`building.mine.t1`）。按下按钮进入放置模式：状态行显示模式，光标下的瓦片高亮，**下一次在画面上左键单击**才发送命令，然后模式清除；`Esc` 只取消放置，不会取消工程师的选中。
+- 选中自己的建筑时，面板按目录中的每条单位路径显示一个 `TRAIN <buildingId> <unitPath>` 按钮（`unit.melee.t1` … `unit.melee.t5`、`unit.engineer`）。有清单显示名时按钮文字就是显示名（经典单位是 `普通`、`强化`、`精英`、`将领`、`战王`、`工程师`），原始路径放在 tooltip 里；没有名字时回退到原始路径。当前兵营等级不够的单位也会显示，服务器回答的 `ERR ...` 会原样变红显示。
+- 选中自己的工程师时，面板按目录中的每条建筑路径显示一个 `BUILD <engineerId> <buildingPath> <tileX> <tileY>` 按钮（`building.armory.t1`、`building.mine.t1`）。按钮文字是清单显示名（`兵工厂 1 级`、`矿井 普通`），没有名字时是原始路径。按下按钮进入放置模式：状态行显示模式，光标下的瓦片高亮，**下一次在画面上左键单击**才发送命令，然后模式清除；`Esc` 只取消放置，不会取消工程师的选中。
 
-`LOGIN` 成功后页面自动发 `WHOAMI`（重新登录也会再发），把 `OK player <id>` 解析到 HUD 字段。每条游戏命令与回答都会写进日志；`ERR ...` 还会原样显示在红色状态行，成功则显示一句简短确认。目录在 [`src/commands.ts`](src/commands.ts)，注释说明服务器才是事实来源：服务器内容增加时这里也要同步。线路格式接收整数瓦片索引；引擎把 `GridPos` 当作该瓦片的中心。
+`LOGIN` 成功后页面自动发 `WHOAMI`（重新登录也会再发），把 `OK player <id>` 解析到 HUD 字段。每条游戏命令与回答都会写进日志；`ERR ...` 还会原样显示在红色状态行，成功则显示一句简短确认，确认里用显示名并把原始 id 放在括号中，例如 `已下训练 普通 (unit.melee.t1)` 或 `已在 20,40 下达 BUILD 兵工厂 1 级 (building.armory.t1)`。线路上的命令本身不变，仍然是 `unit.melee.t1` / `building.armory.t1`。目录在 [`src/commands.ts`](src/commands.ts)，注释说明服务器才是事实来源：服务器内容增加时这里也要同步。线路格式接收整数瓦片索引；引擎把 `GridPos` 当作该瓦片的中心。
 
 **纹理由插件提供**：每个插件把 `assets/manifest.json` 和图片打进自己的 jar，服务器把它们合并成
 `GET /plugin-assets/manifest.json`，客户端启动时读取并按 `atlasUrl` 加载每张图片。多个插件同时提供时按数组顺序
-合并，**后者覆盖前者**（同名地形路径或实体 kind）。本地 `public/textures/atlas.json` 不再是来源；这个目录只保留
+合并，**后者覆盖前者**（同名地形路径或实体 kind，显示名也一起覆盖）。本地 `public/textures/atlas.json` 不再是来源；这个目录只保留
 [契约文档](public/textures/README.md)（清单格式、示例、脚底锚点、每种实体一行动画）。
+
+清单还可以带**显示名**：实体的 `entities.<kind>.name` 与动画字段并列；地形瓦片用命名对象形式
+`tiles.<path>: {"rect": [x, y, w, h], "name": "草地"}`，旧的数组形式仍然合法，只是没有名字。客户端把名字和帧一起
+合并（后者覆盖前者），HUD、TRAIN/BUILD 按钮文字和成功日志都会使用它；名字缺失或为空时一律回退到原始内容路径，
+所以没有名字的清单行为与以前完全一样。名字只用于显示：协议命令仍然发送内容路径。
 清单缺失、请求失败、图片载入失败或返回 `[]` 时，客户端自动退回程序化绘制：每种地形有独立颜色和细节，
 单位是圆形、建筑是带屋顶线的方块，放大后还有 1 像素格线。
 
 > 初始地图由 `demoWorld(seed)` 生成，是确定性的占位岛屿；Java 服务器一旦能回答 `/world/snapshot`，画面就切换到
 > 那个真实的引擎世界（64×64，地形与实体来自服务器的内容目录）。两边使用同一个 `WorldView` 形状，渲染层不需要改。
 
-渲染数学（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、图集越界帧拒绝、插件图集合并与回退）
-可以离线检查：
+渲染数学与纯客户端规则（相机夹紧、以光标为中心缩放、占位地图确定性、服务器快照转换与越界拒绝、图集越界帧拒绝、
+清单显示名与原始 id 回退、磁盘上的经典清单、插件图集合并与回退、心跳常量与启动规则）可以离线检查：
 
 ```shell
 pnpm check:render
@@ -220,15 +230,16 @@ SSH 端口转发或 HTTPS 反向代理。
 | `src/protocol.ts` | OC/1 命令、base64 辅助函数、AES-256-GCM 信封的封/开 |
 | `src/socket.ts` | 一行命令对一个回答的 WebSocket 队列、超时与关闭事件 |
 | `src/commands.ts` | 纯游戏命令构建器（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`）、`parseWhoAmI`，以及游戏操作面板提供的目录 |
-| `src/main.ts` | DOM 接线：连接、握手、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
+| `src/heartbeat.ts` | `HEARTBEAT_MS`（20 秒）、纯函数 `shouldHeartbeat(state)` 的启动/停止规则，以及心跳说明 |
+| `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
-| `src/render/atlas.ts` | 插件清单解析、合成图集（last wins）与图片加载；失败时返回 `null` |
+| `src/render/atlas.ts` | 插件清单解析（帧与显示名）、合成图集（last wins）、带原始 id 回退的标签函数与图片加载；失败时返回 `null` |
 | `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
 | `src/render/view.ts` | `WorldView` / `EntityView` 形状、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序、动画帧与放置高亮 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作、实体拾取、右键命令与放置点击 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、插件图集合并与游戏命令构建器的离线自检 |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、心跳规则与游戏命令构建器的离线自检 |
 | `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档

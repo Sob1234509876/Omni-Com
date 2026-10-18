@@ -41,10 +41,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       sends one is confused rather than hostile.</li>
  * </ul>
  *
- * <p><strong>Idle timeout.</strong> The socket read timeout is set to {@code idleTimeoutMillis} and doubles
- * as the idle timeout, exactly like the TCP channel's read timeout: a browser tab that disappears without a
- * close frame costs its thread for one timeout period and then a close frame with code {@code 1001}. There
- * is no separate scheduler, because a second timer per connection would be more state to get wrong.
+ * <p><strong>Idle timeout and heartbeat.</strong> The socket read timeout is set to
+ * {@code idleTimeoutMillis} and doubles as the idle timeout, exactly like the TCP channel's read timeout: a
+ * browser tab that disappears without a close frame costs its thread for one timeout period and then a
+ * close frame with code {@code 1001}. The endpoint additionally calls {@link #ping()} every
+ * {@code pingIntervalMillis} ms, and a conforming peer answers each ping with a pong. Those pongs are
+ * inbound bytes, so every read resets the socket timeout and a session that is only being kept alive by the
+ * server's own pings stays open; a peer that never answers still times out as before. The heartbeat timer
+ * itself lives in {@link HttpWebServer} - one daemon scheduler for every connection, not one timer per
+ * socket - so this class only has to write the frame safely.
  *
  * <p><strong>Lingering close.</strong> After a protocol error the server has usually not read the payload
  * that the offending frame announced. Closing a socket with unread data makes TCP send a reset, which can
@@ -507,6 +512,26 @@ final class WebSocketConnection implements WebSocketSession {
     @Override
     public String remoteAddress() {
         return remoteAddress;
+    }
+
+    /**
+     * Sends one empty server initiated ping frame, from the endpoint's heartbeat scheduler.
+     *
+     * <p>The write goes through the same lock as every other server frame, so a ping can never interleave
+     * with half a command answer. A write failure means the peer is gone: the connection is marked closed
+     * and its socket is closed, which also unblocks the reader thread. A missing pong is not an error here;
+     * the ordinary socket read timeout still decides when a silent peer is closed.
+     */
+    void ping() {
+        if (!open.get()) {
+            return;
+        }
+        try {
+            writeFrame(OPCODE_PING, new byte[0], true);
+        } catch (IOException failure) {
+            open.set(false);
+            closeQuietly(socket);
+        }
     }
 
     @Override

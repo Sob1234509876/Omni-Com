@@ -72,14 +72,16 @@ the details are in [`protocol/oc-protocol.md`](../../../protocol/oc-protocol.md)
   "image": "atlas.png",          // the image file name inside this plugin's assets/
   "tilePixels": 32,              // recommended art cell size, metadata only
   "tiles": {
-    "<TerrainType name>": [x, y, w, h]
+    "<TerrainType name>": [x, y, w, h]  // legacy form, no display name
+    // named form instead: "<TerrainType name>": { "rect": [x, y, w, h], "name": "草地" }
   },
   "entities": {
     "<entity kind>": {
       "frames": [[x, y, w, h], ...],  // at least one frame, in play order
       "fps": 4,                       // optional, default 4
       "anchor": [0.5, 0.75],          // optional, default [0.5, 0.75]
-      "scale": 1                      // optional, default 1, stacked on top of the camera zoom
+      "scale": 1,                     // optional, default 1, stacked on top of the camera zoom
+      "name": "普通"                  // optional display name
     }
   }
 }
@@ -92,12 +94,24 @@ Field reference:
 | `image` | Yes | image file name inside this plugin's `assets/`; usually `atlas.png` |
 | `tilePixels` | No | suggested art cell size in pixels; treated as 32 when missing or invalid |
 | `tiles` | No | terrain frame table; when missing, all terrain uses procedural drawing |
-| `tiles.<name>` | — | the engine's terrain content path, see the table below |
+| `tiles.<name>` | — | the engine's terrain content path, see the table below; value is `[x, y, w, h]` or `{ "rect": [x, y, w, h], "name": "..." }` |
 | `entities` | No | entity animation table; when missing, entities use procedural shapes |
 | `entities.<kind>.frames` | Yes | at least one `[x, y, w, h]` |
 | `entities.<kind>.fps` | No | positive number, default 4 |
 | `entities.<kind>.anchor` | No | two numbers, default `[0.5, 0.75]` (feet) |
 | `entities.<kind>.scale` | No | positive number, default 1; multiplied with the camera zoom |
+| `entities.<kind>.name` | No | display name; a missing or blank name falls back to the raw kind |
+
+## Display names
+
+Both tables may carry a human readable **display name**: `entities.<kind>.name` for an entity kind, and the `name` member of the
+named tile object for a terrain path. The client merges names with the frames under the same **last-wins** rule, and uses them in
+the HUD selection line, the selected-building line, the TRAIN/BUILD button labels, and the success log lines (for example
+`已下训练 普通 (unit.melee.t1)`). The protocol commands keep sending the raw content path.
+
+Names are optional. A manifest written before names existed, a missing `name`, and a blank `name` all fall back to the raw id, so
+the page never shows `undefined`. `check-render-math` proves the label map, the fallback, and that the classic plugin's on-disk
+manifest names every tile and entity kind.
 
 The server does not interpret `tiles` and `entities`; it only forwards them to the client. Frame validity is checked by the client as described under "Validation and failure behavior" below.
 
@@ -212,6 +226,7 @@ Namespaced paths (for example `oc:soldier`) also match `soldier`. Entities witho
 - The top level must be a JSON object; every frame must be an array of exactly four finite numbers, and `w` and `h` must be greater than 0.
 - Frames must lie entirely inside the image. Out-of-bounds frames are **silently dropped** and reported in one summarized `console.warn` in the console; other valid frames of the same entity keep being used.
 - Entity entries with no valid frame are dropped; an entry with no usable terrain frame and no usable entity frame counts as unusable, and only that plugin is skipped.
+- A tile may be the legacy `[x, y, w, h]` array or the named `{ "rect": [x, y, w, h], "name": "..." }` object; a malformed tile or a missing `rect` is skipped with a warning. A non-string, empty, or whitespace-only `name` is treated as "no name" and falls back to the raw path.
 - An image load failure only skips that plugin; invalid `fps`, `anchor`, and `scale` values are handled with the defaults, with a warning.
 - When the manifest request fails, returns `[]`, or all entries are unusable, the client falls back to procedural drawing; this never blocks page load and never affects the protocol panel.
 

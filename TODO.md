@@ -26,7 +26,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 239 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 633 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 63, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 82, `WorldTickHookCheck` 23, `PlayerCommandCheck` 57, `JoinBaseCheck` 40 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 708 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 82, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 34, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 286 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
@@ -92,7 +92,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Add an account-name-to-player-id map to `WorldHost`, owned by the world thread. `joinPlayer` returns the existing player for a known name and only assigns the smallest unused id for a new name. Keep the base, entities and resources untouched on rejoin; clear the map with the world. A name that maps to a player removed by a future reset must be rejected explicitly rather than silently reassigned.
 
-**Acceptance.** `LOGIN alice` → `OK player 3`; disconnect; `LOGIN alice` → `OK player 3` again, same warehouse, same engineer, the same gold/wood as before the disconnect, and no second base; `LOGIN bob` → `OK player 4`; a seventh distinct account still gets `ERR world full`. `JoinBaseCheck` (40) stays green plus a new rejoin assertion.
+**Acceptance.** `LOGIN alice` → `OK player 3`; disconnect; `LOGIN alice` → `OK player 3` again, same warehouse, same engineer, the same gold/wood as before the disconnect, and no second base; `LOGIN bob` → `OK player 4`; a seventh distinct account still gets `ERR world full`. `JoinBaseCheck` (60) stays green plus the rejoin assertions.
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [CommandDispatcher.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/net/CommandDispatcher.java), [JoinBaseCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/JoinBaseCheck.java).
 
@@ -106,7 +106,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Send a client `PING` every 20 seconds while the socket is open and require `PONG`, through the same in-order `send` queue as every other command, and clear the timer on close. Add a `--ws-idle N` option to `OcGameServer`, thread it into `WebSocketConfig`, default it to five minutes (`300_000` ms), and validate `N > 0`. Optionally send server ping frames as a second line of defence; the client already tolerates an unexpected line.
 
-**Acceptance.** With the default, a page idle for six minutes stays connected and the HUD keeps updating; the log shows `PING`/`PONG` about every 20 seconds; `--ws-idle 60` reproduces the old close, proving the flag is wired; `WebSocketCheck` (63) stays green plus a heartbeat and flag check.
+**Acceptance.** With the default, a page idle for six minutes stays connected and the HUD keeps updating; the log shows `PING`/`PONG` about every 20 seconds; `--ws-idle 60` reproduces the old close, proving the flag is wired; `WebSocketCheck` (88) stays green plus heartbeat and flag checks.
 
 **Files.** [WebSocketConfig.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/WebSocketConfig.java), [OcGameServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/OcGameServer.java), [HttpWebServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/HttpWebServer.java), [main.ts](web-client/src/main.ts), [socket.ts](web-client/src/socket.ts), [WebSocketCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WebSocketCheck.java).
 
@@ -134,7 +134,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Add a `players` array to `/world/snapshot`, for example `[{"id":3,"name":"alice","resources":{"gold":300,"wood":60}}]`, built from each player's `logistics().available()` bundle; emit only item paths the served catalogue defines, so the route stays content-agnostic. Parse and validate it in `view.ts`, keep it on `ServerWorldView`, and render a HUD line for `myPlayerId` (`金币 300 · 木材 60`). Refresh after a successful `BUILD` / `TRAIN` and on every snapshot. Extend `WorldHostCheck` and the snapshot section of the protocol document and its Chinese twin.
 
-**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (82) asserts the `players` shape and values; 633 stays green.
+**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (82) asserts the `players` shape and values; 708 stays green.
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [view.ts](web-client/src/render/view.ts), [main.ts](web-client/src/main.ts), [index.html](web-client/index.html), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md).
 
@@ -185,7 +185,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 ## 5. Known debts
 
 - **No real browser end-to-end run.** `pnpm check:render` exercises pure math; no headless/browser automation in this repository drives the actual page, canvas or WebSocket.
-- **Gameplay commands are proven at the dispatcher level, not over a live socket.** `PlayerCommandCheck` (57) and `JoinBaseCheck` (40) drive `WorldHost` / `CommandDispatcher` directly; there is no browser-to-server socket test for `ORDER`, `BUILD` or `TRAIN`.
+- **Gameplay commands are proven at the dispatcher level, not over a live socket.** `PlayerCommandCheck` (87) and `JoinBaseCheck` (60) drive `WorldHost` / `CommandDispatcher` directly; there is no browser-to-server socket test for `ORDER`, `BUILD` or `TRAIN`.
 - **Allied players never fight, but only the different-player case is asserted.** `CombatSystem.isEnemy` uses `Player.isAlliedWith`, yet no check creates two players with the same `team` and proves they do not target each other.
 - **No performance test with thousands of units.** The spatial index, path budget and tick pipeline are exercised at scenario scale, not at a stress scale.
 - **The world is uniform terrain.** The server uses one flat ground type; the engine's noise generator is unused there.
@@ -209,7 +209,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 - **Determinism inside the simulation.** No `java.util.Random`, no wall clock (`System.currentTimeMillis`, `System.nanoTime`) and no threads inside the simulation. Use `DeterministicRandom`, fixed ticks and explicit id/coordinate tie-breaks. The server's pacing thread is the one place a clock may drive the simulation; transport and storage code may read a clock for timestamps, but the simulation must not.
 - **Daemon threads only in the server.** Plugin threads must be daemon and stopped in `onDisable`; a non-daemon thread keeps the JVM alive after shutdown.
 - **One verified stage per commit.** Run the six Java checks and both client checks before committing; do not mix a refactor and a feature in one commit.
-- **When a total changes, update every document that quotes it.** Grep the old number (for example `633`) across the repository; the READMEs, `help/` and the protocol may all mention it.
+- **When a total changes, update every document that quotes it.** Grep the old number (for example `708`) across the repository; the READMEs, `help/` and the protocol may all mention it.
 - **The docs are bilingual.** Every statement changed in an English file must be changed in its `_zh_CN.md` twin. The `help/` chapters are a Chinese documentation set by design; `protocol/oc-protocol.md` is English by default with `protocol/oc-protocol_zh_CN.md` as its twin, so both must move together.
 - **Runtime folders are not source.** `plugins/` is the operator drop zone and `data/` is server state; `plugins/*.jar` and `data/` are gitignored. Never commit a plugin jar, a key or an account file.
 

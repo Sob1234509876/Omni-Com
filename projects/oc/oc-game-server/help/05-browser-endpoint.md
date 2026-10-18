@@ -12,7 +12,7 @@
 - 静态文件路由：方法、路径穿越、SPA 回退、缓存与缺失的静态根。
 - 插件资源路由：`/plugin-assets/...` 与静态根的关系（细节在协议文档）。
 - 世界快照路由：`/world/snapshot` 的 JSON 形状、503 规则与 `--world` / `--seed`。
-- WebSocket 帧规则、关闭码、空闲超时，以及二进制帧的处理。
+- WebSocket 帧规则、关闭码、空闲超时（`--ws-idle`）、服务端 ping 心跳，以及二进制帧的处理。
 - 常见坑：工作目录、反向代理、`--http-port 0`、关闭世界。
 
 ## 它是什么
@@ -40,7 +40,9 @@ AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应
 
 端点是**可选**的：`--http-port 0` 让 `OcGameServer` 根本不创建 `HttpWebServer`，一个只跑 TCP 的服务器行为与
 这个端点出现之前完全一样。注意 `0` 在这里是“关闭”，不是 `--port 0` 的“让操作系统挑一个空闲端口”；
-`HttpWebServer` 自己把 `0` 解释为后者，是 `OcGameServer` 给了它第二个含义。
+`HttpWebServer` 自己把 `0` 解释为后者，是 `OcGameServer` 给了它第二个含义。WebSocket 的空闲超时默认
+`300` 秒，`--ws-idle N` 可以改成任意正整数秒；端点同时每 25 秒发一次 ping，浏览器自动回 pong，所以
+纯空闲页面不会被旧的 60 秒读超时误杀。
 
 启动顺序是：插件先加载 → 构造 `WorldHost`（不启动线程）→ TCP socket 绑定 → 启动世界的 daemon 线程 →
 （如果端口不是 `0`）浏览器端点绑定 → 定时器。浏览器端点绑定失败时，`OcGameServer.start()` 会把世界线程、已经绑好的
@@ -98,7 +100,7 @@ TCP 命令循环完全相同。因此这条端点上的命令、参数规则、�
 | `LOGIN <名字> <密码>` | `OK <文案>` / `ERR <文案>` | 成功后把**这条连接**标成已认证 |
 | `COUNT` | `OK <账号数>` | 跨连接共享 |
 | `REQ <名字> <base64 载荷>` | `OK <base64 载荷>` / `ERR <文案>` | 需要同一条连接上成功 `LOGIN` |
-| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用 |
+| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用；账号名就是身份，同名重连复用同一个玩家与基地 |
 | `QUIT` | 先 `OK bye`，再关闭连接 | 关闭码是 `1000` |
 | 其它任何东西 | `ERR unknown command` | 空行也是这一条 |
 
@@ -281,7 +283,8 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 ## 帧规则
 
 `WebSocketConnection` 是模块里唯一解释 WebSocket 字节的类。它只把**完整的文本消息**交给 handler，分片、
-mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`，命令行只暴露端口与静态根，不暴露这些数字。
+mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`；命令行只暴露端口、静态根与空闲超时
+（`--ws-idle`），不暴露帧大小、消息上限或 25 秒的 ping 间隔。
 
 | 规则 | 行为 |
 | --- | --- |
@@ -296,8 +299,9 @@ mask 位、控制帧都在传输层处理。默认上限来自 `WebSocketConfig`
 | 文本 | 重组后按 UTF-8 严格校验；非法 UTF-8 是 `1007` |
 | 关闭 | 对端 close 回一个 close；close reason 也按 UTF-8 校验，非法是 `1007` |
 | 关闭码 | `1002` 协议错误、`1007` 非法载荷、`1009` 消息过大、`1001` 空闲/服务器停止 |
-| `PING` / `PONG` | ping 用同一份 payload 回 pong；pong 忽略 |
-| 空闲超时 | socket 读超时兼作 idle timeout，默认 60 秒；超时以 `1001` 关闭 |
+| `PING` / `PONG` | 控制帧 ping 用同一份 payload 回 pong；pong 忽略（但会刷新读超时） |
+| 空闲超时 | socket 读超时兼作 idle timeout，默认 300 秒，可用 `--ws-idle N` 改；超时以 `1001` 关闭 |
+| 服务端心跳 | 端点每 25 秒给每条打开的连接发一个空 ping；浏览器自动回 pong，读超时因此不会在纯空闲页面上到期 |
 | 二进制帧 | 回文本 `ERR binary frames are not commands`，**连接保持打开** |
 
 几个容易记混的点：

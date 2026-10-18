@@ -77,8 +77,9 @@ import java.util.stream.Stream;
  *   <li>the numbers do not ascend - the five melee tiers, the three mines;</li>
  *   <li>the engine gate does not hold - the basic armory must not be able to train t4 or t5, and that has to
  *       be proven against a real {@link ProductionSystem}, not by reading the content back;</li>
- *   <li>the shipped bytes are wrong - the manifest must parse and every rectangle must fit the 96 x 96 atlas,
- *       and a world built from the content must only name kinds the manifest knows.</li>
+ *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 96 atlas,
+ *       every tile and entity must carry a display name, and a world built from the content must only name
+ *       kinds the manifest knows.</li>
  * </ol>
  *
  * <p>The JSON reader is hand written and tiny on purpose: the repository has no third-party dependency and
@@ -488,13 +489,28 @@ public final class ClassicCheck {
 
         StringBuilder bad = new StringBuilder();
         int rects = 0;
+        List<String> unnamedTiles = new ArrayList<>();
         for (Map.Entry<String, Object> entry : tiles.entrySet()) {
-            if (!withinAtlas(bad, "tiles." + entry.getKey(), entry.getValue())) {
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?> tile) {
+                if (!hasNonBlankName(value)) {
+                    unnamedTiles.add("tiles." + entry.getKey());
+                }
+                // A tile may be the old [x, y, w, h] array or the named {"rect": [...], "name": "..."} form.
+                value = tile.get("rect");
+            } else {
+                unnamedTiles.add("tiles." + entry.getKey());
+            }
+            if (!withinAtlas(bad, "tiles." + entry.getKey(), value)) {
                 continue;
             }
             rects++;
         }
+        List<String> unnamedEntities = new ArrayList<>();
         for (Map.Entry<String, Object> entry : entities.entrySet()) {
+            if (!hasNonBlankName(entry.getValue())) {
+                unnamedEntities.add("entities." + entry.getKey());
+            }
             Map<String, Object> entity;
             List<Object> frames;
             try {
@@ -513,6 +529,8 @@ public final class ClassicCheck {
         check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x96 内（共 " + rects + " 个）"
                 + (bad.length() == 0 ? "" : ": " + bad));
         check.that(rects >= 20 + 12, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
+        check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
+        check.that(unnamedEntities.isEmpty(), "每个实体都有非空的 name: " + unnamedEntities);
 
         List<String> missingEntities = new ArrayList<>();
         for (UnitType unit : registry.units()) {
@@ -1224,6 +1242,15 @@ public final class ClassicCheck {
             }
         }
         return host.tick() >= target;
+    }
+
+    /** Whether an entry object carries a non-blank display name; a bare tile array has none. */
+    private static boolean hasNonBlankName(Object entry) {
+        if (!(entry instanceof Map<?, ?> map)) {
+            return false;
+        }
+        Object name = map.get("name");
+        return name instanceof String text && !text.isBlank();
     }
 
     /** Checks one rect (a tile or a frame) against the atlas; records the reason when it does not fit. */

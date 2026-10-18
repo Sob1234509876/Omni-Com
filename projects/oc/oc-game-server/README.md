@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (633 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (708 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,20 +33,21 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 633 checks passed.
+game server self check: all 708 checks passed.
 ```
 
-633 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+708 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
-real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 63
-(upgrade, the version handshake, frame rules and origin rules), `HttpCheck` 47 (static files, traversal,
-caching, a missing static root), `PluginAssetsCheck` 80 (manifest merging and the asset route over real
-plugin jars), `WorldHostCheck` 82 (the daemon tick thread, the snapshot JSON, seed determinism, and the
-`/world/snapshot` 200/503/405 answers), `WorldTickHookCheck` 23 (the plugin tick hook contract and its
-ordering), `PlayerCommandCheck` 57 (`WHOAMI`, the world-thread command queue, movement orders, ownership,
-building cost and the production tier gate) and `JoinBaseCheck` 40 (the warehouse, engineer and starting
-resources a player receives when joining a world). The check is a program in its own `selfCheck` source set
+real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
+(upgrade, the version handshake, frame rules, origin rules, the configurable idle timeout and the server
+heartbeat), `HttpCheck` 47 (static files, traversal, caching, a missing static root), `PluginAssetsCheck` 80
+(manifest merging and the asset route over real plugin jars), `WorldHostCheck` 82 (the daemon tick thread, the
+snapshot JSON, seed determinism, and the `/world/snapshot` 200/503/405 answers), `WorldTickHookCheck` 23 (the
+plugin tick hook contract and its ordering), `PlayerCommandCheck` 87 (`WHOAMI`, account identity, the
+world-thread command queue, movement orders, ownership, building cost and the production tier gate) and
+`JoinBaseCheck` 60 (the warehouse, engineer and starting resources a player receives when joining a world,
+and their survival across a rejoin). The check is a program in its own `selfCheck` source set
 (`src/selfcheck/java`), so the standard `test` task stays source free.
 
 The `server` task runs `OcGameServer` with standard input attached and the repository root as its working
@@ -64,6 +65,7 @@ the built web client.
 | `--save-seconds N` | `60` | how often user records are written; must be positive |
 | `--http-port N` | `25567` | browser endpoint port; `0` disables the endpoint, it does not pick a random port |
 | `--static-root DIRECTORY` | `web-client/dist` | directory the browser endpoint serves, relative to the process working directory |
+| `--ws-idle N` | `300` | WebSocket idle timeout in whole seconds; must be positive; a silent connection is closed with code `1001` |
 | `--world on\|off` | `on` | start the server side world; `off` makes `/world/snapshot` answer 503; `--http-port 0` forces it off |
 | `--seed N` | `1` | seed of the server side world; the same seed reproduces the same map and starting layout |
 | `--help` | — | print the help text and exit |
@@ -92,8 +94,10 @@ upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answ
 `/plugin-assets/...` serves `assets/` out of plugin jars, with every plugin's `assets/manifest.json` merged
 into one array at `/plugin-assets/manifest.json`. `GET /world/snapshot` publishes the hosted world as
 `application/json; charset=utf-8` with `Cache-Control: no-store`, and answers `503 the world is not running`
-when the world is off. It is a plain HTTP/WS listener with no TLS, meant for a local machine or behind a
-reverse proxy, and `--http-port 0` removes it entirely (and with it the world).
+when the world is off. A WebSocket is kept alive by the server: it sends a ping control frame every 25 seconds,
+and the browser's automatic pong keeps the read timeout from expiring; the idle timeout is 300 seconds by
+default and `--ws-idle N` changes it. It is a plain HTTP/WS listener with no TLS, meant for a local machine or
+behind a reverse proxy, and `--http-port 0` removes it entirely (and with it the world).
 
 **The plugin loader.** `PluginLoader` scans `plugins/*.jar` in file name order and gives each jar its own
 `URLClassLoader`. The URL list is that jar first, then every other jar in the folder, sorted by file name, so
@@ -113,10 +117,13 @@ name, an over long name or a payload that is not base64 is `ERR unknown request`
 
 **Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD` and `TRAIN` are parsed by the same `CommandDispatcher` the
 browser endpoint uses, but they are applied by `WorldHost` on the world thread at the start of the next fixed
-step. `WHOAMI` creates the connection's player lazily (the first human is player 3; player 1 is the sample
-scene and player 2 is the classic AI), `ORDER` validates ownership and existence, `BUILD` charges the
-building type's cost from the player's warehouses exactly once at placement, and `TRAIN` lets the engine's
-`ProductionSystem` decide the tier gate. See `protocol/oc-protocol.md` for the wire grammar.
+step. The authenticated account name is the identity: the first gameplay command creates the player for that
+account (the first human is player 3; player 1 is the sample scene and player 2 is the classic AI), and every
+later command - including one after a disconnect and reconnect - reuses the same player, base, entities and
+resources. A new account name takes the next unused id from 3 through 8, and a seventh name answers
+`ERR world full`; an idle account is not reclaimed. `ORDER` validates ownership and existence, `BUILD`
+charges the building type's cost from the player's warehouses exactly once at placement, and `TRAIN` lets the
+engine's `ProductionSystem` decide the tier gate. See `protocol/oc-protocol.md` for the wire grammar.
 
 **Autosave and shutdown.** A daemon timer named `oc-autosave` flushes the user records every `--save-seconds`
 seconds (60 by default), which is a no-op when nothing changed. `stop()` then runs in a fixed order: stop the
@@ -143,7 +150,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 633 check self check program
+src/selfcheck/java/.../server/check/    the 708 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

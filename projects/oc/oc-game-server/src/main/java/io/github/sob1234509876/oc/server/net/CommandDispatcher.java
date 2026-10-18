@@ -54,8 +54,10 @@ import java.util.function.Supplier;
  * a {@link WorldHost.WorldCommand} to the host's queue and waits for its answer, so ownership, existence,
  * content lookups, the production tier gate and the economy all run on the world thread, never while the
  * engine ticks. The answer therefore describes what happened when the command was applied, not what the
- * parser guessed at submit time. A connection's player is created lazily on the first such command (see
- * {@link WorldHost#joinPlayer(String)}); the id is then stable for the life of the connection.
+ * parser guessed at submit time. The player is created lazily on the first such command by passing the
+ * authenticated account name to {@link WorldHost#joinPlayer(String)}, so the account name - not the
+ * connection - is the identity: every gameplay command reuses the same player for the same login, across
+ * disconnects and reconnects, and a different account gets a different slot.
  *
  * <p>This class exists so the encrypted TCP channel and the browser facing WebSocket channel cannot drift
  * apart. Both call {@link #execute(String, Session)} with one line and write back exactly one answer, so a
@@ -267,10 +269,11 @@ public final class CommandDispatcher {
     // ------------------------------------------------------------------ gameplay commands
 
     /**
-     * {@code WHOAMI}: the engine player id of this connection, created on first use.
+     * {@code WHOAMI}: the engine player id of this connection, created or reused on first use.
      *
-     * <p>The answer is exactly {@code OK player <id>}; the id is the one the world assigned, so a client
-     * can use it to identify its own entities in a snapshot.
+     * <p>The answer is exactly {@code OK player <id>}; the id is the one the world bound to the
+     * authenticated account name, so a client can use it to identify its own entities in a snapshot and a
+     * reconnect with the same account gets the same id and the same base.
      */
     private PendingAnswer whoami(String rest, Session session) {
         if (!rest.isEmpty()) {
@@ -485,10 +488,21 @@ public final class CommandDispatcher {
         return PendingAnswer.deferred(handle);
     }
 
-    /** The player of a connection, created on first use and cached in the session by id. */
+    /**
+     * The player of a connection, created or reused from the authenticated account name and cached by id.
+     *
+     * <p>The cache is only a shortcut: the world owns the identity. If the cached id is no longer live - a
+     * future world reset, or a session that outlived its player - the cache is dropped and the join asks the
+     * world for the name again, which either returns the same identity or refuses a mapping that a reset
+     * removed instead of silently reassigning it.
+     */
     private static Player playerOf(Session session, WorldHost host) {
         if (session.playerId() != 0) {
-            return host.findPlayer(session.playerId()).orElse(null);
+            Optional<Player> cached = host.findPlayer(session.playerId());
+            if (cached.isPresent()) {
+                return cached.get();
+            }
+            session.setPlayerId(0);
         }
         Optional<Player> joined = host.joinPlayer(session.loginName());
         if (joined.isEmpty()) {
@@ -658,9 +672,11 @@ public final class CommandDispatcher {
      * gameplay command against a different notion of "logged in" than the other transports use.
      *
      * <p>The player id is assigned lazily by the world thread on the connection's first gameplay command
-     * and cached here; {@link WorldHost#joinPlayer(String)} documents the assignment rule. A transport
-     * executes one command at a time per connection, so the reader thread and the world thread never race
-     * on these fields: the command's completion is the hand-off between them.
+     * and cached here; {@link WorldHost#joinPlayer(String)} documents the identity rule. The cache is keyed
+     * by the account name on the world side, so it only saves a lookup: logging in again with the same name
+     * on a new connection returns the same player and the same base. A transport executes one command at a
+     * time per connection, so the reader thread and the world thread never race on these fields: the
+     * command's completion is the hand-off between them.
      */
     public static final class Session {
 
@@ -686,10 +702,11 @@ public final class CommandDispatcher {
         /**
          * Records a successful login of the client on this connection.
          *
-         * <p>A new login resets the cached player id: the next gameplay command asks the world for this
-         * connection's player again. The previous player is not removed - it stays in the world as an
-         * idle participant - because removing a player while its entities exist would leave those
-         * entities ownerless.
+         * <p>A new login resets the cached player id: the next gameplay command asks the world for the
+         * player bound to this account name again. Logging in with the same name returns the same player,
+         * base and resources; logging in with a different name leaves the previous player in the world as an
+         * idle participant, because removing a player while its entities exist would leave those entities
+         * ownerless. The world never reclaims an idle account in this version.
          */
         public void markAuthenticated(String loginName) {
             this.authenticated = true;
