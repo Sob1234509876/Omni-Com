@@ -7,6 +7,10 @@ import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
+import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.StartingResources;
+import io.github.sob1234509876.oc.rts.content.UnitRole;
+import io.github.sob1234509876.oc.rts.content.WorldContent;
 
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -26,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 /**
@@ -61,6 +66,7 @@ public final class WorldHostCheck {
     public static void run(Check check) {
         check.section("服务器世界主机");
         hostAndSnapshot(check);
+        snapshotPlayers(check);
         determinism(check);
         try {
             route(check);
@@ -107,6 +113,110 @@ public final class WorldHostCheck {
         } finally {
             host.stop();
         }
+    }
+
+    /**
+     * The {@code players} array after real joins: the classic 300 gold / 60 wood, one row per player,
+     * ordered by id, and zeros for a player without a warehouse.
+     *
+     * <p>The catalogue is local to this module because the server self check must not depend on the
+     * classic plugin; {@link PlayersContent} reproduces the classic opening (gold and wood item paths, a
+     * warehouse, a builder tagged {@code builder}, 300 gold and 60 wood) exactly like
+     * {@code ClassicContent} does. The join goes through {@link WorldHost#submitCommand} and
+     * {@link WorldHost#drainForTest()}, the same world-thread path a {@code LOGIN} uses, so no wall clock
+     * or tick thread is involved.
+     */
+    private static void snapshotPlayers(Check check) {
+        check.section("快照：玩家与开局资源");
+        WorldHost host = new WorldHost(1L, new PlayersContent(true));
+        try {
+            check.equal("OK " + WorldHost.FIRST_HUMAN_PLAYER_ID, join(host, "alice"),
+                    "经典内容下 alice 加入并得到 id 3");
+            check.equal("OK " + (WorldHost.FIRST_HUMAN_PLAYER_ID + 1), join(host, "bob"),
+                    "bob 加入并得到 id 4");
+
+            Map<String, Object> document = MiniJson.parseObject(host.snapshotJson());
+            Object rawPlayers = document.get("players");
+            check.that(rawPlayers instanceof List<?>, "快照包含 players 数组");
+            if (!(rawPlayers instanceof List<?> players)) {
+                return;
+            }
+            check.equal(3, players.size(), "样例玩家与两个真人各占一行");
+            check.equal(List.of(1L, 3L, 4L), playerIds(players), "players 按 id 从小到大排列");
+
+            Map<?, ?> alice = playerRow(players, WorldHost.FIRST_HUMAN_PLAYER_ID);
+            check.that(alice != null, "players 里有 alice 的行");
+            if (alice != null) {
+                check.equal("alice", alice.get("name"), "alice 的行带账号名");
+                check.equal(300L, longField(alice, "gold"), "alice 的金币是经典开局的 300");
+                check.equal(60L, longField(alice, "wood"), "alice 的木材是经典开局的 60");
+            }
+            Map<?, ?> bob = playerRow(players, WorldHost.FIRST_HUMAN_PLAYER_ID + 1);
+            check.equal(300L, bob == null ? -1L : longField(bob, "gold"),
+                    "bob 也有自己的 300 金币（存档按玩家各自读取）");
+
+            Map<?, ?> scene = playerRow(players, 1);
+            check.that(scene != null && longField(scene, "gold") == 300L
+                            && longField(scene, "wood") == 60L,
+                    "样例玩家 1 也在同一份开局资源里（300 金币、60 木材）");
+        } finally {
+            host.stop();
+        }
+
+        // No warehouse means nothing can be stored, so the row still exists but both amounts are zero.
+        WorldHost sandbox = new WorldHost(1L, new PlayersContent(false));
+        try {
+            check.equal("OK " + WorldHost.FIRST_HUMAN_PLAYER_ID, join(sandbox, "carol"),
+                    "无仓库内容下 carol 仍能加入");
+            Map<?, ?> carol = playerRow(MiniJson.parseObject(sandbox.snapshotJson()), 3);
+            check.that(carol != null, "没有仓库的玩家也有 players 行");
+            check.that(carol != null && longField(carol, "gold") == 0L && longField(carol, "wood") == 0L,
+                    "没有仓库的玩家报告 0 金币、0 木材");
+        } finally {
+            sandbox.stop();
+        }
+    }
+
+    /** Joins one account on the world thread and returns its answer line. */
+    private static String join(WorldHost host, String name) {
+        WorldHost.CommandHandle handle = host.submitCommand(world -> world.joinPlayer(name)
+                .map(player -> "OK " + player.id().value())
+                .orElse("ERR world full"));
+        host.drainForTest();
+        return handle.await(0);
+    }
+
+    /** The id of every well shaped row, in document order. */
+    private static List<Long> playerIds(List<?> players) {
+        List<Long> ids = new ArrayList<>(players.size());
+        for (Object raw : players) {
+            if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number number) {
+                ids.add(number.longValue());
+            }
+        }
+        return ids;
+    }
+
+    /** One player row by id, or {@code null} when the array has no row for that id. */
+    private static Map<?, ?> playerRow(Map<String, Object> document, long id) {
+        Object rawPlayers = document.get("players");
+        return rawPlayers instanceof List<?> players ? playerRow(players, id) : null;
+    }
+
+    /** One player row by id, or {@code null} when the array has no row for that id. */
+    private static Map<?, ?> playerRow(List<?> players, long id) {
+        for (Object raw : players) {
+            if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number number
+                    && number.longValue() == id) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    /** Reads an integer field of a parsed row; a missing or non-numeric field reports {@code -1}. */
+    private static long longField(Map<?, ?> row, String key) {
+        return row.get(key) instanceof Number number ? number.longValue() : -1L;
     }
 
     /** The same seed must reproduce the same tiles and document; another seed must not. */
@@ -258,7 +368,7 @@ public final class WorldHostCheck {
         }
         check.that(true, label + "：可由手写解析器读取");
 
-        for (String key : List.of("tick", "width", "height", "tilePixels", "tiles", "entities")) {
+        for (String key : List.of("tick", "width", "height", "tilePixels", "tiles", "entities", "players")) {
             check.that(document.containsKey(key), label + "：包含字段 " + key);
         }
         long tick = number(document, "tick");
@@ -321,6 +431,43 @@ public final class WorldHostCheck {
         check.that(entitiesShaped, label + "：entities 是数组");
         check.that(entityCount > 0, label + "：样例场景至少有一个实体");
         check.that(everyEntityValid, label + "：每个实体都有 id/kind/x/y 且位于地图内");
+
+        Object playersValue = document.get("players");
+        boolean playersShaped = playersValue instanceof List<?> players && !players.isEmpty();
+        boolean playersOrdered = playersShaped;
+        long previousPlayerId = Long.MIN_VALUE;
+        if (playersValue instanceof List<?> players) {
+            for (Object raw : players) {
+                if (!(raw instanceof Map<?, ?> row)) {
+                    playersShaped = false;
+                    break;
+                }
+                Object id = row.get("id");
+                Object name = row.get("name");
+                Object gold = row.get("gold");
+                Object wood = row.get("wood");
+                if (!(id instanceof Number idNumber) || !(name instanceof String nameText)
+                        || nameText.isEmpty() || !(gold instanceof Number goldNumber)
+                        || !(wood instanceof Number woodNumber)) {
+                    playersShaped = false;
+                    break;
+                }
+                double goldValue = goldNumber.doubleValue();
+                double woodValue = woodNumber.doubleValue();
+                if (!Double.isFinite(goldValue) || !Double.isFinite(woodValue)
+                        || goldValue < 0 || woodValue < 0) {
+                    playersShaped = false;
+                    break;
+                }
+                long idValue = idNumber.longValue();
+                if (idValue <= previousPlayerId) {
+                    playersOrdered = false;
+                }
+                previousPlayerId = idValue;
+            }
+        }
+        check.that(playersShaped, label + "：players 每行都有 id/name/gold/wood 且金额非负");
+        check.that(playersOrdered, label + "：players 按 id 升序排列");
     }
 
     private static long number(Map<String, Object> document, String key) {
@@ -474,6 +621,66 @@ public final class WorldHostCheck {
 
         String text() {
             return new String(body, StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * A miniature of the classic opening, local to this module.
+     *
+     * <p>It registers the two classic item paths, a warehouse flagged as the drop off, a builder unit and
+     * the 300 gold / 60 wood starting stock, so the snapshot's {@code players} rows carry numbers a real
+     * login produces. The {@code withWarehouse} flag builds the second fixture the check needs: the same
+     * catalogue with no drop off and no starting stock, which is the "player without a warehouse" case.
+     */
+    private static final class PlayersContent implements WorldContent {
+
+        private static final String GOLD = "gold";
+        private static final String WOOD = "wood";
+        private static final String WAREHOUSE = "building.warehouse";
+        private static final String ENGINEER = "unit.engineer";
+
+        private final boolean withWarehouse;
+
+        private PlayersContent(boolean withWarehouse) {
+            this.withWarehouse = withWarehouse;
+        }
+
+        @Override
+        public String id() {
+            return "oc-world-host-check-players";
+        }
+
+        @Override
+        public String description() {
+            return "World host check content: warehouse, builder and the classic 300 gold / 60 wood";
+        }
+
+        @Override
+        public String namespace() {
+            return "worldhostcheck";
+        }
+
+        @Override
+        public StartingResources startingResources() {
+            return withWarehouse
+                    ? StartingResources.builder().add(GOLD, 300).add(WOOD, 60).build()
+                    : StartingResources.EMPTY;
+        }
+
+        @Override
+        public void populate(ContentRegistry.Builder registry) {
+            Objects.requireNonNull(registry, "registry");
+            registry.terrain("grass").name("Grass").buildable().moveCost(1f)
+                    .sprite("terrain/grass").mapColor(0x5FA84F)
+                    .item(GOLD).name("Gold").maxStack(10_000).tag("currency")
+                    .item(WOOD).name("Wood").maxStack(200).tag("material")
+                    .unit(ENGINEER).name("Engineer").role(UnitRole.SUPPORT).health(60).speed(2.6f)
+                    .radius(0.32f).cost(GOLD, 10).buildTime(45).cargo(60).spriteSet(ENGINEER)
+                    .tag("builder");
+            if (withWarehouse) {
+                registry.building(WAREHOUSE).name("Warehouse").size(3, 3).health(500).cost(WOOD, 60)
+                        .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE);
+            }
         }
     }
 

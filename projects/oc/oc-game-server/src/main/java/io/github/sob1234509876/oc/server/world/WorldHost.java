@@ -147,6 +147,23 @@ public final class WorldHost {
      */
     private static final String BUILDER_TAG = "builder";
 
+    /**
+     * Content path of the currency item the snapshot reports as {@code gold}.
+     *
+     * <p>This is the path the classic catalogue registers ({@code ClassicContent.GOLD}) and the server
+     * cannot import that plugin, so the path is repeated here as a wire contract. It is resolved through
+     * the served {@link ContentRegistry}, never assumed to exist: a catalogue without an item of that path
+     * simply reports {@code 0}. See {@link #snapshotJson()} for why the two resources are explicit.
+     */
+    private static final String GOLD_ITEM_PATH = "gold";
+
+    /**
+     * Content path of the building-material item the snapshot reports as {@code wood}.
+     *
+     * <p>See {@link #GOLD_ITEM_PATH}; this is the classic catalogue's {@code ClassicContent.WOOD}.
+     */
+    private static final String WOOD_ITEM_PATH = "wood";
+
     /** Number of human slots a starting base anchor exists for: ids 3 through 8. */
     private static final int BASE_SLOT_COUNT = MAX_PLAYERS - FIRST_HUMAN_PLAYER_ID + 1;
 
@@ -1193,12 +1210,31 @@ public final class WorldHost {
      * <pre>{@code
      * {"tick":42,"width":64,"height":64,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
-     *  "entities":[{"id":1,"kind":"worker","x":12.5,"y":8.5,"player":1,"health":1.0}, ...]}
+     *  "entities":[{"id":1,"kind":"worker","x":12.5,"y":8.5,"player":1,"health":1.0}, ...],
+     *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0},
+     *             {"id":3,"name":"alice","gold":300,"wood":60}]}
      * }</pre>
      *
-     * <p>{@code tiles} is row major with exactly {@code width * height} terrain content paths, and
-     * entities are sorted by id so an unchanged tick produces the same bytes. Coordinates are rounded to
-     * one decimal, which is the precision the renderer needs and far below one tile.
+     * <p>{@code tiles} is row major with exactly {@code width * height} terrain content paths, entities
+     * are sorted by id, and players are sorted by id as well, so an unchanged tick produces the same
+     * bytes. Coordinates are rounded to one decimal, which is the precision the renderer needs and far
+     * below one tile.
+     *
+     * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
+     * player that exists in the world, not only a human connection, contributes one row with its id, its
+     * display name and the amounts of the two classic resources: the flat keys are {@code gold} and
+     * {@code wood} because those are the item paths the classic catalogue registers
+     * ({@link #GOLD_ITEM_PATH}, {@link #WOOD_ITEM_PATH}); the wire format does not repeat their display
+     * names (金币 / 木材), which belong to the client atlas. The amounts are read from the player's
+     * {@link io.github.sob1234509876.oc.rts.economy.Logistics#available()} view - the warehouses are the
+     * engine's drop-off rule, and an item that has not been stored in a warehouse cannot be spent - so a
+     * player with no warehouse, no logistics network or a catalogue without that item path reports
+     * {@code 0}. Any other item kind a
+     * future catalogue registers stays out of this snapshot for now: the document does not enumerate the
+     * inventory, and adding an item to the wire means extending this shape and its documents.
+     *
+     * <p>Amounts are emitted as JSON integers saturated to {@link Long#MAX_VALUE}; the browser could not
+     * use more precision than a number anyway, and a stock that large is already far past playable.
      *
      * <p>A 64 x 64 snapshot is a few kilobytes; it is rebuilt per request rather than cached, because a
      * cached document could disagree with the tick the browser reports in its HUD.
@@ -1293,8 +1329,41 @@ public final class WorldHost {
                     .append(",\"health\":").append(twoDecimals(entity.health().fraction()))
                     .append('}');
         }
+        json.append("],\"players\":[");
+        ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
+        ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
+        List<Player> players = new ArrayList<>(engine.world().players());
+        players.sort(Comparator.comparingInt((Player worldPlayer) -> worldPlayer.id().value()));
+        boolean firstPlayer = true;
+        for (Player worldPlayer : players) {
+            if (!firstPlayer) {
+                json.append(',');
+            }
+            firstPlayer = false;
+            ItemBundle available = worldPlayer.hasLogistics()
+                    ? worldPlayer.logistics().available()
+                    : ItemBundle.EMPTY;
+            json.append("{\"id\":").append(worldPlayer.id().value())
+                    .append(",\"name\":");
+            appendJsonString(json, worldPlayer.name());
+            json.append(",\"gold\":").append(availableAmount(available, goldItem))
+                    .append(",\"wood\":").append(availableAmount(available, woodItem))
+                    .append('}');
+        }
         json.append("]}");
         return json.toString();
+    }
+
+    /**
+     * The integer a player row reports for one snapshot resource.
+     *
+     * <p>A catalogue that does not register the item path has no amount to report, so the row carries
+     * {@code 0} rather than a fabricated number. A stock outside the exact {@code long} range saturates,
+     * because {@code toLongSaturated()} is the engine's own rule for turning an arbitrary {@link Natural}
+     * into a plain number and the browser cannot spend more precision than that anyway.
+     */
+    private static long availableAmount(ItemBundle available, ItemType item) {
+        return item == null ? 0L : available.amount(item).toLongSaturated();
     }
 
     /** Writes a JSON string, escaping the two structural characters and every control character. */

@@ -337,12 +337,17 @@ The server can also publish a live world for the browser view. The snapshot is *
   "entities": [
     {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
     {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ],
+  "players": [
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
   ]
 }
 ```
 
 - A successful answer is `200` with `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`; only `GET` and `HEAD` are allowed, other methods answer `405` with `Allow: GET, HEAD`.
 - `tiles` is row major and has exactly `width * height` entries; every entry is a terrain content path (`grass`, `sand`, ...). `entities` is sorted by id, and `kind` is the engine's content path (`worker`, `soldier`, `medic`, `warehouse`, ...), with the same shape for units and buildings. `x` / `y` are the entity centre in tiles, rounded to one decimal.
+- `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name and the two starting resources as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. The field is additive: an older server may omit it, and a client must keep working without it. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold and wood in the HUD; before that row exists it shows dashes.
 - When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
 - `--world` defaults to `on`, `--seed` defaults to `1`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
 - The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server.

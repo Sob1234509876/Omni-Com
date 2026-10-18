@@ -33,10 +33,20 @@ import {
   tileDisplayName,
   type AtlasSource,
 } from "../src/render/atlas.ts";
-import { TERRAIN_COLORS, terrainColor } from "../src/render/fallback.ts";
+import {
+  SELECTION_COLOR,
+  TERRAIN_COLORS,
+  terrainColor,
+} from "../src/render/fallback.ts";
 import {
   demoWorld,
   isBuildingKind,
+  OWNERSHIP_ENEMY_COLOR,
+  OWNERSHIP_MINE_COLOR,
+  OWNERSHIP_NEUTRAL_COLOR,
+  ownershipColor,
+  ownershipOf,
+  ownershipTag,
   snapshotOrDemo,
   TERRAIN_IDS,
   terrainAt,
@@ -364,6 +374,62 @@ check(
   "有快照时使用服务器世界而不是 demo",
   serverOrDemo.width === 2 && serverOrDemo.height === 2,
   `${serverOrDemo.width}x${serverOrDemo.height}`,
+);
+
+// The server's `players` array: parsed row by row, optional for old snapshots, rejected when malformed.
+const playersSnapshot = worldViewFromSnapshot({
+  ...validSnapshot,
+  players: [
+    { id: 1, name: "Player 1", gold: 0, wood: 0 },
+    { id: 3, name: "alice", gold: 300, wood: 60 },
+  ],
+});
+check(
+  "带 players 的快照解析成功",
+  playersSnapshot !== null && playersSnapshot.players?.length === 2,
+  JSON.stringify(playersSnapshot?.players),
+);
+const aliceRow = playersSnapshot === null ? undefined : playersSnapshot.players?.[1];
+check(
+  "players 行保留 id/name/gold/wood",
+  aliceRow?.id === 3 &&
+    aliceRow.name === "alice" &&
+    aliceRow.gold === 300 &&
+    aliceRow.wood === 60,
+  JSON.stringify(aliceRow),
+);
+check(
+  "没有 players 的旧快照仍然有效，players 是 undefined",
+  worldViewFromSnapshot(validSnapshot)?.players === undefined,
+);
+check(
+  "players 不是数组时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, players: { id: 3 } }) === null,
+);
+check(
+  "players 行缺少 gold 时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    players: [{ id: 3, name: "alice", wood: 60 }],
+  }) === null,
+);
+check(
+  "players 行金额为负或不是整数时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    players: [{ id: 3, name: "alice", gold: -1, wood: 60 }],
+  }) === null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 3, name: "alice", gold: 1.5, wood: 60 }],
+    }) === null,
+);
+check(
+  "players 行 name 为空时拒绝",
+  worldViewFromSnapshot({
+    ...validSnapshot,
+    players: [{ id: 3, name: "  ", gold: 300, wood: 60 }],
+  }) === null,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -695,6 +761,45 @@ check(
   terrainColor("unobtainium") === terrainColor("unobtainium") &&
     terrainColor("unobtainium") !== terrainColor("water"),
   terrainColor("unobtainium"),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Ownership rings
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "归属颜色：我的是蓝色 #3b82f6",
+  ownershipColor(3, 3) === OWNERSHIP_MINE_COLOR && OWNERSHIP_MINE_COLOR === "#3b82f6",
+  ownershipColor(3, 3),
+);
+check(
+  "归属颜色：敌人是红色 #ef4444",
+  ownershipColor(2, 3) === OWNERSHIP_ENEMY_COLOR && OWNERSHIP_ENEMY_COLOR === "#ef4444",
+  ownershipColor(2, 3),
+);
+check(
+  "归属颜色：没有 owner 或 owner 为 0 是灰色 #9ca3af",
+  ownershipColor(undefined, 3) === OWNERSHIP_NEUTRAL_COLOR &&
+    ownershipColor(0, 3) === OWNERSHIP_NEUTRAL_COLOR &&
+    OWNERSHIP_NEUTRAL_COLOR === "#9ca3af",
+);
+check(
+  "归属颜色：没有 myPlayerId 时所有实体都是灰色（演示世界）",
+  [1, 2, 3, undefined].every((playerId) => ownershipColor(playerId, null) === OWNERSHIP_NEUTRAL_COLOR),
+);
+check(
+  "选中环颜色保持不变，仍是金色 #ffd166",
+  SELECTION_COLOR === "#ffd166",
+  SELECTION_COLOR,
+);
+check(
+  "HUD 归属标签：我 / 敌 / 中立",
+  ownershipOf(3, 3) === "mine" &&
+    ownershipTag("mine") === "我" &&
+    ownershipOf(2, 3) === "enemy" &&
+    ownershipTag("enemy") === "敌" &&
+    ownershipOf(undefined, 3) === "neutral" &&
+    ownershipTag("neutral") === "中立",
 );
 
 // ---------------------------------------------------------------------------------------------

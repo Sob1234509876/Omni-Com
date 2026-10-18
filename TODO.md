@@ -26,11 +26,11 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 239 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 708 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 82, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 731 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 105, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 34, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |
-| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 286 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
-| client render math | `node scripts/check-render-math.ts` | 110 | counted from the `check(...)` calls in [check-render-math.ts](web-client/scripts/check-render-math.ts); the script prints the passed total |
+| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 288 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
+| client render math | `node scripts/check-render-math.ts` | 131 | counted from the `check(...)` calls in [check-render-math.ts](web-client/scripts/check-render-math.ts); the script prints the passed total |
 
 **No commit may leave any of these red, and no existing check may be removed or weakened to make a new feature pass.** If a total changes, grep the old number and update every document that quotes it.
 
@@ -120,7 +120,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Extend the texture manifest with display names: `entities.<kind>.name` for entities and `tiles.<path>.name` for terrain. Because a tile entry is currently `[x, y, w, h]`, accept both the old array and a new object `{"rect": [x, y, w, h], "name": "..."}`; entity entries are already objects, so add an optional `name` beside `frames`. The server does not interpret these fields; it already forwards the manifest. `atlas.ts` carries the name through the merged atlas (last plugin wins), and `main.ts` uses it with the content path as fallback. Add names to the `oc-classic` and `oc-hello` manifests and update the texture contract documents.
 
-**Acceptance.** With the classic jar loaded, the HUD shows `e12 普通`, the TRAIN buttons show `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`, and the BUILD buttons show `兵营·普通` / `矿场·普通`; with no name in the manifest the same line falls back to `unit.melee.t1` (never `undefined`); `check-render-math` gains a name-merge and fallback check; 110 stays green.
+**Acceptance.** With the classic jar loaded, the HUD shows `e12 普通`, the TRAIN buttons show `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`, and the BUILD buttons show `兵营·普通` / `矿场·普通`; with no name in the manifest the same line falls back to `unit.melee.t1` (never `undefined`); `check-render-math` gains a name-merge and fallback check; 131 stays green.
 
 **Files.** [atlas.ts](web-client/src/render/atlas.ts), [main.ts](web-client/src/main.ts), [ClassicContent.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicContent.java), [manifest.json](projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json), [textures README](web-client/public/textures/README.md), [textures README zh](web-client/public/textures/README_zh_CN.md), [check-render-math.ts](web-client/scripts/check-render-math.ts).
 
@@ -132,9 +132,9 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Cause.** `WorldHost.snapshotJson()` emits only `tick`, `width`, `height`, `tilePixels`, `tiles` and `entities`; player inventories are not serialized. `worldViewFromSnapshot` has no `players` field to read, and `main.ts` has no HUD line for resources.
 
-**Fix.** Add a `players` array to `/world/snapshot`, for example `[{"id":3,"name":"alice","resources":{"gold":300,"wood":60}}]`, built from each player's `logistics().available()` bundle; emit only item paths the served catalogue defines, so the route stays content-agnostic. Parse and validate it in `view.ts`, keep it on `ServerWorldView`, and render a HUD line for `myPlayerId` (`金币 300 · 木材 60`). Refresh after a successful `BUILD` / `TRAIN` and on every snapshot. Extend `WorldHostCheck` and the snapshot section of the protocol document and its Chinese twin.
+**Fix.** Add a `players` array to `/world/snapshot`, for example `[{"id":3,"name":"alice","gold":300,"wood":60}]`, built from each player's `logistics().available()` bundle and the `gold` / `wood` item paths the served catalogue registers; emit one row per player, sorted by id, with `0` for a path the catalogue does not define. Parse and validate it in `view.ts`, keep it on `ServerWorldView`, and render a HUD line for `myPlayerId` (`资源：alice · 金 300 · 木 60`), with dashes when the world has no row for the player yet. Refresh after a successful `BUILD` / `TRAIN` and on every snapshot. Extend `WorldHostCheck` and the snapshot section of the protocol document and its Chinese twin.
 
-**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (82) asserts the `players` shape and values; 708 stays green.
+**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (105) asserts the `players` shape and values; 731 stays green.
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [view.ts](web-client/src/render/view.ts), [main.ts](web-client/src/main.ts), [index.html](web-client/index.html), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md).
 
@@ -146,9 +146,9 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Cause.** The snapshot carries `player`, and `worldViewFromSnapshot` maps it to `EntityView.playerId`; the only ground ring is the fixed gold selection ring (`#ffd166`). But the atlas sprite path in `renderer.ts` never reads `playerId`; only the procedural fallback passes it to `playerColor` when no atlas entry exists. The HUD selection line prints the kind and coordinates, not the owner.
 
-**Fix.** Draw a ground ownership ring in the pre-sprite pass: blue when `playerId === myPlayerId`, red for any other player, grey when `playerId` is missing or 0. Keep the gold selection ring as a separate, thicker ring so selection and ownership do not compete. Add an HUD label next to the selection (`友方` / `敌方` / `中立`). If the server later exposes `Player.team`, extend the classification to allies, but the snapshot has no team field today.
+**Fix.** Draw a ground ownership ring in the pre-sprite pass: blue `#3b82f6` when `playerId === myPlayerId`, red `#ef4444` for any other player, grey `#9ca3af` when `playerId` is missing or 0 or when `myPlayerId` is unknown (the demo map). Keep the gold `#ffd166` selection ring as a separate, thicker ring drawn after it so selection and ownership do not compete. Add an HUD label next to the selection (`我` / `敌` / `中立`). If the server later exposes `Player.team`, extend the classification to allies, but the snapshot has no team field today.
 
-**Acceptance.** After login, the player's warehouse and engineer have blue rings, the AI's units red, player 1's scene red (different player); clicking an enemy shows `敌方`; with no atlas the procedural shapes keep their player tint and still get the ring; `check-render-math` gains a pure ownership-classification check; 110 stays green.
+**Acceptance.** After login, the player's warehouse and engineer have blue rings, the AI's units red, player 1's scene red (different player); clicking an enemy shows `敌`; with no atlas the procedural shapes keep their player tint and still get the ring; the demo world (no `myPlayerId`) shows grey rings only; `check-render-math` gains a pure ownership-colour check and proves the selection ring colour is unchanged; 131 stays green.
 
 **Files.** [renderer.ts](web-client/src/render/renderer.ts), [fallback.ts](web-client/src/render/fallback.ts), [main.ts](web-client/src/main.ts), [view.ts](web-client/src/render/view.ts), [check-render-math.ts](web-client/scripts/check-render-math.ts).
 
@@ -162,7 +162,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Keep the last two snapshots plus their client receive times. At render time, match entities by id and interpolate position with `alpha = (now - previousReceived) / (currentReceived - previousReceived)`, clamped to `[0, 1]`; snap rather than interpolate when an id is missing from either side, when the tick gap is implausible, or when the entity is newly spawned/dead. The protocol stays OC/1 and the JSON shape does not change. Optionally, after this works, have the server push positions/deltas over the WebSocket at 10–20 Hz and interpolate between deltas; that is a protocol change and must follow the version rules in `protocol/oc-protocol.md`.
 
-**Acceptance.** A moving unit's screen position changes every animation frame, not every 500 ms; average speed matches the server's; no overshoot when a unit reverses; a dead unit disappears on the next snapshot; `check-render-math` covers the interpolation endpoints, midpoint and id matching; 110 stays green.
+**Acceptance.** A moving unit's screen position changes every animation frame, not every 500 ms; average speed matches the server's; no overshoot when a unit reverses; a dead unit disappears on the next snapshot; `check-render-math` covers the interpolation endpoints, midpoint and id matching; 131 stays green.
 
 **Files.** [main.ts](web-client/src/main.ts), [view.ts](web-client/src/render/view.ts), [renderer.ts](web-client/src/render/renderer.ts), [check-render-math.ts](web-client/scripts/check-render-math.ts); no server change.
 
@@ -176,7 +176,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Replace `FlatChunkGenerator` with a deterministic `NoiseChunkGenerator` seeded by `--seed`, with `NoiseSettings` that guarantee buildable land around each base anchor. Make the snapshot a viewport: the client sends a center and radius (or the chunk coordinates it has), and the server returns only the visible tiles and entities; cache chunks client-side and drive the request from the camera focus. On the server, move the engine focus to that center on the world thread; `ChunkStreamer` only loads around the focus. Keep the world bounded only by the coordinate window the host reports, and keep a deterministic fallback for `--world off`. This changes the snapshot contract, so update the protocol document and its Chinese twin, the browser endpoint chapter, and the snapshot checks in the same change.
 
-**Acceptance.** Pan to (10_000, 10_000) and see deterministic terrain that differs from the origin; the same `--seed` reproduces the same terrain on a new host; only the chunks around the camera are loaded and the JSON stays roughly constant in size; two seeds give different worlds; starting bases still find buildable land; `WorldHostCheck` (82) is extended, not weakened; the render checks cover the new viewport parsing.
+**Acceptance.** Pan to (10_000, 10_000) and see deterministic terrain that differs from the origin; the same `--seed` reproduces the same terrain on a new host; only the chunks around the camera are loaded and the JSON stays roughly constant in size; two seeds give different worlds; starting bases still find buildable land; `WorldHostCheck` (105) is extended, not weakened; the render checks cover the new viewport parsing.
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [OcRtsEngineBuilder.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java), [NoiseChunkGenerator.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java), [ChunkStreamer.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [view.ts](web-client/src/render/view.ts), [main.ts](web-client/src/main.ts), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md), [05 browser endpoint](projects/oc/oc-game-server/help/05-browser-endpoint.md).
 
@@ -209,14 +209,14 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 - **Determinism inside the simulation.** No `java.util.Random`, no wall clock (`System.currentTimeMillis`, `System.nanoTime`) and no threads inside the simulation. Use `DeterministicRandom`, fixed ticks and explicit id/coordinate tie-breaks. The server's pacing thread is the one place a clock may drive the simulation; transport and storage code may read a clock for timestamps, but the simulation must not.
 - **Daemon threads only in the server.** Plugin threads must be daemon and stopped in `onDisable`; a non-daemon thread keeps the JVM alive after shutdown.
 - **One verified stage per commit.** Run the six Java checks and both client checks before committing; do not mix a refactor and a feature in one commit.
-- **When a total changes, update every document that quotes it.** Grep the old number (for example `708`) across the repository; the READMEs, `help/` and the protocol may all mention it.
+- **When a total changes, update every document that quotes it.** Grep the old number (for example `731`) across the repository; the READMEs, `help/` and the protocol may all mention it.
 - **The docs are bilingual.** Every statement changed in an English file must be changed in its `_zh_CN.md` twin. The `help/` chapters are a Chinese documentation set by design; `protocol/oc-protocol.md` is English by default with `protocol/oc-protocol_zh_CN.md` as its twin, so both must move together.
 - **Runtime folders are not source.** `plugins/` is the operator drop zone and `data/` is server state; `plugins/*.jar` and `data/` are gitignored. Never commit a plugin jar, a key or an account file.
 
 ## 8. Handoff checklist
 
 - [ ] Run the six Java self checks from §2; all six totals match.
-- [ ] Run `tsc --noEmit` and `node scripts/check-render-math.ts`; 110/110.
+- [ ] Run `tsc --noEmit` and `node scripts/check-render-math.ts`; 131/131.
 - [ ] Open the game once by hand: classic jars in `plugins/`, server up, `pnpm dev`, REGISTER/LOGIN, see the warehouse, engineer, 300 gold and 60 wood.
 - [ ] Read [help/03-plugins.md](projects/oc/oc-game-server/help/03-plugins.md) before touching `PluginLoader` or `PluginContext`.
 - [ ] Confirm `git status` is clean before starting; do not commit jars, keys or `data/`.

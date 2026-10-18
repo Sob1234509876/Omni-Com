@@ -5,8 +5,10 @@
  * pixels from `devicePixelRatio`, and the context is scaled so every drawing call below can use CSS
  * pixels. It never assumes the two sizes are equal.
  *
- * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows and
- * selection rings, then entities sorted by y so lower entities overlap higher ones, then health bars.
+ * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows, ownership
+ * rings, selection rings, then entities sorted by y so lower entities overlap higher ones, then health
+ * bars. Ownership rings are thinner than selection rings and are drawn first, so the gold selection ring
+ * always stays on top.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -19,13 +21,21 @@ import {
   drawBuildingShape,
   drawGroundShadow,
   drawHealthBar,
+  drawOwnershipRing,
   drawSelectionRing,
   drawTerrainTile,
   drawTileGrid,
   drawUnitShape,
   playerColor,
 } from "./fallback";
-import { isBuildingKind, kindName, terrainAt, type EntityView, type WorldView } from "./view";
+import {
+  isBuildingKind,
+  kindName,
+  ownershipColor,
+  terrainAt,
+  type EntityView,
+  type WorldView,
+} from "./view";
 
 const BACKGROUND_COLOR = "#0b1016";
 
@@ -38,6 +48,12 @@ export interface RenderOptions {
   readonly selectedId: number | null;
   /** Tile armed for build placement, or null; drawn with a stronger highlight than plain hover. */
   readonly placementTile: TileCoord | null;
+  /**
+   * Engine player id answered by `WHOAMI`, or null before login and in the demo world.
+   *
+   * With null every ownership ring is grey, which is the documented demo behaviour.
+   */
+  readonly myPlayerId: number | null;
 }
 
 interface Size {
@@ -233,7 +249,8 @@ export class WorldRenderer {
       return left.entity.id - right.entity.id;
     });
 
-    // Ground pass: every shadow first, then every selection ring, so a shadow never hides a ring.
+    // Ground pass: every shadow first, then every ownership ring, then every selection ring, so a shadow
+    // never hides a ring and the gold selection ring is never hidden by an ownership ring.
     for (const item of prepared) {
       drawGroundShadow(
         context,
@@ -241,6 +258,17 @@ export class WorldRenderer {
         item.screenY,
         tileOnScreen,
         isBuildingKind(item.entity.kind),
+      );
+    }
+    // Ownership pass: one thin ring per entity, first, so the gold selection ring can stay on top.
+    for (const item of prepared) {
+      drawOwnershipRing(
+        context,
+        item.screenX,
+        item.screenY,
+        tileOnScreen,
+        isBuildingKind(item.entity.kind),
+        ownershipColor(item.entity.playerId, options.myPlayerId),
       );
     }
     for (const item of prepared) {

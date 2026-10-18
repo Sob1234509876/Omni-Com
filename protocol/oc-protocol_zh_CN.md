@@ -325,12 +325,17 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   "entities": [
     {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
     {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ],
+  "players": [
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
   ]
 }
 ```
 
 - 成功回答是 `200`，`Content-Type: application/json; charset=utf-8`，`Cache-Control: no-store`；只允许 `GET` 与 `HEAD`，其它方法回 `405` 并带 `Allow: GET, HEAD`。
 - `tiles` 是 row major，恰好 `width * height` 个条目；每个条目是一条地形内容路径（`grass`、`sand`、...）。`entities` 按 id 排序，`kind` 是引擎的内容路径（`worker`、`soldier`、`medic`、`warehouse`、...），单位与建筑形状相同。`x` / `y` 是实体中心的地图坐标，保留一位小数。
+- `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名和两种开局资源，金额都是非负整数。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。这个字段是增量字段：旧服务器可以不带它，客户端必须在没有它时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币与木材；还没有这一行时显示破折号。
 - 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
 - `--world` 默认 `on`，`--seed` 默认 `1`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
 - 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。

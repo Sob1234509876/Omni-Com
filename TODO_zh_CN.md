@@ -26,11 +26,11 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 239 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 708 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 82、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 731 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 105、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 34、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
-| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 286 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
-| client render math | `node scripts/check-render-math.ts` | 110 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
+| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 288 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
+| client render math | `node scripts/check-render-math.ts` | 131 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
 
@@ -120,7 +120,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 扩展贴图清单：实体用 `entities.<kind>.name`，地形用 `tiles.<path>.name`。地形条目现在是 `[x, y, w, h]`，所以同时接受旧数组与新对象 `{"rect": [x, y, w, h], "name": "..."}`；实体条目本来就是对象，在 `frames` 旁加可选的 `name`。服务器不解释这些字段，它本来就把清单原样转发。`atlas.ts` 把名字带进合并后的图集（后加载的插件覆盖前面的），`main.ts` 用名字显示、用内容路径兜底。给 `oc-classic` 与 `oc-hello` 的清单补名字，并更新贴图契约文档。
 
-**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；110 条保持全绿。
+**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；131 条保持全绿。
 
 **涉及文件。** [atlas.ts](web-client/src/render/atlas.ts)、[main.ts](web-client/src/main.ts)、[ClassicContent.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicContent.java)、[manifest.json](projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json)、[贴图 README](web-client/public/textures/README.md)、[贴图 README 中文](web-client/public/textures/README_zh_CN.md)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -132,9 +132,9 @@ cd web-client; pnpm install; pnpm dev
 
 **原因。** `WorldHost.snapshotJson()` 只发 `tick`、`width`、`height`、`tilePixels`、`tiles` 与 `entities`；玩家库存没有序列化。`worldViewFromSnapshot` 没有 `players` 字段可读，`main.ts` 也没有资源 HUD 行。
 
-**建议对策。** 给 `/world/snapshot` 加 `players` 数组，例如 `[{"id":3,"name":"alice","resources":{"gold":300,"wood":60}}]`，从每个玩家的 `logistics().available()` bundle 构建；只发当前内容目录定义过的物品路径，让路由保持与内容无关。在 `view.ts` 解析并校验，放到 `ServerWorldView` 上，并为 `myPlayerId` 渲染一行 HUD（`金币 300 · 木材 60`）。成功的 `BUILD` / `TRAIN` 之后以及每次快照时刷新。扩展 `WorldHostCheck` 以及协议文档和它的中文孪生文件的快照一节。
+**建议对策。** 给 `/world/snapshot` 加 `players` 数组，例如 `[{"id":3,"name":"alice","gold":300,"wood":60}]`，从每个玩家的 `logistics().available()` bundle 构建，并用当前内容目录注册的 `gold` / `wood` 物品路径读取；每个玩家一行、按 id 排序，目录没定义的路径报 `0`。在 `view.ts` 解析并校验，放到 `ServerWorldView` 上，并为 `myPlayerId` 渲染一行 HUD（`资源：alice · 金 300 · 木 60`），世界里还没有这一行时显示破折号。成功的 `BUILD` / `TRAIN` 之后以及每次快照时刷新。扩展 `WorldHostCheck` 以及协议文档和它的中文孪生文件的快照一节。
 
-**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（82 条）断言 `players` 的形状与数值；708 条保持全绿。
+**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（105 条）断言 `players` 的形状与数值；731 条保持全绿。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[main.ts](web-client/src/main.ts)、[index.html](web-client/index.html)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)。
 
@@ -146,9 +146,9 @@ cd web-client; pnpm install; pnpm dev
 
 **原因。** 快照带 `player`，`worldViewFromSnapshot` 把它映射成 `EntityView.playerId`；唯一的地面环是固定的金色选中环（`#ffd166`）。但 `renderer.ts` 的图集精灵路径从不读 `playerId`；只有没有图集条目时，程序化回退才把它传给 `playerColor`。HUD 选中行只打印种类和坐标，不打印归属。
 
-**建议对策。** 在画精灵之前的 ground pass 里画一圈地面归属环：`playerId === myPlayerId` 用蓝色，其他玩家用红色，`playerId` 缺失或为 0 用灰色。把金色选中环保留为另一圈更粗的环，让“选中”和“归属”不互相抢。在选中信息旁加 HUD 标签（`友方` / `敌方` / `中立`）。如果服务器以后暴露 `Player.team`，再把分类扩展到盟友；今天的快照没有 team 字段。
+**建议对策。** 在画精灵之前的 ground pass 里画一圈地面归属环：`playerId === myPlayerId` 用蓝色 `#3b82f6`，其他玩家用红色 `#ef4444`，`playerId` 缺失或为 0、或 `myPlayerId` 未知（占位地图）用灰色 `#9ca3af`。把金色 `#ffd166` 选中环保留为另一圈更粗的环、画在归属环之后，让“选中”和“归属”不互相抢。在选中信息旁加 HUD 标签（`我` / `敌` / `中立`）。如果服务器以后暴露 `Player.team`，再把分类扩展到盟友；今天的快照没有 team 字段。
 
-**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌方`；没有图集时程序化形状仍保留玩家染色并同样有环；`check-render-math` 增加一个纯归属分类检查；110 条保持全绿。
+**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌`；没有图集时程序化形状仍保留玩家染色并同样有环；演示世界（没有 `myPlayerId`）只有灰环；`check-render-math` 增加纯归属颜色检查并证明选中环颜色不变；131 条保持全绿。
 
 **涉及文件。** [renderer.ts](web-client/src/render/renderer.ts)、[fallback.ts](web-client/src/render/fallback.ts)、[main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -162,7 +162,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 保留最近两份快照及它们的客户端接收时间。渲染时按 id 匹配实体，用 `alpha = (now - previousReceived) / (currentReceived - previousReceived)` 插值位置，并夹在 `[0, 1]`；当某一侧缺少该 id、tick 间隔不合理、或实体刚生成/刚死亡时直接吸附，不插值。协议保持 OC/1，JSON 形状不变。等这一步稳定后，可选地让服务器通过 WebSocket 以 10–20 Hz 推送位置/增量，再在增量之间插值；那是协议变更，必须遵守 `protocol/oc-protocol.md` 的版本规则。
 
-**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；110 条保持全绿。
+**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；131 条保持全绿。
 
 **涉及文件。** [main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[renderer.ts](web-client/src/render/renderer.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)；服务器不变。
 
@@ -176,7 +176,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 用由 `--seed` 播种的确定性 `NoiseChunkGenerator` 替换 `FlatChunkGenerator`，配一套 `NoiseSettings`，保证每个基地锚点周围有可建陆地。把快照改成视口：客户端发中心与半径（或它已有的区块坐标），服务器只返回可见地块与实体；客户端缓存区块，并由相机焦点驱动请求；服务器侧在 world 线程上把引擎焦点移到该中心，`ChunkStreamer` 只围绕焦点加载。世界只受宿主报告的坐标窗口限制，同时保留 `--world off` 的确定性回退。这会改变快照契约，所以必须在同一次改动里更新协议文档与它的中文孪生文件、浏览器端点章节，以及快照检查。
 
-**验收标准。** 把镜头移到 (10_000, 10_000) 能看到与原点不同的确定性地形；同一个 `--seed` 在新宿主上复现同一地形；只加载相机附近的区块，JSON 大小大致恒定；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（82 条）只扩展、不削弱；渲染检查覆盖新的视口解析。
+**验收标准。** 把镜头移到 (10_000, 10_000) 能看到与原点不同的确定性地形；同一个 `--seed` 在新宿主上复现同一地形；只加载相机附近的区块，JSON 大小大致恒定；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（105 条）只扩展、不削弱；渲染检查覆盖新的视口解析。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[OcRtsEngineBuilder.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[NoiseChunkGenerator.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java)、[ChunkStreamer.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[main.ts](web-client/src/main.ts)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)、[05 浏览器端点](projects/oc/oc-game-server/help/05-browser-endpoint.md)。
 
@@ -209,14 +209,14 @@ cd web-client; pnpm install; pnpm dev
 - **模拟内部保持确定性。** 模拟里不用 `java.util.Random`，不读墙钟（`System.currentTimeMillis`、`System.nanoTime`），不起线程。用 `DeterministicRandom`、固定 tick，并显式按 id/坐标打破平局。服务器的节拍线程是唯一允许用时钟驱动模拟的地方；传输与存储代码可以为时间戳读时钟，但模拟本身不行。
 - **服务器里只用 daemon 线程。** 插件线程必须是 daemon，并在 `onDisable` 里停掉；非 daemon 线程会让 JVM 在关闭后继续活着。
 - **一次提交只做一个已验证阶段。** 提交前跑六个 Java 检查和两个客户端检查；不要把重构和功能混在同一次提交里。
-- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如 `708`）；README、`help/` 与协议都可能提到它。
+- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如 `731`）；README、`help/` 与协议都可能提到它。
 - **文档是双语的。** 英文文件里改动的每一句话，都必须同步改它的 `_zh_CN.md` 孪生。`help/` 章节按设计是中文文档集；`protocol/oc-protocol.md` 默认英文，`protocol/oc-protocol_zh_CN.md` 是它的孪生，所以两者必须一起动。
 - **运行目录不是源码。** `plugins/` 是操作员拖放区，`data/` 是服务器状态；`plugins/*.jar` 与 `data/` 都被 gitignore。绝不提交插件 jar、密钥或账号文件。
 
 ## 8. 交接清单
 
 - [ ] 从 §2 跑六个 Java 自检；六个总数全部对得上。
-- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；110/110。
+- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；131/131。
 - [ ] 手工打开一次游戏：经典 jar 放进 `plugins/`，服务器起来，`pnpm dev`，REGISTER/LOGIN，看到仓库、工程师、300 金币和 60 木材。
 - [ ] 动 `PluginLoader` 或 `PluginContext` 之前先读 [help/03-plugins.md](projects/oc/oc-game-server/help/03-plugins.md)。
 - [ ] 开始前确认 `git status` 干净；不要提交 jar、密钥或 `data/`。

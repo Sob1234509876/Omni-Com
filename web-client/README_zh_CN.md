@@ -87,18 +87,22 @@ HUD 固定在画面左上角，实时显示：
 - 世界来源：快照正常时显示 `世界：server · tick 42`，使用内置占位地图时显示 `世界：demo`；
 - 贴图来源：`atlas · oc-hello`（最多三个插件时列出插件 id）、`atlas · 4 plugins`；回退到程序化绘制时显示 `procedural`；
 - `WHOAMI` 回答的引擎玩家 id（`玩家：3`；未登录时 `玩家：—`，每次重连都会清空）；
+- 当前玩家的资源，取自 `players` 里 id 等于 `WHOAMI` 回答的那一行：`资源：alice · 金 300 · 木 60`。世界里还没有这一行时（未登录、占位地图，或旧服务器的快照没有 `players` 字段），资源行变灰并显示破折号（`资源：金 — · 木 —`）；
 - 鼠标下的瓦片坐标；
 - 缩放倍率（0.5× 到 2.5×）；
 - 平滑后的 FPS；
-- 选中实体的 id、显示名与地面坐标（`选中：e12 普通 (12.5, 8.5)`）；贴图清单里没有这种 kind 的名字时回退到原始 kind（`选中：e12 unit.melee.t1 (…)`）；没有选中时显示 `选中：无`；
+- 选中实体的 id、显示名、归属标签与地面坐标（`选中：e12 普通 [我] (12.5, 8.5)`）；标签是 `我`（自己）、`敌`（其他玩家）或 `中立`（没有主人，或 `WHOAMI` 还没回答）。贴图清单里没有这种 kind 的名字时回退到原始 kind（`选中：e12 unit.melee.t1 [中立] (…)`）；没有选中时显示 `选中：无`；
 - 选中的建筑属于自己时，显示它的显示名与 id（`建筑：兵工厂 1 级 #42`），没有名字时同样回退到原始 kind（`建筑：building.armory.t1 #42`）。
+
+**归属环。** 每个实体脚下还有一圈细的地面环：`playerId` 等于当前玩家时是蓝色 `#3b82f6`，其他玩家是红色 `#ef4444`，没有主人、`playerId` 为 0 或还不知道 `myPlayerId` 时是灰色 `#9ca3af`（整张占位地图就是这种情况）。金色选中环保持不变，画在归属环之后、始终在最上层。分类规则在 `src/render/view.ts`（`ownershipOf`、`ownershipColor`），所以地面环和 HUD 标签不会给出不同答案。
 
 **服务器世界。** 游戏画面不再只有内置的占位岛屿。画面可见时，`main.ts` 每 500ms 轮询一次 `GET /world/snapshot`
 （上一次请求未完成就跳过），并原地替换渲染用的世界。`src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把服务器
 JSON 转换成渲染器已有的 `WorldView`：地形内容路径变成地形 id，`health` 变成 `healthRatio`，`player` 变成
-`playerId`；行宽不符、字段缺失、坐标非有限值或实体越界的文档会被拒绝。确定性的 `demoWorld(seed)` 原样保留为回退，
-抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时 `visibilitychange` 会取消定时器，后台标签页不会
-继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
+`playerId`，可选的 `players` 数组变成带类型的 `PlayerView` 行（没有这个字段的快照仍然合法，所以旧服务器照常
+工作）；行宽不符、字段缺失、坐标非有限值、实体越界或 `players` 行畸形时整份文档被拒绝。确定性的
+`demoWorld(seed)` 原样保留为回退，抓取失败时（例如 `--world off` 回答 503）就使用它。标签页隐藏时
+`visibilitychange` 会取消定时器，后台标签页不会继续请求；`--http-port 0` 时完全不会轮询，画面停在占位地图上。
 
 ### 操作
 
@@ -234,12 +238,12 @@ SSH 端口转发或 HTTPS 反向代理。
 | `src/main.ts` | DOM 接线：连接、握手、自动心跳、按钮、日志、`engine-info`、`WHOAMI`/游戏操作面板、显示名标签，画面/HUD 的启动，以及每 500ms 的 `/world/snapshot` 轮询 |
 | `src/render/camera.ts` | 世界/屏幕坐标、可见瓦片裁剪、平移、以光标为中心缩放与夹紧 |
 | `src/render/atlas.ts` | 插件清单解析（帧与显示名）、合成图集（last wins）、带原始 id 回退的标签函数与图片加载；失败时返回 `null` |
-| `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影与选中环 |
-| `src/render/view.ts` | `WorldView` / `EntityView` 形状、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
+| `src/render/fallback.ts` | 无图集时的地形色块、单位/建筑图形、格线、阴影、选中环与细的归属环 |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` 形状、归属分类与颜色规则、确定性 `demoWorld(seed)` 回退，以及 `/world/snapshot` 的抓取与转换 |
 | `src/render/renderer.ts` | Canvas 2D 一帧的绘制、DPR 处理、按 y 排序、动画帧与放置高亮 |
 | `src/render/input.ts` | 只挂在 canvas 上的指针/键盘操作、实体拾取、右键命令与放置点击 |
 | `public/textures/README.md` | 插件图集契约（清单格式、示例、锚点） |
-| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、心跳规则与游戏命令构建器的离线自检 |
+| `scripts/check-render-math.ts` | 相机、地图确定性、图集校验、显示名标签与原始 id 回退、磁盘上的经典清单、插件图集合并、快照 `players` 解析、归属颜色、心跳规则与游戏命令构建器的离线自检 |
 | `vite.config.ts` | `/ws`、`/plugin-assets` 与 `/world` dev proxy、`dist` 输出目录 |
 
 ## 相关文档

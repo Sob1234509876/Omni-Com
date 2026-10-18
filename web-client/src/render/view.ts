@@ -56,6 +56,76 @@ export interface WorldView {
   /** Row-major terrain: `tiles[y][x]`. */
   readonly tiles: readonly (readonly TerrainId[])[];
   readonly entities: readonly EntityView[];
+  /**
+   * Server player rows, oldest id first, or `undefined` when the snapshot predates the field.
+   *
+   * The demo world and an older server both omit it, so every reader has to tolerate its absence.
+   */
+  readonly players?: readonly PlayerView[];
+}
+
+/** One player row of a server snapshot: the two starting resources plus the display name. */
+export interface PlayerView {
+  /** Engine player id, the same number as `EntityView.playerId`. */
+  readonly id: number;
+  /** Display name the world bound to the account. */
+  readonly name: string;
+  /** Gold in the player's warehouses, as a non-negative integer. */
+  readonly gold: number;
+  /** Wood in the player's warehouses, as a non-negative integer. */
+  readonly wood: number;
+}
+
+/** How one entity stands relative to the local player. */
+export type Ownership = "mine" | "enemy" | "neutral";
+
+/**
+ * Classifies an entity's owner against the player id answered by `WHOAMI`.
+ *
+ * A missing `myPlayerId` (the demo world, or the moment before `LOGIN`) and a missing or non-positive
+ * entity owner are deliberately `neutral`: the renderer then draws the grey ownership ring, which is
+ * also what the demo world shows.
+ */
+export function ownershipOf(playerId: number | undefined, myPlayerId: number | null): Ownership {
+  if (myPlayerId === null || playerId === undefined || !Number.isFinite(playerId) || playerId <= 0) {
+    return "neutral";
+  }
+  return playerId === myPlayerId ? "mine" : "enemy";
+}
+
+/** The one-character HUD tag for an ownership, as shown next to the selected entity's kind. */
+export function ownershipTag(ownership: Ownership): string {
+  switch (ownership) {
+    case "mine":
+      return "我";
+    case "enemy":
+      return "敌";
+    default:
+      return "中立";
+  }
+}
+
+/** Ownership ring colours: mine, enemy, and neutral / no owner / no local player. */
+export const OWNERSHIP_MINE_COLOR = "#3b82f6";
+export const OWNERSHIP_ENEMY_COLOR = "#ef4444";
+export const OWNERSHIP_NEUTRAL_COLOR = "#9ca3af";
+
+/**
+ * The ground-ring colour for one entity's owner relative to the local player.
+ *
+ * This is the pure rule the renderer draws with, kept beside {@link ownershipOf} so the ring and the HUD
+ * tag can never classify the same entity differently. `myPlayerId === null` (the demo world, or before
+ * `WHOAMI` answers) colours every ring grey.
+ */
+export function ownershipColor(playerId: number | undefined, myPlayerId: number | null): string {
+  switch (ownershipOf(playerId, myPlayerId)) {
+    case "mine":
+      return OWNERSHIP_MINE_COLOR;
+    case "enemy":
+      return OWNERSHIP_ENEMY_COLOR;
+    default:
+      return OWNERSHIP_NEUTRAL_COLOR;
+  }
 }
 
 /** Kinds the fallback renderer draws as buildings rather than units. */
@@ -135,9 +205,12 @@ function terrainIdFromSnapshot(value: string): TerrainId {
  *
  * The server sends terrain content paths (`grass`, `oc:grass`, ...): they are normalized to the
  * renderer's terrain ids. Entity `health` becomes `healthRatio`, `player` becomes `playerId`, and
- * `kind` stays the engine content path. Anything structurally wrong is rejected with `null`: a tile
- * row of the wrong length, a non-string tile, a missing id/kind/position, a non-finite coordinate or
- * an entity outside `[0, width) x [0, height)`. Rejecting is deliberate - a partial world would draw
+ * `kind` stays the engine content path. The optional `players` array is validated row by row into
+ * `PlayerView`; a snapshot without it (an older server, or the demo path) stays valid and simply has no
+ * player rows. Anything structurally wrong is rejected with `null`: a tile
+ * row of the wrong length, a non-string tile, a missing id/kind/position, a non-finite coordinate, an
+ * entity outside `[0, width) x [0, height)`, or a `players` row without an integer id and non-negative
+ * integer gold/wood amounts. Rejecting is deliberate - a partial world would draw
  * entities at positions the simulation never had, and the caller has a deterministic demo fallback.
  */
 export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null {
@@ -211,7 +284,53 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     });
   }
 
-  return { tick, width, height, tiles, entities };
+  const rawPlayers = payload["players"];
+  const players: PlayerView[] = [];
+  if (rawPlayers !== undefined) {
+    if (!Array.isArray(rawPlayers)) {
+      return null;
+    }
+    for (const rawPlayer of rawPlayers) {
+      if (!isRecord(rawPlayer)) {
+        return null;
+      }
+      const id = finiteNumber(rawPlayer["id"]);
+      const name = rawPlayer["name"];
+      const gold = finiteNumber(rawPlayer["gold"]);
+      const wood = finiteNumber(rawPlayer["wood"]);
+      if (
+        id === null ||
+        gold === null ||
+        wood === null ||
+        typeof name !== "string" ||
+        name.trim() === ""
+      ) {
+        return null;
+      }
+      // The server emits integers; a fractional or negative amount is a malformed row, not a number to
+      // round. The name keeps its spaces because a display name such as "Player 1" is legitimate.
+      if (
+        !Number.isInteger(id) ||
+        id < 0 ||
+        !Number.isInteger(gold) ||
+        gold < 0 ||
+        !Number.isInteger(wood) ||
+        wood < 0
+      ) {
+        return null;
+      }
+      players.push({ id, name, gold, wood });
+    }
+  }
+
+  return {
+    tick,
+    width,
+    height,
+    tiles,
+    entities,
+    ...(rawPlayers === undefined ? {} : { players }),
+  };
 }
 
 /**

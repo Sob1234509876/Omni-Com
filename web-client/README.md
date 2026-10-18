@@ -90,20 +90,25 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
 - Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
 - the engine player id answered by `WHOAMI` (`玩家：3`; `玩家：—` before login, cleared again on every reconnect);
+- the local player's resources from the `players` row whose id matches `WHOAMI`: `资源：alice · 金 300 · 木 60`. The label greys out and shows dashes (`资源：金 — · 木 —`) while the world has no row for the player yet - before login, on the demo map, or against an older server whose snapshot has no `players` field;
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, display name and ground coordinates of the selected entity (`选中：e12 普通 (12.5, 8.5)`); when the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 (…)`), and `选中：无` means nothing is selected;
+- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通 [我] (12.5, 8.5)`); the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (…)`), and `选中：无` means nothing is selected;
 - the display name and id of the selected building when it belongs to the player (`建筑：兵工厂 1 级 #42`), again falling back to the raw kind (`建筑：building.armory.t1 #42`).
+
+**Ownership rings.** Every entity also gets a thin ground ring under its sprite: blue `#3b82f6` when its `playerId` is the local player, red `#ef4444` for any other player, and grey `#9ca3af` when the owner is missing, zero, or no `myPlayerId` is known yet (which is the whole demo map). The gold selection ring is unchanged, is drawn after the ownership ring and stays on top. The classification lives in `src/render/view.ts` (`ownershipOf`, `ownershipColor`) so the ring and the HUD tag cannot disagree.
 
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible, `main.ts` polls
 `GET /world/snapshot` every 500 ms (skipping a request while the previous one is still in flight) and replaces the rendered
 world in place. `src/render/view.ts` `fetchWorldSnapshot(baseUrl)` converts the server JSON into the same `WorldView` the
-renderer already consumes: terrain content paths become terrain ids, `health` becomes `healthRatio`, and `player` becomes
-`playerId`; a document with wrong row lengths, a missing field, a non-finite coordinate or an out-of-bounds entity is
-rejected. The procedural `demoWorld(seed)` is kept intact as the fallback and is used whenever the fetch fails (for example
-with `--world off`, which answers 503). The timer is cancelled on `visibilitychange` while the tab is hidden, so a background
-tab sends no snapshot requests. With `--http-port 0` nothing is polled and the page stays on the demo map.
+renderer already consumes: terrain content paths become terrain ids, `health` becomes `healthRatio`, `player` becomes
+`playerId`, and the optional `players` array becomes typed `PlayerView` rows (a snapshot without that field stays valid, so an
+older server keeps working); a document with wrong row lengths, a missing field, a non-finite coordinate, an out-of-bounds
+entity or a malformed `players` row is rejected. The procedural `demoWorld(seed)` is kept intact as the fallback and is used
+whenever the fetch fails (for example with `--world off`, which answers 503). The timer is cancelled on `visibilitychange`
+while the tab is hidden, so a background tab sends no snapshot requests. With `--http-port 0` nothing is polled and the page
+stays on the demo map.
 
 ### Controls
 
@@ -243,12 +248,12 @@ plugin directory, or an account's password/permissions.
 | `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, and the 500 ms `/world/snapshot` poll |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, and clamping |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
-| `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, and selection ring when there is no atlas |
-| `src/render/view.ts` | `WorldView` / `EntityView` shapes, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` fetch/conversion |
+| `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring and the thin ownership ring when there is no atlas |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes, the ownership classification and colour rule, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, the heartbeat rule, and gameplay command builders |
+| `scripts/check-render-math.ts` | offline self-check of the camera, map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, snapshot `players` parsing, ownership colours, the heartbeat rule, and gameplay command builders |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

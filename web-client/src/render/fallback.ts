@@ -56,7 +56,9 @@ const PLAYER_COLORS: readonly string[] = [
 const UNIT_HEAD_COLOR = "#f0d2b4";
 const BUILDING_WALL_COLOR = "#a49b8c";
 const BUILDING_DOOR_COLOR = "#4a3524";
-const SELECTION_COLOR = "#ffd166";
+
+/** The gold selection ring; kept unchanged so selection always reads the same. */
+export const SELECTION_COLOR = "#ffd166";
 
 /** Small deterministic hash for tile detail; not cryptographic, only stable. */
 function hash01(x: number, y: number, salt: number): number {
@@ -522,6 +524,32 @@ export function drawBuildingShape(
   const windowSize = width * 0.12;
   context.fillRect(left + width * 0.18, wallTop + height * 0.22, windowSize, windowSize);
   context.fillRect(left + width * 0.7, wallTop + height * 0.22, windowSize, windowSize);
+  context.restore();
+}
+
+/**
+ * Ownership ring drawn on the ground under an entity.
+ *
+ * It is the same ellipse as {@link drawSelectionRing} but thinner and without the halo, so the gold
+ * selection ring stays readable on top of it. The colour comes from {@link ownershipColor}.
+ */
+export function drawOwnershipRing(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  tilePixels: number,
+  building: boolean,
+  color: string,
+): void {
+  const radiusX = tilePixels * (building ? 0.85 : 0.42);
+  const radiusY = radiusX * 0.42;
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = Math.max(1, tilePixels * 0.03);
+  context.globalAlpha = 0.9;
+  context.beginPath();
+  context.ellipse(screenX, screenY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.stroke();
   context.restore();
 }
 

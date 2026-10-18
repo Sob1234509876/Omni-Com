@@ -44,7 +44,10 @@ import {
   fetchWorldSnapshot,
   isBuildingKind,
   kindName,
+  ownershipOf,
+  ownershipTag,
   type EntityView,
+  type PlayerView,
   type WorldView,
 } from "./render/view";
 
@@ -76,6 +79,7 @@ const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
 const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudPlayer = required<HTMLSpanElement>("#hud-player");
+const hudResources = required<HTMLSpanElement>("#hud-resources");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
@@ -755,6 +759,14 @@ function describeEntity(entity: EntityView): string {
     : `e${entity.id} ${label} (${entity.kind})`;
 }
 
+/** The server row for the local player, or undefined while there is no snapshot row for them yet. */
+function myPlayerRow(): PlayerView | undefined {
+  if (myPlayerId === null) {
+    return undefined;
+  }
+  return world.players?.find((player) => player.id === myPlayerId);
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -765,6 +777,12 @@ function updateHud(force = false, now = performance.now()): void {
   hudWorld.textContent =
     worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo";
   hudPlayer.textContent = myPlayerId === null ? "玩家：—" : `玩家：${myPlayerId}`;
+  const resources = myPlayerRow();
+  hudResources.textContent =
+    resources === undefined
+      ? "资源：金 — · 木 —"
+      : `资源：${resources.name} · 金 ${resources.gold} · 木 ${resources.wood}`;
+  hudResources.classList.toggle("unavailable", resources === undefined);
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
@@ -773,6 +791,7 @@ function updateHud(force = false, now = performance.now()): void {
     selected === undefined
       ? "选中：无"
       : `选中：e${selected.id} ${contentLabel(selected.kind)} ` +
+        `[${ownershipTag(ownershipOf(selected.playerId, myPlayerId))}] ` +
         `(${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
   hudBuilding.textContent =
     selected !== undefined && isMine(selected) && isBuildingEntity(selected)
@@ -819,6 +838,9 @@ async function sendGameplayCommand(
   setStatus(text, "ok");
   // The answer is already logged raw above; add the human line so the translation is visible there too.
   log("info", text);
+  // A successful BUILD/TRAIN changes the warehouse stock, so refresh the snapshot instead of waiting up to
+  // 500 ms for the next poll. The poll skips itself while another request is still in flight.
+  void pollWorldSnapshot();
 }
 
 function updateGameplayPanel(): void {
@@ -1122,6 +1144,7 @@ function animationFrame(now: number): void {
       hoverTile,
       selectedId,
       placementTile: placementPath === null ? null : hoverTile,
+      myPlayerId,
     });
     updateHud(false, now);
   }

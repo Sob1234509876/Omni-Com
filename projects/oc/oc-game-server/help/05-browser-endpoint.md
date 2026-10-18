@@ -251,6 +251,10 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
   "entities": [
     {"id": 1, "kind": "warehouse", "x": 19.5, "y": 19.5, "player": 1, "health": 1.00},
     {"id": 4, "kind": "worker", "x": 16.8, "y": 24.3, "player": 1, "health": 1.00}
+  ],
+  "players": [
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
   ]
 }
 ```
@@ -259,6 +263,10 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
   `TerrainType.key().path()` 一致。
 - `entities` 按 id 排序；`kind` 是引擎的内容路径（`worker`、`soldier`、`medic`、`warehouse`、`barracks`、
   `workshop`、`ore_silo`），建筑与单位形状相同。`x` / `y` 是实体中心的地图坐标，保留一位小数。
+- `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
+  `name`，以及扁平的金币/木材数量 `gold` / `wood`。这两个键就是经典内容目录注册的物品路径；快照不重复
+  它们的显示名，其它物品类型暂时不进快照。金额来自玩家仓库的可用数量（引擎的投放点规则，与建造/训练
+  成本检查同源），所以没有仓库的玩家两项都是 `0`。旧服务器可以不带这个字段，客户端必须容错。
 - `tilePixels` 固定 `16`，只是给渲染器的建议值；浏览器仍按自己的相机缩放。
 - 64×64 的快照只有几 KB，服务器每次请求重建，不缓存。
 
@@ -276,9 +284,12 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 ### 浏览器侧
 
 `web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
-（地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`），结构不合法或实体越界时返回
-`null`，页面继续使用确定性的 `demoWorld()` 占位地图。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次请求未完成
-就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`。Vite dev proxy 把 `/world` 转发到同一个 Java 服务器。
+（地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`），
+结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 可以缺失：旧服务器
+没有这个字段时客户端照常工作，只是 HUD 的资源行显示破折号。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次
+请求未完成就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家
+的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。Vite dev proxy 把 `/world` 转发到
+同一个 Java 服务器。
 
 ## 帧规则
 
