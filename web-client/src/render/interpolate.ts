@@ -28,7 +28,7 @@ export interface Frame {
  * Distance in tiles beyond which a position difference is treated as a teleport instead of motion.
  *
  * A snapshot arrives every 500 ms; a unit moving that far between two polls either teleported, was
- * spawned elsewhere, or is not the same thing the player was watching. Sliding it across the map would
+ * spawned elsewhere, or is not the same thing the player was watching. Sliding it across the world would
  * draw a motion the simulation never had, so such an entity snaps to the newer position instead.
  */
 export const MAX_INTERPOLATION_DISTANCE_TILES = 4;

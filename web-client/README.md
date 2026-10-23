@@ -90,7 +90,7 @@ Just open the address Vite prints; the view can be seen even when the Java serve
 The HUD is pinned to the top-left corner of the view and shows, in real time:
 
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
-- Window origin and full map size: `窗口：96,96 · 地图 256×256`. The origin advances as the camera streams a new window, while the map stays 256 tiles square; on the demo map the chip reads `窗口：0,0 · 地图 44×32`;
+- Camera coordinates and window origin: `坐标：-1234,-567 · 窗口：-1250,-582`. Both may be negative and keep counting as the owner pans; the window origin changes as the camera streams a new window. On the demo map the chip starts at `坐标：22,16 · 窗口：0,0` (the demo island is its own window at origin `0,0`);
 - Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
 - the engine player id answered by `WHOAMI` (`玩家：3`; `玩家：—` before login, cleared again on every reconnect);
 - the local player's resources from the `players` row whose id matches `WHOAMI`: `资源：alice · 金 300 · 木 60`. The label greys out and shows dashes (`资源：金 — · 木 —`) while the world has no row for the player yet - before login, on the demo map, or against an older server whose snapshot has no `players` field;
@@ -105,33 +105,38 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible,
 `main.ts` polls `GET /world/snapshot?cx=<cameraTileX>&cy=<cameraTileY>&r=32` every 500 ms (skipping a request while
 the previous one is still in flight) and keeps the last two snapshots as frames for the animation loop to interpolate
-between (see **Movement smoothness** below). The server answers a 256 x 256 map as a 64 x 64 window: `originX` /
-`originY` are the window's absolute top-left tile, `width` / `height` are the **window** size, and entities keep
-absolute map coordinates. `src/render/view.ts` `fetchWorldSnapshot(baseUrl, request)` converts the server JSON into
-the same `WorldView` the renderer already consumes: terrain content paths become terrain ids, `originX` / `originY`
-are kept, `health` becomes `healthRatio`, `player` becomes `playerId`, and the optional `players` array becomes typed
-`PlayerView` rows (a snapshot without that field stays valid, so an older server keeps working). `terrainAt`
-translates an absolute tile by subtracting the origin and returns `void` outside the window, and the renderer and the
-entity picker only draw or select an entity whose tile is inside the window. A document with wrong row lengths, a
-missing field, a non-finite coordinate, an entity outside the 256 x 256 map, a window that leaves the map, or a
-malformed `players` row is rejected. The procedural `demoWorld(seed)` is kept intact as the fallback for a missing
-snapshot (for example `--world off`, which answers 503). The timer is cancelled on `visibilitychange` while the tab
-is hidden, so a background tab sends no snapshot requests. With `--http-port 0` nothing is polled and the page stays
-on the demo map.
+between (see **Movement smoothness** below). The server world is **unbounded**: a snapshot carries only one square
+window, `originX` / `originY` are its absolute top-left tile, `width` / `height` are the **window** size, and entities
+keep absolute world coordinates. The document carries no `mapWidth` / `mapHeight` and no map size at all; both the
+window origin and every entity coordinate may be negative or very large. `src/render/view.ts`
+`fetchWorldSnapshot(baseUrl, request)` converts the server JSON into the same `WorldView` the renderer already
+consumes: terrain content paths become terrain ids, `originX` / `originY` are kept as signed integers, `health` becomes
+`healthRatio`, `player` becomes `playerId`, and the optional `players` array becomes typed `PlayerView` rows (a
+snapshot without that field stays valid, so an older server keeps working). `terrainAt` translates an absolute tile by
+subtracting the origin (flooring first, so a negative fractional position lands in the correct cell) and returns `void`
+outside the window; the renderer and the entity picker only draw or select an entity whose tile is inside the window.
+A document with wrong row lengths, a missing field, a non-finite coordinate or a non-integer window origin is rejected -
+but a negative or far-away coordinate is not an error, because there is no map boundary to cross. The procedural
+`demoWorld(seed)` is kept intact as the fallback for a missing snapshot (for example `--world off`, which answers 503).
+The timer is cancelled on `visibilitychange` while the tab is hidden, so a background tab sends no snapshot requests.
+With `--http-port 0` nothing is polled and the page stays on the demo map.
 
 **Camera-driven window streaming.** The picture moves and the client follows it: `main.ts` keeps a camera focus (the
-camera's centre tile) and asks for a new window centred on that focus as soon as it comes within 8 tiles of the
-loaded window's edge, instead of panning into terrain it has not loaded. The old window stays on screen until the new
-one arrives, so nothing goes blank and nothing flickers while a window is loading; a failed request keeps the last
-window instead of dropping back to the demo map, and a monotonically increasing request id makes a late answer lose
-to a newer one. At the 256-tile map edge the server clamps the window inwards, so
-the same origin is detected and the client does not request the same window every frame. The camera is clamped to the
-full 256 x 256 map, **not** to the 64 x 64 window, so panning is never stopped at the window edge and the renderer
-simply draws whichever part of the loaded window overlaps the view. The HUD shows the window origin and the map size
-(`窗口：96,96 · 地图 256×256`), which is how the streamed window is visible to the owner. The map is 256 tiles square
-today: the snapshot reports the window size in `width` / `height` and does not repeat the map size, so the client
-uses the documented `DEFAULT_MAP_SIZE_TILES = 256`; a snapshot that does carry optional `mapWidth` / `mapHeight`
-wins over that constant.
+camera's centre tile) and asks for a new window centred on that focus as soon as it comes within 8 tiles of the loaded
+window's edge, instead of panning into terrain it has not loaded. The old window stays on screen until the new one
+arrives, so nothing goes blank and nothing flickers while a window is loading; a failed or rejected request keeps the
+last window instead of dropping back to the demo map, and a monotonically increasing request id makes a late answer lose
+to a newer one. The requested centre is sent exactly as it is, so the server answers the origin `centre - r` for any
+signed centre: there is no map edge at which a window is clamped or shifted inwards.
+
+**The world is unbounded.** There is no map width, height or boundary anywhere in the client model or the camera. The
+camera is clamped only to a very generous **safety bound of ±500,000 tiles** (16 million world pixels at 32 px/tile),
+and that bound is not gameplay: it exists because the engine stores positions in single-precision `Vec2` values, whose
+resolution is already about one world pixel near that magnitude. The camera is built once and is never rebuilt when a
+window arrives: a snapshot only changes which terrain is loaded, not where the camera may go. Panning therefore keeps
+working in every direction, into negative coordinates and far past the spawn. The HUD shows the camera coordinates and
+the loaded window origin (`坐标：-1234,-567 · 窗口：-1250,-582`), so the owner can watch both go negative and keep
+counting.
 
 **Movement smoothness.** A snapshot only arrives every 500 ms, so drawing each one as it landed made units step. The view now
 keeps the previous and the current server frame (each a converted `WorldView` plus its tick) and redraws on every animation
@@ -158,7 +163,7 @@ They take effect after the first click on the view; keyboard events are bound on
 | Wheel | zooms around the cursor, keeping the tile under the cursor fixed |
 | `WASD` / arrow keys | pan the camera |
 | `+` / `-` | zoom in / out around the center of the view |
-| `F` | resets the camera (centered, 1×) |
+| `F` | resets the camera to its starting point and 1× |
 | `Esc` | cancels an armed BUILD placement; with no placement armed it clears the selection |
 
 The **Gameplay** panel below the protocol commands drives the rest of the grammar. It only enables a command when the selection belongs to the player id in the HUD (`entity.playerId === myPlayerId`), so a click on someone else's unit can never send an order by accident:
@@ -183,20 +188,21 @@ When the manifest is missing, the request fails, an image fails to load, or the 
 units are circles, buildings are blocks with a roof line, and at higher zoom there is a 1-pixel grid.
 
 > The initial map is the deterministic `demoWorld(seed)` placeholder. As soon as the Java server answers
-> `/world/snapshot`, the view switches to that real engine world: a 256 x 256 map served as a 64 x 64 window that
-> follows the camera; the render layer does not change because both sources use the same `WorldView` shape.
+> `/world/snapshot`, the view switches to that real engine world: an unbounded world, one 64 x 64 window at a time,
+> following the camera; the render layer does not change because both sources use the same `WorldView` shape.
 
-The rendering math and the pure client rules (camera clamping to the full map, cursor-centered zoom, placeholder map determinism, server snapshot
-conversion and out-of-bounds rejection, absolute-to-window terrain translation, the 8-tile camera-driven window trigger,
-the map-edge clamp and request ordering, snapshot interpolation and snapping, rejection of out-of-bounds atlas frames,
-manifest display names and raw-id fallback, the on-disk classic manifest, plugin atlas merging and fallback, and the
-heartbeat constant/start rule) can be checked offline:
+The rendering math and the pure client rules (camera floor semantics and the ±500,000-tile numeric safety bound,
+cursor-centered zoom, placeholder map determinism, unbounded signed snapshot parsing, negative-origin window
+translation, the 8-tile camera-driven window trigger, signed window origins and request ordering, snapshot
+interpolation and snapping, rejection of out-of-bounds atlas frames, manifest display names and raw-id fallback, the
+on-disk classic manifest, plugin atlas merging and fallback, and the heartbeat constant/start rule) can be checked
+offline:
 
 ```shell
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 158 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 165 passing checks.
 
 ## hello plugin demo
 
@@ -282,17 +288,17 @@ plugin directory, or an account's password/permissions.
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
 | `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers |
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, the camera-driven `/world/snapshot` streamer (8-tile edge trigger, request ids, old window kept until the new one arrives), and the animation loop that interpolates between the last two frames of the same window |
-| `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, camera focus tile, and clamping to the full map |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), and the animation loop that interpolates between the last two frames of the same window |
+| `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, floor-based camera focus tile, and the ±500,000-tile numeric safety bound for the unbounded world |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring and the thin ownership ring when there is no atlas |
 | `src/render/interpolate.ts` | pure snapshot interpolation: `Frame`, `alphaFor` for one poll interval, and `interpolate` with the appear/disappear/snap rules |
-| `src/render/stream.ts` | pure window-streaming rules: edge distance, the 8-tile trigger, the server-identical origin clamp that stops requests at a map edge, and the monotonic request tracker |
-| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes (including window origin and full map size), absolute-to-window terrain translation and the in-window entity rule, the ownership classification and colour rule, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
+| `src/render/stream.ts` | pure window-streaming rules: signed edge distance, the 8-tile trigger, the `centre - radius` origin for any signed centre, the duplicate-origin guard, and the monotonic request tracker |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes (window origin and window size, no map size), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera (including its full-map clamp), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, windowed snapshot parsing and origin translation, the window-edge trigger / map-edge guard / request ordering, snapshot `players` parsing, snapshot interpolation, ownership colours, the heartbeat rule, and gameplay command builders |
+| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing, snapshot interpolation, ownership colours, the heartbeat rule, and gameplay command builders |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

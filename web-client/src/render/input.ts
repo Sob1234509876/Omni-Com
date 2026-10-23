@@ -7,7 +7,7 @@
  */
 
 import type { Camera, TileCoord } from "./camera";
-import { entityInWindow, isBuildingKind, tileInMap, type WorldView } from "./view";
+import { entityInWindow, isBuildingKind, isWorldTile, type WorldView } from "./view";
 
 const DRAG_THRESHOLD_PX = 4;
 const KEY_PAN_SPEED_PX_PER_SECOND = 560;
@@ -30,10 +30,10 @@ export interface InputHooks {
   readonly onSelectionChange: (id: number | null) => void;
   readonly onHoverChange?: (tile: TileCoord | null) => void;
   readonly onCameraChange?: () => void;
-  /** A right click on a map tile; `targetId` is the entity under the cursor, if any. */
+  /** A right click on a world tile; `targetId` is the entity under the cursor, if any. */
   readonly onRightClick?: (tile: TileCoord, targetId: number | null) => void;
   /**
-   * A plain left click on a map tile, before selection. Returning `true` consumes the click, which is
+   * A plain left click on a world tile, before selection. Returning `true` consumes the click, which is
    * how the build placement mode places a site instead of changing the selection.
    */
   readonly onLeftClick?: (tile: TileCoord, targetId: number | null) => boolean;
@@ -93,7 +93,7 @@ export class InputController {
     canvas.addEventListener("blur", this.handleBlur);
   }
 
-  /** Tile under the pointer, or null when it is outside the canvas or the map. */
+  /** Tile under the pointer, or null when it is outside the canvas. */
   get hoverTile(): TileCoord | null {
     return this.hoverTileValue;
   }
@@ -154,12 +154,10 @@ export class InputController {
   }
 
   private updateHover(screenX: number, screenY: number): void {
-    const world = this.hooks.getWorld();
     const tile = this.camera.tileAtScreen(screenX, screenY);
-    // The camera is clamped to the full map, not to the loaded window, so a hovered tile may be on
-    // the map but outside the window. It is still a real tile for commands and the HUD.
-    const inside = tileInMap(world, tile.x, tile.y);
-    const next: TileCoord | null = inside ? tile : null;
+    // The world is unbounded, so every whole tile is addressable. The camera is not clamped to the
+    // loaded window, so this tile may be outside it; it is still a real tile for commands and the HUD.
+    const next: TileCoord | null = isWorldTile(tile.x, tile.y) ? tile : null;
     if (!sameTile(next, this.hoverTileValue)) {
       this.hoverTileValue = next;
       this.hooks.onHoverChange?.(next);
@@ -321,7 +319,7 @@ export class InputController {
     }
   };
 
-  /** Emits a right click with its tile and the entity body under the cursor, if the tile is on the map. */
+  /** Emits a right click with its tile and the entity body under the cursor, if there is a tile. */
   private emitRightClick(screenX: number, screenY: number): void {
     const tile = this.hoverTileValue;
     if (tile === null) {

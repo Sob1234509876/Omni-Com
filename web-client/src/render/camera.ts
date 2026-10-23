@@ -5,11 +5,27 @@
  * positions are unzoomed pixels: tile `(x, y)` starts at `(x * tileSize, y * tileSize)`, matching the
  * engine's `TileRect` (inclusive, x to the right, y down, origin top left).
  *
+ * The world is unbounded: there is no map width or height, tiles may be at any signed coordinate, and
+ * the camera starts on a caller-supplied home point and can follow the player in every direction.
+ * The only limit is {@link CAMERA_SAFETY_BOUND_TILES}, a numeric guard rather than a gameplay edge.
+ *
  * The class is a pure state machine: it never touches the DOM, so the Node check can exercise it.
  */
 
 export const MIN_ZOOM = 0.5;
 export const MAX_ZOOM = 2.5;
+
+/**
+ * Largest tile coordinate, in either direction, the camera centre may reach.
+ *
+ * The server world is unbounded, so this is deliberately *not* a map edge: it is a float-precision
+ * guard. The engine keeps positions in single-precision `Vec2` values, whose spacing is already about
+ * one world pixel near `2^24` (roughly 524,000 tiles at 32 px/tile); beyond that, positions would
+ * quantise and the picture would jitter. Five hundred thousand tiles (16 million world pixels at
+ * 32 px/tile) stays just inside that range while being about two thousand times the old 256-tile map,
+ * so no realistic session can feel it. Clamping is applied to the centre in world pixels.
+ */
+export const CAMERA_SAFETY_BOUND_TILES = 500_000;
 
 /** A point in screen (CSS px) or world (unzoomed px) space, depending on the method. */
 export interface Point {
@@ -17,7 +33,7 @@ export interface Point {
   readonly y: number;
 }
 
-/** One integer tile coordinate. */
+/** One integer tile coordinate. The world is unbounded, so either component may be negative. */
 export interface TileCoord {
   readonly x: number;
   readonly y: number;
@@ -40,49 +56,35 @@ function clampZoom(value: number): number {
 }
 
 export class Camera {
-  readonly worldWidthTiles: number;
-  readonly worldHeightTiles: number;
   readonly tileSize: number;
-  readonly worldWidthPx: number;
-  readonly worldHeightPx: number;
 
   private viewportWidthValue = 1;
   private viewportHeightValue = 1;
   private readonly defaultZoom: number;
+  private readonly homeXValue: number;
+  private readonly homeYValue: number;
   private zoomValue: number;
   private centerXValue: number;
   private centerYValue: number;
 
-  constructor(worldWidthTiles: number, worldHeightTiles: number, tileSize: number, zoom = 1) {
-    if (!Number.isFinite(worldWidthTiles) || worldWidthTiles <= 0) {
-      throw new Error(`地图宽度必须是正数，当前是 ${String(worldWidthTiles)}`);
-    }
-    if (!Number.isFinite(worldHeightTiles) || worldHeightTiles <= 0) {
-      throw new Error(`地图高度必须是正数，当前是 ${String(worldHeightTiles)}`);
-    }
+  /**
+   * @param tileSize pixels one tile covers at 1x.
+   * @param zoom initial zoom, clamped to [0.5, 2.5].
+   * @param homeX world pixel the camera starts on and returns to on {@link reset}.
+   * @param homeY world pixel the camera starts on and returns to on {@link reset}.
+   */
+  constructor(tileSize: number, zoom = 1, homeX = 0, homeY = 0) {
     if (!Number.isFinite(tileSize) || tileSize <= 0) {
       throw new Error(`瓦片像素必须是正数，当前是 ${String(tileSize)}`);
     }
-    this.worldWidthTiles = Math.max(1, Math.floor(worldWidthTiles));
-    this.worldHeightTiles = Math.max(1, Math.floor(worldHeightTiles));
     this.tileSize = tileSize;
-    this.worldWidthPx = this.worldWidthTiles * tileSize;
-    this.worldHeightPx = this.worldHeightTiles * tileSize;
     this.defaultZoom = clampZoom(Number.isFinite(zoom) ? zoom : 1);
     this.zoomValue = this.defaultZoom;
-    this.centerXValue = this.worldWidthPx / 2;
-    this.centerYValue = this.worldHeightPx / 2;
+    this.homeXValue = Number.isFinite(homeX) ? homeX : 0;
+    this.homeYValue = Number.isFinite(homeY) ? homeY : 0;
+    this.centerXValue = this.homeXValue;
+    this.centerYValue = this.homeYValue;
     this.clamp();
-  }
-
-  /** Inclusive map width in tiles. */
-  get worldWidth(): number {
-    return this.worldWidthTiles;
-  }
-
-  /** Inclusive map height in tiles. */
-  get worldHeight(): number {
-    return this.worldHeightTiles;
   }
 
   /** Canvas width in CSS pixels. */
@@ -130,7 +132,7 @@ export class Camera {
     this.clamp();
   }
 
-  /** Centres the view on a world pixel position, then clamps it. */
+  /** Centres the view on a world pixel position, then clamps it to the safety bound. */
   setCenter(worldX: number, worldY: number): void {
     if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
       return;
@@ -156,7 +158,7 @@ export class Camera {
     };
   }
 
-  /** Tile under a screen point; the caller decides whether it is inside the map. */
+  /** Tile under a screen point; the caller decides whether it has a loaded window. */
   tileAtScreen(screenX: number, screenY: number): TileCoord {
     const world = this.screenToWorld(screenX, screenY);
     return {
@@ -168,35 +170,32 @@ export class Camera {
   /**
    * Tile the viewport is centred on.
    *
-   * This is the camera focus the snapshot streamer follows. The camera is already clamped to the
-   * map, so the result is always a map tile; the extra clamp keeps a caller safe at an exact edge.
+   * This is the camera focus the snapshot streamer follows. The world is unbounded, so the result may
+   * be any signed tile; `Math.floor` (not truncation) keeps coordinates west and north of the origin
+   * on the correct tile.
    */
   centerTile(): TileCoord {
-    const x = Math.floor(this.centerXValue / this.tileSize);
-    const y = Math.floor(this.centerYValue / this.tileSize);
     return {
-      x: clampNumber(x, 0, this.worldWidthTiles - 1),
-      y: clampNumber(y, 0, this.worldHeightTiles - 1),
+      x: Math.floor(this.centerXValue / this.tileSize),
+      y: Math.floor(this.centerYValue / this.tileSize),
     };
   }
 
   /**
    * Inclusive rectangle of tiles that may be visible.
    *
-   * The range is clamped to the map, so it is always safe to index. When the whole map is smaller
-   * than the viewport the range is the whole map.
+   * Nothing is clamped to a map: the range follows the viewport wherever it is, so it may contain
+   * negative tiles. The renderer only draws terrain for tiles inside the loaded window anyway.
    */
   visibleTileRange(): TileRange {
     const topLeft = this.screenToWorld(0, 0);
     const bottomRight = this.screenToWorld(this.viewportWidthValue, this.viewportHeightValue);
-    const maximumX = this.worldWidthTiles - 1;
-    const maximumY = this.worldHeightTiles - 1;
     const edge = 1e-6;
     return {
-      minX: clampNumber(Math.floor(topLeft.x / this.tileSize), 0, maximumX),
-      maxX: clampNumber(Math.floor((bottomRight.x - edge) / this.tileSize), 0, maximumX),
-      minY: clampNumber(Math.floor(topLeft.y / this.tileSize), 0, maximumY),
-      maxY: clampNumber(Math.floor((bottomRight.y - edge) / this.tileSize), 0, maximumY),
+      minX: Math.floor(topLeft.x / this.tileSize),
+      maxX: Math.floor((bottomRight.x - edge) / this.tileSize),
+      minY: Math.floor(topLeft.y / this.tileSize),
+      maxY: Math.floor((bottomRight.y - edge) / this.tileSize),
     };
   }
 
@@ -218,8 +217,8 @@ export class Camera {
   /**
    * Zooms by `factor` while keeping the world point under the cursor fixed.
    *
-   * Near a map edge `clamp()` wins over the anchor: the view may not leave the map, so the point can
-   * shift by a few pixels there.
+   * At the safety bound `clamp()` wins over the anchor, exactly as a map edge used to: the camera may
+   * not leave the numeric range, so the anchored point can shift there.
    */
   zoomAt(screenX: number, screenY: number, factor: number): void {
     if (!Number.isFinite(factor) || factor <= 0) {
@@ -237,27 +236,25 @@ export class Camera {
     this.clamp();
   }
 
-  /** Keeps the viewport inside the map; a map smaller than the viewport stays centred. */
+  /**
+   * Keeps the camera centre inside the numeric safety bound.
+   *
+   * There is no map to stay inside. The bound exists only so the engine's single-precision `Vec2`
+   * never reaches a magnitude where its resolution is worse than a pixel; see
+   * {@link CAMERA_SAFETY_BOUND_TILES}. The viewport half-size is deliberately not part of this
+   * calculation: the map view may extend past the bound, it is terrain that does not exist there.
+   */
   clamp(): void {
-    const halfWidth = this.viewportWidthValue / (2 * this.zoomValue);
-    const halfHeight = this.viewportHeightValue / (2 * this.zoomValue);
-    if (halfWidth * 2 >= this.worldWidthPx) {
-      this.centerXValue = this.worldWidthPx / 2;
-    } else {
-      this.centerXValue = clampNumber(this.centerXValue, halfWidth, this.worldWidthPx - halfWidth);
-    }
-    if (halfHeight * 2 >= this.worldHeightPx) {
-      this.centerYValue = this.worldHeightPx / 2;
-    } else {
-      this.centerYValue = clampNumber(this.centerYValue, halfHeight, this.worldHeightPx - halfHeight);
-    }
+    const limit = CAMERA_SAFETY_BOUND_TILES * this.tileSize;
+    this.centerXValue = clampNumber(this.centerXValue, -limit, limit);
+    this.centerYValue = clampNumber(this.centerYValue, -limit, limit);
   }
 
-  /** Restores the default zoom and centres the map. */
+  /** Restores the default zoom and returns to the home point the constructor was given. */
   reset(): void {
     this.zoomValue = this.defaultZoom;
-    this.centerXValue = this.worldWidthPx / 2;
-    this.centerYValue = this.worldHeightPx / 2;
+    this.centerXValue = this.homeXValue;
+    this.centerYValue = this.homeYValue;
     this.clamp();
   }
 }

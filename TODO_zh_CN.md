@@ -30,7 +30,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 37、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 293 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
-| client render math | `node scripts/check-render-math.ts` | 158 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
+| client render math | `node scripts/check-render-math.ts` | 165 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
 
@@ -120,7 +120,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 扩展贴图清单：实体用 `entities.<kind>.name`，地形用 `tiles.<path>.name`。地形条目现在是 `[x, y, w, h]`，所以同时接受旧数组与新对象 `{"rect": [x, y, w, h], "name": "..."}`；实体条目本来就是对象，在 `frames` 旁加可选的 `name`。服务器不解释这些字段，它本来就把清单原样转发。`atlas.ts` 把名字带进合并后的图集（后加载的插件覆盖前面的），`main.ts` 用名字显示、用内容路径兜底。给 `oc-classic` 与 `oc-hello` 的清单补名字，并更新贴图契约文档。
 
-**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；158 条保持全绿。
+**验收标准。** 加载经典 jar 后，HUD 显示 `e12 普通`，TRAIN 按钮显示 `普通` / `强化` / `精英` / `将领` / `战王` / `工程师`，BUILD 按钮显示 `兵营·普通` / `矿场·普通`；清单里没有名字时同一行回退到 `unit.melee.t1`（绝不能出现 `undefined`）；`check-render-math` 增加名字合并与回退检查；所有检查保持全绿（今天是 165 条，本阶段落地时是 158 条）。
 
 **涉及文件。** [atlas.ts](web-client/src/render/atlas.ts)、[main.ts](web-client/src/main.ts)、[ClassicContent.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicContent.java)、[manifest.json](projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json)、[贴图 README](web-client/public/textures/README.md)、[贴图 README 中文](web-client/public/textures/README_zh_CN.md)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -148,7 +148,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 在画精灵之前的 ground pass 里画一圈地面归属环：`playerId === myPlayerId` 用蓝色 `#3b82f6`，其他玩家用红色 `#ef4444`，`playerId` 缺失或为 0、或 `myPlayerId` 未知（占位地图）用灰色 `#9ca3af`。把金色 `#ffd166` 选中环保留为另一圈更粗的环、画在归属环之后，让“选中”和“归属”不互相抢。在选中信息旁加 HUD 标签（`我` / `敌` / `中立`）。如果服务器以后暴露 `Player.team`，再把分类扩展到盟友；今天的快照没有 team 字段。
 
-**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌`；没有图集时程序化形状仍保留玩家染色并同样有环；演示世界（没有 `myPlayerId`）只有灰环；`check-render-math` 增加纯归属颜色检查并证明选中环颜色不变；158 条保持全绿。
+**验收标准。** 登录后玩家的仓库与工程师是蓝环，AI 单位是红环，玩家 1 的示例场景也是红环（不同玩家）；点中敌人显示 `敌`；没有图集时程序化形状仍保留玩家染色并同样有环；演示世界（没有 `myPlayerId`）只有灰环；`check-render-math` 增加纯归属颜色检查并证明选中环颜色不变；所有检查保持全绿（今天是 165 条，本阶段落地时是 158 条）。
 
 **涉及文件。** [renderer.ts](web-client/src/render/renderer.ts)、[fallback.ts](web-client/src/render/fallback.ts)、[main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)。
 
@@ -162,7 +162,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 保留最近两份快照及它们的客户端接收时间。渲染时按 id 匹配实体，用 `alpha = (now - previousReceived) / (currentReceived - previousReceived)` 插值位置，并夹在 `[0, 1]`；当某一侧缺少该 id、tick 间隔不合理、或实体刚生成/刚死亡时直接吸附，不插值。协议保持 OC/1，JSON 形状不变。等这一步稳定后，可选地让服务器通过 WebSocket 以 10–20 Hz 推送位置/增量，再在增量之间插值；那是协议变更，必须遵守 `protocol/oc-protocol.md` 的版本规则。
 
-**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；158 条保持全绿。
+**验收标准。** 移动单位的屏幕位置每个动画帧都在变，而不是每 500 毫秒变一次；平均速度与服务器一致；单位反向时不会过冲；死亡单位在下一次快照时立刻消失；`check-render-math` 覆盖插值端点、中点与 id 匹配；所有检查保持全绿（今天是 165 条，本阶段落地时是 158 条）。
 
 **涉及文件。** [main.ts](web-client/src/main.ts)、[view.ts](web-client/src/render/view.ts)、[renderer.ts](web-client/src/render/renderer.ts)、[check-render-math.ts](web-client/scripts/check-render-math.ts)；服务器不变。
 
@@ -176,7 +176,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策（stage g3，客户端）。** `WorldView` 现在带有 `originX` / `originY` 与完整地图大小（`mapWidth` / `mapHeight`）；地形查找先减去原点，窗口外返回 `void`，实体保持绝对地图坐标，渲染器与拾取都只在实体瓦片位于窗口内时才绘制或选中。`main.ts` 由相机焦点发 `GET /world/snapshot?cx=<相机 tileX>&cy=<相机 tileY>&r=32`，焦点进入窗口边缘 8 格以内就请求以相机为中心的新窗口；新窗口到达前保留旧窗口，并用单调递增的请求 id 丢弃乱序回答；无参数请求保留为第一次的确定性中心请求。相机夹紧到 256×256 地图而不是 64×64 窗口，所以平移不会被已加载窗口挡住；HUD 显示窗口原点与地图大小。`web-client/README.md` 与 `README_zh_CN.md` 记录了窗口流送。
 
-**验收标准（已满足；服务端地图大小后来被 stage i2 取代）。** 服务端在 256×256 的报告地图上提供确定性噪声地形、可建造出生锚点和 `cx` / `cy` / `r` 窗口快照；同一个 `--seed` 在新宿主上复现同一地形与锚点；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（187 条）只扩展、不削弱。客户端现在请求以相机为中心的窗口，用 `originX` / `originY` 翻译绝对坐标，在新窗口到达前保留旧窗口，忽略乱序回答，并把相机夹紧到地图；`check-render-math` 覆盖窗口解析、8 格边缘触发、地图边缘保护、请求排序与地图夹紧，现在打印 **158** 项通过（142 + 16）。
+**验收标准（已满足；服务端地图大小后来被 stage i2 取代）。** 服务端在 256×256 的报告地图上提供确定性噪声地形、可建造出生锚点和 `cx` / `cy` / `r` 窗口快照；同一个 `--seed` 在新宿主上复现同一地形与锚点；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（187 条）只扩展、不削弱。客户端现在请求以相机为中心的窗口，用 `originX` / `originY` 翻译绝对坐标，在新窗口到达前保留旧窗口，忽略乱序回答，并把相机夹紧到地图；`check-render-math` 覆盖窗口解析、8 格边缘触发、地图边缘保护、请求排序与地图夹紧。本阶段打印 **158** 项通过（142 + 16）；stage i3 之后当前总数为 **165**。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[OcRtsEngineBuilder.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[NoiseChunkGenerator.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java)、[ChunkStreamer.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[stream.ts](web-client/src/render/stream.ts)、[camera.ts](web-client/src/render/camera.ts)、[renderer.ts](web-client/src/render/renderer.ts)、[input.ts](web-client/src/render/input.ts)、[main.ts](web-client/src/main.ts)、[index.html](web-client/index.html)、[客户端 README](web-client/README.md)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)、[05 浏览器端点](projects/oc/oc-game-server/help/05-browser-endpoint.md)。
 
@@ -201,11 +201,45 @@ cd web-client; pnpm install; pnpm dev
 自校验断言无界报告。总数：game server 813（原 789）、debug 85（原 82）、classic 293（原 291）。
 
 **已知限制。** 本阶段按要求不修改 `web-client/`；它仍按 `DEFAULT_MAP_SIZE_TILES = 256` 校验并拒绝负实体
-坐标，所以渲染新的负原点窗口需要单独的客户端阶段。
+坐标，所以渲染新的负原点窗口需要单独的客户端阶段。该阶段就是下面的 i3：客户端现在把世界当作无界处理。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[OcGameServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/OcGameServer.java)、[HttpWebServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/HttpWebServer.java)、[ClassicAi.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicAi.java)、[DebugPlugin.java](projects/oc/oc-game-server-debug/src/main/java/io/github/sob1234509876/oc/server/debug/DebugPlugin.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[ClassicCheck.java](projects/oc/oc-game-server-classic/src/selfcheck/java/io/github/sob1234509876/oc/server/classic/check/ClassicCheck.java)、[DebugPluginCheck.java](projects/oc/oc-game-server-debug/src/selfcheck/java/io/github/sob1234509876/oc/server/debug/check/DebugPluginCheck.java)、[05 浏览器端点](projects/oc/oc-game-server/help/05-browser-endpoint.md)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)。
 
 **代价。** 大。
+
+### i. 浏览器客户端仍然假设有限地图 —— 已完成（stage i3）
+
+**现象。** stage i2 之后服务器接受任意有符号窗口中心，但页面会拒绝由此产生的文档：
+`worldViewFromSnapshot` 拒绝负实体坐标，并在快照没有 `mapWidth` / `mapHeight` 时虚构一个 256 格的
+`DEFAULT_MAP_SIZE_TILES`。相机被夹紧到那张 256×256 的地图，HUD 打印地图大小，原点是负数的窗口永远渲染不出来，
+所以镜头无法平移出出生点很远。
+
+**原因。** stage i2 为了让服务端改动便于审查，刻意没碰 `web-client/`；客户端仍按更早的有限地图快照契约编写。
+
+**建议对策（stage i3，客户端，已实现）。** `view.ts` 完全删掉 `mapWidth` / `mapHeight` 与
+`DEFAULT_MAP_SIZE_TILES`。窗口原点必须是有符号整数（接受负数与很大的值），实体位置必须是有限的有符号数
+（小数或远在窗口之外都可以），不再按地图做任何校验。绝对坐标到窗口索引的平移在向下取整后减去有符号原点，
+所以负原点、负瓦片与 `-1` 边界都能正确索引。`camera.ts` 只在启动时用调用方给的家位置构造一次，没有世界尺寸，
+只把中心夹紧到有文档说明的 `CAMERA_SAFETY_BOUND_TILES = 500000` 数值保护（引擎用单精度 `Vec2` 存位置，
+到这个量级附近会失去亚像素分辨率）；焦点瓦片用 `Math.floor`，所以原点以西/以北的坐标也正确。
+`stream.ts` 对任意有符号中心都算 `snapshotOrigin(centre, radius) = centre - radius`，保留有符号边缘触发、
+重复原点保护与单调递增的请求跟踪器。`main.ts` 按任意有符号相机焦点请求窗口（第一次轮询也一样）；请求失败或
+回答因乱序被拒绝时保留旧窗口；窗口到达时绝不重建相机或输入控制器。HUD 用相机坐标替换地图大小，并保留窗口原点
+（`坐标：-1234,-567 · 窗口：-1250,-582`），占位世界仍从自己的 `0,0` 窗口开始。两份 README 孪生都记录了
+无界世界、安全边界与新 HUD 行。
+
+**验收标准（已满足）。** `tsc --noEmit` 干净。`check-render-math` 证明负实体坐标被接受并可往返；负原点把
+绝对瓦片映射到正确的窗口索引（含 `-1` 边界）；负原点窗口能绘制自己的地形，恰好在窗口外返回 `void`；相机能到
+`-100000` 而不被夹紧，并在 `±500000` 处被停住；负中心生成
+`/world/snapshot?cx=-1250&cy=-582&r=32`；乱序回答不会替换此前已加载的窗口。脚本现在打印 **165** 项通过
+（原为 158）。
+
+**涉及文件。** [view.ts](web-client/src/render/view.ts)、[camera.ts](web-client/src/render/camera.ts)、
+[stream.ts](web-client/src/render/stream.ts)、[main.ts](web-client/src/main.ts)、[input.ts](web-client/src/render/input.ts)、
+[index.html](web-client/index.html)、[check-render-math.ts](web-client/scripts/check-render-math.ts)、
+[客户端 README](web-client/README.md)、[客户端 README 中文](web-client/README_zh_CN.md)。
+
+**代价。** 中。
 
 ## 5. 已知欠账
 
@@ -216,7 +250,6 @@ cd web-client; pnpm install; pnpm dev
 - **世界状态没有存档/读档。** 只有用户记录通过 `LocalUserStore` 持久化在 `data/users.txt`；实体位置、地形编辑与生产队列在重启后丢失，引擎的 `ChunkStore` 接缝在服务器上也没有接上。
 - **皮革/石头/铁/金/钻石的美术递进只有文档，没有机器断言。** 经典 README 描述了这条阶梯；没有检查证明图集像素或各级美术真的遵循它（数值与成本阶梯是有检查的）。
 - **调试插件没有浏览器端对应物。** 页面能调用 `engine-info`，但只能由操作员手工粘贴 `debug.key`；没有与 `oc-debug` CLI 相当的浏览器 CLI 或调试面板。
-- **仓库里的浏览器客户端仍然按有限地图编写。** `web-client/src/render/view.ts` 把缺省的 `mapWidth` / `mapHeight` 当成 `256`，并拒绝负坐标实体，所以页面还渲染不了无界服务器的契约；这需要单独的客户端阶段。
 
 ## 6. 建议的后续功能
 
@@ -241,7 +274,7 @@ cd web-client; pnpm install; pnpm dev
 ## 8. 交接清单
 
 - [ ] 从 §2 跑六个 Java 自检；六个总数全部对得上。
-- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；158/158。
+- [ ] 跑 `tsc --noEmit` 与 `node scripts/check-render-math.ts`；165/165。
 - [ ] 手工打开一次游戏：经典 jar 放进 `plugins/`，服务器起来，`pnpm dev`，REGISTER/LOGIN，看到仓库、工程师、300 金币和 60 木材。
 - [ ] 动 `PluginLoader` 或 `PluginContext` 之前先读 [help/03-plugins.md](projects/oc/oc-game-server/help/03-plugins.md)。
 - [ ] 开始前确认 `git status` 干净；不要提交 jar、密钥或 `data/`。

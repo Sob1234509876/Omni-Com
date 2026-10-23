@@ -23,7 +23,7 @@ import {
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
-import { Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
+import { CAMERA_SAFETY_BOUND_TILES, Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
 import {
   MAX_INTERPOLATION_DISTANCE_TILES,
   alphaFor,
@@ -46,10 +46,10 @@ import {
   terrainColor,
 } from "../src/render/fallback.ts";
 import {
-  DEFAULT_MAP_SIZE_TILES,
   demoWorld,
   entityInWindow,
   isBuildingKind,
+  isWorldTile,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
   OWNERSHIP_NEUTRAL_COLOR,
@@ -57,10 +57,12 @@ import {
   ownershipOf,
   ownershipTag,
   snapshotOrDemo,
+  snapshotUrl,
   TERRAIN_IDS,
   TERRAIN_VOID,
   terrainAt,
   tileInWindow,
+  windowTileIndex,
   worldViewFromSnapshot,
   type EntityView,
   type TerrainId,
@@ -74,6 +76,8 @@ import {
   shouldStreamWindow,
   snapshotOrigin,
   windowCentre,
+  windowEdgeDistance,
+  windowNeedsStream,
 } from "../src/render/stream.ts";
 
 let passed = 0;
@@ -115,51 +119,52 @@ function recordTable(value: unknown): Record<string, unknown> | null {
 // Camera
 // ---------------------------------------------------------------------------------------------
 
-const camera = new Camera(40, 30, 32, 1);
+// The world is unbounded: the camera is constructed with a home world pixel, not a map size.
+const camera = new Camera(32, 1, 640, 480);
 camera.setViewport(800, 600);
 camera.reset();
 check(
-  "复位后镜头位于地图中心",
+  "复位后镜头回到构造时给的家位置",
   near(camera.centerX, 640) && near(camera.centerY, 480),
   `${camera.centerX}, ${camera.centerY}`,
 );
 
 camera.pan(1_000_000, 1_000_000);
 check(
-  "向右下平移不会露出地图外",
-  near(camera.centerX, 880) && near(camera.centerY, 660),
+  "向右下平移不会撞到任何地图边界",
+  near(camera.centerX, 1_000_640) && near(camera.centerY, 1_000_480),
   `${camera.centerX}, ${camera.centerY}`,
 );
 
 camera.pan(-2_000_000, -2_000_000);
 check(
-  "向左上平移不会露出地图外",
-  near(camera.centerX, 400) && near(camera.centerY, 300),
+  "向左上平移同样自由（可以越过原点进入负坐标）",
+  near(camera.centerX, -999_360) && near(camera.centerY, -999_520),
   `${camera.centerX}, ${camera.centerY}`,
 );
 
-camera.reset();
+camera.setCenter(-100 * 32, -50 * 32);
 const visible = camera.visibleTileRange();
 check(
-  "可见瓦片范围被夹在 0..39 / 0..29",
-  visible.minX >= 0 &&
-    visible.minY >= 0 &&
-    visible.maxX <= 39 &&
-    visible.maxY <= 29 &&
-    visible.minX <= visible.maxX &&
-    visible.minY <= visible.maxY,
+  "镜头在负坐标时可见瓦片范围也是负的（不再夹到 0..）",
+  visible.minX < 0 &&
+    visible.minY < 0 &&
+    visible.maxX < 0 &&
+    visible.maxY < 0 &&
+    visible.minX <= -100 &&
+    visible.maxX >= -100 &&
+    visible.minY <= -50 &&
+    visible.maxY >= -50,
   `${visible.minX}..${visible.maxX} x ${visible.minY}..${visible.maxY}`,
 );
-check(
-  "1× 时只画可见的一部分瓦片",
-  visible.maxX - visible.minX + 1 < 40 && visible.maxY - visible.minY + 1 < 30,
-  `${visible.maxX - visible.minX + 1} x ${visible.maxY - visible.minY + 1}`,
-);
 
-const roundTrip = camera.screenToWorld(camera.worldToScreen(512, 640).x, camera.worldToScreen(512, 640).y);
+const roundTrip = camera.screenToWorld(
+  camera.worldToScreen(-3_200, -1_600).x,
+  camera.worldToScreen(-3_200, -1_600).y,
+);
 check(
-  "世界坐标与屏幕坐标可逆",
-  near(roundTrip.x, 512) && near(roundTrip.y, 640),
+  "负世界坐标与屏幕坐标可逆",
+  near(roundTrip.x, -3_200) && near(roundTrip.y, -1_600),
   `${roundTrip.x}, ${roundTrip.y}`,
 );
 
@@ -181,39 +186,59 @@ check("缩放下限是 0.5", camera.zoom === MIN_ZOOM, String(camera.zoom));
 
 camera.reset();
 check(
-  "复位同时恢复默认缩放",
+  "复位同时恢复默认缩放与家位置",
   camera.zoom === 1 && near(camera.centerX, 640) && near(camera.centerY, 480),
   `${camera.zoom}, ${camera.centerX}, ${camera.centerY}`,
 );
 
-const smallCamera = new Camera(5, 4, 32, 1);
-smallCamera.setViewport(800, 600);
+// The safety bound is not a map edge: it exists because the engine stores positions in
+// single-precision Vec2 values, whose resolution degrades beyond roughly 500,000 tiles.
+camera.setCenter(-100_000 * 32, -100_000 * 32);
+const farFocus = camera.centerTile();
 check(
-  "地图小于视口时保持居中",
-  near(smallCamera.centerX, 80) && near(smallCamera.centerY, 64),
-  `${smallCamera.centerX}, ${smallCamera.centerY}`,
-);
-const smallRange = smallCamera.visibleTileRange();
-check(
-  "地图小于视口时可见范围是整张图",
-  smallRange.minX === 0 && smallRange.maxX === 4 && smallRange.minY === 0 && smallRange.maxY === 3,
-  `${smallRange.minX}..${smallRange.maxX} x ${smallRange.minY}..${smallRange.maxY}`,
+  "镜头可以移动到 -100000 瓦片而不被夹紧",
+  near(camera.centerX, -3_200_000) &&
+    near(camera.centerY, -3_200_000) &&
+    farFocus.x === -100_000 &&
+    farFocus.y === -100_000,
+  `${camera.centerX}, ${camera.centerY} / 焦点 ${farFocus.x}, ${farFocus.y}`,
 );
 
-// The camera is built from the full 256 x 256 map, not from the 64 x 64 snapshot window, so panning
-// reaches the map edge even though only one window is loaded at a time.
-const mapCamera = new Camera(256, 256, 32, 1);
-mapCamera.setViewport(800, 600);
-mapCamera.pan(10_000_000, 10_000_000);
-const mapCameraFocus = mapCamera.centerTile();
+camera.setCenter(-1_000_000_000_000, 1_000_000_000_000);
+const boundFocus = camera.centerTile();
 check(
-  "相机夹紧到 256×256 地图而不是 64×64 窗口",
-  near(mapCamera.centerX, 256 * 32 - 400) &&
-    near(mapCamera.centerY, 256 * 32 - 300) &&
-    mapCameraFocus.x === 243 &&
-    mapCameraFocus.y === 246,
-  `${mapCamera.centerX}, ${mapCamera.centerY} / 焦点 ${mapCameraFocus.x}, ${mapCameraFocus.y}`,
+  "镜头被停在 ±500000 瓦片的安全边界上",
+  CAMERA_SAFETY_BOUND_TILES === 500_000 &&
+    near(camera.centerX, -CAMERA_SAFETY_BOUND_TILES * 32) &&
+    near(camera.centerY, CAMERA_SAFETY_BOUND_TILES * 32) &&
+    boundFocus.x === -CAMERA_SAFETY_BOUND_TILES &&
+    boundFocus.y === CAMERA_SAFETY_BOUND_TILES,
+  `${camera.centerX}, ${camera.centerY} / 焦点 ${boundFocus.x}, ${boundFocus.y}`,
 );
+
+camera.setCenter(-16, -16);
+check(
+  "中心瓦片对负坐标向下取整（-0.5 格是瓦片 -1，不是 0）",
+  camera.centerTile().x === -1 && camera.centerTile().y === -1,
+  `${camera.centerTile().x}, ${camera.centerTile().y}`,
+);
+check(
+  "屏幕取瓦片对负坐标同样向下取整",
+  camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).x === -1 &&
+    camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).y === -1,
+  `${camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).x}, ` +
+    `${camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).y}`,
+);
+check(
+  "有符号整数瓦片判定接受任意正负坐标、拒绝小数与 NaN",
+  isWorldTile(-100_000, 500_000) &&
+    isWorldTile(0, 0) &&
+    !isWorldTile(-0.5, 0) &&
+    !isWorldTile(0, Number.NaN),
+);
+
+
+
 
 // ---------------------------------------------------------------------------------------------
 // Demo world determinism
@@ -360,26 +385,42 @@ check(
     entities: [{ id: 1, kind: "worker", x: Number.NaN, y: 1 }],
   }) === null,
 );
+// The world is unbounded: entity positions are signed world coordinates, not indices into a map.
+const negativeEntitySnapshot = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: -16,
+  originY: -16,
+  entities: [
+    { id: 1, kind: "worker", x: -12.5, y: -3.5 },
+    { id: 2, kind: "soldier", x: -100_000.25, y: 500_000.5 },
+  ],
+});
+const negativeWorker = negativeEntitySnapshot?.entities.find((entity) => entity.id === 1);
+const farEntity = negativeEntitySnapshot?.entities.find((entity) => entity.id === 2);
 check(
-  "实体越出右边界时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "worker", x: 2, y: 1 }],
-  }) === null,
+  "负实体坐标被接受并原样保留（往返）",
+  negativeEntitySnapshot !== null &&
+    negativeWorker?.x === -12.5 &&
+    negativeWorker.y === -3.5,
+  JSON.stringify(negativeWorker),
 );
 check(
-  "实体越出下边界时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "worker", x: 1, y: 2 }],
-  }) === null,
+  "远景实体坐标（负数与很大值）不再按地图边界拒绝",
+  negativeEntitySnapshot !== null &&
+    farEntity?.x === -100_000.25 &&
+    farEntity.y === 500_000.5,
+  JSON.stringify(farEntity),
 );
 check(
-  "实体坐标为负时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "worker", x: -0.1, y: 1 }],
-  }) === null,
+  "窗口原点不是整数时仍然拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, originX: -0.5, originY: 0 }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, originX: 0, originY: 1.5 }) === null,
+);
+check(
+  "窗口原点为 NaN 或 Infinity 时拒绝",
+  worldViewFromSnapshot({ ...validSnapshot, originX: Number.NaN, originY: 0 }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, originX: 0, originY: Number.POSITIVE_INFINITY }) ===
+      null,
 );
 check(
   "实体缺少 kind 时拒绝",
@@ -470,13 +511,13 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
-// Windowed snapshot: absolute coordinates, window translation, and the map size
+// Windowed snapshot: unbounded signed coordinates and window translation
 // ---------------------------------------------------------------------------------------------
 
 const windowSnapshotPayload = {
   tick: 23,
-  originX: 96,
-  originY: 64,
+  originX: -16,
+  originY: -16,
   width: 4,
   height: 3,
   tiles: [
@@ -485,36 +526,51 @@ const windowSnapshotPayload = {
     ["rock", "water", "hill", "grass"],
   ],
   entities: [
-    { id: 1, kind: "worker", x: 97.5, y: 65.5, player: 1 },
+    { id: 1, kind: "worker", x: -15.5, y: -15.5, player: 1 },
     { id: 2, kind: "soldier", x: 200.5, y: 200.5, player: 2 },
   ],
 };
 const windowed = worldViewFromSnapshot(windowSnapshotPayload);
 check(
-  "带 originX/originY 的窗口快照解析成功，地图大小是 256",
+  "带负 originX/originY 的窗口快照解析成功，且不带地图大小",
   windowed !== null &&
-    windowed.originX === 96 &&
-    windowed.originY === 64 &&
+    windowed.originX === -16 &&
+    windowed.originY === -16 &&
     windowed.width === 4 &&
     windowed.height === 3 &&
-    windowed.mapWidth === DEFAULT_MAP_SIZE_TILES &&
-    windowed.mapHeight === DEFAULT_MAP_SIZE_TILES &&
-    DEFAULT_MAP_SIZE_TILES === 256,
+    !Object.prototype.hasOwnProperty.call(windowed, "mapWidth") &&
+    !Object.prototype.hasOwnProperty.call(windowed, "mapHeight"),
   JSON.stringify(windowed),
 );
 if (windowed !== null) {
   check(
-    "绝对瓦片坐标减去 origin 后索引窗口地形",
-    terrainAt(windowed, 96, 64) === "grass" &&
-      terrainAt(windowed, 97, 65) === "hill" &&
-      terrainAt(windowed, 99, 66) === "grass",
+    "负原点把绝对瓦片映射到正确的窗口索引（含 -1 边界）",
+    windowTileIndex(windowed, -16, -16)?.x === 0 &&
+      windowTileIndex(windowed, -16, -16)?.y === 0 &&
+      windowTileIndex(windowed, -13, -14)?.x === 3 &&
+      windowTileIndex(windowed, -13, -14)?.y === 2 &&
+      windowTileIndex(windowed, -17, -16) === null &&
+      windowTileIndex(windowed, -16, -17) === null &&
+      windowTileIndex(windowed, -12, -16) === null &&
+      windowTileIndex({ ...windowed, originX: 0, originY: 0 }, -1, 0) === null,
   );
   check(
-    "窗口外的绝对瓦片返回 void（不是窗口内的错误格子）",
-    terrainAt(windowed, 95, 64) === TERRAIN_VOID &&
-      terrainAt(windowed, 100, 64) === TERRAIN_VOID &&
-      terrainAt(windowed, 96, 67) === TERRAIN_VOID &&
-      terrainAt(windowed, 96, 63) === TERRAIN_VOID,
+    "窗口索引对负小数使用 floor（-0.1 落在索引 0，而不是 trunc 的 1）",
+    windowTileIndex({ ...windowed, originX: -1, originY: -1 }, -0.1, -0.1)?.x === 0 &&
+      windowTileIndex({ ...windowed, originX: -1, originY: -1 }, -0.1, -0.1)?.y === 0,
+  );
+  check(
+    "负原点窗口按绝对坐标绘制地形",
+    terrainAt(windowed, -16, -16) === "grass" &&
+      terrainAt(windowed, -15, -15) === "hill" &&
+      terrainAt(windowed, -13, -14) === "grass",
+  );
+  check(
+    "负原点窗口外的绝对瓦片返回 void（不是窗口内的错误格子）",
+    terrainAt(windowed, -17, -16) === TERRAIN_VOID &&
+      terrainAt(windowed, -12, -16) === TERRAIN_VOID &&
+      terrainAt(windowed, -16, -13) === TERRAIN_VOID &&
+      terrainAt(windowed, -16, -17) === TERRAIN_VOID,
   );
   const insideEntity = windowed.entities.find((entity) => entity.id === 1);
   const outsideEntity = windowed.entities.find((entity) => entity.id === 2);
@@ -525,82 +581,96 @@ if (windowed !== null) {
       outsideEntity !== undefined &&
       entityInWindow(windowed, insideEntity) === true &&
       entityInWindow(windowed, outsideEntity) === false &&
-      tileInWindow(windowed, 97, 65) === true &&
+      tileInWindow(windowed, -15, -15) === true &&
       tileInWindow(windowed, 200, 200) === false,
   );
 }
 check(
-  "窗口起点加窗口尺寸越过地图时拒绝",
-  worldViewFromSnapshot({ ...windowSnapshotPayload, originX: 254 }) === null,
+  "窗口原点可以是任意有符号整数（很大且为负也不拒绝）",
+  worldViewFromSnapshot({ ...windowSnapshotPayload, originX: -100_000, originY: 50_000 })
+    ?.originX === -100_000 &&
+    worldViewFromSnapshot({ ...windowSnapshotPayload, originX: -100_000, originY: 50_000 })
+      ?.originY === 50_000,
+);
+const legacySized = worldViewFromSnapshot({
+  ...windowSnapshotPayload,
+  mapWidth: 512,
+  mapHeight: 512,
+});
+check(
+  "旧快照附带的 mapWidth/mapHeight 被忽略（世界无界，不再读取地图大小）",
+  legacySized !== null &&
+    legacySized.originX === -16 &&
+    legacySized.width === 4 &&
+    !Object.prototype.hasOwnProperty.call(legacySized, "mapWidth") &&
+    !Object.prototype.hasOwnProperty.call(legacySized, "mapHeight"),
+  JSON.stringify(legacySized),
 );
 check(
-  "实体按 256×256 地图校验：地图内窗口外接受，越出地图拒绝",
-  worldViewFromSnapshot({
-    ...windowSnapshotPayload,
-    entities: [{ id: 2, kind: "soldier", x: 256, y: 200.5 }],
-  }) === null &&
-    worldViewFromSnapshot(windowSnapshotPayload)?.entities.length === 2,
-);
-check(
-  "没有 origin 的旧快照把整张图当作窗口（向后兼容）",
+  "没有 origin 的旧快照以 (0,0) 作为窗口原点（向后兼容）",
   worldViewFromSnapshot(validSnapshot)?.originX === 0 &&
-    worldViewFromSnapshot(validSnapshot)?.originY === 0 &&
-    worldViewFromSnapshot(validSnapshot)?.mapWidth === 2 &&
-    worldViewFromSnapshot(validSnapshot)?.mapHeight === 2,
+    worldViewFromSnapshot(validSnapshot)?.originY === 0,
 );
 check(
-  "快照显式给出 mapWidth/mapHeight 时优先于 256 常量",
-  worldViewFromSnapshot({ ...windowSnapshotPayload, mapWidth: 512, mapHeight: 512 })
-    ?.mapWidth === 512 &&
-    worldViewFromSnapshot({ ...windowSnapshotPayload, mapWidth: 512, mapHeight: 512 })
-      ?.mapHeight === 512,
+  "构造出的窗口请求 URL 使用负中心（不被当成越界）",
+  snapshotUrl("", { cx: -1_250, cy: -582, r: SNAPSHOT_RADIUS_TILES }) ===
+    "/world/snapshot?cx=-1250&cy=-582&r=32" &&
+    snapshotUrl("http://127.0.0.1:25567/", { cx: -1, cy: -32, r: 32 }) ===
+      "http://127.0.0.1:25567/world/snapshot?cx=-1&cy=-32&r=32" &&
+    snapshotUrl("", null) === "/world/snapshot",
 );
 
 // ---------------------------------------------------------------------------------------------
-// Camera-driven window streaming: edge trigger, map-edge clamp and request ordering
+// Camera-driven window streaming: signed centres, the duplicate-origin guard and request ordering
 // ---------------------------------------------------------------------------------------------
 
 const streamBounds = {
-  originX: 100,
-  originY: 100,
+  originX: -1_282,
+  originY: -614,
   width: 64,
   height: 64,
-  mapWidth: 256,
-  mapHeight: 256,
 };
 
 check(
-  "窗口边缘触发：距左右/上下边缘正好 8 格时请求新窗口",
+  "窗口边缘触发：负坐标窗口距边缘正好 8 格时请求新窗口",
   SNAPSHOT_EDGE_MARGIN_TILES === 8 &&
     SNAPSHOT_RADIUS_TILES === 32 &&
-    shouldStreamWindow(streamBounds, { x: 108, y: 132 }) &&
-    shouldStreamWindow(streamBounds, { x: 155, y: 132 }) &&
-    shouldStreamWindow(streamBounds, { x: 132, y: 108 }) &&
-    shouldStreamWindow(streamBounds, { x: 132, y: 155 }) &&
-    shouldRequestWindow(streamBounds, { x: 108, y: 132 }) &&
-    shouldRequestWindow(streamBounds, { x: 155, y: 132 }) &&
-    shouldRequestWindow(streamBounds, { x: 132, y: 108 }) &&
-    shouldRequestWindow(streamBounds, { x: 132, y: 155 }),
+    shouldStreamWindow(streamBounds, { x: -1_274, y: -590 }) &&
+    shouldStreamWindow(streamBounds, { x: -1_227, y: -590 }) &&
+    shouldStreamWindow(streamBounds, { x: -1_250, y: -606 }) &&
+    shouldStreamWindow(streamBounds, { x: -1_250, y: -559 }) &&
+    shouldRequestWindow(streamBounds, { x: -1_274, y: -590 }) &&
+    shouldRequestWindow(streamBounds, { x: -1_227, y: -590 }) &&
+    shouldRequestWindow(streamBounds, { x: -1_250, y: -606 }) &&
+    shouldRequestWindow(streamBounds, { x: -1_250, y: -559 }),
 );
 check(
   "窗口边缘触发：距边缘 9 格时保持当前窗口",
-  !shouldStreamWindow(streamBounds, { x: 109, y: 132 }) &&
-    !shouldRequestWindow(streamBounds, { x: 109, y: 132 }) &&
-    !shouldRequestWindow(streamBounds, { x: 154, y: 132 }) &&
-    !shouldRequestWindow(streamBounds, { x: 132, y: 109 }) &&
-    !shouldRequestWindow(streamBounds, { x: 132, y: 154 }),
+  !shouldStreamWindow(streamBounds, { x: -1_273, y: -590 }) &&
+    !shouldRequestWindow(streamBounds, { x: -1_273, y: -590 }) &&
+    !shouldRequestWindow(streamBounds, { x: -1_228, y: -590 }) &&
+    !shouldRequestWindow(streamBounds, { x: -1_250, y: -605 }) &&
+    !shouldRequestWindow(streamBounds, { x: -1_250, y: -560 }),
 );
 check(
-  "地图边缘已经夹紧的窗口不会重复请求",
-  shouldStreamWindow({ ...streamBounds, originX: 192, originY: 192 }, { x: 255, y: 255 }) &&
-    !shouldRequestWindow({ ...streamBounds, originX: 192, originY: 192 }, { x: 255, y: 255 }) &&
-    snapshotOrigin({ x: 255, y: 255 }, SNAPSHOT_RADIUS_TILES, 256, 256).x === 192 &&
-    snapshotOrigin({ x: 255, y: 255 }, SNAPSHOT_RADIUS_TILES, 256, 256).y === 192,
+  "有符号中心的窗口原点就是 centre - radius，且同一原点不会重复请求",
+  snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).x === -1_282 &&
+    snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).y === -614 &&
+    !windowNeedsStream(streamBounds, { x: -1_250, y: -582 }) &&
+    windowNeedsStream(streamBounds, { x: -1_250, y: -590 }),
 );
 check(
-  "窗口中心瓦片用于没有触碰边缘时的定期刷新",
-  windowCentre(streamBounds).x === 132 && windowCentre(streamBounds).y === 132,
+  "窗口中心瓦片用于没有触碰边缘时的定期刷新（负坐标）",
+  windowCentre(streamBounds).x === -1_250 && windowCentre(streamBounds).y === -582,
   `${windowCentre(streamBounds).x}, ${windowCentre(streamBounds).y}`,
+);
+check(
+  "负原点窗口的边缘距离在边界内外以有符号数表示",
+  windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -10, y: -10 }) ===
+    0 &&
+    windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -11, y: -10 }) ===
+      -1 &&
+    windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -7, y: -7 }) === 0,
 );
 
 const requestTracker = new SnapshotRequestTracker();
@@ -617,6 +687,29 @@ check(
   requestTracker.accept(firstRequestId) === false,
   `next=${requestTracker.latest}`,
 );
+check(
+  "从未发出的请求 id（0 或未来值）不会被接受",
+  requestTracker.accept(0) === false && requestTracker.accept(99) === false,
+);
+
+// The page keeps the loaded window unless the tracker accepts a non-null response. Model that rule
+// with two windows around a negative centre: the newer answer lands first, then the older one.
+const oldWindow = { originX: -1_100, originY: -1_100, width: 64, height: 64 };
+const newWindow = { originX: -1_132, originY: -1_132, width: 64, height: 64 };
+let loadedWindow = oldWindow;
+if (requestTracker.accept(secondRequestId)) {
+  loadedWindow = newWindow;
+}
+if (requestTracker.accept(firstRequestId)) {
+  loadedWindow = oldWindow;
+}
+check(
+  "乱序到达的旧回答不会替换已经加载的新窗口（保留前一个窗口）",
+  loadedWindow === newWindow &&
+    newWindow.originX ===
+      snapshotOrigin({ x: -1_100, y: -1_100 }, SNAPSHOT_RADIUS_TILES).x,
+  JSON.stringify(loadedWindow),
+);
 
 // ---------------------------------------------------------------------------------------------
 // Snapshot interpolation
@@ -626,14 +719,12 @@ const FRAME_WIDTH = 16;
 const FRAME_HEIGHT = 16;
 const FRAME_GRASS: readonly TerrainId[] = Array.from({ length: FRAME_WIDTH }, () => "grass");
 
-/** A grass-only 16x16 map, large enough for a ten-tile jump between two frames. */
+/** A grass-only 16x16 window, large enough for a ten-tile jump between two frames. */
 function frameView(entities: readonly EntityView[]): WorldView {
   const tiles = Array.from({ length: FRAME_HEIGHT }, () => FRAME_GRASS);
   return {
     originX: 0,
     originY: 0,
-    mapWidth: FRAME_WIDTH,
-    mapHeight: FRAME_HEIGHT,
     width: FRAME_WIDTH,
     height: FRAME_HEIGHT,
     tiles,

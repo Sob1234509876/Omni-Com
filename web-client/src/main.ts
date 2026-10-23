@@ -710,9 +710,15 @@ const WORLD_POLL_MS = 500;
 type WorldSource = "demo" | "server";
 
 let world: WorldView = demoWorld(DEMO_SEED);
-// The camera is built from the full map size, never from the snapshot window size: panning must not
-// stop at the edge of the loaded window. The demo map is its own map, so its window is the map.
-let camera = new Camera(world.mapWidth, world.mapHeight, TILE_SIZE_PX, 1);
+// The world is unbounded, so the camera is built once and never rebuilt when a snapshot window
+// arrives: a window only changes which terrain is loaded, not where the camera may go. It starts on
+// the demo island's centre and is afterwards limited only by the camera's numeric safety bound.
+const camera = new Camera(
+  TILE_SIZE_PX,
+  1,
+  (world.width * TILE_SIZE_PX) / 2,
+  (world.height * TILE_SIZE_PX) / 2,
+);
 const renderer = new WorldRenderer(gameCanvas);
 
 let atlas: Atlas | null = null;
@@ -803,9 +809,10 @@ function updateHud(force = false, now = performance.now()): void {
     atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
   hudWorld.textContent =
     worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo";
-  // The owner can watch this origin change as the camera streams a new window; the map size stays
-  // 256 x 256, which is what proves panning is not clamped to the window.
-  hudWindow.textContent = `窗口：${world.originX},${world.originY} · 地图 ${world.mapWidth}×${world.mapHeight}`;
+  // The world is unbounded, so the HUD shows where the camera is and which window is loaded. Both
+  // may be negative and keep counting as the owner pans in any direction.
+  const focus = camera.centerTile();
+  hudWindow.textContent = `坐标：${focus.x},${focus.y} · 窗口：${world.originX},${world.originY}`;
   hudPlayer.textContent = myPlayerId === null ? "玩家：—" : `玩家：${myPlayerId}`;
   const resources = myPlayerRow();
   hudResources.textContent =
@@ -1082,38 +1089,25 @@ const inputHooks: InputHooks = {
   onCancel: () => doCancel(),
 };
 
-let input = new InputController(gameCanvas, camera, inputHooks);
-
-/**
- * Rebuilds the camera and input controller when the rendered map changes size.
- *
- * The camera bounds are the full map (`mapWidth` / `mapHeight`), not the snapshot window: a new
- * window from the streamer leaves the map unchanged, so the camera is not rebuilt and its position is
- * never reset by a window change. The hooks read `world` lazily, so every frame after the swap already
- * sees the new map. The server reports a 256 x 256 map today, so this rebuild happens once, on the
- * first snapshot after the 44 x 32 demo map.
- */
-function adoptWorldSize(next: WorldView): void {
-  if (next.mapWidth === camera.worldWidth && next.mapHeight === camera.worldHeight) {
-    return;
-  }
-  const zoom = camera.zoom;
-  camera = new Camera(next.mapWidth, next.mapHeight, TILE_SIZE_PX, zoom);
-  input.dispose();
-  input = new InputController(gameCanvas, camera, inputHooks);
-  selectedId = null;
-  hoverTile = null;
-  placementPath = null;
-}
+const input = new InputController(gameCanvas, camera, inputHooks);
 
 /**
  * Draws a world that is not interpolated: the demo map, the very first server snapshot (there is no
  * previous frame to slide from), or the first snapshot of a different window (the terrain swapped, so
  * the window is adopted as received and interpolation resumes on its next refresh).
+ *
+ * The camera and the input controller are deliberately not rebuilt: the world is unbounded and a
+ * snapshot only changes which window of it is loaded, so replacing them would reset the owner's
+ * position for no reason. The hooks read `world` lazily and the camera holds its own position.
  */
-function useWorld(next: WorldView): void {
-  adoptWorldSize(next);
+function useWorld(next: WorldView, fromDemo = false): void {
   world = next;
+  if (fromDemo) {
+    // The demo and server id spaces are unrelated; never let a demo selection silently become a
+    // different server entity (or keep an armed BUILD aimed at a demo engineer).
+    selectedId = null;
+    placementPath = null;
+  }
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1126,16 +1120,13 @@ function cameraFocus(): TileCoord {
 /**
  * Where the next refresh should point.
  *
- * Before the first snapshot has taken over, `null` sends the no-parameter centre window: the demo
- * camera was built for the 44 x 32 demo map, so its focus means nothing on the server's 256 x 256
- * map. Once the server window is loaded, near an edge the camera is sent as `cx` / `cy` so the
- * server slides the window under the picture; otherwise the loaded window's centre is refreshed,
- * which keeps the same window while entities and the tick advance.
+ * The world is unbounded, so the camera focus is a valid window centre even before the first server
+ * snapshot: the first poll asks for a window around wherever the demo camera was looking. Once a
+ * server window is loaded, the focus is sent as `cx` / `cy` near an edge so the server slides the
+ * window under the picture; otherwise the loaded window's centre is refreshed, which keeps the same
+ * window while entities and the tick advance.
  */
-function nextSnapshotCentre(): TileCoord | null {
-  if (worldSource !== "server") {
-    return null;
-  }
+function nextSnapshotCentre(): TileCoord {
   const focus = cameraFocus();
   if (shouldRequestWindow(world, focus, SNAPSHOT_RADIUS_TILES, SNAPSHOT_EDGE_MARGIN_TILES)) {
     return focus;
@@ -1167,14 +1158,13 @@ function applySnapshot(snapshot: ServerWorldView): void {
     previousFrame = null;
     currentFrame = { view: snapshot, tick: snapshot.tick };
     currentFetchedAt = fetchedAt;
-    useWorld(snapshot);
+    useWorld(snapshot, wasDemo);
   } else {
     // Keep the pair in order: the frame just received becomes `current`, and the animation loop
     // renders from `previous` towards it as the clock advances over the next poll interval.
     previousFrame = previous;
     currentFrame = { view: snapshot, tick: snapshot.tick };
     currentFetchedAt = fetchedAt;
-    adoptWorldSize(snapshot);
     // Adopt the new entity set immediately (positions already start at the previous frame) so the
     // HUD and the gameplay panel see a dead or changed selection before the next animation frame.
     world = interpolate(previous, currentFrame, 0);
@@ -1185,31 +1175,31 @@ function applySnapshot(snapshot: ServerWorldView): void {
     log(
       "info",
       `服务器世界已接管画面：窗口 ${snapshot.originX},${snapshot.originY} ` +
-        `${snapshot.width}×${snapshot.height} · 地图 ${snapshot.mapWidth}×${snapshot.mapHeight}，` +
-        `tick ${snapshot.tick}`,
+        `${snapshot.width}×${snapshot.height}，tick ${snapshot.tick}`,
     );
   }
 }
 
 /**
- * Requests one snapshot window.
+ * Requests one snapshot window centred on an absolute signed camera tile.
  *
- * `centre === null` sends the no-parameter centre window (the old client's deterministic fallback).
  * Every request has a monotonic id; a response older than the newest request is discarded, so a slow
  * answer can never replace a newer window. The old window stays on screen until a valid answer
- * arrives, and a failed request keeps it rather than flipping back to the demo map mid-pan.
+ * arrives, and a failed or rejected request keeps it rather than flipping back to the demo map
+ * mid-pan.
  */
-async function requestWorldSnapshot(centre: TileCoord | null): Promise<void> {
+async function requestWorldSnapshot(centre: TileCoord): Promise<void> {
   if (worldRequestInFlight || viewHidden || document.hidden) {
     return;
   }
   worldRequestInFlight = true;
   const requestId = snapshotRequests.begin();
   try {
-    const snapshot = await fetchWorldSnapshot(
-      "",
-      centre === null ? null : { cx: centre.x, cy: centre.y, r: SNAPSHOT_RADIUS_TILES },
-    );
+    const snapshot = await fetchWorldSnapshot("", {
+      cx: centre.x,
+      cy: centre.y,
+      r: SNAPSHOT_RADIUS_TILES,
+    });
     if (!snapshotRequests.accept(requestId)) {
       log("info", `丢弃乱序到达的 /world/snapshot 回答（请求 #${requestId}）`);
       return;
@@ -1244,8 +1234,9 @@ async function pollWorldSnapshot(): Promise<void> {
  *
  * The camera can pan faster than one 500 ms poll, so a fresh window is requested as soon as the focus
  * reaches the loaded window's edge instead of waiting for the next poll. The in-flight flag and the
- * clamped-origin comparison make this a no-op while a request is running and at a map edge, and the
- * timestamp throttle keeps a down server from being retried at frame rate.
+ * duplicate-origin comparison make this a no-op while a request is running or when the same window is
+ * already loaded, and the timestamp throttle keeps a down server from being retried at frame rate.
+ * The world is unbounded, so there is no map edge at which this could stop.
  */
 function maybeStreamWindow(now: number): void {
   if (worldSource !== "server" || worldRequestInFlight || viewHidden || document.hidden) {
@@ -1463,9 +1454,9 @@ startWorldPolling();
 updateHud(true);
 log(
   "info",
-  `游戏画面已启用：先显示 ${world.mapWidth}×${world.mapHeight} 的确定性占位地图，` +
+  `游戏画面已启用：先显示 ${world.width}×${world.height} 的确定性占位地图，` +
     "每 500ms 尝试用服务器 /world/snapshot 接管，并在最近两帧快照之间插值；" +
-    "镜头靠近快照窗口边缘时按相机中心请求新窗口，插件没有提供图集时使用程序化绘制。",
+    "世界无界，镜头靠近快照窗口边缘时按相机中心请求新窗口，插件没有提供图集时使用程序化绘制。",
 );
 
 window.addEventListener("beforeunload", () => {

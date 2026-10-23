@@ -2,15 +2,15 @@
  * Camera-driven snapshot window streaming.
  *
  * The server answers `GET /world/snapshot?cx=<tileX>&cy=<tileY>&r=<radius>` with a square window of
- * the map, its top-left tile in `originX` / `originY` and the window size in `width` / `height`. The
- * page keeps one window loaded and follows the camera: while the camera centre stays away from the
- * window edge it polls the same window for new ticks; once the centre comes within
- * {@link SNAPSHOT_EDGE_MARGIN_TILES} tiles of an edge it asks for a window centred on the camera.
- * The old window stays on screen until the new one arrives, so the picture never goes blank.
+ * its **unbounded** world, its top-left tile in `originX` / `originY` and the window size in
+ * `width` / `height`. The page keeps one window loaded and follows the camera: while the camera
+ * centre stays away from the window edge it polls the same window for new ticks; once the centre
+ * comes within {@link SNAPSHOT_EDGE_MARGIN_TILES} tiles of an edge it asks for a window centred on the
+ * camera. The old window stays on screen until the new one arrives, so the picture never goes blank.
  *
- * At a map edge the server clamps the origin inwards and the window cannot follow the camera any
- * further. {@link shouldRequestWindow} compares the origin the server would answer against the
- * loaded one, so the edge margin staying true there does not cause a request every frame.
+ * There is no map edge to stop at. The server uses the requested centre exactly as sent, negative or
+ * huge, and returns the origin `centre - radius`; the comparison in {@link windowNeedsStream} is
+ * therefore mostly a duplicate-request guard (and stays correct against a server that still clamps).
  *
  * Everything here is pure and DOM-free so `scripts/check-render-math.ts` can exercise it under Node.
  */
@@ -23,14 +23,12 @@ export const SNAPSHOT_RADIUS_TILES = 32;
 /** How close, in tiles, the camera may get to the window edge before a new window is requested. */
 export const SNAPSHOT_EDGE_MARGIN_TILES = 8;
 
-/** The subset of a world that streaming needs: one window and the full map it lies on. */
+/** The subset of a world that streaming needs: one loaded window, with signed origin and integer size. */
 export interface WindowBounds {
   readonly originX: number;
   readonly originY: number;
   readonly width: number;
   readonly height: number;
-  readonly mapWidth: number;
-  readonly mapHeight: number;
 }
 
 /** Distance in tiles from `tile` to the nearest window edge; negative when the tile is outside. */
@@ -61,42 +59,34 @@ export function windowCentre(bounds: WindowBounds): TileCoord {
 }
 
 /**
- * The origin the server would answer for a window of `radius` centred on `centre`.
+ * The origin the server answers for a window of `radius` centred on `centre`.
  *
- * This mirrors `WorldHost.snapshotJson(int, int, int)`: the requested centre is clamped to the map,
- * then the origin is shifted inwards so the window is always full size and entirely inside the map.
+ * This mirrors `WorldHost.snapshotJson(int, int, int)`: it uses any signed centre exactly as sent and
+ * places the origin at `centre - radius`, with no map to clamp against. Negative and very large
+ * centres therefore produce negative and very large origins.
  */
-export function snapshotOrigin(
-  centre: TileCoord,
-  radius: number,
-  mapWidth: number,
-  mapHeight: number,
-): TileCoord {
-  const size = radius * 2;
-  const maxOriginX = Math.max(0, mapWidth - size);
-  const maxOriginY = Math.max(0, mapHeight - size);
-  return {
-    x: Math.max(0, Math.min(centre.x - radius, maxOriginX)),
-    y: Math.max(0, Math.min(centre.y - radius, maxOriginY)),
-  };
+export function snapshotOrigin(centre: TileCoord, radius: number): TileCoord {
+  return { x: centre.x - radius, y: centre.y - radius };
 }
 
 /**
  * Whether a request centred on `centre` would actually move the loaded window.
  *
- * Near a map edge the server's clamp makes two different camera tiles resolve to the same origin;
- * this check is what stops the edge trigger from firing every frame there.
+ * With an unbounded server two different centres normally resolve to two different origins, so this
+ * is true near an edge. It stays false when the loaded window already starts at the origin this
+ * centre would request (the camera sitting exactly on the window centre), which is the invariant the
+ * old map-clamped streamer relied on and the check still proves for signed centres.
  */
 export function windowNeedsStream(
   bounds: WindowBounds,
   centre: TileCoord,
   radius: number = SNAPSHOT_RADIUS_TILES,
 ): boolean {
-  const target = snapshotOrigin(centre, radius, bounds.mapWidth, bounds.mapHeight);
+  const target = snapshotOrigin(centre, radius);
   return target.x !== bounds.originX || target.y !== bounds.originY;
 }
 
-/** The full trigger: the camera is near an edge and the clamped target window is not loaded yet. */
+/** The full trigger: the camera is near an edge and the target window is not loaded yet. */
 export function shouldRequestWindow(
   bounds: WindowBounds,
   centre: TileCoord,

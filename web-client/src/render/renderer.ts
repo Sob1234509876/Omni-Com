@@ -12,7 +12,7 @@
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
- * the winning plugin's `tilePixels`, which keeps a 16, 32 and 64 pixel plugin aligned on the same map.
+ * the winning plugin's `tilePixels`, which keeps a 16, 32 and 64 pixel plugin aligned on the same world.
  */
 
 import type { Atlas, AtlasEntity, AtlasSource, AtlasTile, EntitySprite, SpriteRect } from "./atlas";
@@ -233,7 +233,7 @@ export class WorldRenderer {
     const padding = Math.max(80, tileOnScreen * 3);
     const prepared: PreparedEntity[] = [];
     for (const entity of world.entities) {
-      // Entity positions are absolute map coordinates; only an entity whose ground tile is inside
+      // Entity positions are absolute world coordinates; only an entity whose ground tile is inside
       // the loaded window is drawn, so a stale or off-window entity can never float over unknown
       // terrain.
       if (!entityInWindow(world, entity)) {
