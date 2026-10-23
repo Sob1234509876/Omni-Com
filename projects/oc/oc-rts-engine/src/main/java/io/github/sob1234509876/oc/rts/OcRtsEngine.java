@@ -12,9 +12,9 @@ import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.EventBus;
-import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.MapStreaming;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
+import io.github.sob1234509876.oc.rts.map.StreamingTerrainMap;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.PathService;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
@@ -65,7 +65,7 @@ public final class OcRtsEngine {
     private final World world;
     private final SystemPipeline pipeline;
     private final int ticksPerSecond;
-    private final ChunkedMap map;
+    private final StreamingTerrainMap map;
     private final PathFinder pathFinder;
     private final PathService pathService;
     private final UnitDirector commands;
@@ -80,7 +80,7 @@ public final class OcRtsEngine {
             World world,
             SystemPipeline pipeline,
             int ticksPerSecond,
-            ChunkedMap map,
+            StreamingTerrainMap map,
             PathFinder pathFinder,
             PathService pathService,
             UnitDirector commands,

@@ -13,7 +13,9 @@ import io.github.sob1234509876.oc.rts.map.ChunkStore;
 import io.github.sob1234509876.oc.rts.map.ChunkStreamer;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.InMemoryChunkStore;
+import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.StreamingTerrainMap;
 import io.github.sob1234509876.oc.rts.movement.MovementSystem;
 import io.github.sob1234509876.oc.rts.movement.PathService;
 import io.github.sob1234509876.oc.rts.order.CommandService;
@@ -62,6 +64,9 @@ public final class OcRtsEngineBuilder {
     private int viewRadiusChunks = 4;
     private ChunkGenerator generator;
     private ChunkStore chunkStore = new InMemoryChunkStore();
+    private boolean infiniteTerrain;
+    private int maxLoadedChunks = InfiniteTerrainMap.DEFAULT_MAX_LOADED_CHUNKS;
+    private InfiniteTerrainMap terrainMap;
     private DimensionProfile profile = DimensionProfile.earth();
     private final List<DimensionSpec> extraDimensions = new ArrayList<>();
     private VisualLibrary visuals = VisualLibrary.empty();
@@ -116,6 +121,67 @@ public final class OcRtsEngineBuilder {
     /** Storage used to persist chunks; defaults to an in-memory store. */
     public OcRtsEngineBuilder chunkStore(ChunkStore chunkStore) {
         this.chunkStore = Objects.requireNonNull(chunkStore, "chunkStore");
+        return this;
+    }
+
+    /**
+     * Builds a world without a terrain edge: every dimension uses an {@link InfiniteTerrainMap} with the
+     * given seed, so any signed tile coordinate can be visited and the chunks behind the camera are
+     * evicted by a least-recently-used budget instead of relying on the streaming radius alone.
+     *
+     * <p>This is a separate opt-in from the default {@link ChunkedMap}: existing callers keep the
+     * historical unbounded-but-uncapped map, while a caller that cannot rely on a camera or wants a hard
+     * memory ceiling writes:
+     *
+     * <pre>{@code
+     * OcRtsEngine engine = OcRtsEngine.builder(content)
+     *         .infiniteTerrain(42L)
+     *         .maxLoadedChunks(1024)      // optional; defaults to InfiniteTerrainMap.DEFAULT_MAX_LOADED_CHUNKS
+     *         .viewRadiusChunks(4)
+     *         .build();
+     * }</pre>
+     *
+     * <p>The generator, chunk size and store configured on this builder are used exactly as before.
+     */
+    public OcRtsEngineBuilder infiniteTerrain(long seed) {
+        this.seed = seed;
+        return infiniteTerrain();
+    }
+
+    /** Builds an unbounded world with the seed configured by {@link #seed(long)}. */
+    public OcRtsEngineBuilder infiniteTerrain() {
+        this.infiniteTerrain = true;
+        return this;
+    }
+
+    /**
+     * Uses an already configured unbounded map for the default dimension and, like
+     * {@link #infiniteTerrain()}, makes the extra dimensions unbounded too.
+     *
+     * <p>The supplied instance wins over this builder's generator, store and chunk size for the default
+     * dimension, which is the point of handing it in: a host may keep its own store or already have
+     * terrain loaded. Additional dimensions get fresh {@link InfiniteTerrainMap}s built from their own
+     * generator and store with {@link #maxLoadedChunks(int)}. Bounded default worlds are unchanged: a
+     * caller that never calls this method (or {@code infiniteTerrain}) still gets a {@link ChunkedMap}.
+     */
+    public OcRtsEngineBuilder terrainMap(InfiniteTerrainMap terrainMap) {
+        this.terrainMap = Objects.requireNonNull(terrainMap, "terrainMap");
+        this.infiniteTerrain = true;
+        return this;
+    }
+
+    /**
+     * Chunk budget of every unbounded map built by this builder; defaults to
+     * {@link InfiniteTerrainMap#DEFAULT_MAX_LOADED_CHUNKS}.
+     *
+     * <p>It only affects {@link #infiniteTerrain(long)} / {@link #infiniteTerrain()} worlds; the default
+     * {@link ChunkedMap} keeps its historical unlimited behaviour. Must be positive.
+     */
+    public OcRtsEngineBuilder maxLoadedChunks(int maxLoadedChunks) {
+        if (maxLoadedChunks <= 0) {
+            throw new IllegalArgumentException("max loaded chunks must be positive, was " + maxLoadedChunks);
+        }
+        this.maxLoadedChunks = maxLoadedChunks;
         return this;
     }
 
@@ -206,9 +272,11 @@ public final class OcRtsEngineBuilder {
 
         // One map per dimension, each with its own chunk store: a store is keyed by chunk position only,
         // so sharing one between dimensions would make them overwrite each other's terrain.
-        Map<DimensionId, ChunkedMap> maps = new LinkedHashMap<>();
+        Map<DimensionId, StreamingTerrainMap> maps = new LinkedHashMap<>();
         ChunkGenerator defaultGenerator = generator != null ? generator : new NoiseChunkGenerator(seed, content);
-        ChunkedMap defaultMap = new ChunkedMap(defaultGenerator, chunkStore, chunkSize);
+        StreamingTerrainMap defaultMap = terrainMap != null
+                ? terrainMap
+                : createMap(defaultGenerator, chunkStore);
         defaultMap.focus(Vec2.ZERO, viewRadiusChunks);
         world.addDimension(DimensionId.overworld(), profile, defaultMap);
         maps.put(DimensionId.overworld(), defaultMap);
@@ -217,13 +285,13 @@ public final class OcRtsEngineBuilder {
             ChunkGenerator dimensionGenerator =
                     spec.generator() != null ? spec.generator() : new NoiseChunkGenerator(seedFor(spec.id()), content);
             ChunkStore dimensionStore = spec.store() != null ? spec.store() : new InMemoryChunkStore();
-            ChunkedMap dimensionMap = new ChunkedMap(dimensionGenerator, dimensionStore, chunkSize);
+            StreamingTerrainMap dimensionMap = createMap(dimensionGenerator, dimensionStore);
             dimensionMap.focus(Vec2.ZERO, viewRadiusChunks);
             world.addDimension(spec.id(), spec.profile(), dimensionMap);
             maps.put(spec.id(), dimensionMap);
         }
 
-        for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+        for (Map.Entry<DimensionId, StreamingTerrainMap> entry : maps.entrySet()) {
             world.setPathFinder(entry.getKey(),
                     new AStarPathFinder(entry.getValue(), AStarPathFinder.minimumMoveCost(content)));
         }
@@ -259,6 +327,16 @@ public final class OcRtsEngineBuilder {
         SnapshotFactory snapshots = new SnapshotFactory(world, visuals, ticksPerSecond);
         return new OcRtsEngine(world, pipeline, ticksPerSecond, defaultMap, pathFinder, pathService, commands,
                 production, visuals, snapshots);
+    }
+
+    /**
+     * Builds the map implementation for one dimension. The bounded/default path keeps constructing the
+     * historical {@link ChunkedMap}; only an explicit unbounded request switches to the LRU budget.
+     */
+    private StreamingTerrainMap createMap(ChunkGenerator generator, ChunkStore store) {
+        return infiniteTerrain
+                ? new InfiniteTerrainMap(generator, store, chunkSize, maxLoadedChunks)
+                : new ChunkedMap(generator, store, chunkSize);
     }
 
     /**

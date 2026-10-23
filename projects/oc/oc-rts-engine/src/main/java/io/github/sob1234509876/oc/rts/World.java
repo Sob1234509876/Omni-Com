@@ -19,6 +19,7 @@ import io.github.sob1234509876.oc.rts.event.EventBus;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.event.SimpleEventBus;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
+import io.github.sob1234509876.oc.rts.map.StreamingTerrainMap;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
@@ -196,6 +197,7 @@ public final class World {
         }
         Dimension dimension = new Dimension(id, profile, map, this::nextId, this::tickNumber, events);
         dimensions.put(id, dimension);
+        wireChunkUnloadEvents(id, map);
         return dimension;
     }
 
@@ -262,6 +264,23 @@ public final class World {
         DimensionProfile profile = existing != null ? existing.profile() : DimensionProfile.earth();
         dimensions.put(defaultDimensionId,
                 new Dimension(defaultDimensionId, profile, map, this::nextId, this::tickNumber, events));
+        wireChunkUnloadEvents(defaultDimensionId, map);
+    }
+
+    /**
+     * Makes a streaming map publish {@link Events.ChunkUnloaded} for this world.
+     *
+     * <p>The map is the only component that knows a chunk really left memory - the streamer may drop it
+     * outside the focus, the LRU budget of an {@link io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap}
+     * may evict it, and a scenario may call {@code unload} directly - so the world installs the callback
+     * once when the map is registered instead of relying on one caller to publish the fact. The tick
+     * number is read at the moment of the drop, which during a tick is exactly the running tick.
+     */
+    private void wireChunkUnloadEvents(DimensionId id, TerrainMap map) {
+        if (map instanceof StreamingTerrainMap streaming) {
+            streaming.setUnloadListener(pos ->
+                    events.publish(new Events.ChunkUnloaded(id, pos, tickNumber)));
+        }
     }
 
     // ------------------------------------------------------------------ gateways and travel

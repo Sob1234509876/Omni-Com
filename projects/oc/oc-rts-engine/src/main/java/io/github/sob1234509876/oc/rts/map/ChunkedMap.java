@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * A world map made of chunks that are produced on demand and only partly held in memory.
@@ -25,14 +26,18 @@ import java.util.Set;
  * bounded; {@link ChunkStreamer} is the component that decides which of the generated chunks survive.
  *
  * <p>Loaded chunks are held in insertion order rather than a hash order so that eviction and diagnostics
- * are reproducible for a given sequence of accesses.
+ * are reproducible for a given sequence of accesses. This map has no budget of its own by default; see
+ * {@link InfiniteTerrainMap} for the access ordered, least-recently-used variant that bounds memory even
+ * without a streamer.
  */
-public final class ChunkedMap implements TerrainMap, MapStreaming {
+public final class ChunkedMap implements StreamingTerrainMap {
 
     private final ChunkGenerator generator;
     private final ChunkStore store;
     private final int chunkSize;
     private final Map<ChunkPos, Chunk> loaded = new LinkedHashMap<>();
+    private Consumer<ChunkPos> unloadListener = position -> {
+    };
 
     private Vec2 focus = Vec2.ZERO;
     private int radiusChunks;
@@ -134,9 +139,18 @@ public final class ChunkedMap implements TerrainMap, MapStreaming {
     public void unload(ChunkPos chunk) {
         Objects.requireNonNull(chunk, "chunk");
         Chunk evicted = loaded.remove(chunk);
-        if (evicted != null && evicted.isDirty()) {
+        if (evicted == null) {
+            return;
+        }
+        if (evicted.isDirty()) {
             store.save(evicted);
         }
+        unloadListener.accept(chunk);
+    }
+
+    @Override
+    public void setUnloadListener(Consumer<ChunkPos> listener) {
+        this.unloadListener = Objects.requireNonNull(listener, "listener");
     }
 
     /** Writes every edited chunk to the store and marks it persisted. */

@@ -148,7 +148,7 @@ public final class AStarPathFinder implements PathFinder {
         if (minimumStep > 0f) {
             return minimumStep;
         }
-        if (map instanceof ChunkedMap chunked) {
+        if (map instanceof StreamingTerrainMap chunked) {
             return minimumMoveCost(distinctTerrains(chunked));
         }
         // A map without chunks cannot enumerate its terrain, so a sample around the origin stands in.
@@ -174,8 +174,8 @@ public final class AStarPathFinder implements PathFinder {
         return cheapest == Float.MAX_VALUE ? 1f : cheapest;
     }
 
-    /** Terrain kinds currently present in a chunked map, used to scale the heuristic. */
-    private static Set<TerrainType> distinctTerrains(ChunkedMap map) {
+    /** Terrain kinds currently present in a streaming map, used to scale the heuristic. */
+    private static Set<TerrainType> distinctTerrains(StreamingTerrainMap map) {
         Set<TerrainType> terrains = new LinkedHashSet<>();
         for (Chunk chunk : map.chunks().values()) {
             Collections.addAll(terrains, chunk.rawTiles());

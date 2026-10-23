@@ -1,6 +1,8 @@
 # 区块地图与寻路
 
-> 世界按 16×16 区块惰性生成、按焦点流式加载，内存里只留焦点周围那一片；寻路在 A* 里按 `TerrainType.moveCost()` 付代价，并把结果当作航点写回单位的 `Motion`。
+> 世界按 16×16 区块惰性生成、按焦点流式加载，内存里只留焦点周围那一片；`InfiniteTerrainMap` 进一步用 LRU 区块预算保证即使没有相机、单位一直往外走，内存也有硬上限。寻路在 A* 里按 `TerrainType.moveCost()` 付代价，并把结果当作航点写回单位的 `Motion`。
+>
+> **没有地图边缘**：`TerrainMap` 从来就没有 `width()`/`height()`，任何有符号格坐标都会被生成；受限的是 A* 的搜索预算与区块内存预算，不是世界尺寸。
 
 ## 这一篇讲什么
 
@@ -31,6 +33,7 @@ public interface TerrainMap {
 语义要点：
 
 - **查询会自动生成/加载**。接口注释写得很直白："每一次查询都可能触发生成或加载一个区块"。`terrainAt(9999, -9999)` 会凭空造出一块地形并留在内存里，直到流式系统把它卸掉。实测（半径 3、`chunkSize = 16`）：`tick(12)` 后内存里 48 个区块，查询远方一格后变 49；下一 tick 那个远方区块已经不在内存里了（同时流式系统补上了本该加载的第 49 块），计数回到 49。
+- **接口里没有边界方法**。`TerrainMap` 没有 `width()`/`height()`、没有 `contains`、也没有"越界"返回值；坐标是 `int`，`ChunkPos.of` 用 `Math.floorDiv`、局部坐标用 `Math.floorMod`，负数格落在负区块里（`-1` 是 `chunk(-1,-1)` 的最后一格，不是 `chunk(0,0)`）。所以这里没有"拆成有界/无界两个接口"这一步，旧签名本来就是无界的。两种地图共有的区块操作放在 `StreamingTerrainMap extends TerrainMap, MapStreaming` 里（`chunk`、`chunks`、`generatedChunkCount`、`setMaxLoadedChunks`、`flushDirty`、`unloadAll`、`setUnloadListener`），`ChunkedMap` 与第 4b 节的 `InfiniteTerrainMap` 都实现它。
 - `isBuildable` = `passable && buildable`，`isPassable` 只看 `TerrainType.passable()`，`moveCost` 是"进入这一格"的相对代价（1 是开阔地）。
 
 `Chunk` 把地形放在一个扁平数组里（行主序 `localY * size + localX`），区块一存在，每格就已经实体化了，所以之后的查询是一次数组访问：
@@ -191,22 +194,70 @@ new ChunkedMap(ChunkGenerator generator);   // 用 InMemoryChunkStore，区块�
 
 实测（`seed = 20240202`，`chunkSize = 16`，`viewRadiusChunks = 3`）：`tick(32)` 后 `loadedChunkCount() == 49`（7×7），`generatedChunkCount() == 49`，`loadedBounds() == [-48..63 x -48..63]`。
 
+## 4b. `InfiniteTerrainMap`：无边界 + LRU 区块预算
+
+`InfiniteTerrainMap` 与 `ChunkedMap` 遵守同一个 `TerrainMap` 契约，区别只有两点：它把已加载区块放在**访问顺序**的 `LinkedHashMap` 里，并在数量超过 `maxLoadedChunks` 时驱逐**最久未使用**的区块。默认预算是 `InfiniteTerrainMap.DEFAULT_MAX_LOADED_CHUNKS = 4096` 块；它必须为正，`setMaxLoadedChunks(n)` 会立刻把超出部分驱逐掉。
+
+```java
+new InfiniteTerrainMap(generator);                          // InMemoryChunkStore，预算 4096，chunkSize 取 generator
+new InfiniteTerrainMap(generator, 1024);                    // 自定义预算
+new InfiniteTerrainMap(generator, store, chunkSize, 4096);  // store / 区块边长 / 预算全部显式
+```
+
+读取语义与 `ChunkedMap` 完全一致，只是多了"内存有硬上限"：
+
+| 方法 | 说明 |
+| --- | --- |
+| `terrainAt(int x, int y)` / `setTerrain(GridPos, TerrainType)` | 任意有符号坐标；本地没有就 `store.load` → `generator.generate`，并把该区块标为最近使用 |
+| `chunk(ChunkPos)` / `peekChunk(ChunkPos)` | 取区块（会触发加载）/ 只看内存；两者都算一次"访问"，会刷新 LRU 顺序 |
+| `loadedChunks()` / `loadedOrder()` / `loadedBounds()` | 已加载区块（从最久到最近）/ 空 map 的 `loadedBounds()` 是 `Optional.empty()` |
+| `unload(ChunkPos)` / `unloadAll()` / `flushDirty()` | 显式卸载 / 全部卸载 / 所有脏区块写回 store；每条卸载都恰好触发一次 `unloadListener` |
+| `setMaxLoadedChunks(int)` / `maxLoadedChunks()` | 预算（必须 > 0）/ 当前值；调小会立即驱逐 |
+| `generatedChunkCount()` / `evictedChunkCount()` / `loadedChunkCount()` | 真正调用生成器的次数 / 被预算驱逐的次数 / 当前内存块数 |
+| `focus(...)` / `loadArea(...)` | 与 `ChunkedMap` 相同；`ChunkStreamer` 会围绕焦点加载，LRU 只负责硬上限 |
+
+**驱逐顺序与可复现性。** `LinkedHashMap(..., accessOrder = true)` 的迭代顺序就是 LRU 顺序；`terrainAt`/`chunk`/`peekChunk` 会移动条目，`isChunkLoaded`/`loadedChunks`/`loadedOrder`/`chunks` 不移动（诊断不会扰动驱逐顺序）。驱逐只取决于访问历史，不依赖哈希顺序；而生成结果是 `ChunkGenerator` 的纯函数，所以同一个区块被驱逐后重新访问会得到逐位相同的地形——第 1c 节自校验用 100000 格以外的区块断言了这一点。
+
+**卸载事件。** `setUnloadListener(Consumer<ChunkPos>)` 是引擎接上 `Events.ChunkUnloaded` 的缝：`World.addDimension(...)` / `World.setMap(...)` 在注册地图时给 `StreamingTerrainMap` 安装监听器，于是"焦点半径外卸载"、"LRU 预算驱逐"和场景直接调 `unload` 三条路径都只发布一条带维度的 `ChunkUnloaded`。`ChunkedMap` 也实现了同一个监听器以便行为一致；事件里的 tick 是卸载发生时的 `world.tickNumber()`。
+
+**在引擎里打开无界世界。** 默认 builder 路径保持不变（仍是 `ChunkedMap`，`maxLoadedChunks() == 0` = 不限）；显式打开才会换成 `InfiniteTerrainMap`：
+
+```java
+OcRtsEngine infinite = OcRtsEngine.builder(content)
+        .infiniteTerrain(42L)      // 种子 42；默认维度和所有额外维度都用 InfiniteTerrainMap
+        .maxLoadedChunks(1024)     // 可选；默认 4096
+        .viewRadiusChunks(4)
+        .build();
+
+InfiniteTerrainMap mine = new InfiniteTerrainMap(generator, myStore, 16, 2048);
+OcRtsEngine supplied = OcRtsEngine.builder(content)
+        .terrainMap(mine)          // 默认维度用这个实例；额外维度仍按 .maxLoadedChunks(...) 新建无界图
+        .build();
+```
+
+已有调用不需要改：不调用 `infiniteTerrain(...)`/`terrainMap(...)` 时，构造出的就是原来的 `ChunkedMap`，`TerrainMap` 的签名也没有变化。`InfiniteTerrainMap` 只把**内存**变成有界，世界仍然没有边缘；如果预算小于流式窗口，流式系统与 LRU 会互相驱逐，结果正确但会多做生成/加载工作。
+
+第 1c 节自校验覆盖了：`x = ±100000` 与生成器采样一致、负数格落进负区块；LRU 淘汰最久未用块而保留刚访问过的块；单位真的走 2000 格，`loadedChunkCount()` 始终不超过预算 16 且发生了驱逐；被驱逐区块重新生成后与全新生成器逐位相同；同种子两张图在远处一致；`terrainMap(...)` 使用传入实例；流式系统把焦点搬到 100000 格外后加载新块、卸载旧块且每条卸载只发一次；以及默认 `ChunkedMap` 世界行为不变。
+
 ## 5. `ChunkStreamer`：相位 100、每 tick 预算
 
 ```java
 public static final int ORDER = 100;                      // 管线相位
 public static final int DEFAULT_CHUNKS_PER_TICK = 4;      // 默认每 tick 的区块转换次数
-new ChunkStreamer(ChunkedMap map, int radiusChunks);
+new ChunkStreamer(StreamingTerrainMap map, int radiusChunks);
+new ChunkStreamer(Map<DimensionId, ? extends StreamingTerrainMap> maps, int radiusChunks);
 setChunksPerTick(int);   // 必须为正；loadNow(World, Tick) 无视预算一次装满
 ```
 
-每个 tick 它做两件事，且**先卸载后加载**（卸载便宜，正好腾出内存）：把切比雪夫距离大于半径的区块卸掉，再从焦点区方形范围里补齐缺失的区块；两者共用同一个预算。加载与卸载分别发布 `Events.ChunkLoaded(ChunkPos pos, long tick)` 与 `Events.ChunkUnloaded(ChunkPos pos, long tick)`。
+每个 tick 它做两件事，且**先卸载后加载**（卸载便宜，正好腾出内存）：把切比雪夫距离大于半径的区块卸掉，再从焦点区方形范围里补齐缺失的区块；两者共用同一个预算。焦点坐标可以任意大/小（第 1c 节用 `x = 100000` 验证过），只会在接近 `int` 极限时把半径夹到剩余空间，避免 `+radius` 溢出。
+
+加载事件由 streamer 发布，卸载事件由**地图自己的 unload listener**发布（`World` 在注册地图时安装它）。这样"焦点外卸载"、"`InfiniteTerrainMap` 的 LRU 驱逐"与"场景直接 `unload`"三条路径都只产生一条带维度的 `Events.ChunkUnloaded(dimension, pos, tick)`，不会重复：
 
 ```java
 engine.events().subscribe(Events.ChunkLoaded.class, event ->
-        System.out.println("+" + event.pos() + " @tick " + event.tick()));
+        System.out.println("+" + event.dimension() + " " + event.pos() + " @tick " + event.tick()));
 engine.events().subscribe(Events.ChunkUnloaded.class, event ->
-        System.out.println("-" + event.pos() + " @tick " + event.tick()));
+        System.out.println("-" + event.dimension() + " " + event.pos() + " @tick " + event.tick()));
 engine.focus(new GridPos(4000, 4000));   // 只改焦点；下一个 tick 起开始搬家
 engine.tick(40);                          // 半径 3、预算 4 → 大约 25 个 tick 装满 7×7
 ```
@@ -267,7 +318,8 @@ AStarPathFinder pathFinder = new AStarPathFinder(map, AStarPathFinder.minimumMov
 - **航点拉直**：先重建瓦片路径，再用 **supercover DDA** 视线检查跳过不必要的拐点（线段**经过**的每一格都要可通行，不只命中格心的那些，否则贴着湖角拉直的路线看着是直线却走不过去）；生成航点时丢掉起点格（单位已经站在那儿），并把重建出来的最后一格只加一次——目标不可通行时它正是那个"最近可站格"，不会出现零长度的重复末段。
 - **过期堆记录是设计的一部分**：开放集允许同一格存在多条记录。改进一个节点时会同步记录这次的代价（`node.queuedG = tentative`）再重新入堆，弹出时若"记录时的代价"与当前最优不一致就跳过这条记录，因此既不用在堆里查找移动，也不会把被改进过的节点（包括目标格）漏掉。
 - **确定性**：节点比较先比 `f`，再比启发值，再比 y，最后比 x。所以同样的起点/终点/选项永远得到同一条路径，即使 map 的迭代顺序或哈希布局变了也一样；启发式尺度固定（由目录决定）进一步保证了这一点。
-- **规模上限**：`MAX_NODES = 1 << 20`；堆数组长度是 `min(maxExpansions * 4 + 16, MAX_NODES)`，`EXHAUSTIVE` 时每次搜索约 4 MiB（`int[1048576]`）。
+- **规模上限**：`MAX_NODES = 1 << 20`；堆数组长度是 `min(maxExpansions * 8 + 16, MAX_NODES)`，`EXHAUSTIVE` 时每次搜索约 4 MiB（`int[1048576]`）。
+- **搜索有界，世界无界**：A* 的边界是 `PathOptions.maxExpansions()`（以及 `MAX_NODES`/堆数组），不是地图宽高；它从不检查"是否走出地图"。所以 100000 格处的一条 8 格路线照常返回，而 5000 格以外的目标在 `PathOptions.FAST`（2000 次扩展）下会干净地返回 `Optional.empty()`——这不是"地图到头了"，而是这次搜索的预算用完了，换更大的预算或分段重试即可。第 1c 节自校验同时断言了这两件事。延伸阅读：`PathService` 的 `MAX_EXPANSIONS_PER_SEARCH` 与每 tick 节点预算（第 8 节）才是实际运行时的搜索上限。
 
 ```java
 PathFinder finder = engine.pathFinder();
@@ -322,7 +374,10 @@ engine.pathService().spentNodesLastTick();  // 上一 tick 给出的节点额度
 | `ChunkStore.load/save/exists` + `InMemoryChunkStore` | 持久化接缝（`save` 要负责 `markClean()`） |
 | `ChunkedMap.chunk/peekChunk/chunks/loadedOrder` / `unload/flushDirty/unloadAll` | 区块访问与卸载落盘 |
 | `ChunkedMap.focus/radiusChunks/loadArea` / `setMaxLoadedChunks` / `generatedChunkCount/loadedChunkCount/loadedBounds` | 焦点、整片加载、上限与统计 |
-| `new ChunkStreamer(map, radiusChunks)` / `setChunksPerTick` / `loadNow` / `ORDER` | 流式加载（相位 100） |
+| `StreamingTerrainMap extends TerrainMap, MapStreaming` | 两种地图共有的区块缝：`chunk/chunks/generatedChunkCount/setMaxLoadedChunks/maxLoadedChunks/flushDirty/unloadAll/setUnloadListener` |
+| `new InfiniteTerrainMap(generator[, store, chunkSize, maxLoadedChunks])` / `DEFAULT_MAX_LOADED_CHUNKS` | 无界地形 + LRU 内存预算（默认 4096）；`evictedChunkCount` 可观测驱逐 |
+| `OcRtsEngineBuilder.infiniteTerrain([seed])` / `maxLoadedChunks(n)` / `terrainMap(InfiniteTerrainMap)` | 选择无界世界及其预算；不调用时仍是 `ChunkedMap` |
+| `new ChunkStreamer(map, radiusChunks)` / `setChunksPerTick` / `loadNow` / `ORDER` | 流式加载（相位 100；接受任意 `StreamingTerrainMap`） |
 | `Events.ChunkLoaded/ChunkUnloaded` | 区块进出内存的事件 |
 | `Path.start/goal/waypoints/waypoint/destination/isEmpty/length` / `PathFinder.findPath/hasLineOfSight/isReachable` | 路径结果与寻路入口 |
 | `PathOptions.DEFAULT/EXHAUSTIVE/FAST` / `withMaxExpansions` / `withDiagonals` | 单次搜索预算与启发权重 |
@@ -332,7 +387,9 @@ engine.pathService().spentNodesLastTick();  // 上一 tick 给出的节点额度
 
 ## 常见坑
 
-- **任何瓦片查询都可能造区块**：`map.terrainAt(x, y)`、`isPassable(...)`、路径搜索经过的每一格都会生成/加载区块。默认 `maxLoadedChunks` 是 0（不限），所以"离得很远的查询"靠 `ChunkStreamer` 在下一个 tick 收回来（每 tick 只收回 4 个）。
+- **任何瓦片查询都可能造区块**：`map.terrainAt(x, y)`、`isPassable(...)`、路径搜索经过的每一格都会生成/加载区块。**默认 `ChunkedMap` 的 `maxLoadedChunks` 是 0（不限）**，所以"离得很远的查询"靠 `ChunkStreamer` 在下一个 tick 收回来（每 tick 只收回 4 个）；**`InfiniteTerrainMap` 的默认预算是 4096，超了立刻按 LRU 驱逐**，不需要等流式系统。
+- **LRU 与流式是两套策略**：`InfiniteTerrainMap` 只保证内存上限，`ChunkStreamer` 决定焦点周围保留什么。预算小于 `(2r+1)²` 时两者会互相驱逐（结果仍正确，但会反复生成）；把 `maxLoadedChunks` 配到至少能容下流式窗口再加一点余量。`evictedChunkCount()` 统计的是驱逐次数（含 store/生成器重新载入后的再次驱逐），不是唯一区块数。
+- **`unload` 事件只发一次**：加载由 `ChunkStreamer` 发布，卸载由地图的 `setUnloadListener(...)` 发布（`World` 在注册地图时安装）。自己直接调 `map.unload(...)` 也会经过同一条路径；不要在外面再包一层发布，否则会重复。
 - **卸载只发生在焦点半径之外**，而且每 tick 有预算。焦点跳远之后，内存里的旧区块要过好几个 tick 才清完，期间 `loadedChunkCount()` 会先一路掉到 1 再涨回来（半径 3 实测 12 个 tick 全在卸载）。
 - **`focus()` 只是改坐标**，真正搬家发生在这个 tick 的 `ChunkStreamer`（相位 100）：设置焦点后不 `tick()`，内存里什么都不会变；`loadArea(min, max)` 则无视预算立刻生成整片区域，会卡住这个 tick。另外 `ChunkedMap` 的焦点半径与 `ChunkStreamer` 的半径是两份数据（builder 把 `viewRadiusChunks` 同时交给两者），直接调 `map.focus(center, otherRadius)` 会被流式系统按自己的半径卸载掉，要改半径请给 `viewRadiusChunks(...)`。
 - **`save` 的契约包含 `markClean()`**：`flushDirty()` 自己不标记，靠 store 标记；自定义 store 忘了这一步，区块会永远是脏的，每次卸载/刷盘都会重写。`InMemoryChunkStore` 也不拷贝区块，存进去的是同一个对象，之后的地形编辑会直接反映在"存档"里；想要快照语义请自己复制。
@@ -352,12 +409,12 @@ engine.pathService().spentNodesLastTick();  // 上一 tick 给出的节点额度
 
 ## 相关源码
 
-- [TerrainMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/TerrainMap.java)、[Chunk.java](../src/main/java/io/github/sob1234509876/oc/rts/map/Chunk.java)、[MapStreaming.java](../src/main/java/io/github/sob1234509876/oc/rts/map/MapStreaming.java)
+- [TerrainMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/TerrainMap.java)、[StreamingTerrainMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/StreamingTerrainMap.java)、[Chunk.java](../src/main/java/io/github/sob1234509876/oc/rts/map/Chunk.java)、[MapStreaming.java](../src/main/java/io/github/sob1234509876/oc/rts/map/MapStreaming.java)
 - [ChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkGenerator.java)、[FlatChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/FlatChunkGenerator.java)
 - [NoiseChunkGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java)、[NoiseSettings.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseSettings.java)
 - [NoiseTerrainGenerator.java](../src/main/java/io/github/sob1234509876/oc/rts/map/NoiseTerrainGenerator.java)、[BiomeTable.java](../src/main/java/io/github/sob1234509876/oc/rts/map/BiomeTable.java)
 - [ChunkStore.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStore.java)、[InMemoryChunkStore.java](../src/main/java/io/github/sob1234509876/oc/rts/map/InMemoryChunkStore.java)
-- [ChunkedMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkedMap.java)、[ChunkStreamer.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)
+- [ChunkedMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkedMap.java)、[InfiniteTerrainMap.java](../src/main/java/io/github/sob1234509876/oc/rts/map/InfiniteTerrainMap.java)、[ChunkStreamer.java](../src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)
 - [Path.java](../src/main/java/io/github/sob1234509876/oc/rts/map/Path.java)、[PathFinder.java](../src/main/java/io/github/sob1234509876/oc/rts/map/PathFinder.java)、[PathOptions.java](../src/main/java/io/github/sob1234509876/oc/rts/map/PathOptions.java)、[AStarPathFinder.java](../src/main/java/io/github/sob1234509876/oc/rts/map/AStarPathFinder.java)
 - [PathService.java](../src/main/java/io/github/sob1234509876/oc/rts/movement/PathService.java)、[Motion.java](../src/main/java/io/github/sob1234509876/oc/rts/movement/Motion.java)
-- [OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1、2 节的可运行证据）、[ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)
+- [OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)、[InfiniteTerrainChecks.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/InfiniteTerrainChecks.java)（第 1c 节无限地图的可运行证据）、[ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)

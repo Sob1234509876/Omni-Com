@@ -46,13 +46,14 @@ Task oriented guides (written in Chinese, API names in English) live in [`help/`
 ```
 
 The scenario is a headless self check (no test framework, no network) that prints what it observed:
-terrain streamed in and out per chunk, a route around water, a squad forming up, warehouse gating of
-items, a barracks training soldiers, animation frames advancing, three dimensions simulated side by
-side, a melee fight, a charged building site, and an ASCII picture of the world.
+terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbounded map with an LRU
+chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
+soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, a charged
+building site, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 259 checks passed.
+RTS engine scenario: all 305 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -64,6 +65,7 @@ What the scenario actually proves, section by section:
 | --- | --- |
 | 1 chunked terrain | a view radius of 2 chunks keeps 5x5 chunks in memory, a jump to (4000, 4000) unloads them again, a never visited tile is generated on demand, and a 64x64 patch contains six terrain kinds |
 | 1b noise terrain | the standalone `NoiseTerrainGenerator` produces the same chunk from the same seed twice, another seed changes it, generating (3,1) before (0,0) changes neither, a 64x64 patch holds six registered paths including water and high ground, chunk boundaries share the same elevation sample, and a world built on it ticks once |
+| 1c unbounded terrain | terrain at x = 100000 and x = -100000 equals the generator's own sample; an `InfiniteTerrainMap` keeps at most its budget in a least-recently-used order, evicts the least recently used chunk, and regenerates an evicted chunk bit for bit; two maps with the same seed agree; a unit really walks 2000 tiles while the loaded count stays at or below the configured 16 chunks; the streamer loads a 100000-tile-away focus, unloads the old one and publishes each unload once; the default `ChunkedMap` world still behaves exactly as before; and a 5000-tile path search stops on its node budget instead of a map edge |
 | 2 path finding | a route of 60+ tiles exists, every waypoint is walkable, consecutive waypoints have line of sight, and a target in deep water either fails cleanly or resolves to the shore |
 | 3 formations | twelve soldiers ordered onto one tile end up spread out, no pair overlaps, every unit walked the distance, and the five shapes yield five different spreads (line 0.85x9.87, column 7.27x2.53, box 2.02x3.28, wedge 3.48x3.64, circle 2.73x4.04) |
 | 4 items and warehouses | 46 item kinds; stored goods are visible to logistics while goods in a factory buffer or a backpack are not; reservations gate spending; slot limits and store filters hold |

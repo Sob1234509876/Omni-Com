@@ -25,7 +25,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | Check | Gradle task | Total | Where the total comes from |
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 215 checks passed.` |
-| engine | `:projects:oc:oc-rts-engine:scenario` | 259 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
+| engine | `:projects:oc:oc-rts-engine:scenario` | 305 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
 | game server | `:projects:oc:oc-game-server:selfcheck` | 789 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 163, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 34, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |

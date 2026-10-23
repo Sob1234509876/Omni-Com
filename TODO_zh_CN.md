@@ -25,7 +25,7 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | 检查 | Gradle 任务 | 总数 | 总数来源 |
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 215 checks passed.` |
-| engine | `:projects:oc:oc-rts-engine:scenario` | 259 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
+| engine | `:projects:oc:oc-rts-engine:scenario` | 305 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
 | game server | `:projects:oc:oc-game-server:selfcheck` | 789 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 163、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 34、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |

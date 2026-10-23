@@ -27,7 +27,14 @@ import java.util.Objects;
  *
  * <p>Load and unload facts are published on the world event bus, tagged with their dimension, so that
  * rendering, analysis and scenario scripts can react to terrain appearing and disappearing without the
- * streamer knowing anything about them.
+ * streamer knowing anything about them. Loading is published here; unloading is published by the map's
+ * own unload listener, which {@link io.github.sob1234509876.oc.rts.World} installs when the map is
+ * registered, so a chunk dropped by the focus radius, by an LRU budget or by a direct {@code unload}
+ * produces the same fact exactly once.
+ *
+ * <p>The streamer is written against {@link StreamingTerrainMap}, so it treats a {@link ChunkedMap} and
+ * an {@link InfiniteTerrainMap} the same way. Neither has a world edge: the square around the focus is
+ * built from chunk coordinates, which may be any signed integer.
  */
 public final class ChunkStreamer implements SimulationSystem {
 
@@ -38,7 +45,7 @@ public final class ChunkStreamer implements SimulationSystem {
     public static final int DEFAULT_CHUNKS_PER_TICK = 4;
 
     /** Dimensions and their maps, in registration order. */
-    private final Map<DimensionId, ChunkedMap> maps = new LinkedHashMap<>();
+    private final Map<DimensionId, StreamingTerrainMap> maps = new LinkedHashMap<>();
     private final int radiusChunks;
 
     private int chunksPerTick = DEFAULT_CHUNKS_PER_TICK;
@@ -47,12 +54,12 @@ public final class ChunkStreamer implements SimulationSystem {
      * A streamer for a single map, registered under {@link DimensionId#overworld()}. Prefer
      * {@link #ChunkStreamer(Map, int)} when the world has several dimensions.
      */
-    public ChunkStreamer(ChunkedMap map, int radiusChunks) {
+    public ChunkStreamer(StreamingTerrainMap map, int radiusChunks) {
         this(Map.of(DimensionId.overworld(), Objects.requireNonNull(map, "map")), radiusChunks);
     }
 
     /** A streamer over one map per dimension; insertion order is the order budgets are handed out in. */
-    public ChunkStreamer(Map<DimensionId, ChunkedMap> maps, int radiusChunks) {
+    public ChunkStreamer(Map<DimensionId, ? extends StreamingTerrainMap> maps, int radiusChunks) {
         if (radiusChunks < 0) {
             throw new IllegalArgumentException("radius in chunks must not be negative, was " + radiusChunks);
         }
@@ -101,30 +108,31 @@ public final class ChunkStreamer implements SimulationSystem {
      * Adds a dimension that was registered after the engine was built, or replaces the map of a known one.
      * Without this a late {@code world.addDimension(...)} would stay unstreamed.
      */
-    public void streamDimension(DimensionId id, ChunkedMap map) {
-        maps.put(Objects.requireNonNull(id, "id"), Objects.requireNonNull(map, "map"));
+    public void streamDimension(DimensionId id, StreamingTerrainMap map) {
+        Objects.requireNonNull(id, "id");
+        maps.put(id, Objects.requireNonNull(map, "map"));
     }
 
     /** Loads the whole radius of every dimension at once, ignoring the per tick budget. */
     public void loadNow(World world, Tick tick) {
-        sync(world, tick, Integer.MAX_VALUE);
+        sync(Objects.requireNonNull(world, "world"), tick, Integer.MAX_VALUE);
     }
 
     @Override
     public void tick(World world, Tick tick) {
-        sync(world, tick, chunksPerTick);
+        sync(Objects.requireNonNull(world, "world"), tick, chunksPerTick);
     }
 
     private void sync(World world, Tick tick, int budget) {
         if (budget == Integer.MAX_VALUE) {
-            for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+            for (Map.Entry<DimensionId, StreamingTerrainMap> entry : maps.entrySet()) {
                 syncOne(world, tick, entry.getKey(), entry.getValue(), Integer.MAX_VALUE);
             }
             return;
         }
         int perDimension = Math.max(1, budget / maps.size());
         int remaining = budget;
-        for (Map.Entry<DimensionId, ChunkedMap> entry : maps.entrySet()) {
+        for (Map.Entry<DimensionId, StreamingTerrainMap> entry : maps.entrySet()) {
             if (remaining <= 0) {
                 break;
             }
@@ -134,22 +142,24 @@ public final class ChunkStreamer implements SimulationSystem {
         }
     }
 
-    private int syncOne(World world, Tick tick, DimensionId id, ChunkedMap map, int budget) {
+    private int syncOne(World world, Tick tick, DimensionId id, StreamingTerrainMap map, int budget) {
         ChunkPos center = ChunkPos.of(map.focus().tile(), map.chunkSize());
         // Clamp the offsets so that a focus near the coordinate limit cannot overflow the int range.
         int headroom = Integer.MAX_VALUE - Math.max(Math.abs(center.x()), Math.abs(center.y())) - 2;
         int maxOffset = Math.min(radiusChunks, Math.max(0, headroom));
         int remaining = budget;
-        remaining = unloadOutside(world, tick, id, map, center, maxOffset, remaining);
+        remaining = unloadOutside(map, center, maxOffset, remaining);
         if (remaining > 0) {
             loadMissing(world, tick, id, map, center, maxOffset, remaining);
         }
         return budget - remaining;
     }
 
-    private int unloadOutside(World world, Tick tick, DimensionId id, ChunkedMap map, ChunkPos center,
-            int maxOffset, int budget) {
+    private int unloadOutside(StreamingTerrainMap map, ChunkPos center, int maxOffset, int budget) {
         // A chunk that leaves the radius loses its in-memory copy; if it was edited it is saved first.
+        // The map publishes ChunkUnloaded through the listener World installed when the map was
+        // registered, so the drop is reported exactly once whether it was the streamer, the LRU budget
+        // or a direct call.
         List<ChunkPos> dropping = new ArrayList<>();
         for (ChunkPos pos : map.loadedChunks()) {
             if (chebyshev(pos, center) > maxOffset) {
@@ -163,13 +173,12 @@ public final class ChunkStreamer implements SimulationSystem {
                 break;
             }
             map.unload(pos);
-            world.events().publish(new Events.ChunkUnloaded(id, pos, tick.number()));
             remaining--;
         }
         return remaining;
     }
 
-    private int loadMissing(World world, Tick tick, DimensionId id, ChunkedMap map, ChunkPos center,
+    private int loadMissing(World world, Tick tick, DimensionId id, StreamingTerrainMap map, ChunkPos center,
             int maxOffset, int budget) {
         int remaining = budget;
         int minX = center.x() - maxOffset;

@@ -78,6 +78,7 @@ public final class RtsScenario {
 
         checkChunkedTerrain(check, content);
         checkNoiseTerrain(check, content);
+        InfiniteTerrainChecks.run(check, content);
         checkPathFinding(check, content);
         checkFormationMovement(check, content);
         checkItemsAndWarehouses(check, content);

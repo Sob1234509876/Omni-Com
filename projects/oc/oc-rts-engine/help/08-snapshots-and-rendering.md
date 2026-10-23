@@ -228,7 +228,7 @@ engine.dimension(DimensionId.of("moon")).focus(new Vec2(0f, 0f), 3); // 等价�
 几条必须记住的事实：
 
 1. **`focus` 只是设定关注点，区块是慢慢长出来的**。相位 100 的 `ChunkStreamer` 每 tick 最多做 `ChunkStreamer.DEFAULT_CHUNKS_PER_TICK = 4` 次区块切换（先卸载、后加载），而且这个预算是**所有维度共享**的。视野半径 2 是 5x5=25 个区块，跳一次焦点后大约要十几个 tick 才铺满——自校验场景每次跳焦点后都 `engine.tick(30)` 就是为此。多维度下每张图有自己的焦点，所以"看月球"不会把火星的区块带走。
-2. **`snapshot` 会按需生成区块**。`capture` 对矩形内每一格调**那张图**的 `terrainAt(x, y)`，`ChunkedMap` 遇到不在内存的区块会 `generator.generate(...)` 并计入 `generatedChunkCount()`，同时把它塞进内存（`maxLoadedChunks` 默认 0 = 不限；之后要靠 streamer 把它们当作"半径外"逐步淘汰）。所以**别拿大半径快照去扫还没流式加载的区域**：它不会报错，只会很慢，并且把内存和生成计数顶上去。
+2. **`snapshot` 会按需生成区块**。`capture` 对矩形内每一格调**那张图**的 `terrainAt(x, y)`，`ChunkedMap` 遇到不在内存的区块会 `generator.generate(...)` 并计入 `generatedChunkCount()`，同时把它塞进内存（`ChunkedMap` 的 `maxLoadedChunks` 默认 0 = 不限，之后靠 streamer 淘汰；`InfiniteTerrainMap` 默认预算 4096，超过即按 LRU 驱逐）。所以**别拿大半径快照去扫还没流式加载的区域**：它不会报错，只会很慢，并且把内存和生成计数顶上去。
 3. **`loadedChunks()` 是"哪些地形算数"的权威**。快照给的 `terrainAt` 对界外格返回 `fallbackTerrain()`，而 `WorldSnapshot.loadedChunks()` 是采集瞬间**该维度**的真实内存状态。渲染层可以据此把 `bounds()` 之外的格子标成"未知/黑幕"，或至少避免画一大堆 fallback 地形。
 4. 半径与区块大小在构造期定：`OcRtsEngine.builder(content).chunkSize(16).viewRadiusChunks(3)`（默认 `chunkSize = 16`、`viewRadiusChunks = 4`）。`engine.streaming().focus(v2, radiusChunks)` 改的是流式半径，`ChunkStreamer` 自身持有的半径在 build 时就固定了——想彻底换一套流式节奏，就在 `OcRtsEngineBuilder` 上配。
 5. **旧的 `focus(...)` 只动默认维度**。`engine.focus(GridPos)` / `engine.focus(Vec2)` 跟随 `world.setDefaultDimension(...)` 指向的那张图；要动别的图就得用 `engine.focus(DimensionId, Vec2, int)`（或 `Dimension.focus(...)`），前者还能顺手改那张图的半径。

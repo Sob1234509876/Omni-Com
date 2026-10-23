@@ -31,7 +31,8 @@
 | 调噪声地形的海平面/森林线/山线 | [03](03-map-and-pathfinding.md) | `NoiseSettings#withSeaThreshold`、`NoiseSettings#withPaths` |
 | 让开局附近一定是可建陆地 | [03](03-map-and-pathfinding.md) | `NoiseSettings#withOrigin`、`NoiseChunkGenerator#guaranteedLandRadius` |
 | 把编辑过的区块存到磁盘 | [03](03-map-and-pathfinding.md) | `ChunkStore#save`、`OcRtsEngineBuilder#chunkStore` |
-| 限制内存里同时保留多少区块 | [03](03-map-and-pathfinding.md) | `ChunkedMap#setMaxLoadedChunks`、`ChunkStreamer#setChunksPerTick` |
+| 限制内存里同时保留多少区块 | [03](03-map-and-pathfinding.md) | `ChunkedMap#setMaxLoadedChunks`、`InfiniteTerrainMap#setMaxLoadedChunks`、`OcRtsEngineBuilder#maxLoadedChunks`、`ChunkStreamer#setChunksPerTick` |
+| 建一个没有地图边缘的世界 | [03](03-map-and-pathfinding.md) | `OcRtsEngineBuilder#infiniteTerrain`、`OcRtsEngineBuilder#terrainMap`、`InfiniteTerrainMap` |
 | 调整寻路预算（每 tick 请求数/节点数） | [03](03-map-and-pathfinding.md) / [11](11-limits-and-faq.md) | `OcRtsEngineBuilder#pathBudget`、`PathService` |
 | 单次寻路更省或更彻底 | [03](03-map-and-pathfinding.md) | `PathOptions.DEFAULT/FAST/EXHAUSTIVE` |
 | 调整分离避让强度 / 卡位重寻路 | [04](04-units-orders-and-movement.md) / [11](11-limits-and-faq.md) | `SteeringSettings`、`MovementSystem#settings` |
@@ -72,7 +73,7 @@
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
 | `OcRtsEngine` | 一场比赛的门面：世界 + 系统管线 + 各服务 | `world()`、`tick()`、`commands()`、`production()`、`snapshot()`、`describe()` | [01](01-getting-started.md) |
-| `OcRtsEngineBuilder` | 链式装配 `OcRtsEngine`，每个子系统都有可用默认值 | `seed()`、`ticksPerSecond()`、`generator()`、`chunkStore()`、`visuals()`、`player()`、`build()` | [01](01-getting-started.md) |
+| `OcRtsEngineBuilder` | 链式装配 `OcRtsEngine`，每个子系统都有可用默认值 | `seed()`、`ticksPerSecond()`、`generator()`、`chunkStore()`、`infiniteTerrain()`、`maxLoadedChunks()`、`terrainMap()`、`visuals()`、`player()`、`build()` | [01](01-getting-started.md) |
 | `Player` | 一个参赛方：拥有实体，其仓库构成一张后勤网 | `id()`、`colorArgb()`、`team()`、`logistics()`、`attachLogistics()` | [06](06-economy-logistics-and-production.md) |
 | `PlayerId` | 玩家身份，全场比赛稳定 | `of(int)`、`value()` | [06](06-economy-logistics-and-production.md) |
 | `World` | 模拟状态本体：多个维度、实体、玩家与各服务 | `dimensions()`、`dimension()`、`addDimension()`、`spawnUnit()`、`spawnBuilding()`、`canPlace()`、`production()`、`destroy()`、`flush()`、`spatial()`、`spatial(DimensionId)`、`events()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
@@ -199,8 +200,10 @@
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
-| `TerrainMap` | 逐格访问的地形接口，查询可能触发区块生成 | `terrainAt()`、`setTerrain()`、`isPassable()`、`isBuildable()`、`moveCost()`、`loadedChunks()`、`loadedBounds()` | [03](03-map-and-pathfinding.md) |
-| `ChunkedMap` | 按需生成、部分驻留的分块地图（`TerrainMap` + `MapStreaming`） | `chunkSize()`、`chunk()`、`peekChunk()`、`setMaxLoadedChunks()`、`focus()`、`loadArea()`、`flushDirty()`、`unload()` | [03](03-map-and-pathfinding.md) |
+| `TerrainMap` | 逐格访问的地形接口，查询可能触发区块生成；**没有宽高/边界方法** | `chunkSize()`、`terrainAt()`、`setTerrain()`、`isPassable()`、`isBuildable()`、`moveCost()`、`loadedChunks()`、`loadedBounds()` | [03](03-map-and-pathfinding.md) |
+| `StreamingTerrainMap` | `TerrainMap` + `MapStreaming` + 两种地图共有的区块操作 | `chunk()`、`chunks()`、`generatedChunkCount()`、`setMaxLoadedChunks()`、`maxLoadedChunks()`、`flushDirty()`、`unloadAll()`、`setUnloadListener()` | [03](03-map-and-pathfinding.md) |
+| `ChunkedMap` | 按需生成、部分驻留的分块地图；默认无内存预算 | `chunkSize()`、`chunk()`、`peekChunk()`、`setMaxLoadedChunks()`、`focus()`、`loadArea()`、`flushDirty()`、`unload()` | [03](03-map-and-pathfinding.md) |
+| `InfiniteTerrainMap` | 无边界 + 访问顺序 LRU 区块预算（默认 4096）；任意有符号坐标可查 | `DEFAULT_MAX_LOADED_CHUNKS`、`chunk()`、`peekChunk()`、`evictedChunkCount()`、`setMaxLoadedChunks()`、`loadedOrder()`、`setUnloadListener()` | [03](03-map-and-pathfinding.md) |
 | `Chunk` | 一块方形地形；世界生成、存储、流式加载的单位 | `filled()`、`terrainAt()`、`setTerrain()`、`isDirty()`/`markClean()`、`rawTiles()`、`fill()`、`count()` | [03](03-map-and-pathfinding.md) |
 | `ChunkGenerator` | 区块地形生成接缝；必须是区块坐标的纯函数 | `generate(ChunkPos)`、`chunkSize()` | [03](03-map-and-pathfinding.md) |
 | `FlatChunkGenerator` | 全平地生成器（测试与手工搭图的场景） | `DEFAULT_CHUNK_SIZE`、`terrain()` | [03](03-map-and-pathfinding.md) |
@@ -208,7 +211,7 @@
 | `NoiseSettings` | 噪声地形调参：边界高度、湿度、原点保证、内容路径 | `DEFAULT_CHUNK_SIZE`、`DEFAULT_ORIGIN_ELEVATION`、`DEFAULT_ORIGIN_RADIUS`、`defaults(ns)`、`withSeaThreshold()`、`withOrigin()`、`withPaths()`、`amplitudeSum()` | [03](03-map-and-pathfinding.md) |
 | `ChunkStore` | 区块持久化接缝：被卸载的编辑必须活得比内存久 | `load()`、`save()`、`exists()` | [03](03-map-and-pathfinding.md) |
 | `InMemoryChunkStore` | 内存实现，测试/工具用 | `load()`、`save()`、`exists()`、`size()`、`clear()` | [03](03-map-and-pathfinding.md) |
-| `ChunkStreamer` | 保持每个维度焦点附近区块驻留、丢掉其余的系统 | `ORDER`、`DEFAULT_CHUNKS_PER_TICK`、`ChunkStreamer(Map<DimensionId,ChunkedMap>, int radiusChunks)`、`setChunksPerTick()`、`loadNow()`、`radiusChunks()`、`dimensions()`、`streamDimension(id, map)` | [03](03-map-and-pathfinding.md) / [13](13-dimensions.md) |
+| `ChunkStreamer` | 保持每个维度焦点附近区块驻留、丢掉其余的系统；接受任意 `StreamingTerrainMap` | `ORDER`、`DEFAULT_CHUNKS_PER_TICK`、`ChunkStreamer(StreamingTerrainMap, int radiusChunks)`、`ChunkStreamer(Map<DimensionId, ? extends StreamingTerrainMap>, int)`、`setChunksPerTick()`、`loadNow()`、`radiusChunks()`、`dimensions()`、`streamDimension(id, map)` | [03](03-map-and-pathfinding.md) / [13](13-dimensions.md) |
 | `MapStreaming` | 控制哪一部分世界留在内存（无相机时由调用方指定焦点） | `focus(Vec2,int)`、`focus(GridPos,int)`、`radiusChunks()`、`loadedChunks()`、`loadArea()`、`unload()` | [03](03-map-and-pathfinding.md) |
 | `PathFinder` | 寻路接缝；相同起点/终点/选项必得同一条路 | `findPath(start, goal)`、`findPath(start, goal, options)`、`hasLineOfSight()`、`isReachable()` | [03](03-map-and-pathfinding.md) |
 | `AStarPathFinder` | A* + 对角 + 拉绳平滑 + 固定扩张上限 | `AStarPathFinder(TerrainMap)`、`AStarPathFinder(TerrainMap, float minimumStep)`、`minimumMoveCost(ContentRegistry)`、`map()`、`findPath()`、`hasLineOfSight(Vec2,Vec2)`、`hasLineOfSight(GridPos,GridPos)` | [03](03-map-and-pathfinding.md) |
@@ -356,7 +359,7 @@
 | `FlatChunkGenerator.DEFAULT_CHUNK_SIZE`、`NoiseChunkGenerator.DEFAULT_CHUNK_SIZE` | `16` |
 | `AsciiMapRenderer.UNKNOWN_SYMBOL` / `OTHER_SYMBOL` | `'?'` / `'%'` |
 | `ItemBundle.EMPTY`、`Vec2.ZERO` | 空 bundle / `new Vec2(0f, 0f)` |
-| `OcRtsEngineBuilder` 默认值 | `seed=20240101L`、`ticksPerSecond=20`、`chunkSize=16`、`viewRadiusChunks=4`、`chunkStore=new InMemoryChunkStore()`、`visuals=VisualLibrary.empty()`、`directDelivery=false`、`directDeliveryTicks=60`、`pathRequestsPerTick=32`、`pathNodeBudgetPerTick=200_000`；`build()` 时若没有任何玩家，自动加入 `Player.of(1, "Player 1", 0xFF4FC3F7)` |
+| `OcRtsEngineBuilder` 默认值 | `seed=20240101L`、`ticksPerSecond=20`、`chunkSize=16`、`viewRadiusChunks=4`、`chunkStore=new InMemoryChunkStore()`、`infiniteTerrain=false`、`maxLoadedChunks=4096`、`visuals=VisualLibrary.empty()`、`directDelivery=false`、`directDeliveryTicks=60`、`pathRequestsPerTick=32`、`pathNodeBudgetPerTick=200_000`；`build()` 时若没有任何玩家，自动加入 `Player.of(1, "Player 1", 0xFF4FC3F7)` |
 | `SimulationSystem.order()` 建议阶段 | `100` 地图流式、`200` 订单、`300` 寻路请求、`400` 移动、`450` 战斗、`500` 建造、`600` 生产、`700` 后勤、`800` 动画；接口默认 `1000`，`900` 清理是预留槽位（当前没有内置系统占用） |
 | `World` 内部默认 | **每个维度**各自用 `new GridSpatialIndex(4f)`；事件总线用 `SimpleEventBus`；维度用 `LinkedHashMap` 按创建顺序保存 |
 
@@ -370,11 +373,11 @@
 | `world()` / `content()` / `events()` / `players()` | 取世界、内容目录、事件总线、玩家列表 | 否 |
 | `tickNumber()` / `ticksPerSecond()` / `elapsedSeconds()` / `currentTick()` | 时间信息；`currentTick()` 是"即将运行"的 tick | 否 |
 | `commands()` / `production()` / `pathService()` / `pathFinder()` / `visuals()` / `pipeline()` | 取服务（指挥、生产、寻路预算、寻路器、动画库、管线） | 否 |
-| `map()` / `streaming()` | 取地形与区块流式控制（默认维度的同一 `ChunkedMap` 的两个视图） | 否 |
+| `map()` / `streaming()` | 取地形与区块流式控制（默认维度同一张 `StreamingTerrainMap` 的两个视图） | 否 |
 | `dimensions()` / `dimension(DimensionId)` / `defaultDimensionId()` | 维度清单、按 id 取一张图、单地图 API 指向哪张图 | 维度不存在 → `IllegalArgumentException` |
 | `tick()` / `tick(int ticks)` | 前进一格 / 若干格 | 系统内部异常原样冒泡（例如世界未设地图时 `World#map()` 抛 `IllegalArgumentException`） |
 | `tickUntil(Predicate<OcRtsEngine>, int maxTicks)` | 反复 tick 直到条件成立；返回是否达成 | 条件为 `null` → `NullPointerException` |
-| `focus(Vec2)` / `focus(GridPos)` | 移动**默认维度**的兴趣点，下一 tick 会流式载入附近区块 | 参数为 `null` → `NullPointerException`（经 `ChunkedMap#focus`） |
+| `focus(Vec2)` / `focus(GridPos)` | 移动**默认维度**的兴趣点，下一 tick 会流式载入附近区块 | 参数为 `null` → `NullPointerException`（经 `MapStreaming#focus`） |
 | `focus(DimensionId, Vec2, int radiusChunks)` | 移动指定维度的兴趣点**并改它的流式半径** | 维度不存在 → `IllegalArgumentException`；参数为 `null` → `NullPointerException` |
 | `loadedBounds()` | 默认维度当前内存中区块的瓦片范围 | 否；**没有任何区块时返回 `null`** |
 | `spawnUnit(String, Player, Vec2/GridPos)` | 按内容路径直接生成单位（默认维度） | 路径未定义 → `NoSuchElementException`（来自 `ContentRegistry#unit`） |
@@ -394,6 +397,9 @@
 | `viewRadiusChunks(int)` | 兴趣点周围保留多少区块 | `< 0` → `IllegalArgumentException` |
 | `generator(ChunkGenerator)` | 换地形生成器；不设则用 `NoiseChunkGenerator(seed, content)` | 否（`null` 等于"用默认"） |
 | `chunkStore(ChunkStore)` | 换区块存储（默认内存）；只作用于默认维度 | `null` → `NullPointerException` |
+| `infiniteTerrain()` / `infiniteTerrain(long seed)` | 默认维度与所有额外维度改用 `InfiniteTerrainMap`（无界 + LRU 预算），并可选地设置种子 | 否 |
+| `terrainMap(InfiniteTerrainMap)` | 默认维度直接使用传入的无界地图实例；额外维度仍按 `maxLoadedChunks(...)` 新建 | `null` → `NullPointerException` |
+| `maxLoadedChunks(int)` | 无界地图的区块预算（默认 4096）；对默认 `ChunkedMap` 无影响 | `<= 0` → `IllegalArgumentException` |
 | `profile(DimensionProfile)` | 设置默认维度的环境档案（默认 `DimensionProfile.earth()`） | `null` → `NullPointerException` |
 | `dimension(DimensionId, DimensionProfile[, ChunkGenerator[, ChunkStore]])` | 再注册一张图；键重复或参数为 `null` 会在 `addDimension`/`build()` 时抛异常 | 参数为 `null` → `NullPointerException` |
 | `moonAndMars()` | 便捷方法：注册 `moon` 与 `mars`（各自的档案与生成器） | 否 |

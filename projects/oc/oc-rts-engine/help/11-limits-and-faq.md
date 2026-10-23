@@ -46,6 +46,7 @@
 | 群体寻路 / 流场 | 每个单位各自跑一次 A*（受 `PathService` 预算约束） | 大队形移动时观察 `pendingRequests()`；预算调大或改成共享路径/流场 |
 | 建筑碰撞 | **建筑不阻挡单位移动**：`MovementSystem` 只检查地形是否可通行 | 见下面的 [FAQ 第 13 条](#13-单位会穿过建筑) |
 | 维度之间的旅行 | **已经实现**：`Gateway` + `World.route(...)` + `UnitDirector.travel(...)` | 见 [13-dimensions.md](13-dimensions.md)；没有门就是订单失败，不会瞬移 |
+| 无界地形 | **已经实现**：`TerrainMap`/`ChunkedMap` 本来就没有宽高；`InfiniteTerrainMap` 再给它一个 LRU 区块预算，任意有符号格坐标都能查询 | `OcRtsEngine.builder(content).infiniteTerrain(seed).maxLoadedChunks(n)`；见 [03](03-map-and-pathfinding.md#4b-infiniteterrainmap无边界--lru-区块预算) |
 | 跨维度送货 | **代码就位（"模拟货运"），但生产端的请求链路还没跨图，端到端仍不可用（自校验把这一点记为待办）**：`HaulingSystem` 只挑同维度的搬运工，跨图的货按"直送延迟 × 门链跳数"发运 | 见 [13-dimensions.md](13-dimensions.md) 与 [06](06-economy-logistics-and-production.md)；走路单位永远不会被派去另一张图 |
 | 按维度的快照 | **已经实现**：`SnapshotFactory.capture(DimensionId, ...)`、`WorldSnapshot.dimension()` / `dimensionName()`、图例带维度 | 见 [08-snapshots-and-rendering.md](08-snapshots-and-rendering.md) |
 | 环境危害（不可呼吸、重力、辐射） | **没有**：`hazardDamagePerTick` / `gravity` / `breathable` / `requiresSealedUnits()` 无人读取 | 自己写一个按 `dimensionId()` 分组的危害系统；见 [13-dimensions.md](13-dimensions.md) |
@@ -80,6 +81,7 @@
 12. **`Natural.BEYOND` 不是数字，是顶元素**。它比一切都大、吸收运算，引擎用它表达"无上限"（`Inventory.UNLIMITED = Natural.BEYOND`）。因此它不能当作普通数量参与结算，也**不能放进 `ItemBundle`**（`ItemBundle.Builder.add` 会拒绝）。要表达"装得下无限多"请把它写在 `Inventory` 的上限上。
 13. **门是单向的，旅行有整段超时**。`Gateway` 默认只朝一个方向，回程要 `reversed()` 或另写一条；`TransferOrder.TIMEOUT_TICKS = 2400`（两分钟）是**整段旅程**的预算，不是每跳重算。没有路线时 `travel` 直接失败，不会瞬移。
 14. **一个单位同时只能在一条供应线上**。`travel` 会替换订单队列（`orders().replace(...)`），而搬运工按"同图 + 空闲"挑选；让一个单位既长途旅行又承担本图短驳，只会让它两头都做不好。
+15. **"无界"指没有地图边缘，不是无限精度**。格坐标是 `int`，`Integer.MAX_VALUE`/`MIN_VALUE` 附近做 `+radius` 仍可能溢出（`ChunkStreamer` 会把焦点附近的半径夹到剩余空间），`Vec2` 是 `float`，10 万格处分辨率约 `0.0078` 格、100 万格处约 `0.0625` 格。`InfiniteTerrainMap` 保证的是**内存**有界（默认 4096 块，LRU），不是坐标有无限精度；如果预算小于流式窗口，两个策略会互相驱逐，帧率会变差但结果仍正确。
 
 ## FAQ
 
@@ -223,7 +225,8 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 | `directDelivery(boolean)` | `false` | 打开可省掉搬运工的移动与订单开销（用延迟模拟运输） |
 | `ticksPerSecond(n)` | `20` | 只改推进频率；移动按"格/秒"积分，所以世界速度不变 |
 | `ChunkStreamer.setChunksPerTick(n)` | `4` | 焦点跳转后的铺满速度；通过 `engine.pipeline().systems()` 找到 `ChunkStreamer` 实例调整。多维度下 `n` 是**所有维度共享**的总预算（先平均分，余数给先注册的维度），加一张图不会让预算翻倍 |
-| `map.setMaxLoadedChunks(n)` | `0`（不限） | 内存上限；超限时按"离焦点最远"驱逐，被驱逐的脏区块会先写回 `ChunkStore` |
+| `map.setMaxLoadedChunks(n)` | `ChunkedMap`：`0`（不限）；`InfiniteTerrainMap`：`4096` | 内存上限。`ChunkedMap` 超限时按"离焦点最远"驱逐，`InfiniteTerrainMap` 按"最近最少使用"驱逐；被驱逐的脏区块都会先写回 `ChunkStore` |
+| `OcRtsEngineBuilder.infiniteTerrain([seed]).maxLoadedChunks(n)` | 关闭 / `4096` | 打开无界地图并设置其 LRU 预算；不调用 `infiniteTerrain(...)` 时仍然是历史 `ChunkedMap` |
 | `SteeringSettings` | `defaults()` | 分离强度、到达减速、速度平滑、卡住判定等的集中参数 |
 
 ## 相关文档
@@ -240,4 +243,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 战斗字段与生命：[`CombatStats.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatStats.java)、[`CombatSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatSystem.java)、[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 10、11、12、13 节，整份 259 项）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1c、10、11、12、13 节，整份 305 项）
