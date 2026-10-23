@@ -57,10 +57,12 @@ import java.util.Objects;
  *
  * <p>Whatever the state, the standing economy rules run on every decision except during a defence: keep at
  * least {@value #ENGINEER_TARGET} engineers alive (train them in an armory), keep at least
- * {@value #ARMORY_TARGET} armories and {@value #MINE_TARGET} mines standing (place a site with the
- * engine's {@link UnitDirector#build} and let an idle builder raise it), and train the army while it is
- * below {@value #ARMY_TARGET}. At most one production job and one building site are started per decision,
- * so the AI cannot drain its stock or its builders in a single tick.
+ * {@value #ARMORY_TARGET} armories, {@value #MINE_TARGET} mines and {@value #LUMBER_TARGET} lumber camp
+ * standing (place a site with the engine's {@link UnitDirector#build} and let an idle builder raise it),
+ * and train the army while it is below {@value #ARMY_TARGET}. At most one production job and one building
+ * site are started per decision, so the AI cannot drain its stock or its builders in a single tick. The
+ * lumber camp matters because every armory costs wood and the opening stock is finite; the AI raises a
+ * {@code building.lumbercamp.t1} with the same bounded site search it uses for every other building.
  *
  * <h2>What "strongest tier" means</h2>
  *
@@ -145,6 +147,9 @@ public final class ClassicAi implements WorldTickHook {
 
     /** Mines the AI tries to keep standing. */
     public static final int MINE_TARGET = 3;
+
+    /** Lumber camps the AI tries to keep standing, so it has a renewable source of wood. */
+    public static final int LUMBER_TARGET = 1;
 
     /** Army size the AI grows towards; past it the AI stops training troops. */
     public static final int ARMY_TARGET = 8;
@@ -273,13 +278,15 @@ public final class ClassicAi implements WorldTickHook {
         train(world, ai, buildings, recipe(world, ClassicContent.TRAIN_ENGINEER));
     }
 
-    /** Places one missing armory or mine with an idle builder, if there is one. */
+    /** Places one missing armory, mine or lumber camp with an idle builder, if there is one. */
     private static void upkeepBuildings(World world, Player ai, List<Unit> units, List<Building> buildings) {
         BuildingType type = null;
         if (countTag(buildings, ClassicContent.ARMORY_TAG) < ARMORY_TARGET) {
             type = buildingType(world, ClassicContent.ARMORY_T1);
         } else if (countTag(buildings, ClassicContent.MINE_TAG) < MINE_TARGET) {
             type = buildingType(world, ClassicContent.MINE_T1);
+        } else if (countTag(buildings, ClassicContent.LUMBER_TAG) < LUMBER_TARGET) {
+            type = buildingType(world, ClassicContent.LUMBERCAMP_T1);
         }
         if (type == null) {
             return;

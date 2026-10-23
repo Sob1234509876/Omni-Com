@@ -34,6 +34,7 @@ import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
+import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
@@ -89,6 +90,7 @@ public final class RtsScenario {
         checkHugeNumbers(check);
         checkDimensions(check, content);
         checkCombat(check, content);
+        checkBuildingCombat(check, content);
         checkBuildingCosts(check, content);
 
         check.summary("RTS engine scenario");
@@ -1045,6 +1047,12 @@ public final class RtsScenario {
     private static final String WEAKLING = "weakling";
     /** Has damage but a range of zero, so it still cannot attack. */
     private static final String STATUE = "statue";
+    /** A 3x3, 30 hit point building with no armour: three hits of 10 kill it. */
+    private static final String WALL = "wall";
+    /** The same building with armour 5: a 10 damage hit deals 5, so six hits are needed. */
+    private static final String BUNKER = "bunker";
+    /** A 1x1 building used for the mixed unit-versus-building tie break. */
+    private static final String POST = "post";
 
     /**
      * Combat: damage, armour, range, deterministic target selection, the attack orders and the kill
@@ -1286,6 +1294,130 @@ public final class RtsScenario {
                 + " hit for hit (" + firstRun.size() + " observations)");
     }
 
+    // ------------------------------------------------------------------ 12b) buildings as targets
+
+    /**
+     * Buildings are combat targets exactly like units: they have health and content armour, a hit goes
+     * through the same damage path, a building that reaches zero health is destroyed with the ordinary
+     * killed event and leaves the spatial index and every unit's target on the same tick, and both attack
+     * orders accept a building id.
+     *
+     * <p>Every case uses the same tiny, exact catalogue as the unit combat checks, so a death tick is
+     * arithmetic rather than a guess.
+     */
+    private static void checkBuildingCombat(Check check, ContentRegistry scenarioContent) {
+        check.section("12b) buildings are targets: damage, armour, a predictable kill, attack orders");
+        ContentRegistry content = combatContent();
+        Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
+        Player red = Player.of(2, "Red", 0xFFEF5350);
+        BuildingType wall = content.building(WALL);
+
+        check.equal(30L, wall.maxHealth(), "the building target declares 30 hit points");
+        check.equal(0, wall.armour(), "building armour defaults to zero when content does not set it");
+        check.close(1.5f, wall.radius(), 1e-6f, "a 3x3 building reports a 1.5 tile footprint radius");
+
+        // --- a building takes hits and dies on the same arithmetic tick as a 30 hit point unit
+        OcRtsEngine inRange = combatEngine(content, blue, red);
+        World inRangeWorld = inRange.world();
+        List<Natural> damage = new ArrayList<>();
+        List<Events.EntityKilled> kills = new ArrayList<>();
+        inRangeWorld.events().subscribe(Events.DamageDealt.class, event -> damage.add(event.amount()));
+        inRangeWorld.events().subscribe(Events.EntityKilled.class, kills::add);
+        Unit attacker = inRangeWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(19.5f, 21.5f));
+        Building target = inRangeWorld.spawnBuilding(wall, red, new GridPos(20, 20));
+        EntityId targetId = target.id();
+        check.equal(30L, target.health().current(), "the spawned building starts at full health");
+        inRange.tick(1);
+        check.equal(20L, target.health().current(), "the first hit lands on tick 1");
+        check.equal(targetId, attacker.targetId(), "the attacker records the building as its target");
+        check.equal(1, damage.size(), "the hit published a DamageDealt event for the building");
+        inRange.tick(20);
+        check.that(!target.isAlive(), "the 30 hit point building dies after three hits of 10");
+        check.equal(1, kills.size(), "exactly one EntityKilled event was published");
+        if (kills.size() == 1) {
+            check.equal(attacker.id(), kills.get(0).killer().id(), "the attacker is the recorded killer");
+            check.equal(targetId, kills.get(0).victim().id(), "the building is the recorded victim");
+            check.equal(21L, kills.get(0).tick(), "30 hit points at 10 damage every 10 ticks die on tick 21");
+        }
+        check.equal(List.of(Natural.of(10), Natural.of(10), Natural.of(10)), damage,
+                "the three hits carried exactly ten damage each");
+        check.that(inRangeWorld.findEntity(targetId).isEmpty(),
+                "the destroyed building is removed from the world");
+        check.that(inRangeWorld.spatial().inRadius(new Vec2(21.5f, 21.5f), 3f).stream()
+                        .noneMatch(entity -> entity.id().equals(targetId)),
+                "and its body left the spatial index on the kill tick");
+        check.that(attacker.targetId() == null, "and its id is dropped from the attacker's target");
+
+        // --- building armour is a real field read by the same damage path
+        long unarmouredDeath = buildingDeathTick(content, blue, red, WALL);
+        long armouredDeath = buildingDeathTick(content, blue, red, BUNKER);
+        check.equal(21L, unarmouredDeath, "the unarmoured building dies on tick 21");
+        check.equal(51L, armouredDeath, "armour 5 halves each hit, so the same building needs six hits: tick 51");
+        check.equal(5L, CombatStats.of(content.unit(DUELIST))
+                        .damageAfterArmour(content.building(BUNKER).armour()),
+                "the combat view applies building armour exactly like unit armour");
+
+        // --- nearest wins across both kinds; equal distances are still broken by entity id
+        OcRtsEngine mixed = combatEngine(content, blue, red);
+        World mixedWorld = mixed.world();
+        Unit hunter = mixedWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        // A one tile post first, so the building has the lower id and the tie goes to it.
+        Building post = mixedWorld.spawnBuilding(content.building(POST), red, new GridPos(8, 10));
+        Unit sameDistance = mixedWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(12.5f, 10.5f));
+        check.that(post.id().compareTo(sameDistance.id()) < 0,
+                "the building at the tie has the lower entity id");
+        check.close(hunter.position().distance(post.position()), hunter.position().distance(sameDistance.position()),
+                1e-5f, "the building and the unit stand at the same distance from the hunter");
+        mixed.tick(1);
+        check.equal(post.id(), hunter.targetId(),
+                "a mixed nearest-target choice picks the lower id building on a tie");
+        check.equal(20L, post.health().current(), "the building took the hit");
+        check.equal(30L, sameDistance.health().current(), "the equal distance unit did not");
+
+        // --- AttackOrder accepts a building id and really reaches it
+        OcRtsEngine chase = combatEngine(content, blue, red);
+        World chaseWorld = chase.world();
+        List<Events.EntityKilled> chaseKills = new ArrayList<>();
+        chaseWorld.events().subscribe(Events.EntityKilled.class, chaseKills::add);
+        Unit chaser = chaseWorld.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        Building fort = chaseWorld.spawnBuilding(wall, red, new GridPos(40, 10));
+        EntityId fortId = fort.id();
+        chase.commands().attack(chaser, fortId);
+        boolean chaseFinished = chase.tickUntil(engine -> !fort.isAlive() && !chaser.orders().hasCurrent(), 1200);
+        check.that(chaseFinished, "an AttackOrder with a building id reaches and kills the building");
+        check.equal(1, chaseKills.size(), "the long chase published exactly one kill");
+        check.equal(fortId, chaseKills.isEmpty() ? null : chaseKills.get(0).victim().id(),
+                "the killed entity is the building the order named");
+        check.that(!chaser.orders().hasCurrent(), "the attack order ends when the building dies");
+
+        // --- AttackMoveOrder accepts a building id too, through the director and directly
+        OcRtsEngine march = combatEngine(content, blue, red);
+        World marchWorld = march.world();
+        Unit marcher = marchWorld.spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        Building bunker = marchWorld.spawnBuilding(content.building(BUNKER), red, new GridPos(40, 10));
+        march.commands().attackMove(marcher, bunker.id());
+        check.that(!marcher.orders().pending().isEmpty()
+                        && marcher.orders().pending().get(0) instanceof AttackMoveOrder attackMove
+                        && attackMove.isTargeted()
+                        && attackMove.targetId().orElseThrow().equals(bunker.id()),
+                "attackMove(unit, buildingId) queues a targeted AttackMoveOrder");
+        boolean marchFinished = march.tickUntil(engine -> !bunker.isAlive() && !marcher.orders().hasCurrent(),
+                1600);
+        check.that(marchFinished, "an AttackMoveOrder with a building id reaches and kills the armoured building");
+        check.that(!marcher.orders().hasCurrent(), "the attack-move order ends when the building dies");
+    }
+
+    /** Tick one duelist needs to destroy a building type, or {@code -1} when nothing died. */
+    private static long buildingDeathTick(ContentRegistry content, Player blue, Player red, String buildingType) {
+        OcRtsEngine engine = combatEngine(content, blue, red);
+        List<Long> ticks = new ArrayList<>();
+        engine.world().events().subscribe(Events.EntityKilled.class, event -> ticks.add(event.tick()));
+        engine.world().spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
+        engine.world().spawnBuilding(content.building(buildingType), red, new GridPos(12, 9));
+        engine.tick(80);
+        return ticks.isEmpty() ? -1L : ticks.get(0);
+    }
+
     // ------------------------------------------------------------------ 13) building costs
 
     /**
@@ -1442,6 +1574,11 @@ public final class RtsScenario {
                 .spriteSet(WEAKLING)
                 .unit(STATUE).name("Statue").role(UnitRole.COMBAT).health(50).speed(0.05f).radius(0.35f)
                 .attack(5f, 0f).spriteSet(STATUE)
+                // Building targets: no armour (30 HP, three hits of 10), armour 5 (six hits) and a one
+                // tile post used by the mixed nearest-target tie break.
+                .building(WALL).name("Wall").size(3, 3).health(30).spriteSet(WALL)
+                .building(BUNKER).name("Bunker").size(3, 3).health(30).armour(5).spriteSet(BUNKER)
+                .building(POST).name("Post").size(1, 1).health(30).spriteSet(POST)
                 .build();
     }
 

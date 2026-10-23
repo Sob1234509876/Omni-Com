@@ -30,6 +30,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int sizeX;
     private final int sizeY;
     private final Natural maxHealth;
+    private final int armour;
     private final int buildTimeTicks;
     private final int level;
     private final ItemBundle cost;
@@ -46,6 +47,7 @@ public final class BuildingType implements Comparable<BuildingType> {
             int sizeX,
             int sizeY,
             Natural maxHealth,
+            int armour,
             int buildTimeTicks,
             int level,
             ItemBundle cost,
@@ -60,6 +62,10 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.sizeX = sizeX;
         this.sizeY = sizeY;
         this.maxHealth = maxHealth;
+        if (armour < 0) {
+            throw new IllegalArgumentException("armour must not be negative, was " + armour);
+        }
+        this.armour = armour;
         this.buildTimeTicks = buildTimeTicks;
         this.level = level;
         this.cost = cost;
@@ -89,6 +95,28 @@ public final class BuildingType implements Comparable<BuildingType> {
 
     public Natural maxHealth() {
         return maxHealth;
+    }
+
+    /**
+     * Flat damage reduction of this building: every hit against it deals
+     * {@code max(1, damage - armour)}.
+     *
+     * <p>It is a real field the combat layer reads, exactly like {@link UnitType#armour()}. Content that
+     * does not set it has no reduction, so adding building targets changed no existing balance.
+     */
+    public int armour() {
+        return armour;
+    }
+
+    /**
+     * Radius of the footprint in tiles, measured from its centre to its longest side.
+     *
+     * <p>Combat reaches a building when its centre is within the attacker's range plus this radius, so a
+     * unit with a short melee reach can hit the wall of a three by three building instead of having to
+     * stand inside it.
+     */
+    public float radius() {
+        return Math.max(sizeX, sizeY) / 2f;
     }
 
     public int buildTimeTicks() {

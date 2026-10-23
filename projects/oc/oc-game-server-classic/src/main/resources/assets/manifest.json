@@ -35,6 +35,9 @@
     "building.mine.t1": { "frames": [[64, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "矿井 普通" },
     "building.mine.t2": { "frames": [[0, 64, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "矿井 强化" },
     "building.mine.t3": { "frames": [[32, 64, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "矿井 精英" },
+    "building.lumbercamp.t1": { "frames": [[0, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "普通" },
+    "building.lumbercamp.t2": { "frames": [[32, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "强化" },
+    "building.lumbercamp.t3": { "frames": [[64, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "精英" },
     "building.warehouse": { "frames": [[0, 32, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "仓库" }
   }
 }

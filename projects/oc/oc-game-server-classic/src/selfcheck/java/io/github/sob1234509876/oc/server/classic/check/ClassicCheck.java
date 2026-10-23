@@ -76,7 +76,7 @@ import java.util.stream.Stream;
  * <p>The sections are deliberately different in kind, because the plugin can fail in four different ways:
  * <ol>
  *   <li>the catalogue is wrong - ids missing, names wrong, a cost that does not include what it should;</li>
- *   <li>the numbers do not ascend - the five melee tiers, the three mines;</li>
+ *   <li>the numbers do not ascend - the five melee tiers, the three mines, the three lumber camps;</li>
  *   <li>the engine gate does not hold - the basic armory must not be able to train t4 or t5, and that has to
  *       be proven against a real {@link ProductionSystem}, not by reading the content back;</li>
  *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 96 atlas,
@@ -123,6 +123,7 @@ public final class ClassicCheck {
         tiers(check, registry);
         tierGate(check, registry);
         mines(check, registry);
+        lumberCamps(check, registry);
         economy(check, classic, registry);
         startingResources(check, classic, registry);
         Map<String, Object> manifest = assets(check, registry);
@@ -176,7 +177,7 @@ public final class ClassicCheck {
                 "工程师伤害低于最便宜的近战单位");
 
         // --- buildings
-        check.equal(6, registry.buildings().size(), "目录注册了 6 座建筑");
+        check.equal(9, registry.buildings().size(), "目录注册了 9 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 仓库）");
         BuildingType armoryT1 = registry.building(ClassicContent.ARMORY_T1);
         BuildingType armoryT2 = registry.building(ClassicContent.ARMORY_T2);
         check.equal("兵营·普通", armoryT1.displayName(), "普通兵营的显示名");
@@ -341,6 +342,52 @@ public final class ClassicCheck {
         }
     }
 
+    // ------------------------------------------------------------------ 4a) the lumber camps
+
+    /** The wood income ladder: three tiers, Chinese names, gold only and strictly ascending wood. */
+    private static void lumberCamps(Check check, ContentRegistry registry) {
+        check.section("伐木场与木材收益阶梯");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
+        List<ClassicContent.LumberCampTier> camps = ClassicContent.lumberCampTiers();
+        check.equal(3, camps.size(), "伐木场有 3 个等级");
+        check.equal("普通", camps.get(0).displayName(), "t1 伐木场的显示名是 普通");
+        check.equal("强化", camps.get(1).displayName(), "t2 伐木场的显示名是 强化");
+        check.equal("精英", camps.get(2).displayName(), "t3 伐木场的显示名是 精英");
+        for (ClassicContent.LumberCampTier camp : camps) {
+            BuildingType building = registry.building(camp.buildingPath());
+            check.equal(camp.displayName(), building.displayName(),
+                    "t" + camp.tier() + " 伐木场的显示名与表一致");
+            check.equal(camp.level(), building.level(), "t" + camp.tier() + " 伐木场的等级与表一致");
+            check.equal(camp.costGold(), asLong(building.cost().amount(gold)),
+                    "t" + camp.tier() + " 伐木场的金币成本与表一致");
+            check.equal(0L, asLong(building.cost().amount(wood)),
+                    "t" + camp.tier() + " 伐木场只花金币，不花木材");
+            check.that(building.hasTag(ClassicContent.LUMBER_TAG),
+                    "t" + camp.tier() + " 伐木场带 lumbercamp 标签（AI 用它计数）");
+            check.that(building.hasTag(ClassicContent.WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute()),
+                    "t" + camp.tier() + " 伐木场带 wood_income_" + camp.woodPerMinute() + " 标签");
+            check.equal(camp.woodPerMinute(), ClassicEconomy.woodIncomePerMinute(building),
+                    "t" + camp.tier() + " 伐木场的木材收益率与表一致");
+            check.equal(0L, ClassicEconomy.incomePerMinute(building),
+                    "t" + camp.tier() + " 伐木场不会被当成金矿（金币收益为 0）");
+        }
+        for (int index = 1; index < camps.size(); index++) {
+            ClassicContent.LumberCampTier low = camps.get(index - 1);
+            ClassicContent.LumberCampTier high = camps.get(index);
+            check.that(high.woodPerMinute() > low.woodPerMinute(), "木材收益严格递增: t" + low.tier() + " "
+                    + low.woodPerMinute() + "/min -> t" + high.tier() + " " + high.woodPerMinute() + "/min");
+            check.that(high.costGold() > low.costGold(), "伐木场成本严格递增: t" + low.tier() + " "
+                    + low.costGold() + " -> t" + high.tier() + " " + high.costGold());
+        }
+        check.equal(ClassicContent.LUMBERCAMP_T1, camps.get(0).buildingPath(),
+                "t1 伐木场的内容路径是 building.lumbercamp.t1");
+        check.equal(ClassicContent.LUMBERCAMP_T2, camps.get(1).buildingPath(),
+                "t2 伐木场的内容路径是 building.lumbercamp.t2");
+        check.equal(ClassicContent.LUMBERCAMP_T3, camps.get(2).buildingPath(),
+                "t3 伐木场的内容路径是 building.lumbercamp.t3");
+    }
+
     // ------------------------------------------------------------------ 4b) mine income
 
     /**
@@ -354,6 +401,7 @@ public final class ClassicCheck {
     private static void economy(Check check, ClassicContent classic, ContentRegistry registry) {
         check.section("矿场收益");
         ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
         Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
         Player landless = Player.of(2, "No warehouse", 0xFFEF5350);
         OcRtsEngine engine = flatEngine(registry, player, landless);
@@ -405,6 +453,55 @@ public final class ClassicCheck {
         economy.tick(world, 420);
         check.equal(810L, goldOf(player, gold), "被摧毁的矿场不再发钱（少 30，累计 810）");
         check.equal(420L, economy.lastPaidTick(), "钩子记住了最后一次发放的 tick");
+
+        // --- the same 60 tick cadence pays wood from constructed, living lumber camps
+        check.equal(0L, asLong(player.logistics().amount(wood)),
+                "在放下伐木场之前，仓库里没有木材");
+        Building firstCamp = world.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), player,
+                new GridPos(60, 10));
+        check.equal(20L, ClassicEconomy.woodIncomePerMinute(firstCamp.type()),
+                "t1 伐木场的木材收益率是 20/分钟");
+        // A second player with a camp but no warehouse: wood that no warehouse can take is not paid.
+        world.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), landless, new GridPos(44, 10));
+        economy.tick(world, 479);
+        check.equal(0L, asLong(player.logistics().amount(wood)), "tick 479 不是 60 的倍数，不发木材");
+        economy.tick(world, 480);
+        check.equal(20L, asLong(player.logistics().amount(wood)), "tick 480 发放一座 t1 伐木场的 20 木材");
+        economy.tick(world, 480);
+        check.equal(20L, asLong(player.logistics().amount(wood)), "同一个 tick 再调用一次也不会重复发木材");
+        economy.tick(world, 481);
+        check.equal(20L, asLong(player.logistics().amount(wood)), "tick 481 不发木材");
+        economy.tick(world, 540);
+        check.equal(40L, asLong(player.logistics().amount(wood)), "tick 540 再发 20（累计 40）");
+
+        Building secondCamp = world.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), player,
+                new GridPos(64, 10));
+        economy.tick(world, 599);
+        check.equal(40L, asLong(player.logistics().amount(wood)), "tick 599 不是整分钟，木材不变");
+        economy.tick(world, 600);
+        check.equal(80L, asLong(player.logistics().amount(wood)),
+                "两座 t1 伐木场在 tick 600 一起发放 40 木材（累计 80）");
+        economy.tick(world, 600);
+        check.equal(80L, asLong(player.logistics().amount(wood)), "同一个 tick 不会给两座伐木场重复发木材");
+
+        Building unfinished = world.placeBuilding(registry.building(ClassicContent.LUMBERCAMP_T3), player,
+                new GridPos(68, 10));
+        check.that(!unfinished.isConstructed(), "新放置的 T3 伐木场还是未完工的工地");
+        economy.tick(world, 660);
+        check.equal(120L, asLong(player.logistics().amount(wood)),
+                "未完工的伐木场一分木材都不发（只有两座 t1 的 40，累计 120）");
+        unfinished.completeConstruction();
+        economy.tick(world, 720);
+        check.equal(240L, asLong(player.logistics().amount(wood)),
+                "完工后的 T3 伐木场按 80/分钟发放（20+20+80，累计 240）");
+        check.equal(0L, asLong(landless.logistics().amount(wood)),
+                "没有仓库的玩家收不到伐木场木材（投放点规则）");
+
+        world.destroy(secondCamp);
+        world.flush();
+        economy.tick(world, 780);
+        check.equal(340L, asLong(player.logistics().amount(wood)),
+                "被摧毁的伐木场不再发木材（少 20，累计 340）");
 
         check.that(registry.building(ClassicContent.MINE_T1).hasTag(ClassicContent.INCOME_TAG_PREFIX + 30)
                         && registry.building(ClassicContent.MINE_T2)
@@ -487,7 +584,7 @@ public final class ClassicCheck {
             return Map.of();
         }
         check.equal(20, tiles.size(), "tiles 保留了 hello 的 20 个地块名");
-        check.equal(12, entities.size(), "entities 有 12 个条目（11 个绘制单位/建筑 + 借用图块的仓库）");
+        check.equal(15, entities.size(), "entities 有 15 个条目（6 单位 + 9 建筑）");
 
         StringBuilder bad = new StringBuilder();
         int rects = 0;
@@ -530,7 +627,7 @@ public final class ClassicCheck {
         }
         check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x96 内（共 " + rects + " 个）"
                 + (bad.length() == 0 ? "" : ": " + bad));
-        check.that(rects >= 20 + 12, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
+        check.that(rects >= 20 + 15, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
         check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
         check.that(unnamedEntities.isEmpty(), "每个实体都有非空的 name: " + unnamedEntities);
 
@@ -597,7 +694,7 @@ public final class ClassicCheck {
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
             check.equal(ClassicContent.ID, host.worldContent().id(), "主机服务的正是 oc-classic");
             check.equal(6, host.content().units().size(), "主机用的目录有 6 个单位");
-            check.equal(6, host.content().buildings().size(), "主机用的目录有 6 座建筑");
+            check.equal(9, host.content().buildings().size(), "主机用的目录有 9 座建筑");
 
             String initial = host.snapshotJson();
             check.that(initial.startsWith("{") && initial.endsWith("}"), "快照以 { 开头、以 } 结尾");
@@ -702,6 +799,7 @@ public final class ClassicCheck {
         check.section("敌人 AI");
         trainsEngineersFirst(check, registry);
         buildsMissingStructures(check, registry);
+        keepsLumberCamp(check, registry);
         attacksAtSix(check, registry);
         defendsItsBase(check, registry);
     }
@@ -767,6 +865,59 @@ public final class ClassicCheck {
             mineSite |= candidate.type().hasTag(ClassicContent.MINE_TAG);
         }
         check.that(mineSite, "两座兵营已就位而矿场不足时，AI 放下一个矿场工地");
+    }
+
+    /**
+     * The AI's wood need: with the other economy targets met it places a lumber camp, and with one
+     * standing it does not place a second.
+     */
+    private static void keepsLumberCamp(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player enemy = engine.players().get(1);
+        Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
+        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), enemy, new GridPos(24, 20));
+        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy, new GridPos(28, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            world.spawnBuilding(registry.building(ClassicContent.MINE_T1), enemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy, new GridPos(22, 22));
+        stock(check, registry, enemy, warehouse);
+        ClassicAi ai = new ClassicAi();
+
+        check.equal(0, countTag(world, enemy, ClassicContent.LUMBER_TAG), "AI 开始时没有伐木场");
+        ai.tick(world, 20);
+        List<Building> sites = sitesOf(world, enemy);
+        boolean lumberSite = false;
+        for (Building site : sites) {
+            lumberSite |= site.type().hasTag(ClassicContent.LUMBER_TAG);
+        }
+        check.that(lumberSite, "两座兵营与三座矿场已就位而伐木场不足时，AI 放下一个伐木场工地");
+        check.equal(ClassicContent.LUMBERCAMP_T1, sites.isEmpty() ? "<none>" : sites.get(0).type().key().path(),
+                "工地是普通伐木场 building.lumbercamp.t1");
+
+        // One standing camp satisfies the need: the next decision places nothing else.
+        OcRtsEngine satisfied = aiEngine(registry);
+        World satisfiedWorld = satisfied.world();
+        Player satisfiedEnemy = satisfied.players().get(1);
+        Building satisfiedWarehouse = warehouse(satisfiedWorld, registry, satisfiedEnemy, new GridPos(20, 20));
+        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), satisfiedEnemy,
+                new GridPos(24, 20));
+        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), satisfiedEnemy,
+                new GridPos(28, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            satisfiedWorld.spawnBuilding(registry.building(ClassicContent.MINE_T1), satisfiedEnemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), satisfiedEnemy,
+                new GridPos(48, 20));
+        satisfiedWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), satisfiedEnemy, new GridPos(22, 22));
+        stock(check, registry, satisfiedEnemy, satisfiedWarehouse);
+        ClassicAi satisfiedAi = new ClassicAi();
+        satisfiedAi.tick(satisfiedWorld, 20);
+        check.equal(0, sitesOf(satisfiedWorld, satisfiedEnemy).size(),
+                "已有一座伐木场时，AI 不再放下第二座（维持目标 1 座）");
     }
 
     /** Six fighting units: the AI marches them all at the nearest enemy building, and only once. */
@@ -842,7 +993,7 @@ public final class ClassicCheck {
      * {@link WorldHost} with the classic content, the economy and the AI, compared byte for byte.
      *
      * <p>The host is advanced through {@link WorldHost#step()}, not its wall clock thread, so the run is
-     * exactly 600 ticks on any machine. Everything the run contains - mine income, the AI's bootstrap,
+     * exactly 600 ticks on any machine. Everything the run contains - gold and wood income, the AI's bootstrap,
      * its production, the orders it issues and the movement and combat that follow - therefore has to be
      * a pure function of the seed and the tick number for the two documents to match.
      */
@@ -1012,6 +1163,7 @@ public final class ClassicCheck {
                     entry(ClassicContent.class),
                     entry(ClassicContent.MeleeTier.class),
                     entry(ClassicContent.MineTier.class),
+                    entry(ClassicContent.LumberCampTier.class),
                     // The two world tick hooks the plugin instantiates in its own constructor: a plugin jar
                     // that forgot them would fail at load time, which is exactly what this fixture catches.
                     entry(ClassicEconomy.class),

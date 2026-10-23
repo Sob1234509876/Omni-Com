@@ -4,8 +4,10 @@ import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.core.EntityId;
+import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
@@ -29,21 +31,23 @@ import java.util.Objects;
  *
  * <p><strong>Cost.</strong> Target selection asks the unit's own dimension's
  * {@link io.github.sob1234509876.oc.rts.entity.SpatialIndex} for the entities inside its attack range
- * and scans only that neighbourhood: the tick costs the sum of the neighbourhoods of the fighting units,
- * never a pass over every pair of units on the board. Units of another dimension are invisible to the
- * query because coordinates are local to a dimension.
+ * widened by the largest building footprint of the catalogue, and scans only that neighbourhood: the
+ * tick costs the sum of the neighbourhoods of the fighting units, never a pass over every pair of
+ * entities on the board. Entities of another dimension are invisible to the query because coordinates
+ * are local to a dimension.
  *
- * <p><strong>An enemy</strong> is a living unit owned by another player that is not an ally. Players
- * sharing a {@link Player#team()} are allies and never shoot each other, which is the rule
- * {@link Player#isAlliedWith(Player)} documents. Buildings are not targets yet: the combat layer fights
- * units.
+ * <p><strong>An enemy</strong> is a living unit <em>or building</em> owned by another player that is not
+ * an ally. Players sharing a {@link Player#team()} are allies and never shoot each other, which is the
+ * rule {@link Player#isAlliedWith(Player)} documents. A building is hit when its centre lies within the
+ * attacker's range plus the building's footprint radius, so a melee unit can strike the wall of a three
+ * by three building without having to stand inside it; a unit keeps the original centre-to-centre rule.
  *
  * <p><strong>A hit</strong> deals {@code max(1, damage - armour)} to the victim and publishes
  * {@link Events.DamageDealt}; the event carries the amount actually subtracted from the victim's health,
  * which is the computed damage capped by the health that was left. A victim that reaches zero health gets
  * an {@link Events.EntityKilled} event and is removed through {@link World#destroy}, so the usual
- * {@link Events.EntityDestroyed} and the end of tick flush follow. The id of the dead unit is then
- * cleared from every unit's target, so no survivor is left aiming at a removed entity.
+ * {@link Events.EntityDestroyed} and the end of tick flush follow. The id of the dead unit or building is
+ * then cleared from every unit's target, so no survivor is left aiming at a removed entity.
  *
  * <p><strong>Movement.</strong> A unit with a target in range stops where it stands: its movement goal is
  * dropped and its velocity zeroed, and it keeps auto-attacking whatever comes into range. The one
@@ -55,8 +59,10 @@ import java.util.Objects;
  * tick, so it simply keeps walking.
  *
  * <p><strong>Determinism.</strong> Nothing here draws a random number or reads a clock. The nearest
- * enemy is chosen by squared distance and ties are broken by entity id, so the same states always
- * produce the same target, the same hit tick and the same kill tick.
+ * enemy - unit or building - is chosen by squared distance and ties are broken by entity id, so the
+ * same states always produce the same target, the same hit tick and the same kill tick. A building that
+ * reaches zero health is removed through the same {@link World#destroy} path as a unit, so it leaves
+ * the spatial index immediately and every unit aiming at it is cleared on the same tick.
  */
 public final class CombatSystem implements SimulationSystem {
 
@@ -103,7 +109,7 @@ public final class CombatSystem implements SimulationSystem {
                 unit.clearTarget();
                 continue;
             }
-            Unit target = nearestEnemyInRange(world, unit);
+            Entity target = nearestEnemyInRange(world, unit);
             if (target == null) {
                 unit.clearTarget();
                 continue;
@@ -121,15 +127,19 @@ public final class CombatSystem implements SimulationSystem {
     // ------------------------------------------------------------------ targeting
 
     /**
-     * The nearest living enemy inside the unit's attack range, or {@code null} when there is none.
+     * The nearest living enemy unit or building inside the unit's attack range, or {@code null} when
+     * there is none.
      *
      * <p>The spatial index supplies the candidates, so the cost is the neighbourhood of the unit, not a
-     * scan of the world. Distance is squared centre-to-centre distance, the same measure and the same
-     * comparison the index's radius query uses, so "inside the query" and "inside the range" agree.
-     * Equal distances are broken by entity id: the lower id wins, which makes the choice independent of
-     * the bucket order the index happens to return.
+     * scan of the world. The query is widened by the largest building footprint radius of the catalogue,
+     * because a building is reached at its edge; a unit candidate is still judged by the unchanged
+     * centre-to-centre rule, so the unit-only result is exactly what it always was. Equal distances are
+     * broken by entity id: the lower id wins, which makes the choice independent of the bucket order the
+     * index happens to return.
+     *
+     * @return the nearest enemy unit or building, never {@code null} only when one is in reach
      */
-    public static Unit nearestEnemyInRange(World world, Unit unit) {
+    public static Entity nearestEnemyInRange(World world, Unit unit) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(unit, "unit");
         CombatStats stats = unit.combat();
@@ -137,27 +147,42 @@ public final class CombatSystem implements SimulationSystem {
             return null;
         }
         List<Entity> candidates = world.spatial(unit.dimensionId())
-                .inRadius(unit.position(), stats.attackRange());
-        Unit best = null;
+                .inRadius(unit.position(), stats.attackRange() + buildingTargetPadding(world));
+        Entity best = null;
         float bestDistance = Float.MAX_VALUE;
         for (int i = 0; i < candidates.size(); i++) {
             Entity candidate = candidates.get(i);
-            if (!(candidate instanceof Unit enemy) || !enemy.isAlive() || !isEnemy(unit, enemy)) {
+            if (!(candidate instanceof Unit) && !(candidate instanceof Building)) {
                 continue;
             }
-            float distance = unit.position().distanceSquared(enemy.position());
+            if (!candidate.isAlive() || !isEnemy(unit, candidate) || !inRange(unit, candidate)) {
+                continue;
+            }
+            float distance = unit.position().distanceSquared(candidate.position());
             if (best == null || distance < bestDistance
-                    || (distance == bestDistance && enemy.id().compareTo(best.id()) < 0)) {
-                best = enemy;
+                    || (distance == bestDistance && candidate.id().compareTo(best.id()) < 0)) {
+                best = candidate;
                 bestDistance = distance;
             }
         }
         return best;
     }
 
-    /** Whether {@code other} is an enemy of {@code unit}: another player, alive, not an ally. */
+    /** Largest footprint radius among the building types of the world, used to widen the query. */
+    private static float buildingTargetPadding(World world) {
+        float largest = 0f;
+        for (BuildingType type : world.content().buildings()) {
+            largest = Math.max(largest, type.radius());
+        }
+        return largest;
+    }
+
+    /** Whether {@code other} is an enemy of {@code unit}: a living unit or building of another player. */
     public static boolean isEnemy(Unit unit, Entity other) {
-        if (unit == null || other == null || !other.isAlive() || !(other instanceof Unit)) {
+        if (unit == null || other == null || !other.isAlive()) {
+            return false;
+        }
+        if (!(other instanceof Unit) && !(other instanceof Building)) {
             return false;
         }
         if (unit.owner().equals(other.owner())) {
@@ -166,21 +191,32 @@ public final class CombatSystem implements SimulationSystem {
         return !unit.owner().isAlliedWith(other.owner());
     }
 
-    /** Whether the target stands inside the unit's attack range. */
+    /**
+     * Whether the target stands inside the unit's attack range.
+     *
+     * <p>A unit is measured centre to centre, exactly as before. A building is measured to its edge:
+     * the footprint radius is subtracted from the centre distance, so a short melee reach can hit the
+     * wall of a large building. This is the same rule {@link #nearestEnemyInRange(World, Unit)} applies,
+     * which is what keeps target selection and the attack order's hold test in agreement.
+     */
     public static boolean inRange(Unit unit, Entity target) {
         Objects.requireNonNull(unit, "unit");
         Objects.requireNonNull(target, "target");
-        return unit.combat().reaches(unit.position().distance(target.position()));
+        float distance = unit.position().distance(target.position());
+        if (target instanceof Building building) {
+            distance -= building.radius();
+        }
+        return unit.combat().reaches(distance);
     }
 
     // ------------------------------------------------------------------ one hit
 
     /**
-     * Applies one hit from {@code attacker} to {@code victim}, publishes the damage and, when the victim
-     * dies, the kill and the removal.
+     * Applies one hit from {@code attacker} to {@code victim}, unit or building, publishes the damage
+     * and, when the victim dies, the kill and the removal.
      */
-    private void attack(World world, Tick tick, Unit attacker, Unit victim) {
-        Natural damage = attacker.combat().damageAgainst(victim.combat());
+    private void attack(World world, Tick tick, Unit attacker, Entity victim) {
+        Natural damage = attacker.combat().damageAgainst(victim);
         Natural dealt = victim.health().damage(damage);
         // Content with a zero cooldown still has to spend one tick between hits, otherwise the cooldown
         // would be meaningless and the hit order would depend on the unit order in the list.

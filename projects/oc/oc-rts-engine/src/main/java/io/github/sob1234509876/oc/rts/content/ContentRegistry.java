@@ -431,11 +431,12 @@ public final class ContentRegistry {
         }
 
         /**
-         * Flat damage reduction of the current unit: every hit against it deals
+         * Flat damage reduction of the current unit or building: every hit against it deals
          * {@code max(1, damage - armour)}. {@code 0} (the default) means no reduction.
          *
-         * <p>This sets the real {@link UnitType#armour()} field the combat system reads. Content may keep
-         * publishing an {@code armour_<n>} tag for display, but the tag is not a mechanic.
+         * <p>This sets the real {@link UnitType#armour()} or {@link BuildingType#armour()} field the
+         * combat system reads. Content may keep publishing an {@code armour_<n>} tag for display, but the
+         * tag is not a mechanic.
          *
          * @throws IllegalArgumentException when the value is negative
          */
@@ -443,7 +444,11 @@ public final class ContentRegistry {
             if (value < 0) {
                 throw new IllegalArgumentException("armour must not be negative, was " + value);
             }
-            draft(UnitDraft.class, "unit").armour = value;
+            if (current instanceof BuildingDraft building) {
+                building.armour = value;
+            } else {
+                draft(UnitDraft.class, "unit").armour = value;
+            }
             return this;
         }
 
@@ -637,6 +642,7 @@ public final class ContentRegistry {
                             building.sizeX,
                             building.sizeY,
                             building.maxHealth,
+                            building.armour,
                             building.buildTimeTicks,
                             building.level,
                             resolveItems(items, building.cost, "building " + building.key),
@@ -818,6 +824,7 @@ public final class ContentRegistry {
         int sizeX = 1;
         int sizeY = 1;
         Natural maxHealth = Natural.of(500);
+        int armour;
         int buildTimeTicks = 200;
         int level = 1;
         Natural storageSlots = Natural.ZERO;

@@ -48,12 +48,12 @@ Task oriented guides (written in Chinese, API names in English) live in [`help/`
 The scenario is a headless self check (no test framework, no network) that prints what it observed:
 terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbounded map with an LRU
 chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
-soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, a charged
-building site, and an ASCII picture of the world.
+soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, buildings
+that take damage and die, a charged building site, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 305 checks passed.
+RTS engine scenario: all 336 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -76,6 +76,7 @@ What the scenario actually proves, section by section:
 | 10 huge numbers | an item with a `10^5000` stack and a unit with `10↑↑10` hit points: 1000 damage does not dent it, `Natural.BEYOND` damage kills it, a vault reports `BEYOND` slots while an unlimited vault is still not full, and a four slot vault with the same structural amount is |
 | 11 dimensions | `moonAndMars()` gives three dimensions; two units spawned on the same tile of the overworld and the Moon keep separate ids, one entity per spatial index and no cross map neighbour; a far away Mars focus loads Mars chunks only; a move order keeps the unit on the Moon; destroying it leaves the overworld unit alive; two gateways chain the overworld to Mars through the Moon, the route is two hops, gateways are one way, and a travelling unit keeps its id and fires one `EntityTransferred` per hop |
 | 12 combat | a duelist and an unarmed dummy: exactly one kill on tick 21, three `DamageDealt` events of 10; a 10 damage hit on 5 hit points reports the 5 actually subtracted; armour 5 halves each hit; a 3 HP slab still dies to the floor of one; a range-zero unit never attacks; the nearest enemy wins with ties broken by id; `AttackOrder` chases, `AttackMoveOrder` engages and resumes; the kill clears the dead id from every unit's target |
+| 12b building targets | a 3x3 building takes hits and dies on tick 21 (armour 5 makes it tick 51), its kill publishes the ordinary `EntityKilled` and removes it from the world, the spatial index and the attacker's target; a mixed unit/building tie is still broken by id; `AttackOrder` and `AttackMoveOrder` both accept a building id, reach its footprint edge and kill it |
 | 13 building cost | placing a building site charges exactly the catalogue cost once; an unaffordable second build and an occupied-tile placement are both refused, and neither charges anything |
 
 A real preview of the generated world, terrain only, one character per tile
@@ -106,7 +107,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 5 | Sprites and animation (data only) | `visual.VisualLibrary`, `visual.AnimationSet`, `visual.UnitAnimator`, `visual.AnimationSystem` |
 | 6 | Several maps in one world (dimensions) | `dimension.DimensionId`, `dimension.DimensionProfile`, `dimension.Dimension`, `dimension.Gateway`, `World` dimension accessors, `map.ChunkStreamer` |
 | 7 | Travel between maps through gateways | `World.addGateway`, `World.route`, `order.TransferOrder`, `order.UnitDirector.travel`, `event.Events.EntityTransferred` |
-| 8 | Units that fight on their own | `combat.CombatSystem`, `combat.CombatStats`, `order.AttackOrder`, `order.AttackMoveOrder`, `event.Events.DamageDealt`, `event.Events.EntityKilled` |
+| 8 | Units that fight units and buildings | `combat.CombatSystem`, `combat.CombatStats`, `order.AttackOrder`, `order.AttackMoveOrder`, `event.Events.DamageDealt`, `event.Events.EntityKilled` |
 
 ## Architecture
 

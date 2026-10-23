@@ -37,7 +37,7 @@
 | 能力 | 现状 | 你可以怎么做 |
 | --- | --- | --- |
 | 渲染、窗口、输入、选中 UI | 引擎零图形依赖 | 用[只读快照](08-snapshots-and-rendering.md)自己写渲染层；`AsciiMapRenderer` 是一个完整的消费示例 |
-| 战斗 | **已实现**：相位 450 的 `CombatSystem` 自动索敌、扣护甲、结算伤害与死亡；只打单位，不打建筑 | 见 [14-combat.md](14-combat.md)；攻城要自己扩展目标类型与伤害规则 |
+| 战斗 | **已实现**：相位 450 的 `CombatSystem` 自动索敌、扣护甲、结算伤害与死亡；目标是单位**或建筑**，建筑按占地边缘吃射程并走同一条 `World.destroy` | 见 [14-combat.md](14-combat.md)；建筑是否算敌人仍由 `Player.isAlliedWith` 决定 |
 | 死亡与尸体 | 战斗会把血量为零的单位立刻标死并在 tick 末移除，**没有“死亡动画播完再消失”的流程** | 自己写系统：订阅 `Events.EntityKilled` → 播 `AnimationClips.DEATH` → 若干 tick 后清理 |
 | AI | 没有 | 它本质上就是"按 tick 读快照/世界，然后调 `UnitDirector` 与 `ProductionSystem`"，不需要引擎改动 |
 | 战争迷雾 | 没有可见性/探索状态 | 自己按玩家维护一张已探索区块集合，订阅 `Events.ChunkLoaded` 更新 |
@@ -243,4 +243,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 战斗字段与生命：[`CombatStats.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatStats.java)、[`CombatSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatSystem.java)、[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1c、10、11、12、13 节，整份 305 项）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（215 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1c、10、11、12、12b、13 节，整份 336 项）

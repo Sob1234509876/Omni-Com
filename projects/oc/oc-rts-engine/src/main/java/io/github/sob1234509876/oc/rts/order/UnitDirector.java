@@ -68,6 +68,16 @@ public interface UnitDirector {
     void attackMove(Unit unit, GridPos destination);
 
     /**
+     * Attack-moves onto one entity, unit or building: the unit walks into reach of the target, attacks
+     * it until it dies, and fails when an id that never resolves cannot be found.
+     *
+     * <p>This is the entity form of {@link #attackMove(Unit, Vec2)}; the target id may name a building
+     * exactly like {@link #attack(Unit, EntityId)}. A building is reached at its footprint edge, so the
+     * final approach does not have to stand inside the building.
+     */
+    void attackMove(Unit unit, EntityId target);
+
+    /**
      * Places a building site on the map and orders the unit to build it.
      *
      * <p>The site is created unfinished in the unit's own dimension - coordinates are local to a

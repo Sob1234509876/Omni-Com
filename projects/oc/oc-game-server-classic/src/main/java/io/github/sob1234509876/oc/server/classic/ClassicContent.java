@@ -9,12 +9,13 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The {@code oc-classic} game: five melee tiers, an engineer, two armories, three mines and a warehouse.
+ * The {@code oc-classic} game: five melee tiers, an engineer, two armories, three mines, three lumber camps
+ * and a warehouse.
  *
  * <p><strong>The game.</strong> Everything a match needs is registered here, as data: four terrain kinds
  * (grass and sand are buildable, rock and water are not), two items ({@code gold} and {@code wood}), six
- * units, six buildings and six production recipes. The engine never learns their names; the catalogue is the
- * game.
+ * units, nine buildings and six production recipes. The engine never learns their names; the catalogue is
+ * the game.
  *
  * <p><strong>Units.</strong> Five melee tiers with strictly ascending hit points, damage, armour, cost and
  * production time, plus one cheap engineer:
@@ -51,6 +52,15 @@ import java.util.Objects;
  * passive income tick, so each mine publishes its rate as the {@code income_<gold per minute>} tag (and as
  * {@link #mineTiers()} for tooling), and {@link ClassicEconomy} - the plugin's world tick hook - pays it
  * out. No recipe silently mints gold here.
+ *
+ * <p><strong>Wood comes from lumber camps.</strong> {@code building.lumbercamp.t1}/{@code .t2}/{@code .t3}
+ * are the same idea for the second resource: named 普通/强化/精英, bought with <strong>gold only</strong>
+ * (80/160/320), with strictly ascending wood income published as the
+ * {@code wood_income_<wood per minute>} tag (20/40/80). {@link ClassicEconomy} sums those tags over a
+ * player's constructed, alive camps and deposits the wood through the same warehouse path as gold, so a
+ * player holding no warehouse earns neither. This is what makes an armory's 20 wood reachable after the
+ * opening stock, and the AI keeps one camp standing with the same bounded site search it uses for its
+ * other buildings.
  *
  * <p><strong>The drop off.</strong> The engine's logistics network is "every finished building whose type is
  * a warehouse" - there is no special drop off type. {@code building.warehouse} therefore replicates the
@@ -90,6 +100,12 @@ public final class ClassicContent implements WorldContent {
     /** Prefix of the content tag that publishes a mine's income, in gold per minute. */
     public static final String INCOME_TAG_PREFIX = "income_";
 
+    /** Tag shared by the three lumber camp tiers; the AI counts these buildings with it. */
+    public static final String LUMBER_TAG = "lumbercamp";
+
+    /** Prefix of the content tag that publishes a lumber camp's income, in wood per minute. */
+    public static final String WOOD_INCOME_TAG_PREFIX = "wood_income_";
+
     public static final String MELEE_T1 = "unit.melee.t1";
     public static final String MELEE_T2 = "unit.melee.t2";
     public static final String MELEE_T3 = "unit.melee.t3";
@@ -102,6 +118,10 @@ public final class ClassicContent implements WorldContent {
     public static final String MINE_T1 = "building.mine.t1";
     public static final String MINE_T2 = "building.mine.t2";
     public static final String MINE_T3 = "building.mine.t3";
+
+    public static final String LUMBERCAMP_T1 = "building.lumbercamp.t1";
+    public static final String LUMBERCAMP_T2 = "building.lumbercamp.t2";
+    public static final String LUMBERCAMP_T3 = "building.lumbercamp.t3";
 
     /** The engine's drop off: a building flagged as a warehouse, exactly like the sample catalogue's. */
     public static final String WAREHOUSE = "building.warehouse";
@@ -156,6 +176,22 @@ public final class ClassicContent implements WorldContent {
             long costGold, int buildTimeTicks) {
     }
 
+    /**
+     * One lumber camp tier.
+     *
+     * @param tier the tier number, 1 to 3
+     * @param buildingPath content path of the building
+     * @param displayName Chinese display name
+     * @param level building level, declared for symmetry with the mines
+     * @param woodPerMinute the documented wood income rate, paid by {@link ClassicEconomy} on every full
+     *     minute
+     * @param costGold cost in gold; lumber camps never cost wood
+     * @param buildTimeTicks construction time in ticks
+     */
+    public record LumberCampTier(int tier, String buildingPath, String displayName, int level,
+            long woodPerMinute, long costGold, int buildTimeTicks) {
+    }
+
     /** The five melee tiers, cheapest first. */
     private static final List<MeleeTier> MELEE_TIERS = List.of(
             new MeleeTier(1, MELEE_T1, "普通", 100, 10, 1, 20, 60),
@@ -169,6 +205,12 @@ public final class ClassicContent implements WorldContent {
             new MineTier(1, MINE_T1, "普通", 1, 30, 80, 120),
             new MineTier(2, MINE_T2, "强化", 2, 60, 160, 180),
             new MineTier(3, MINE_T3, "精英", 3, 120, 320, 240));
+
+    /** The three lumber camp tiers, cheapest first, all paid for in gold only. */
+    private static final List<LumberCampTier> LUMBER_CAMP_TIERS = List.of(
+            new LumberCampTier(1, LUMBERCAMP_T1, "普通", 1, 20, 80, 120),
+            new LumberCampTier(2, LUMBERCAMP_T2, "强化", 2, 40, 160, 180),
+            new LumberCampTier(3, LUMBERCAMP_T3, "精英", 3, 80, 320, 240));
 
     /** Cost of the basic armory: gold and wood. */
     private static final long ARMORY_T1_GOLD = 100;
@@ -198,6 +240,11 @@ public final class ClassicContent implements WorldContent {
         return MINE_TIERS;
     }
 
+    /** The three lumber camp tiers, cheapest first. */
+    public static List<LumberCampTier> lumberCampTiers() {
+        return LUMBER_CAMP_TIERS;
+    }
+
     @Override
     public String id() {
         return ID;
@@ -205,7 +252,8 @@ public final class ClassicContent implements WorldContent {
 
     @Override
     public String description() {
-        return "Classic: five melee tiers and an engineer, two armory levels, three mines and a warehouse";
+        return "Classic: five melee tiers and an engineer, two armory levels, three mines, three lumber"
+                + " camps and a warehouse";
     }
 
     @Override
@@ -281,6 +329,22 @@ public final class ClassicContent implements WorldContent {
                     .spriteSet(mine.buildingPath())
                     .tag(MINE_TAG)
                     .tag(INCOME_TAG_PREFIX + mine.goldPerMinute());
+        }
+
+        // ------------------------------------------------------------------ lumber camps
+        for (LumberCampTier camp : LUMBER_CAMP_TIERS) {
+            registry.building(camp.buildingPath())
+                    .name(camp.displayName())
+                    .size(3, 3)
+                    .health(500)
+                    .level(camp.level())
+                    // Gold only: a lumber camp must never compete with the armory for the wood it makes.
+                    .cost(GOLD, camp.costGold())
+                    .buildTime(camp.buildTimeTicks())
+                    .storage(6)
+                    .spriteSet(camp.buildingPath())
+                    .tag(LUMBER_TAG)
+                    .tag(WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute());
         }
 
         // ------------------------------------------------------------------ armories and the drop off

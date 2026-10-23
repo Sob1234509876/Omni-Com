@@ -6,11 +6,11 @@
 
 - 战斗在 tick 管线里的位置：相位 450，移动（400）之后、建造（500）之前。
 - `CombatStats`：一个单位从内容目录继承下来的只读战斗视图，创建一次、终身不变。
-- 目标选择：本维度的空间索引、最近的敌人、平方距离与实体 id 平局。
+- 目标选择：本维度的空间索引、最近的敌人（**单位或建筑**）、平方距离与实体 id 平局。
 - 一次命中的完整账目：`max(1, 伤害 - 护甲)`、tick 冷却、`DamageDealt` 与 `EntityKilled`。
-- 死亡：实体怎么离开世界、它的 id 怎么从每个单位的目标里被清掉。
-- `AttackOrder`：追一个 id；超时与卡住沿用 `MoveOrder` 的约定；未知 id 与换图的敌人都会失败。
-- `AttackMoveOrder`：边走边打，打完继续走。
+- 死亡：实体怎么离开世界、它的 id 怎么从每个单位的目标里被清掉；建筑走同一条 `World.destroy`。
+- `AttackOrder`：追一个 id（单位或建筑）；超时与卡住沿用 `MoveOrder` 的约定；未知 id 与换图的敌人都会失败。
+- `AttackMoveOrder`：边走边打，打完继续走；也能接受一个实体 id，一路追到建筑边上打。
 - 怎么取消：`UnitDirector.stop` 与 `UnitDirector.hold`，以及为什么普通 `MoveOrder` 会被战斗顶掉。
 - 跨维度：`World.transfer` 为什么必须清空目标。
 - 确定性：没有随机、没有时钟，同样的订单与种子得到同样的结果。
@@ -36,7 +36,7 @@
 | 分量 | 类型 | 含义 |
 | --- | --- | --- |
 | `attackDamage` | `Natural` | 每次命中的伤害，**未扣目标护甲**；`0` 表示不能攻击 |
-| `attackRange` | `float` | 射程，单位是格，量的是**单位中心到中心**的距离；`0` 表示不能攻击 |
+| `attackRange` | `float` | 射程，单位是格；对单位量**中心到中心**，对建筑量到**占地边缘**（中心距减建筑半径）；`0` 表示不能攻击 |
 | `attackCooldownTicks` | `int` | 同一个攻击者两次命中之间的 tick 数 |
 | `armour` | `int` | 平摊减伤，作用在**每一次** incoming 命中上 |
 | `maxHealth` | `Natural` | 生成时的血量上限 |
@@ -53,25 +53,27 @@
 CombatStats stats = unit.combat();
 stats.canAttack();                 // 伤害 > 0 且射程 > 0
 stats.reaches(distance);           // distance <= attackRange
-stats.damageAfterArmour(3);        // max(1, attackDamage - 3)
-stats.damageAgainst(enemy.combat());// 同上，取目标的 armour
+stats.damageAfterArmour(3);         // max(1, attackDamage - 3)
+stats.damageAgainst(enemy.combat()); // 同上，取单位目标的 armour
+stats.damageAgainst(enemy);          // 单位或建筑：取 Unit.combat().armour() 或 Building.armour()
+CombatStats.armourOf(entity);        // 单位或建筑目标的减伤字段
 ```
 
 `canAttack()` 这一条很重要：一个工人或任何射程为 0 的单位，即使被内容目录写了非零伤害，也永远不会获得目标。战斗系统每 tick 会先把这类单位的 `targetId` 清掉，让“目标”字段保持诚实。
 
-内容侧怎么写这些值见 [02-content-and-items.md](02-content-and-items.md)。护甲是**真正的引擎字段**（`UnitType.armour()`），`armour_<n>` 标签只是给显示和工具看的，没有系统读它。
+内容侧怎么写这些值见 [02-content-and-items.md](02-content-and-items.md)。护甲是**真正的引擎字段**：单位读 `UnitType.armour()`，建筑读 `BuildingType.armour()`（默认 0）。两处的 `armour_<n>` 标签只是给显示和工具看的，没有系统读它。
 
 ## 三、目标选择：本维度、最近、平局按 id
 
-`CombatSystem.nearestEnemyInRange(world, unit)` 是目标选择的唯一实现，`AttackMoveOrder` 也复用它：
+`CombatSystem.nearestEnemyInRange(world, unit)` 是目标选择的唯一实现，`AttackMoveOrder` 也复用它。返回类型是 `Entity`，也就是一个 `Unit` 或 `Building`：
 
 1. 单位不能攻击（`!canAttack()`）就返回 `null`。
-2. 用 `world.spatial(unit.dimensionId()).inRadius(unit.position(), attackRange())` 取候选。代价是**这个单位的邻域**，不是全图两两比较；别的维度的单位在查询里根本不存在，因为坐标是每张图局部的。
-3. 候选必须是一个 `Unit`、还活着、并且是敌人。`isEnemy` 的判定是：**不同玩家，且双方不属于同一 `team`**。同队的玩家永远不会互相开火（`Player.isAlliedWith`）。
-4. 距离用**平方中心距**（`position().distanceSquared(...)`），与空间索引半径查询的度量一致，所以“查询命中”与“射程命中”不会打架。
-5. 平局按**更小的实体 id** 胜出。这打破了空间索引桶顺序的影响，让同一状态永远得到同一个目标。
+2. 用 `world.spatial(unit.dimensionId()).inRadius(unit.position(), attackRange() + 建筑最大半径)` 取候选。查询半径加上目录里最大的建筑半径，是因为建筑可以从边缘命中；单位候选仍按原来的中心距判断，所以纯单位目标的行为一字未变。代价仍是**这个单位的邻域**，不是全图两两比较；别的维度的实体在查询里根本不存在。
+3. 候选必须是 `Unit` 或 `Building`、还活着、并且是敌人。`isEnemy` 的判定是：**不同玩家，且双方不属于同一 `team`**。同队的玩家永远不会互相开火（`Player.isAlliedWith`）。
+4. 距离用**平方中心距**（`position().distanceSquared(...)`）比较；`inRange` 对单位用中心距，对建筑用 `中心距 - Building.radius()`，所以三格宽的建筑可以被近战从墙外打到。
+5. 平局按**更小的实体 id** 胜出。这打破了空间索引桶顺序的影响，让同一状态永远得到同一个目标；单位与建筑混在一起时也一样。
 
-**建筑不是目标**。当前战斗层只打单位；`isEnemy` 里显式要求 `other instanceof Unit`。想让攻城单位打建筑，要自己扩展这一层。
+建筑因此和单位一样会被自动索敌、被 `DamageDealt` 记录、被打死后发布 `EntityKilled` 并从空间索引和每个单位的目标里清掉。`BuildingType.armour()` 不写就是 0，所以旧内容不会因为多了一种目标而改变平衡。
 
 ## 四、一次命中：伤害、冷却、两个事件
 
@@ -86,7 +88,7 @@ stats.damageAgainst(enemy.combat());// 同上，取目标的 armour
 一次命中的账目是固定的（摘自 `CombatSystem.attack`，`dropTarget` 是它的私有辅助方法）：
 
 ```java
-Natural damage = attacker.combat().damageAgainst(victim.combat()); // max(1, 伤害 - 护甲)
+Natural damage = attacker.combat().damageAgainst(victim);           // max(1, 伤害 - 目标护甲)
 Natural dealt  = victim.health().damage(damage);                   // 实际扣掉的血，夹在剩余血量内
 attacker.setAttackCooldown(Math.max(1, attacker.combat().attackCooldownTicks()));
 world.events().publish(new Events.DamageDealt(victim, attacker, dealt, tick.number()));
@@ -124,11 +126,11 @@ dropTarget(world, victim.id());
 - 渲染层或 AI 读 `unit.targetId()` 时不会拿到悬空引用；
 - 这个清理与 `World.destroy` 里的空间索引摘除配合：查询已经不可能再返回死者，存下来的 id 也被抹掉。
 
-死亡的单位在 `flush()` 之前仍然出现在 `world.units()` 里，只是 `isAlive()` 为 false；战斗循环用 `if (!unit.isAlive()) continue;` 跳过它。
+死亡的单位在 `flush()` 之前仍然出现在 `world.units()` 里，只是 `isAlive()` 为 false；战斗循环用 `if (!unit.isAlive()) continue;` 跳过它。建筑不需要额外的死亡路径：`CombatSystem.attack` 对 `Entity` 结算，血量到 0 时同样走 `world.destroy`、同样的 `EntityKilled`，`dropTarget` 也清掉所有瞄着这座建筑的 `targetId`。
 
 ## 六、`AttackOrder`：追一个 id
 
-`UnitDirector.attack(unit, targetId)` 推入一条 `AttackOrder`。它**不造成伤害**：只负责把单位带进射程、停下、转向，命中由 `CombatSystem` 按冷却打。这样攻击中的单位与闲着自卫的单位走的是同一条伤害路径。
+`UnitDirector.attack(unit, targetId)` 推入一条 `AttackOrder`。`targetId` 可以是一个单位，也可以是一座建筑。它**不造成伤害**：只负责把单位带进射程、停下、转向，命中由 `CombatSystem` 按冷却打。这样攻击中的单位与闲着自卫的单位走的是同一条伤害路径。
 
 每 tick 的判定顺序：
 
@@ -161,7 +163,9 @@ int stalledTicksBeforeFailure = AttackOrder.STALLED_TICKS_BEFORE_FAILURE; // 300
 - **没敌人**：`fighting = false`，把目标恢复成 `destination` 继续走。到达判定是 `distance(destination) <= 1 + radius`，比默认到达半径宽一点，让“在目的地格上打完最后一场”能正常结束，而不是绕着格子转圈。
 - 超时与卡住沿用 `MoveOrder`：`TIMEOUT_TICKS = 2000`、`STALLED_TICKS_BEFORE_FAILURE = 300`。**打仗不算卡住**——一个正在射击的单位是在推进，`stalledTicks` 会被清零。
 
-与 `AttackOrder` 的区别一句话：`AttackOrder` 追一个**会动的 id**，`AttackMoveOrder` 走向一个**不动的点**，路上遇到谁就打谁。
+它还有两个接受实体 id 的重载：`UnitDirector.attackMove(unit, targetId)` 推入 `AttackMoveOrder(EntityId)`，一边走向目标、一边按战斗系统的自动索敌打，目标死了就完成，从未解析到就失败。`targetId` 同样可以是建筑；建筑按占地边缘判断射程。
+
+与 `AttackOrder` 的区别一句话：`AttackOrder` 只盯一个 id；`AttackMoveOrder` 可以走向一个**不动的点**，路上遇到谁就打谁，也可以接受一个 id 追到它死。
 
 ## 八、停下、待命与“被战斗顶掉”
 
@@ -197,11 +201,11 @@ int stalledTicksBeforeFailure = AttackOrder.STALLED_TICKS_BEFORE_FAILURE; // 300
 - 事件顺序也是确定的：`DamageDealt` →（若死亡）`EntityKilled` → `EntityDestroyed`；
 - 战斗系统的遍历顺序是 `world.units()` 的创建顺序；它不 spawn，`destroy` 只做标记，所以列表在一个 tick 内形状不变，没有“边遍历边改”。
 
-这条性质是自校验第 7 节“同种子逐位一致”和第 12 节“战斗场景”能成立的前提。自己往战斗里加东西时，也要遵守 [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) 的确定性清单：不要 `Math.random()`，不要读时钟，平局显式按 id/坐标打破。
+这条性质是自校验第 7 节“同种子逐位一致”、第 12 节“战斗场景”和第 12b 节“建筑目标”能成立的前提。自己往战斗里加东西时，也要遵守 [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md) 的确定性清单：不要 `Math.random()`，不要读时钟，平局显式按 id/坐标打破。
 
 ## 常见坑
 
-1. **以为建筑会被打**。当前 `CombatSystem` 只把 `Unit` 当目标；`isEnemy` 里写死了 `other instanceof Unit`。要攻城得自己加目标类型与伤害规则。
+1. **以为建筑按中心距吃射程**。建筑按占地边缘命中：`inRange` 会把 `Building.radius()` 从中心距里减掉。自己写目标过滤时若复制了旧的 `distance <= attackRange`，近战就永远够不到三格宽建筑的墙。
 2. **以为下了 `attack` 就会掉血**。`AttackOrder` 只负责走位与停下，伤害是 `CombatSystem` 在相位 450 打的。自己拼管线却忘了 `pipeline.add(new CombatSystem(world))`，单位会走到敌人面前然后一直站着。
 3. **把 `DamageDealt.amount()` 当成算出来的伤害**。它可能被目标剩余血量截断：算出来 30、目标只剩 5，事件里就是 5。要统计“打了多少”看这个字段，要统计“理论输出”得自己用 `CombatStats` 算。
 4. **给冷却写 0 期待一 tick 多打**。引擎会抬到 1，而且同一 tick 内一个单位最多打一次；否则命中顺序会依赖列表顺序。
@@ -228,4 +232,4 @@ int stalledTicksBeforeFailure = AttackOrder.STALLED_TICKS_BEFORE_FAILURE; // 300
 - 单位与生命：[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)、[Health.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)
 - 世界与事件：[World.java](../src/main/java/io/github/sob1234509876/oc/rts/World.java)、[Events.java](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 接线（相位 450 在此登记）：[OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)
-- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节，59 项）
+- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节 59 项 + 第 12b 节建筑目标 31 项；整份 336 项）

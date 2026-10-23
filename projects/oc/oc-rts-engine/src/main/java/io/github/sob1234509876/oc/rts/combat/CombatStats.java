@@ -2,6 +2,8 @@ package io.github.sob1234509876.oc.rts.combat;
 
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.UnitType;
+import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 
 import java.util.Objects;
@@ -18,9 +20,10 @@ import java.util.Objects;
  *
  * <p>Damage is exact natural number arithmetic: a hit deals {@code max(1, attackDamage - armour)}, so
  * the result is never zero and even an armoured target always loses at least one hit point per hit.
- * Range is a distance between unit centers, the same measure the
- * {@link io.github.sob1234509876.oc.rts.entity.SpatialIndex} uses, so a spatial query with
- * {@link #attackRange()} and the in-range test agree exactly.
+ * A target may be a unit or a building: {@link #damageAgainst(Entity)} reads the matching armour field,
+ * so one damage path serves both. Range is a distance between unit centers (a building is reached at its
+ * footprint edge), the same measure the {@link io.github.sob1234509876.oc.rts.entity.SpatialIndex} uses,
+ * so a spatial query with {@link #attackRange()} and the in-range test agree exactly.
  *
  * @param attackDamage damage per hit before the target's armour; {@code 0} means the unit cannot attack
  * @param attackRange reach in tiles, measured between unit centers; {@code 0} means the unit cannot attack
@@ -84,6 +87,33 @@ public record CombatStats(
     /** Damage one hit of this unit deals to the given target. */
     public Natural damageAgainst(CombatStats target) {
         return damageAfterArmour(Objects.requireNonNull(target, "target").armour());
+    }
+
+    /**
+     * Damage one hit of this unit deals to an entity, unit or building.
+     *
+     * <p>This is the one damage path the combat system uses, so a building takes a hit exactly like a
+     * unit: the target's own {@code armour()} field is subtracted and the result floored at one.
+     */
+    public Natural damageAgainst(Entity target) {
+        return damageAfterArmour(armourOf(target));
+    }
+
+    /**
+     * Flat damage reduction of an entity: a unit's {@link Unit#combat() combat profile}, a building's
+     * {@link Building#armour() type armour}.
+     *
+     * @throws IllegalArgumentException when the entity is neither a unit nor a building
+     */
+    public static int armourOf(Entity target) {
+        Objects.requireNonNull(target, "target");
+        if (target instanceof Unit unit) {
+            return unit.combat().armour();
+        }
+        if (target instanceof Building building) {
+            return building.armour();
+        }
+        throw new IllegalArgumentException(target + " is neither a unit nor a building");
     }
 
     /** Whether a point at the given centre-to-centre distance is within this unit's reach. */

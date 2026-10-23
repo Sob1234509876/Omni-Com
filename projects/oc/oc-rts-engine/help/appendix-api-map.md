@@ -98,15 +98,15 @@
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
-| `CombatStats` | 一个单位从内容目录继承的只读战斗视图，生成时缓存一次、终身不变 | `of(UnitType)`、`of(Unit)`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`maxHealth()`（`Natural`）、`canAttack()`、`reaches(float)`、`damageAfterArmour(int)`、`damageAgainst(CombatStats)` | [14](14-combat.md) |
-| `CombatSystem` | 相位 450：每个能攻击的单位锁定本维度射程内最近的敌人，按冷却开火，结算伤害与死亡 | `SYSTEM_ORDER`（450）、`nearestEnemyInRange(World,Unit)`、`isEnemy(Unit,Entity)`、`inRange(Unit,Entity)`、`face(Unit,Vec2)`、`name()`（返回 `"combat"`） | [14](14-combat.md) |
+| `CombatStats` | 一个单位从内容目录继承的只读战斗视图，生成时缓存一次、终身不变；也提供按实体取护甲的伤害入口 | `of(UnitType)`、`of(Unit)`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`maxHealth()`（`Natural`）、`canAttack()`、`reaches(float)`、`damageAfterArmour(int)`、`damageAgainst(CombatStats)`、`damageAgainst(Entity)`、`armourOf(Entity)` | [14](14-combat.md) |
+| `CombatSystem` | 相位 450：每个能攻击的单位锁定本维度射程内最近的敌人（单位或建筑），按冷却开火，结算伤害与死亡 | `SYSTEM_ORDER`（450）、`nearestEnemyInRange(World,Unit)`（返回 `Entity`）、`isEnemy(Unit,Entity)`、`inRange(Unit,Entity)`（建筑按占地边缘）、`face(Unit,Vec2)`、`name()`（返回 `"combat"`） | [14](14-combat.md) |
 
 ### `...oc.rts.content`
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
 | `ContentRegistry` | 一份游戏的全部定义目录，按 `ResourceKey` 寻址 | `namespace()`、`terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`recipesFor()`、`builder()` | [02](02-content-and-items.md) |
-| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`cost(...)`、`storage()`、`warehouse()`、`producer()`、`armour(int)`、`level(int)`、`requiredBuildingLevel(int)`、`build()` | [02](02-content-and-items.md) |
+| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`cost(...)`、`storage()`、`warehouse()`、`producer()`、`armour(int)`（单位或建筑）、`level(int)`、`requiredBuildingLevel(int)`、`build()` | [02](02-content-and-items.md) |
 | `WorldContent` | 一份完整游戏目录的接缝：身份、说明、命名空间与填充目录的方法 | `id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)`、`startingResources()` | [02](02-content-and-items.md) |
 | `ScenarioWorldContent` | 把示例目录 `ScenarioContent` 包装成 `WorldContent`，作为引擎默认内容 | `ID`、`id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
 | `ScenarioContent` | 示例场景的内容目录：地形、物品、兵种、建筑与配方 | `NAMESPACE`、`omniCom()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
@@ -117,7 +117,7 @@
 | `ItemBundle.Builder` | 累加式构建 `ItemBundle`；拒绝负数与 `BEYOND` | `add()`、`addAll()`、`build()` | [02](02-content-and-items.md) |
 | `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`（`Natural`）、`speed()`、`radius()`、`cost()`、`cargoCapacity()`（`Natural`）、`canHaul()`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`canAttack()` | [02](02-content-and-items.md) |
 | `UnitRole` | 兵种大类，供生产和后勤判断用途 | `COMBAT`/`WORKER`/`SUPPORT`、`id()` | [02](02-content-and-items.md) |
-| `BuildingType` | 一种建筑的定义：占地、成本、血、仓储、生产标签 | `sizeX()`/`sizeY()`、`footprint()`、`maxHealth()`（`Natural`）、`level()`、`cost()`、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
+| `BuildingType` | 一种建筑的定义：占地、成本、血、护甲、仓储、生产标签 | `sizeX()`/`sizeY()`、`radius()`、`footprint()`、`maxHealth()`（`Natural`）、`armour()`、`level()`、`cost()`、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
 | `Recipe` | 一条生产配方：消耗什么、产出什么、要多久 | `inputs()`、`itemOutputs()`、`unitOutput()`、`isUnitRecipe()`、`durationTicks()`、`requiredBuildingLevel()`、`isUnlockedAt(int)`、`producerTags()` | [06](06-economy-logistics-and-production.md) |
 | `StartingResources` | 新玩家的开局物品：按物品路径索引的 `Natural` 数量，不可变且保持插入顺序 | `EMPTY`、`of(Map)`、`builder()`、`isEmpty()`、`size()`、`amounts()`、`amount(path)` | [02](02-content-and-items.md) |
 | `StartingResources.Builder` | 累加式构建开局物品；拒绝空路径、负数与 `BEYOND` | `add(path, amount)`、`isEmpty()`、`build()` | [02](02-content-and-items.md) |
@@ -152,7 +152,7 @@
 | --- | --- | --- | --- |
 | `Entity` | 世界里的一切：身份、归属、位置、生命、动画状态 | `id()`、`owner()`、`position()`、`health()`、`isUnit()`、`asUnit()`、`visual()`、`dimensionId()`、`dimensionIfAny()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
 | `Unit` | 可移动实体：士兵、工人、载具 | `type()`、`role()`、`combat()`、`attackCooldown()`、`canAttackNow()`、`targetId()`、`setTargetId(EntityId)`、`clearTarget()`、`hasTarget()`、`motion()`、`orders()`、`cargo()`、`tile()`、`setSelected()` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) |
-| `Building` | 带占地面积的静态实体：仓库、兵营、工厂 | `origin()`、`inventory()`、`entrance()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()` | [06](06-economy-logistics-and-production.md) |
+| `Building` | 带占地面积的静态实体：仓库、兵营、工厂；也是战斗目标 | `origin()`、`inventory()`、`entrance()`、`armour()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()` | [06](06-economy-logistics-and-production.md) / [14](14-combat.md) |
 | `Health` | 生命值小值对象，承接伤害与治疗；血量与伤害都是 `Natural`，`fraction()` 仍是 `float` 比例 | `max()`、`current()`、`fraction()`、`damage()`、`heal()`、`restore()`、`setCurrent()` | [09](09-architecture-and-tick-pipeline.md) |
 | `SpatialIndex` | 宽阶段空间查询接口（不是位置感知的） | `inRadius()`、`inRect()`、`nearest()`、`insert()`/`update()`/`remove()` | [04](04-units-orders-and-movement.md) |
 | `GridSpatialIndex` | 均匀网格实现，实体按小方格分桶 | `GridSpatialIndex(float cellSize)`（默认由 `World` 用 `4f` 构造）、`occupiedCellCount()` | [04](04-units-orders-and-movement.md) |
@@ -237,13 +237,13 @@
 | `OrderState` | 订单生命周期 | `RUNNING`/`COMPLETED`/`FAILED`/`CANCELLED`、`isFinished()` | [04](04-units-orders-and-movement.md) |
 | `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()` | [04](04-units-orders-and-movement.md) |
 | `OrderSystem` | 推进每个单位的订单队列 | `order()`（返回 200） | [04](04-units-orders-and-movement.md) |
-| `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
+| `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2/EntityId)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
 | `UnitDirector.BuildResult` | 一次建造请求的结果：已放置的工地或拒绝原因，两者恰有其一 | `placed()`、`refused()`、`site()`、`refusal()` | [06](06-economy-logistics-and-production.md) |
 | `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder` | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
 | `MoveOrder` | 把单个单位走到某个位置 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`destination()` | [04](04-units-orders-and-movement.md) |
 | `HoldOrder` | 让单位留在原地 | `name()`（返回 `"hold"`） | [04](04-units-orders-and-movement.md) |
 | `AttackOrder` | 追一个实体 id：走进射程、停下，由战斗系统开火；未知 id 或目标换图会失败 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`targetId()`、`name()`（返回 `"attack"`） | [14](14-combat.md) |
-| `AttackMoveOrder` | 走向一个点，路上遇到射程内敌人就停下打，打完继续走 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`destination()`、`isFighting()`、`name()`（返回 `"attack_move"`） | [14](14-combat.md) |
+| `AttackMoveOrder` | 走向一个点，路上遇到射程内敌人就停下打，打完继续走；也有接受实体 id（含建筑）的形态 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`AttackMoveOrder(EntityId)`、`destination()`、`targetId()`、`isTargeted()`、`isFighting()`、`name()`（返回 `"attack_move"`） | [14](14-combat.md) |
 | `BuildOrder` | 把建造者留在工地入口，直到建筑建成或工地被毁 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`BUILD_RANGE_TILES`（2f）、`site()`、`name()`（返回 `"build"`） | [06](06-economy-logistics-and-production.md) |
 | `FormationMoveOrder` | 让单个单位走到自己在移动队形中的槽位 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`ANCHOR_EPSILON`、`formationId()`、`slotOffset()`、`goal()`、`updateAnchor()`、`isActive()` | [05](05-formations.md) |
 | `TransferOrder` | 让单位沿传送门链路走到另一张图（`name()` 返回 `"travel"`） | `GATEWAY_RADIUS = 1.5f`、`TIMEOUT_TICKS = 20 * 120`、`TransferOrder(DimensionId target)`、`target()` | [13](13-dimensions.md) |

@@ -77,7 +77,7 @@ ContentRegistry content = ContentRegistry.builder("oc")
 | `role(UnitRole)` / `speed(float)` / `radius(float)` / `cargo(Natural,long)` / `attack(Natural,float)` 或 `attack(float,float)` / `attackCooldown(int)` | 单位属性 | unit |
 | `size(int,int)` / `storage(Natural,long)` / `storageTag(String)` / `warehouse()` | 建筑属性 | building |
 | `input(String,Natural,long)` / `itemOutput(String,Natural,long)` / `unitOutput(String)` | 配方数据 | recipe |
-| `health(Natural,long,float)` / `cost(String,Natural,long)` / `buildTime(int)` / `spriteSet(String)` | 按当前草稿分派到单位或建筑 | unit / building |
+| `health(Natural,long,float)` / `cost(String,Natural,long)` / `buildTime(int)` / `spriteSet(String)` / `armour(int)` | 按当前草稿分派到单位或建筑 | unit / building |
 | `duration(int)` | 落在配方上是工期，落在建筑上是建造时间 | recipe / building |
 | `producer(String)` | 落在建筑上声明"我能跑哪些配方"，落在配方上声明"哪些建筑能跑我" | building / recipe |
 
@@ -88,7 +88,7 @@ ContentRegistry content = ContentRegistry.builder("oc")
 | item | `maxStack = Natural.of(100)`，无标签，显示名默认取 path |
 | terrain | `passable = true`，`buildable = false`，`moveCost = 1f`，`sprite = "terrain/unknown"`，`mapColor = 0x808080` |
 | unit | `role = COMBAT`，`maxHealth = Natural.of(100)`，`speed = 2f`，`radius = 0.4f`，`attackDamage = Natural.ZERO`，`attackRange = 0f`，`attackCooldown = 60`，`buildTime = 100`，`cargo = Natural.ZERO`，`spriteSet = "unit/unknown"`，无代价 |
-| building | `size = 1×1`，`maxHealth = Natural.of(500)`，`buildTime = 200`，`storage = Natural.ZERO`，`warehouse = false`，无 producer 标签，`spriteSet = "building/unknown"` |
+| building | `size = 1×1`，`maxHealth = Natural.of(500)`，`armour = 0`，`buildTime = 200`，`storage = Natural.ZERO`，`warehouse = false`，无 producer 标签，`spriteSet = "building/unknown"` |
 | recipe | `duration = 100`，无 producer 标签，无产出 |
 
 数量类的属性都是 `Natural`（见 [12-numbers-and-googology.md](12-numbers-and-googology.md)），所以 `maxStack` / `health` / `cargo` / `storage` / `cost` / `input` / `itemOutput` 既能收 `long` 字面量（`.maxStack(100)`、`.health(120)`、`.cargo(24)`），也能收 `Natural` 表达式。`health(float)` 与 `attack(float,float)` 仍然存在，但它们只是"整数便捷写法"：小数会在 `build()` 前直接抛 `IllegalArgumentException`（`health is a natural number, so 120.5 has to be written with Natural instead of as a fraction`），不会静默截断。
@@ -131,11 +131,13 @@ NoSuchElementException: no item 'oc:b'; defined items: [oc:a]
 | --- | --- |
 | `ItemType` | `key()`、`displayName()`、`maxStack()`（`Natural`）、`tags()`、`hasTag(String)`、`hasAnyTag(Set<String>)`；按 `key` 相等，可直接当 `Map` 的键 |
 | `UnitType` | `role()`、`maxHealth()`（`Natural`）、`speed()`（格/秒，`float`）、`radius()`（格，`float`）、`cost()`（`ItemBundle`）、`buildTimeTicks()`（`int`）、`cargoCapacity()`（`Natural`）、`canHaul()`、`spriteSetId()`、`tags()`、`attackDamage()`（`Natural`）、`attackRange()`（`float`）、`attackCooldownTicks()`（`int`）、`canAttack()` |
-| `BuildingType` | `sizeX()/sizeY()`、`maxHealth()`（`Natural`）、`buildTimeTicks()`、`cost()`、`storageSlots()`（`Natural`）、`storageTags()`、`isStorage()`、`isWarehouse()`、`producerTags()`、`canProduce()`、`spriteSetId()`、`footprint(int,int)` |
+| `BuildingType` | `sizeX()/sizeY()`、`radius()`（占地半径）、`maxHealth()`（`Natural`）、`armour()`、`buildTimeTicks()`、`cost()`、`storageSlots()`（`Natural`）、`storageTags()`、`isStorage()`、`isWarehouse()`、`producerTags()`、`canProduce()`、`spriteSetId()`、`footprint(int,int)` |
 | `Recipe` | `inputs()`、`itemOutputs()`（都是 `ItemBundle`）、`unitOutput()`（`Optional<UnitType>`）、`isUnitRecipe()`、`durationTicks()`、`producerTags()`、`produces(ItemType)` |
 | `UnitRole` | 枚举 `COMBAT` / `WORKER` / `SUPPORT`，`id()` 返回 `"combat"` / `"worker"` / `"support"` |
 
-`UnitType` 的 `attackDamage/attackRange/attackCooldownTicks/armour` 是**真正生效的字段**：`CombatStats` 在单位生成时把它们缓存成只读视图，战斗系统（相位 450）按射程索敌、按冷却开火、按护甲减伤。写内容时照填即可，`attackDamage` 为 0 或 `attackRange` 为 0 的单位永远不会攻击。注意 `attackDamage` 是 `Natural`、`attackRange` 是 `float`：伤害是件数，射程是距离。完整规则见 [14-combat.md](14-combat.md)。
+`UnitType` 的 `attackDamage/attackRange/attackCooldownTicks/armour` 是**真正生效的字段**：`CombatStats` 在单位生成时把它们缓存成只读视图，战斗系统（相位 450）按射程索敌、按冷却开火、按护甲减伤。写内容时照填即可，`attackDamage` 为 0 或 `attackRange` 为 0 的单位永远不会攻击。注意 `attackDamage` 是 `Natural`、`attackRange` 是 `float`：伤害是件数，射程是距离。
+
+`BuildingType` 的 `armour` 也是真正生效的字段：同一套 `.armour(int)` 对建筑草稿写入 `BuildingType.armour()`（默认 0），建筑被打时走 `CombatStats.damageAgainst(Entity)` 的同一条 `max(1, 伤害 - 护甲)` 路径。建筑没有攻击字段，所以它只能是目标，不会自己开火。完整规则见 [14-combat.md](14-combat.md)。
 
 ## 5. `ItemBundle`：不可变、有序的多重集
 

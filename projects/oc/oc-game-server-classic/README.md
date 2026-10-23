@@ -4,7 +4,7 @@ English | [简体中文](README_zh_CN.md)
 
 `projects:oc:oc-game-server-classic` — the world content plugin `oc-classic`. A server picks plugins up from its
 `plugins/` folder; this jar registers one game: five melee tiers, an engineer, two armory levels, three mine
-levels and a warehouse, together with the mine income hook and the enemy AI that play it. It registers no
+levels, three lumber camp tiers and a warehouse, together with the income hook and the enemy AI that play it. It registers no
 request, opens no file and starts no thread. With the jar in the folder the server serves this world instead of
 the engine's sample catalogue; remove it and the server falls back.
 
@@ -18,7 +18,7 @@ the engine's sample catalogue; remove it and the server falls back.
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (293 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (349 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x96 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -77,17 +77,32 @@ Every mine is 3x3 with 500 HP and six storage slots. Income is content data, not
 has no passive income tick, so each mine publishes its rate as the `income_<n>` tag and the plugin's
 `ClassicEconomy` hook pays it out.
 
+## The three lumber camp levels
+
+| Path | Name | Level | Income (wood per minute) | Cost (gold) | Build ticks |
+| --- | --- | --- | --- | --- | --- |
+| `building.lumbercamp.t1` | 普通 | 1 | 20 | 80 | 120 |
+| `building.lumbercamp.t2` | 强化 | 2 | 40 | 160 | 180 |
+| `building.lumbercamp.t3` | 精英 | 3 | 80 | 320 | 240 |
+
+Every lumber camp is 3x3 with 500 HP and six storage slots, and it costs **gold only** — a wood building that
+cost wood could never break the opening deadlock. It publishes its rate as the `wood_income_<n>` tag, which is
+deliberately a different prefix from the mines' `income_<n>`, so a camp is never mistaken for a gold mine.
+`ClassicEconomy` sums one player's constructed, living camps and deposits the wood through the same warehouse
+path as gold.
+
 ## The economy rule
 
 Every **60 ticks** — the classic minute, three seconds at the host's twenty ticks per second — each player is
-paid, in gold, **the sum of the incomes of the mines they own**. A player with three tier 1 mines gains 90 gold
-on that tick; a player with one of each tier gains 210. Only a mine that is both **constructed and alive** pays:
-a site still being raised and a destroyed mine pay nothing.
+paid, in gold, **the sum of the incomes of the mines they own**, and in wood, **the sum of the wood incomes of
+their lumber camps**. A player with three tier 1 mines gains 90 gold on that tick; a player with one of each
+tier gains 210. A player with two tier 1 camps gains 40 wood. Only a building that is both **constructed and
+alive** pays: a site still being raised and a destroyed building pay nothing.
 
-The sum is paid through the engine's logistics network, which deposits it into the owner's warehouse as one
-stack. **No warehouse means no payment**: the gold is never dropped on the ground and never queued, so a player
-who lost every warehouse simply stops earning. The hook remembers the last tick it paid, so being called twice
-with the same tick number cannot pay twice.
+The sums are paid through the engine's logistics network, which deposits them into the owner's warehouse as
+stacks. **No warehouse means no payment**: neither resource is dropped on the ground or queued, so a player who
+lost every warehouse simply stops earning. The hook remembers the last tick it paid, so being called twice with
+the same tick number cannot pay twice — not gold and not wood.
 
 ## The warehouse
 
@@ -96,7 +111,7 @@ building whose type is a warehouse, so there is no special drop-off type: the ca
 warehouse like the engine's sample — 500 HP, 24 storage slots, 60 wood and 120 ticks.
 
 It is part of the catalogue rather than an invention of this module because without one, starting resources
-would have nowhere to live, production could not be supplied and mine income could not be paid.
+would have nowhere to live, production could not be supplied and neither income could be paid.
 
 ## Starting resources and the opening
 
@@ -127,9 +142,10 @@ second — and falls into one mode, chosen in this fixed precedence:
 | `ECON` | the base is not staffed yet | train engineers and raise buildings |
 
 Whatever the mode, except during a defence, the standing economy rules run: keep at least **three engineers**
-alive, at least **two armories** and **three mines** standing, and grow the army to eight. At most one
-production job and one building site are started per decision, so the AI cannot drain its stock or its builders
-in a single tick.
+alive, at least **two armories**, **three mines** and **one lumber camp** standing, and grow the army to eight.
+At most one production job and one building site are started per decision, so the AI cannot drain its stock or
+its builders in a single tick. The lumber camp is what gives the AI renewable wood for its armories; it is
+placed with the same bounded site search as every other building.
 
 Army training looks at the **best idle armory** — highest level, ties by entity id — and walks the five tiers
 from the top down, taking the first one the armory's level allows and the warehouses can still pay for. A tier 2
@@ -138,7 +154,8 @@ never reissues an order and never replaces a march that is still running.
 
 On its first tick the AI creates player 2 itself, attaches the engine's warehouse logistics, places a warehouse,
 a tier 2 armory and a tier 1 mine as its opening base, spawns one engineer and deposits the same 300 gold and
-60 wood. It defends within eight tiles of its own buildings. There is no randomness anywhere: units, buildings
+60 wood. Its first lumber camp is an upkeep placement, not part of the opening. It defends within eight tiles of
+its own buildings. There is no randomness anywhere: units, buildings
 and intruders are sorted by entity id and every distance tie is broken by id, so the same world state and tick
 always produce the same orders.
 
@@ -172,13 +189,14 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 293 checks passed.
+classic plugin self check: all 349 checks passed.
 ```
 
-293 is the sum of twelve sections: the catalogue 82, the five-tier stat ladder 40, the armory level gate 14, the
-mine income ladder 20, the mine payout 18, the starting stock 10, the manifest and atlas 17, the host and
-snapshot 30, the enemy AI 25, determinism 8 (including the AI's 64-tile entity bound over a 600-tick run), the
-plugin seam 17 and the plugin loader 12. The gate section is the
+349 is the sum of thirteen sections: the catalogue 82, the five-tier stat ladder 40, the armory level gate 14,
+the mine income ladder 20, the lumber camp ladder 35, the economy payout 33 (18 gold + 15 wood), the starting
+stock 10, the manifest and atlas 17, the host and snapshot 29, the enemy AI 31 (including the lumber camp
+upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the plugin seam 17 and the
+plugin loader 12. The gate section is the
 strict part: it proves against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just
 that the catalogue says so.
 
@@ -186,14 +204,14 @@ that the catalogue says so.
 
 | Path | Contents |
 | --- | --- |
-| `src/main/java/.../classic/ClassicContent.java` | the catalogue: terrain, items, six units, six buildings, six recipes |
-| `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine income once per 60 ticks |
+| `src/main/java/.../classic/ClassicContent.java` | the catalogue: terrain, items, six units, nine buildings, six recipes |
+| `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine and lumber camp income once per 60 ticks |
 | `src/main/java/.../classic/ClassicAi.java` | the deterministic enemy that plays player 2 |
 | `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the two hooks |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 293 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 349 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

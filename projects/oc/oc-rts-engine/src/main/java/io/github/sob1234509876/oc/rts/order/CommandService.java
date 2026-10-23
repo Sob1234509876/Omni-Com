@@ -129,6 +129,19 @@ public final class CommandService implements UnitDirector {
     }
 
     /**
+     * Attack-moves onto one entity. A building id is accepted exactly like a unit id; the order walks
+     * into the building's footprint edge and lets the combat system land the hits.
+     */
+    @Override
+    public void attackMove(Unit unit, EntityId target) {
+        Objects.requireNonNull(target, "target");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().replace(context(unit), new AttackMoveOrder(target));
+    }
+
+    /**
      * Places a building site, charges its cost and gives the unit a {@link BuildOrder}.
      *
      * <p>The placement is checked against the unit's own dimension before anything is created, so a

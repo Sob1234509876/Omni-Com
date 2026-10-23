@@ -46,7 +46,7 @@ public final class ClassicPlugin implements Plugin {
     /** The catalogue this plugin offers; stateless, so one instance is enough. */
     private final ClassicContent content = new ClassicContent();
 
-    /** The mine income hook, one per loaded plugin (and therefore one per world). */
+    /** The gold and wood income hook, one per loaded plugin (and therefore one per world). */
     private final ClassicEconomy economy = new ClassicEconomy();
 
     /** The enemy AI hook, one per loaded plugin (and therefore one per world). */
@@ -68,8 +68,8 @@ public final class ClassicPlugin implements Plugin {
 
     @Override
     public String description() {
-        return "Classic game content: five melee tiers, an engineer, two armory levels, three mines and a "
-                + "warehouse, with mine income and an enemy AI";
+        return "Classic game content: five melee tiers, an engineer, two armory levels, three mines, three "
+                + "lumber camps and a warehouse, with gold and wood income and an enemy AI";
     }
 
     /**
@@ -92,7 +92,7 @@ public final class ClassicPlugin implements Plugin {
         return content;
     }
 
-    /** The mine income hook this plugin registered, in registration order before the AI. */
+    /** The income hook this plugin registered, in registration order before the AI. */
     public ClassicEconomy economy() {
         return economy;
     }

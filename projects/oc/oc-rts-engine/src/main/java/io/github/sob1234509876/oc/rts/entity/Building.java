@@ -75,6 +75,11 @@ public final class Building extends Entity {
         return type.isWarehouse();
     }
 
+    /** Flat damage reduction of this building, read from its type; zero unless the content set it. */
+    public int armour() {
+        return type.armour();
+    }
+
     public boolean isConstructed() {
         return constructed;
     }
@@ -148,7 +153,7 @@ public final class Building extends Entity {
 
     @Override
     public float radius() {
-        return Math.max(type.sizeX(), type.sizeY()) / 2f;
+        return type.radius();
     }
 
     @Override
