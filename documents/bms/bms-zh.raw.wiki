@@ -1,0 +1,211 @@
+Bashicu 矩阵系统（Bashicu Matrix System，'''BMS'''）是一个[[序数记号]]。Bashicu Hyudora 在 2018 年给出了它的定义。
+
+== 定义 ==
+
+=== 原定义 ===
+Bashicu 最初在他的未命名的 BASIC 编程语言改版上提交了 BMS 的定义。<ref name=":0"> Bashicu Hyudora (2015). [https://googology.fandom.com/ja/wiki/%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E3%83%96%E3%83%AD%E3%82%B0:BashicuHyudora/BASIC%E8%A8%80%E8%AA%9E%E3%81%AB%E3%82%88%E3%82%8B%E5%B7%A8%E5%A4%A7%E6%95%B0%E3%81%AE%E3%81%BE%E3%81%A8%E3%82%81#.E3.83.90.E3.82.B7.E3.82.AF.E8.A1.8C.E5.88.97.E6.95.B0.28Bashicu_matrix_number.29 Summary of large numbers in BASIC language] (BASIC言語による巨大数のまとめ). ''Googology Wiki''.</ref>BMS 的原定义是一个大数记号，理论的输出是一个大数。该程序并未设计为实际运行，原因在于语言修改的未定义性，同时也受限于内存与计算时间的现实约束，无法计算出这个大数的实际最终值。因此，Fish 编写了名为"Bashicu 矩阵计算器"的程序来演示预期的计算流程（该程序已得到 Bashicu 验证）。故 Bashicu 矩阵的正式定义可参考 Fish 程序的源代码。<ref>Kyodaisuu (2020). [https://github.com/kyodaisuu/basmat/blob/master/basmat.c basmat]. ''Gthub''.</ref>
+
+=== 正式定义 ===
+中文 googology 社区提到 BMS 默认是一个序数记号。以下是序数记号 BMS 的定义及说明：
+
+首先是 BMS 合法式：BMS 的合法式是二维的自然数构成的序列，在外观上看是一个矩阵。如 <math>\begin{pmatrix} 0 & 1&2&1 \\ 0&1&1&1\\0&1&0&1 \end{pmatrix}</math> 就是一个 BMS 的合法式。在很多场合，这种二维的结构书写起来不是很方便，因此我们也常常把BMS从左到右、从上到下按列书写，每一列的不同行之间用逗号隔开，不同列之间用括号隔开。例如，上面的 BMS 也可以写成 <math>(0,0,0)(1,1,1)(2,1,0)(1,1,1)</math>。在很多情况下，除首列外，列末的 0 也可以省略不写，例如上面的 BMS 写为 <math>(0)(1,1,1)(2,1)(1,1,1)</math>。
+
+理论上来说，只要是这样的式子就可以按照 BMS 的规则进行处理了。但实际操作过程中，我们还可以排除一些明显不标准的式子：
+
+* 首列并非全 0
+* 每一列并非不严格递减，即出现一列中下面的数大于上面的数
+* 出现一个元素 a，它比它同行左边所有元素都大超过 1
+
+在了解 BMS 的展开规则之前，需要先了解一些概念。
+
+# 第一行元素的'''父项'''：对于位于第一行的元素 a，它的父项 b 是满足以下条件的项当中，位于最右边的项：1. 同样位于第一行且在 a 的左边；2. 小于 a。这里和 [[初等序列系统|PrSS]] 判定父项的规则是相同的。显然，0 没有父项。
+# '''祖先项'''：一个元素自己，以及它的父项、父项的父项、父项的父项的父项……共同构成它的祖先项。
+# 其余行元素的父项：对于不位于第一行的元素 c，它的父项 d 指满足以下条件的项当中，位于最右边的项：1. 与c位于同一行且在 c 的左边；2. 小于 c；3. d 正上方的项 e 是 c 正上方的项f的祖先项。0 没有父项。
+# '''坏根'''：最后一列位于最下方的非零元素的父项所在列，称为坏根。如果最后一列所有元素为 0，则这个 BMS 表达式无坏根。值得一提的是，末列最靠下的非零元素记作 '''LNZ'''（Lowermost Non-Zero）
+# '''好部'''、'''坏部'''：这两个概念与 PrSS 是相似的。位于坏根左边的所有列称为好部，记作 G，G 可以为空；从坏根到倒数第二列(包括坏根、倒数第二列)的部分称为坏部，记作B。
+# '''阶差向量'''：在一个 n 行 BMS 中，我们把末列记为 <math>(\alpha_1,\alpha_2,\cdots,\alpha_n)</math>，把坏根列记为 <math>(\beta_1,\beta_2,\cdots,\beta_n)</math>，并且我们规定 <math>\alpha_{n+1}=0</math>。则阶差向量<math>\Delta=(\delta_1,\delta_2,\cdots,\delta_n)</math>按照这样的规则得到：<math>\delta_i = \begin{cases} \alpha_i-\beta_i, & \alpha_{i+1}\neq0 \\ 0, & \alpha_{i+1}=0 \end{cases}</math>。通俗的说，如果末列的第 <math>i+1</math> 项等于0，则 <math>\delta_i=0</math>，否则 <math>\delta_i</math> 等于末列第 i 行减去坏根列第 i 行。阶差向量记作 <math>\Delta</math>。
+# <math>B_m</math>：<math>B_m</math>是 B 中每一列都加上 <math>\Delta</math> 的 m 倍所得到的新矩阵。但是有一点需要注意：如果 B 中某个元素 t 的祖先项不包含坏根中的元素，则在 <math>B_m</math> 对应位置的元素的值依然是 t，它不加 <math>\Delta</math>。
+
+了解概念后，以下是 BMS 的展开规则：
+
+# 空矩阵 = 0
+# 如果表达式是非空矩阵 S，如果它没有坏根，那么 S 等于 S 去掉最后一列之后，剩余部分的后继 。
+# 否则，确定这个 BMS 表达式 S 的坏根、G、B、<math>\Delta</math>，S 的基本列第 n 项<math>S[n]=G\sim B\sim B_1 \sim B_2\sim B_3\sim\cdots\sim B_{n-1}</math>。其中 ~ 表示序列拼接。或者称 S 的展开式是 <math>G\sim B \underbrace{\sim B_1\sim B_2\sim \cdots}_{\omega}</math>。
+
+BMS 的极限基本列是 <math>\{(0)(1),(0,0)(1,1),(0,0,0)(1,1,1),(0,0,0,0)(1,1,1,1),\cdots\}</math>，从这个基本列中元素开始取前驱或取基本列所能得到的表达式是 BMS 的标准式。
+
+以下是 BMS 展开的一些实例：
+
+例一：<math>(0,0,0)(1,1,1)(2,2,1)(3,2,0)(0,0,0)</math>
+
+因为末列全都是 0，因此这个 BMS 没有坏根。根据规则 2，它是 <math>(0,0,0)(1,1,1)(2,2,1)(3,2,0)</math> 的后继。
+
+例二：<math>(0,0,0)(1,1,1)(2,2,2)(3,3,3)(4,2,0)</math>
+
+LNZ 是末列第二行的 2。首先确定末列第 1 行元素的祖先项，即标红的部分（末列本身不染色，下同）：<math>({\color{red}0},0,0)({\color{red}1},1,1)({\color{red}2},2,2)({\color{red}3},3,3)(4,2,0)</math>。因此末列第二行的 2 的父项只能在含有标红元素的这些列中选取。于是确定 LNZ 的父项为（标绿）：<math>({\color{red}0},0,0)({\color{red}1},{\color{green}1},1)({\color{red}2},2,2)({\color{red}3},3,3)(4,2,0)</math>。因此确定 <math>(1,1,1)</math> 是坏根。好部 G 是 <math>(0,0,0)</math>，坏部 B 是 <math>(1,1,1)(2,2,2)(3,3,3)</math>。计算出阶差向量 <math>\Delta=(3,0,0)</math>。检查 B 中是否存在祖先项不包含坏根中元素的项（当然，我们只需要检查 <math>\Delta</math> 非零的那些行），很幸运，没有。于是我们得到展开式是 <math>(0,0,0)(1,1,1)(2,2,2)(3,3,3)(4,1,1)(5,2,2)(6,3,3)(7,1,1)(8,2,2)(9,3,3)\cdots</math>
+
+例三：<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,1,1)(4,2,0,0)(5,1,1,1)(6,2,2,1)(7,3,1,1)</math>
+
+LNZ 是末列第四行的 1。首先确定末列第一行元素 7 的祖先项（标红）：<math>({\color{red}0},0,0,0)({\color{red}1},1,1,1)({\color{red}2},2,2,1)({\color{red}3},3,1,1)({\color{red}4},2,0,0)({\color{red}5},1,1,1)({\color{red}6},2,2,1)(7,3,1,1)</math>。在含有标红元素的列中寻找末列第二行元素 3 的祖先项（标绿）：<math>({\color{red}0},{\color{green}0},0,0)({\color{red}1},1,1,1)({\color{red}2},2,2,1)({\color{red}3},3,1,1)({\color{red}4},2,0,0)({\color{red}5},{\color{green}1},1,1)({\color{red}6},{\color{green}2},2,1)(7,3,1,1)</math>。在含有标绿元素的列中寻找末列第三行元素 1 的祖先项（标蓝）：<math>({\color{red}0},{\color{green}0},{\color{dodgerblue}0},0)({\color{red}1},1,1,1)({\color{red}2},2,2,1)({\color{red}3},3,1,1)({\color{red}4},2,0,0)({\color{red}5},{\color{green}1},1,1)({\color{red}6},{\color{green}2},2,1)(7,3,1,1)</math>。在含有标蓝元素的列中寻找 LNZ 的父项，即首列第四行的 0。于是得到坏根是 <math>(0,0,0,0)</math>，好部 G 是空矩阵，坏部 B 是 <math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,1,1)(4,2,0,0)(5,1,1,1)(6,2,2,1)</math>，计算阶差向量 <math>\Delta=(7,3,1,0)</math>。检查 B 中是否存在祖先项不包含坏根中元素的项（只检查 <math>\Delta</math> 非 0 的行）得到第五列第三行的 0 祖先项不经过坏根。于是我们得到展开式是
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,1,1)(4,2,{\color{red}0},0)(5,1,1,1)(6,2,2,1)(7,3,1,0)(8,4,2,1)(9,5,3,1)(10,6,2,1)(11,5,{\color{red}0},0)(12,4,2,1)(13,5,3,1)(14,6,2,0)(15,7,3,1)(16,8,4,1)(17,9,3,1)(18,8,{\color{red}0},0)(19,7,3,1)(20,8,4,1)\cdots</math>
+
+展开 BMS 可以靠 [https://gyafun.jp/ln/basmat.cgi Bashicu Matrix Calculator] 或 [https://hypcos.github.io/notation-explorer/ Notation Explorer] 辅助。
+
+=== 数学定义 ===
+kotetian 给出 BMS 的数学定义，但是他给出的定义是大数记号版本的。以下是根据他的定义改写的序数记号版 BMS 的定义：
+
+<math>\mathrm{Matrix:}{\boldsymbol S}={\boldsymbol S}_0{\boldsymbol S}_1\cdots{\boldsymbol S}_{X-1}</math>
+
+<math>\mathrm{Vector:}~{\boldsymbol S}_x=(S_{x0},S_{x1},\cdots,S_{x(Y-1)})</math>
+
+<math>\mathrm{parent~of}~{\boldsymbol S}_{xy}:~P_{y}(x)= \begin{cases} \max\{p|p<x\land {\boldsymbol S}_{py}<{\boldsymbol S}_{xy}\land \exists a(p=(P_{y-1})^a(x))\} & \text{if }y>0 \\ \max\{p|p<x\land {\boldsymbol S}_{py}<{\boldsymbol S}_{xy}\} & \text{if }y=0 \end{cases}</math>
+
+<math>\mathrm{Lowermost~nonzero:}~t=\max\{y|{\boldsymbol S}_{(X-1)y}> 0\}</math>
+
+<math>\mathrm{Bad~root:}~r = P_t(X-1)</math>
+
+<math>\mathrm{Ascension~offset:}~\Delta_{y} = \begin{cases} {\boldsymbol S}_{(X-1)y}-{\boldsymbol S}_{ry} & \text{if }y < t \\ 0 & \text{if }y\geq t \end{cases}</math>
+
+<math>\mathrm{Ascension~matrix:}~A_{xy}=\left\{\begin{array}{ll} 1 &(\mathrm{if}~ \exists a( r=(P_{y})^a(r+x)))\\ 0 &(\mathrm{otherwise}) \end{array}\right.</math>
+
+<math>\mathrm{Good~part:}~{\boldsymbol G}={\boldsymbol S}_0{\boldsymbol S}_1\cdots{\boldsymbol S}_{r-1}</math>
+
+<math>\mathrm{Bad~part:}~{\boldsymbol B}^{(a)}={\boldsymbol B}_0^{(a)}{\boldsymbol B}_1^{(a)}\cdots{\boldsymbol B}_{X-2-r}^{(a)}</math>
+
+<math>{\boldsymbol B}_x^{(a)}=(B_{x0}^{(a)},B_{x1}^{(a)},\cdots,B_{x(Y-1)}^{(a)})</math>
+
+<math>B_{xy}^{(a)}=S_{(r+x)y}+a\Delta_{y}A_{xy}</math>
+
+<math>\varnothing=0</math>
+
+<math>\boldsymbol{S} = \begin{cases} \boldsymbol{S}_0\boldsymbol{S}_1\boldsymbol{S}_2\cdots\boldsymbol{S}_{X-2}, & \text{if }\forall y,\boldsymbol{S}_{(X-1)y}=0 \\ \sup\{G,GB^{(0)},GB^{(0)}B^{(1)},GB^{(0)}B^{(1)}B^{(2)},\cdots\} & \text{otherwise} \end{cases}</math>
+
+== 历史 ==
+Bashicu 在2015年的时候给出了第一版 BMS 的定义，即 BM1。BM1 创建后的首个问题便是其是否必然终止。这一疑问直到 2016 年用户 KurohaKafka 在日本论坛 2ch.net 发表终止性证明才暂告段落。<ref>http://wc2014.2ch.net/test/read.cgi/math/1448211924/152-155n</ref>然而 Hyp cos 通过构造非终止序列推翻了该证明。<ref>Hyp cos (2016). [https://googology.fandom.com/wiki/Talk:Bashicu_matrix_system?oldid=118833#Something_wrong_happens Talk: Bashicu Matrix System, Something wrong happens]. ''Googology Wiki''.</ref>
+
+为此，Bashicu 发布第二版（BM2），以 BASIC 语言重新实现算法。<ref name=":0" />2018年6月12日，他再次更新定义至 BM3，<ref>Kyodaisuu (2018). [https://googology.fandom.com/ja/wiki/%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E3%83%96%E3%83%AD%E3%82%B0:Kyodaisuu/%E3%83%90%E3%82%B7%E3%82%AF%E8%A1%8C%E5%88%97%E6%9C%80%E6%96%B0%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3 Bashiku Matrix Version 3] (バシク行列バージョン3). ''Googology Wiki''.</ref>但当月内 Alemagno12 便发现存在不终止的例证。<ref>Alemagno12 (2018). [https://googology.fandom.com/wiki/User_blog:Alemagno12/BM3_has_an_infinite_loop BM3 has an infinite loop]. ''Googology Wiki''.</ref>
+
+2018 年 11 月 11 日，P進大好きbot 针对 PSS（即行数限制为 2 的 BMS）完成了终止性证明。<ref>P shin daisuki bot (P進大好きbot) (2018). [https://googology.fandom.com/ja/wiki/%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E3%83%96%E3%83%AD%E3%82%B0:P%E9%80%B2%E5%A4%A7%E5%A5%BD%E3%81%8Dbot/%E3%83%9A%E3%82%A2%E6%95%B0%E5%88%97%E3%81%AE%E5%81%9C%E6%AD%A2%E6%80%A7 Stopping property of pair sequences] (ペア数列の停止性). ''Googology Wiki''.</ref>
+
+2018 年 8 月 28 日，Bubby3 确认 BM2 确实不会终止。<ref>Bubby3 (2018). [https://googology.fandom.com/wiki/User_blog:Bubby3/BM2_doesn%27t_terminate. BM2 doesn't terminate.]. ''Googology Wiki''.</ref>
+
+Bashicu 最终修正官方定义推出 BM4，此为2018 年 9 月 1 日的最新版本。该版本最终在 2023 年 7 月 12 日被 Racheline（在 googology 社区中曾用名 Yto）证明停机。<ref>Rachel Hunter (2024). [https://arxiv.org/abs/2307.04606 Well-Orderedness of the Bashicu Matrix System]. ''arXiv''.</ref>
+
+尽管 BM4 是最后官方修订版，但 googology 社区已衍生诸多非官方变体，如 BM2.2、BM2.5、BM2.6、BM3.1、BM3.1.1、BM3.2 及 PsiCubed2 版等。<ref>Ecl1psed276 (2018). [https://googology.fandom.com/wiki/User_blog:Ecl1psed276/A_list_of_all_BMS_versions_and_their_differences A list of all BMS versions and their differences]. ''Googology Wiki''.</ref>需注意的是，整数编号版本（1-4）均由 Bashicu 本人定义，其余版本均为他人修改。
+
+由于 BMS 在三行之后出现提升效应造成分析上的极大困难，目前我们仍然在探索理想无提升 BMS（Idealized BMS，IBMS）的定义。[[BM3.3]]一度被认为是符合预期的 IBMS<ref>User blog:Rpakr/Bashicu Matrix Version 3.3 | Googology Wiki | Fandom</ref>，然而目前已经发现了 BM3.3 也具有提升。目前最新的成果是2026年5月28日test_alpha0所制造的记号[[UPMS]]。目前它被相信是理想的无提升BMS。
+
+=== 争议 ===
+test_alpha0 声称 Yto(Racheline)剽窃了他的证明。据test_alpha0所说，他在2022年2月16日在googology wiki上发布了关于 BMS 停机证明的文章<ref>User blog:ReflectingOrdinal/A proof of termination of BMS | Googology Wiki | Fandom</ref>，并在 googology discord 社区回答了相关问题，Racheline 声称他的证明不严谨，但过了一段时间，Racheline在ArXiv上发了证明，框架与 test_alpha0 的证明完全一致。目前尚不清楚 Racheline 的回应。
+
+== 强度分析 ==
+主词条：[[BMS分析|BMS 分析]]，[[提升效应]]
+
+BMS 的分析是一项浩大的工程，由于提升效应造成的困难。BMS的分析最初由Bubby3使用[[SAN]]进行，得出了<math>\text{lim(pDAN)}=(0,0,0)(1,1,1)(2,2,0)</math>，后来Yto接手了BMS的分析工作，使用[[稳定序数]]分析到了<math>(0,0,0)(1,1,1)(2,2,2)</math>。国内的YourCpper、bugit等人使用[[投影序数|投影]]进行BMS分析，达到了<math>(0,0,0,0)(1,1,1,1)(2,2,1,1)(3,0,0,0)</math>以上，但这些分析是错误的。后来FENG发现并修正了两人的分析错误，最终完成了BMS与向上投影的分析工作。
+
+这里列举出一些关键节点：
+
+<math>\varnothing=0</math>
+
+<math>(0)=1</math>
+
+<math>(0)(0)=2</math>
+
+<math>(0)(1)=\omega</math>
+
+<math>(0)(1)(1)=\omega^2</math>
+
+<math>(0)(1)(2)=\omega^{\omega}</math>
+
+<math>(0,0)(1,1)=\varepsilon_0</math>
+
+<math>(0,0)(1,1)(1,1)=\varepsilon_1</math>
+
+<math>(0,0)(1,1)(2,0)=\varepsilon_{\omega}</math>
+
+<math>(0,0)(1,1)(2,1)=\zeta_0</math>
+
+<math>(0,0)(1,1)(2,2)=\psi(\Omega_2)</math>
+
+<math>(0,0,0)(1,1,1)=\psi(\Omega_{\omega})</math>
+
+<math>(0,0,0)(1,1,1)(2,1,0)=\psi(\Omega_{\omega}\times\Omega)</math>
+
+<math>(0,0,0)(1,1,1)(2,1,0)(1,1,1)=\psi(\Omega_{\omega}^2)</math>
+
+<math>(0,0,0)(1,1,1)(2,1,1)=\psi(\Omega_{\omega^2})</math>
+
+<math>(0,0,0)(1,1,1)(2,1,1)(3,1,0)(2,0,0)=\psi(I)</math>
+
+<math>(0,0,0)(1,1,1)(2,1,1)(3,1,1)=\psi(I_{\omega})</math>
+
+<math>(0,0,0)(1,1,1)(2,1,1)(3,1,1)(3,1,1)=\psi(M_{\omega})</math>
+
+<math>(0,0,0)(1,1,1)(2,1,1)(3,1,1)(4,1,1)=\psi(K_{\omega})</math>
+
+<math>(0,0,0)(1,1,1)(2,2,0)=\psi(psd.\Pi_{\omega})</math>
+
+<math>(0,0,0)(1,1,1)(2,2,1)=\psi(\Pi_1(\lambda\alpha.(\Omega_{\alpha+2})-\Pi_1))</math>
+
+<math>(0,0,0)(1,1,1)(2,2,1)(3,0,0)=\psi(\lambda\alpha.(\Omega_{\alpha+\omega})-\Pi_0)</math>
+
+<math>(0,0,0)(1,1,1)(2,2,1)(3,2,1)=\psi(\Pi_1(\lambda\alpha.(I_{\alpha+1})-\Pi_1))</math>
+
+<math>(0,0,0)(1,1,1)(2,2,1)(3,3,0)=\psi(\lambda\alpha.(\lambda\beta.\beta+1-\Pi_1[\alpha+1])-\Pi_1)</math>
+
+<math>(0,0,0)(1,1,1)(2,2,2)=\psi(psd. \omega-\pi-\Pi_0)=\psi(\psi_\alpha(\alpha_{\omega}))</math>
+
+<math>(0,0,0)(1,1,1)(2,2,2)(3,2,2)=\psi(\psi_\alpha(\alpha_{\omega^2}))</math>
+
+<math>(0,0,0)(1,1,1)(2,2,2)(3,3,0)=\psi(\psi_\alpha(\psi_\beta(\varepsilon_{\alpha_{\beta+1}+1})))</math>
+
+<math>(0,0,0)(1,1,1)(2,2,2)(3,3,3)=\psi(\beta_{\omega})</math>
+
+<math>(0,0,0,0)(1,1,1,1)=\psi(\omega-\text{Projection})=\psi(\psi_S(\sigma S\times \omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,1,1,1)(3,1,0,0)(2,0,0,0)=\psi((1,0)-\text{Projection})=\psi(\psi_S(\sigma S\times S))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,1,1,1)(3,1,1,1)=\psi(\psi_S(\sigma S\times S\times\omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,0,0)=\psi(\psi_S(\sigma S\times S\times\omega+S_2))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,1,1)=\psi(\psi_S(\sigma S\times S\times\omega+\psi_{S_3}(\sigma S\times S\times\omega)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,0)=\psi(\psi_S(\sigma S\times S\times\omega+S_\omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)=\psi(\psi_S(\sigma S\times S\times\omega^2))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,2,0,0)(4,3,0,0)=\psi(\psi_S(\varepsilon_{\sigma S+1}))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,2,2,0)=\psi(\psi_S(\sigma S_\omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,2,2,1)=\psi(\psi_S(\psi_{\sigma\sigma S}(\sigma S_{\sigma \sigma S+1}^2+1)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,0,0)=\psi(\psi_S(\psi_{\sigma\sigma S}(\sigma\sigma S_2)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,1,1)=\psi(\psi_S(\psi_{\sigma\sigma S}(S_{\sigma\sigma S_2+1}+\sigma S_{\sigma\sigma S+1}\times(S+1)+\sigma S\times S \times \omega)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,2,0)=\psi(\psi_S(\psi_{\sigma\sigma S}(S_{\sigma\sigma S_2+1}+\psi_{\sigma\sigma S_2}(S_{\sigma\sigma S_2+1}+1))))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,2,1)=\psi(\psi_S(\psi_{\sigma\sigma S}(S_{\sigma\sigma S_2+2}+1)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,3,0)=\psi(\psi_S(\psi_{\sigma\sigma S}(\sigma\sigma S_\omega)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,3,1)=\psi(\psi_S(\sigma\sigma S\times\omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,3,1)(4,0,0,0)=\psi(\psi_S(\sigma\theta S\times\omega))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,1)(3,3,3,1)(4,4,4,0)=\psi(\psi_S(\psi_{\sigma\sigma\theta S}(\sigma\sigma\theta S_\omega)))</math>
+
+<math>(0,0,0,0)(1,1,1,1)(2,2,2,2)=\psi(\psi_X(\theta X\times\omega))</math>
+
+<math>(0,0,0,0,0)(1,1,1,1,1)=\psi(\psi_H(H^{H^\omega}))</math>
+
+<math>\text{Limit}=\psi(\psi_H(\varepsilon_{H+1}))</math>
+
+<math>(0,0,0,0)(1,1,1,1)</math>被命名为 TSSO（Trio Sequence System Ordinal，三行序列系统序数），<math>(0,0,0,0,0)(1,1,1,1,1)</math>被命名为 QSSO（Quardo Sequence System Ordinal，四行序列系统序数）。BMS 的极限在中文 googology 社区被称为 SHO（Small Hydra Ordinal），但这一命名的起源不明（SHO 最早被用来指代 <math>\varepsilon_0</math>，后来不明不白的变成了 BMS 极限），也是非正式的，因此被部分人拒绝使用。也有人称 BMS 极限为 BMO。
+
+== 来源 ==
+{{默认排序:序数记号}}
+[[分类:记号]]
