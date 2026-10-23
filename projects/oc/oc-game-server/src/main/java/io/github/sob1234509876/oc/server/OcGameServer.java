@@ -112,8 +112,20 @@ public final class OcGameServer {
     /** Whether this server was asked to host a world; a port of {@code 0} always turns it off. */
     private final boolean worldEnabled;
 
+    /**
+     * The chunk budget of the hosted world.
+     *
+     * @return the configured positive chunk budget, whether or not the world was started
+     */
+    public int worldChunks() {
+        return worldChunks;
+    }
+
     /** Seed of the hosted world. It is ignored when {@link #worldEnabled} is false. */
     private final long worldSeed;
+
+    /** Least-recently-used chunk budget of the hosted world; a memory ceiling, not a world size. */
+    private final int worldChunks;
 
     /** The running world, or {@code null} when it is disabled or not started. */
     private volatile WorldHost worldHost;
@@ -183,6 +195,33 @@ public final class OcGameServer {
      */
     public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
             int saveIntervalSeconds, WebSocketConfig webSocketConfig, boolean worldEnabled, long worldSeed) {
+        this(config, pluginsDirectory, dataDirectory, saveIntervalSeconds, webSocketConfig, worldEnabled,
+                worldSeed, WorldHost.DEFAULT_CHUNK_BUDGET);
+    }
+
+    /**
+     * Creates a server with explicit world settings, including the unbounded terrain's chunk budget.
+     *
+     * <p>{@code worldChunks} is the least-recently-used ceiling on chunks kept in memory, the
+     * {@code --chunks N} command line option. It is a memory bound, not a map size: the world has no edge,
+     * and chunks beyond the budget are regenerated deterministically when they are visited again.
+     *
+     * @param config              the game socket and framing limits
+     * @param pluginsDirectory    where plugin jars live
+     * @param dataDirectory       server owned state, user records today
+     * @param saveIntervalSeconds how often user records are written
+     * @param webSocketConfig     the browser endpoint settings; a port of {@code 0} disables the endpoint
+     * @param worldEnabled        whether to host a world (ignored when the endpoint port is {@code 0})
+     * @param worldSeed           seed of the hosted world
+     * @param worldChunks         positive chunk budget of the hosted world
+     * @throws IllegalArgumentException when {@code worldChunks} is not positive
+     */
+    public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
+            int saveIntervalSeconds, WebSocketConfig webSocketConfig, boolean worldEnabled, long worldSeed,
+            int worldChunks) {
+        if (worldChunks <= 0) {
+            throw new IllegalArgumentException("world chunks must be positive, was " + worldChunks);
+        }
         this.config = Objects.requireNonNull(config, "config");
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory")
                 .toAbsolutePath().normalize();
@@ -195,6 +234,7 @@ public final class OcGameServer {
         this.webSocketConfig = Objects.requireNonNull(webSocketConfig, "webSocketConfig");
         this.worldEnabled = worldEnabled;
         this.worldSeed = worldSeed;
+        this.worldChunks = worldChunks;
         this.auth = new AuthService(LocalUserStore.inDirectory(this.dataDirectory));
         // One registry, two owners: the loader hands it to every plugin through the PluginContext, and the
         // socket consults it for REQ. A plugin loaded here is therefore reachable the moment a client logs
@@ -342,7 +382,8 @@ public final class OcGameServer {
         // plugins offered, or the engine's sample catalogue when no plugin claimed the world.
         WorldContent content = selectWorldContent(pluginLoader.worldContents());
         WorldHost host = worldEnabled && webSocketConfig.port() != 0
-                ? new WorldHost(worldSeed, content, selectWorldTickHooks(pluginLoader.worldTickHooks()))
+                ? new WorldHost(worldSeed, content, selectWorldTickHooks(pluginLoader.worldTickHooks()),
+                        worldChunks)
                 : null;
         server.start();
         if (host != null) {
@@ -512,6 +553,7 @@ public final class OcGameServer {
                       --ws-idle N         WebSocket idle timeout in seconds (default 300, must be positive)
                       --world on|off      start the server side world (default on; off answers 503)
                       --seed N            seed of the server side world (default 1)
+                      --chunks N          loaded chunk budget of the unbounded world (default 4096)
                       --help              this text
                     """);
             return;
@@ -528,6 +570,8 @@ public final class OcGameServer {
         boolean worldEnabled = parseWorldOption(options.getOrDefault("world", "on")) && httpPort != 0;
         long worldSeed = Long.parseLong(options.getOrDefault("seed",
                 Long.toString(WorldHost.DEFAULT_SEED)));
+        int worldChunks = Integer.parseInt(options.getOrDefault("chunks",
+                Integer.toString(WorldHost.DEFAULT_CHUNK_BUDGET)));
         ServerConfig config = ServerConfig.defaults().withPort(port);
         WebSocketConfig webConfig = WebSocketConfig.defaults()
                 .withPort(httpPort)
@@ -540,7 +584,7 @@ public final class OcGameServer {
         }
 
         OcGameServer server = new OcGameServer(config, plugins, data, saveSeconds, webConfig,
-                worldEnabled, worldSeed);
+                worldEnabled, worldSeed, worldChunks);
         server.start();
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop, "oc-shutdown"));
         System.out.println("Omni Com " + VERSION + " listening on " + config.bindAddress() + ":" + server.port());

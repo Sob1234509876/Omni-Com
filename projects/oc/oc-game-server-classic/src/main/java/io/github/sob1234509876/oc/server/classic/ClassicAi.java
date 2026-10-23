@@ -73,13 +73,15 @@ import java.util.Objects;
  *
  * <h2>Where buildings go</h2>
  *
- * <p>The site search is deterministic and has no randomness: it walks the AI's buildings in entity id order
- * as anchors, and around each anchor scans rings of tiles from the anchor's origin outwards, in a fixed
- * row-major order, taking the first free buildable origin for which
- * {@link World#canPlace(DimensionId, BuildingType, GridPos)} holds. Candidate origins are clamped to the
- * server's reported {@value WorldHost#MAP_SIZE} x {@value WorldHost#MAP_SIZE} map, so the AI never places
- * an entity outside the picture the browser is sent. With no building to anchor on there is no site and the
- * AI does nothing.
+ * <p>The site search is deterministic and has no randomness: it takes the origin of the AI's oldest living
+ * building as its base anchor and scans rings of tiles outwards from it, in a fixed row-major order, taking
+ * the first free buildable origin for which
+ * {@link World#canPlace(DimensionId, BuildingType, GridPos)} holds. The world is unbounded, so the search is
+ * bounded by {@value #SITE_SEARCH_RADIUS_TILES} tiles instead of a map edge. When no site fits inside the
+ * bound, the AI places nothing for that decision and tries again after
+ * {@value #DECISION_INTERVAL_TICKS} ticks; with no building to anchor on there is no site either and the AI
+ * does nothing. The same bound keeps every opening building within
+ * {@value #SITE_SEARCH_RADIUS_TILES} tiles of its preferred anchor.
  *
  * <h2>The enemy player and its opening</h2>
  *
@@ -90,10 +92,10 @@ import java.util.Objects;
  * the content's {@link ClassicContent#STARTING_RESOURCES starting stock} (300 gold, 60 wood) into its
  * warehouse. That stock is the same content data the host gives player 1 - the engine itself applies
  * starting resources to no player, and {@link WorldHost} applies them to its single player - so the AI
- * reuses the content's numbers instead of inventing its own. The opening base starts from a fixed anchor in
- * the opposite quadrant from the host's centre scene, but every building origin is then chosen by a
- * deterministic search for buildable ground: the served terrain is noise, so a fixed tile would sometimes
- * be water or rock.
+ * reuses the content's numbers instead of inventing its own. The opening base starts from a fixed anchor far
+ * from the host's sample scene near the origin, but every building origin is then chosen by a deterministic
+ * search for buildable ground: the served terrain is noise, so a fixed tile would sometimes be water or
+ * rock.
  *
  * <p>If the server serves some other catalogue (the world content seam is first-one-wins, so a classic hook
  * can end up in a world another plugin claimed), the bootstrap finds no classic definitions and the hook
@@ -161,23 +163,27 @@ public final class ClassicAi implements WorldTickHook {
 
     private static final float DEFENCE_RADIUS_SQUARED = DEFENCE_RADIUS_TILES * DEFENCE_RADIUS_TILES;
 
-    /** Widest ring, in tiles, the site search looks at around every existing building. */
-    private static final int SITE_SEARCH_RADIUS = 6;
+    /**
+     * Widest ring, in tiles, any site search may walk from the AI's own base.
+     *
+     * <p>The world is unbounded, so this fixed radius is what replaces the old whole-map fallback. It is the
+     * maximum distance from the AI's oldest building to any site it places, for the opening base as well as
+     * for later buildings; a search that finds nothing inside it gives up rather than walking forever.
+     */
+    public static final int SITE_SEARCH_RADIUS_TILES = 64;
 
     /** Content tag that marks the units a builder: the engineer carries it. */
     private static final String BUILDER_TAG = "builder";
 
-    /** The host's reported map side, used to keep every site inside the picture the browser receives. */
-    private static final int MAP_SIZE = WorldHost.MAP_SIZE;
-
     /**
-     * Anchor of the enemy opening base: three quarters of the way across the reported map.
+     * Fixed anchor of the enemy opening base, far from the host's sample scene near the world origin.
      *
-     * <p>The host places its sample scene and the human bases around the centre of the map, so the AI takes
-     * the opposite quadrant. The anchor is only a hint: {@link #findOpenOrigin} searches rings of buildable
-     * tiles around it, because the terrain is noise and the exact tile may be water or rock.
+     * <p>The host scans from {@code (0, 0)} and places its scene and the human bases around that anchor, so
+     * the AI takes a distant, fixed point of the unbounded world. The anchor is only a hint:
+     * {@link #findOpenOrigin} searches rings of buildable tiles around it, because the terrain is noise and
+     * the exact tile may be water or rock.
      */
-    private static final GridPos BASE_ANCHOR = new GridPos(MAP_SIZE * 3 / 4, MAP_SIZE * 3 / 4);
+    private static final GridPos BASE_ANCHOR = new GridPos(192, 192);
 
     /** Preferred offset of the armory from the opening warehouse, in tiles (one tile of clearance). */
     private static final GridPos OFFSET_ARMORY = new GridPos(0, 4);
@@ -188,7 +194,7 @@ public final class ClassicAi implements WorldTickHook {
     /** Preferred offset of the engineer from the opening warehouse, in tiles. */
     private static final GridPos OFFSET_ENGINEER = new GridPos(2, 4);
 
-    /** Widest ring the opening base search walks around its preferred tiles before scanning the map. */
+    /** Near ring the opening base search walks before the bounded wider fallback. */
     private static final int OPENING_SEARCH_RADIUS = 24;
 
     private Mode mode = Mode.ECON;
@@ -420,36 +426,30 @@ public final class ClassicAi implements WorldTickHook {
     // ------------------------------------------------------------------ site search
 
     /**
-     * The first origin where the type fits, scanning around the AI's buildings in a fixed order.
+     * The first origin where the type fits, scanning rings around the AI's own base in a fixed order.
      *
-     * <p>Anchors are walked in entity id order. Around each anchor the search visits rings of growing
-     * radius, and within a ring the tiles in row-major order ({@code dy} then {@code dx}), so the result is
-     * a pure function of the world state without any random shuffle.
+     * <p>The base is the origin of the AI's oldest living building in the builder's dimension, which is the
+     * opening warehouse. The search visits rings of growing radius up to
+     * {@value #SITE_SEARCH_RADIUS_TILES} tiles, and within a ring the tiles in row-major order ({@code dy}
+     * then {@code dx}), so the result is a pure function of the world state without any random shuffle. A
+     * radius that finds nothing is the documented fallback: the AI skips this building project for the
+     * decision and tries again on the next one. The world is unbounded, so there is no map scan to fall back
+     * to.
      */
     private static GridPos findSite(World world, Unit builder, List<Building> buildings, BuildingType type) {
         DimensionId dimension = builder.dimensionId();
-        for (Building anchor : buildings) {
-            if (!anchor.isAlive() || !anchor.dimensionId().equals(dimension)) {
-                continue;
-            }
-            GridPos from = anchor.origin();
-            for (int radius = 0; radius <= SITE_SEARCH_RADIUS; radius++) {
-                for (int dy = -radius; dy <= radius; dy++) {
-                    for (int dx = -radius; dx <= radius; dx++) {
-                        if (Math.max(Math.abs(dx), Math.abs(dy)) != radius) {
-                            continue;
-                        }
-                        int x = from.x() + dx;
-                        int y = from.y() + dy;
-                        if (x < 0 || y < 0 || x + type.sizeX() > MAP_SIZE || y + type.sizeY() > MAP_SIZE) {
-                            continue;
-                        }
-                        GridPos candidate = new GridPos(x, y);
-                        if (world.canPlace(dimension, type, candidate)) {
-                            return candidate;
-                        }
-                    }
-                }
+        GridPos base = baseAnchor(buildings, dimension);
+        if (base == null) {
+            return null;
+        }
+        return scanOrigin(world, type, base, SITE_SEARCH_RADIUS_TILES, List.of(), dimension);
+    }
+
+    /** The origin of the AI's oldest living building in the dimension, or {@code null} when there is none. */
+    private static GridPos baseAnchor(List<Building> buildings, DimensionId dimension) {
+        for (Building building : buildings) {
+            if (building.isAlive() && building.dimensionId().equals(dimension)) {
+                return building.origin();
             }
         }
         return null;
@@ -529,78 +529,82 @@ public final class ClassicAi implements WorldTickHook {
     }
 
     /**
-     * The first buildable origin for a building, scanning rings around a preferred tile and then the map.
+     * The first buildable origin for a building, scanning rings around a preferred tile.
      *
      * <p>The search order is fixed: ring by ring outward, and within one ring row-major ({@code dy} then
      * {@code dx}). It uses {@link World#canPlace} with the AI's dimension, so the building footprint must be
      * buildable terrain of the served catalogue and must overlap no living building - exactly the rule the
      * later site search uses. {@code reserved} rectangles are the other openings chosen in the same
      * bootstrap, which are not spawned yet and therefore invisible to {@code canPlace}; excluding them keeps
-     * the three buildings from collapsing onto one another when water pushes their searches together. The
-     * row-major map scan at {@code (0, 0)} is the deterministic fallback for a preferred tile that happens to
-     * sit in the middle of a lake.
+     * the three buildings from collapsing onto one another when water pushes their searches together.
+     *
+     * <p>The near rings ({@value #OPENING_SEARCH_RADIUS}) are tried first, then the same preferred tile is
+     * searched again up to {@value #SITE_SEARCH_RADIUS_TILES} tiles. Both are bounded because the world has
+     * no map to scan, and the wider bound is the documented fallback for a preferred tile that happens to
+     * sit in the middle of a lake. If even that finds nothing the opening is abandoned instead of walking
+     * forever.
      */
     private static GridPos findOpenOrigin(World world, BuildingType type, GridPos preferred,
             List<TileRect> reserved) {
-        for (int ring = 0; ring <= OPENING_SEARCH_RADIUS; ring++) {
+        DimensionId dimension = world.defaultDimensionId();
+        GridPos near = scanOrigin(world, type, preferred, OPENING_SEARCH_RADIUS, reserved, dimension);
+        return near != null ? near
+                : scanOrigin(world, type, preferred, SITE_SEARCH_RADIUS_TILES, reserved, dimension);
+    }
+
+    /**
+     * Visits rings around a centre in row-major order and returns the first origin the building fits.
+     *
+     * @param dimension the dimension the building will be placed in
+     */
+    private static GridPos scanOrigin(World world, BuildingType type, GridPos centre, int radius,
+            List<TileRect> reserved, DimensionId dimension) {
+        for (int ring = 0; ring <= radius; ring++) {
             for (int dy = -ring; dy <= ring; dy++) {
                 for (int dx = -ring; dx <= ring; dx++) {
                     if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
                         continue;
                     }
-                    GridPos candidate = new GridPos(preferred.x() + dx, preferred.y() + dy);
-                    if (openOrigin(world, type, candidate, reserved)) {
+                    GridPos candidate = new GridPos(centre.x() + dx, centre.y() + dy);
+                    if (openOrigin(world, type, candidate, reserved, dimension)) {
                         return candidate;
                     }
-                }
-            }
-        }
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                GridPos candidate = new GridPos(x, y);
-                if (openOrigin(world, type, candidate, reserved)) {
-                    return candidate;
                 }
             }
         }
         return null;
     }
 
-    /** Whether a building origin is inside the reported map, free of reserved areas, and placeable. */
-    private static boolean openOrigin(World world, BuildingType type, GridPos origin, List<TileRect> reserved) {
-        if (origin.x() < 0 || origin.y() < 0
-                || origin.x() + type.sizeX() > MAP_SIZE || origin.y() + type.sizeY() > MAP_SIZE) {
-            return false;
-        }
+    /** Whether a building origin is free of reserved areas and placeable in the dimension. */
+    private static boolean openOrigin(World world, BuildingType type, GridPos origin,
+            List<TileRect> reserved, DimensionId dimension) {
         TileRect footprint = type.footprint(origin.x(), origin.y());
         for (TileRect area : reserved) {
             if (area.intersects(footprint)) {
                 return false;
             }
         }
-        return world.canPlace(type, origin);
+        return world.canPlace(dimension, type, origin);
     }
 
-    /** The first free buildable unit tile, scanning rings around a preferred tile and then the map. */
+    /** The first free buildable unit tile, scanning near rings and then the bounded wider fallback. */
     private static GridPos findOpenTile(World world, GridPos preferred, List<TileRect> reserved) {
-        for (int ring = 0; ring <= OPENING_SEARCH_RADIUS; ring++) {
+        GridPos near = scanTile(world, preferred, OPENING_SEARCH_RADIUS, reserved);
+        return near != null ? near : scanTile(world, preferred, SITE_SEARCH_RADIUS_TILES, reserved);
+    }
+
+    /** Visits rings around a centre in row-major order and returns the first free buildable tile. */
+    private static GridPos scanTile(World world, GridPos centre, int radius, List<TileRect> reserved) {
+        for (int ring = 0; ring <= radius; ring++) {
             for (int dy = -ring; dy <= ring; dy++) {
                 for (int dx = -ring; dx <= ring; dx++) {
                     if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
                         continue;
                     }
-                    GridPos candidate = new GridPos(preferred.x() + dx, preferred.y() + dy);
+                    GridPos candidate = new GridPos(centre.x() + dx, centre.y() + dy);
                     if (openTile(world, candidate, reserved)) {
                         return candidate;
                     }
-                }
-            }
-        }
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                GridPos candidate = new GridPos(x, y);
-                if (openTile(world, candidate, reserved)) {
-                    return candidate;
                 }
             }
         }
@@ -609,9 +613,6 @@ public final class ClassicAi implements WorldTickHook {
 
     /** Whether a tile is buildable ground, outside the reserved footprints, and carries no entity. */
     private static boolean openTile(World world, GridPos tile, List<TileRect> reserved) {
-        if (tile.x() < 0 || tile.y() < 0 || tile.x() >= MAP_SIZE || tile.y() >= MAP_SIZE) {
-            return false;
-        }
         if (!world.map().isBuildable(tile)) {
             return false;
         }

@@ -18,7 +18,7 @@ window. The CLI logs in like a player and prints the report, as text or as one J
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` (the passive plugin API) and `oc-rts-engine` (the engine facts the report prints) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-debug:selfcheck` (82 checks, including a real socket round trip) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-debug:selfcheck` (85 checks, including a real socket round trip) |
 | Request | `engine-info`, read only, requires `LOGIN` on the same connection |
 | Help | [`../oc-game-server/help/04-debug-plugin-and-cli.md`](../oc-game-server/help/04-debug-plugin-and-cli.md) — the chapter, in Chinese |
 
@@ -32,10 +32,10 @@ window. The CLI logs in like a player and prints the report, as text or as one J
 The self check prints one line at the end:
 
 ```text
-debug plugin self check: all 82 checks passed.
+debug plugin self check: all 85 checks passed.
 ```
 
-82 is the sum of four sections: the envelope 15, the key file and the `engine-info` report 34, the request
+85 is the sum of four sections: the envelope 15, the key file and the `engine-info` report 37, the request
 registry 14, and a real socket end to end 19. The reporter is the game server module's, put on this module's
 self check class path, so no assertion helper is duplicated here.
 
@@ -84,12 +84,14 @@ answering immediately. The client seals one request line inside the envelope:
 | anything else | `ERR unsupported request` |
 | an envelope that cannot be opened | `ERR bad request` |
 
-The two request lines are compared case sensitively after stripping whitespace. A report carries 36 facts in a
+The two request lines are compared case sensitively after stripping whitespace. A report carries 38 facts in a
 fixed order: the server version and the plugin (its name, version, data directory, key file, registered request
 names, served count), then the JVM and the machine (vendor, name, version, OS, processors, uptime, heap, live
 threads), then the engine (the nine hyperoperation levels, a structural `10^^10` rendered by `NaturalFormat`,
-and the dimensions, entities, tick, terrain and chunks of a throwaway `World`). Every request rebuilds the map,
-so no fact can be stale, and the text report is about 1.5 KiB, well inside the 4096 byte protocol line limit.
+and the dimensions, entities, tick, terrain and chunks of a throwaway unbounded `World`). The map is read
+through `StreamingTerrainMap`, never by casting to the finite `ChunkedMap`: `engine-map-bounded` reports
+`false`, and `engine-chunks-budget` reports the 4096-chunk memory ceiling in place of a map size. Every request rebuilds the map,
+so no fact can be stale, and the text report is about 1.6 KiB, well inside the 4096 byte protocol line limit.
 
 ## What it cannot do
 
@@ -118,7 +120,7 @@ bytes, and a timestamp more than 60 seconds away from the reader's clock is refu
 | `src/main/java/.../debug/DebugKeyFile.java` | `debug.key`: read it, create it once with `CREATE_NEW`, never overwrite it |
 | `src/main/java/.../debug/cli/DebugCli.java` | the CLI: read the key, seal the request, `LOGIN`, `REQ engine-info`, print |
 | `src/main/java/module-info.java` | requires `oc.projects.oc.game.server`, `oc.projects.oc.rts.engine` and `java.management`; exports both packages |
-| `src/selfcheck/java/.../debug/check/DebugPluginCheck.java` | the 82 check self check program |
+| `src/selfcheck/java/.../debug/check/DebugPluginCheck.java` | the 85 check self check program |
 | `build.gradle` | the `selfcheck` and `debugCli` tasks, and the server self check output on the check class path |
 
 ## Related

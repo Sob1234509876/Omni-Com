@@ -22,6 +22,7 @@ import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
+import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
 
 import java.util.ArrayList;
@@ -41,21 +42,24 @@ import java.util.concurrent.TimeoutException;
 /**
  * The server side world: one {@link OcRtsEngine} advanced on one daemon thread and rendered by the browser.
  *
- * <p>The world is a deterministic 256 x 256 reported slice of the engine's endless noise landscape.
+ * <p>The world is unbounded: it is an {@link InfiniteTerrainMap} over the engine's endless noise landscape,
+ * with a fixed least-recently-used budget of loaded chunks instead of a map edge or a map size.
  * {@link NoiseTerrainGenerator} derives every tile from the seed through an integer hash field, so the same
- * seed and the same served content always paint the same water, sand, grass, forest, hill and rock, and no
- * chunk needs its neighbours to be generated first. A snapshot no longer sends the whole map: it serialises
- * one square window around a requested centre (see {@link #snapshotJson(int, int, int)}), which keeps the
- * document small however large {@link #MAP_SIZE} becomes. Entities keep absolute map coordinates and are
- * always sent in full, so a window that does not contain an entity still lets the client track it.
+ * seed and the same served content always paint the same water, sand, grass, forest, hill and rock at any
+ * signed tile coordinate, and no chunk needs its neighbours to be generated first. There is no
+ * map size at all: a snapshot serialises one square window around an arbitrary requested centre (see
+ * {@link #snapshotJson(int, int, int)}), and both its origin and the entities it reports may be negative.
+ * Entities keep absolute world coordinates and are always sent in full, so a window that does not contain
+ * an entity still lets the client track it.
  *
  * <p><strong>Buildable anchors.</strong> Noise terrain contains water and rock, so no fixed tile may carry
- * the sample scene or a starting base. The host scans outward from the centre of the reported map, in a
- * fixed ring order, for the first tile whose terrain is buildable for the served catalogue; that tile is
- * {@link #spawnAnchor()}. The scene, the sample player's stock and every human starting base are then
- * placed relative to that anchor by deterministic ring searches, never by randomness. The anchor depends
- * only on the seed and the content, which is what lets two hosts with the same seed agree and lets a check
- * assert it.
+ * the sample scene or a starting base. The host scans outward from {@code (0, 0)} - the origin of the
+ * unbounded world - in a fixed ring order, for the first tile whose terrain is buildable for the served
+ * catalogue; that tile is {@link #spawnAnchor()}. The search is bounded by
+ * {@value #SEARCH_RADIUS_TILES} tiles so server start cannot walk an endless world. The scene, the sample
+ * player's stock and every human starting base are then placed relative to that anchor by deterministic
+ * ring searches, never by randomness. The anchor depends only on the seed and the content, which is what
+ * lets two hosts with the same seed agree and lets a check assert it.
  *
  * <p><strong>Content comes from a seam, not from this class.</strong> The catalogue is a
  * {@link WorldContent} handed to the constructor. {@link #WorldHost(long)} keeps the historical behaviour
@@ -118,8 +122,25 @@ public final class WorldHost {
 
     private static final System.Logger LOG = System.getLogger("oc.world");
 
-    /** Side length of the reported map, in tiles. The one place this size is stated. */
-    public static final int MAP_SIZE = 256;
+    /**
+     * Loaded chunk budget of the unbounded terrain, used when the caller does not name one.
+     *
+     * <p>The map has no size; this is a memory ceiling. Chunks beyond it are evicted least-recently-used
+     * and regenerated deterministically when somebody looks at them again. The server exposes it as
+     * {@code --chunks N}, and the engine's own default is the same number.
+     */
+    public static final int DEFAULT_CHUNK_BUDGET = InfiniteTerrainMap.DEFAULT_MAX_LOADED_CHUNKS;
+
+    /**
+     * How far, in tiles, a deterministic site search may walk from its anchor before giving up.
+     *
+     * <p>The world is unbounded, so every search that used to fall back to "scan the whole map" is bounded
+     * by this radius instead. It applies to the spawn anchor search from {@code (0, 0)}, to the scene and
+     * starting-base placement fallbacks, and - through its own copy of the rule - to the classic AI's site
+     * search. A radius of 64 is large enough for noisy terrain (the square holds 16,641 tiles) and small
+     * enough that startup and a single AI decision stay fast.
+     */
+    public static final int SEARCH_RADIUS_TILES = 64;
 
     /** Radius of a snapshot window when the request names none, in tiles. */
     public static final int DEFAULT_SNAPSHOT_RADIUS = 32;
@@ -195,10 +216,10 @@ public final class WorldHost {
     /** Distance from the spawn anchor row to the two rows of human base anchors, in tiles. */
     private static final int BASE_ANCHOR_STRIDE_Y = 48;
 
-    /** How many rings around its anchor the warehouse site search visits before scanning the whole map. */
+    /** Near rings around its anchor the warehouse site search visits before the wider bounded fallback. */
     private static final int BASE_SITE_SEARCH_RADIUS = 16;
 
-    /** How many rings around the warehouse the builder tile search visits before scanning the whole map. */
+    /** Near rings around the warehouse the builder tile search visits before the wider bounded fallback. */
     private static final int BASE_UNIT_SEARCH_RADIUS = 6;
 
     /**
@@ -235,7 +256,7 @@ public final class WorldHost {
     /** How far below the scene origin the sample units are spawned, in tiles. */
     private static final int SCENE_UNIT_OFFSET_Y = 24;
 
-    /** How many rings a scene placement may walk around its preferred tile before scanning the whole map. */
+    /** How many rings a scene placement walks around its preferred tile before the wider fallback. */
     private static final int SCENE_SEARCH_RADIUS = 16;
 
     /** An empty tile rectangle, used when a unit search excludes no building footprint. */
@@ -253,8 +274,11 @@ public final class WorldHost {
     private final Player player;
     private final OcRtsEngine engine;
 
+    /** Hard least-recently-used ceiling on the chunks the unbounded terrain keeps in memory. */
+    private final int chunkBudget;
+
     /**
-     * The first buildable tile the host found when scanning outwards from the map centre.
+     * The first buildable tile the host found when scanning outwards from the world origin {@code (0, 0)}.
      *
      * <p>Every scene building and every human starting base is placed relative to this tile, which is why it
      * is computed once, before anything spawns, and never changes. It is a pure function of the seed and the
@@ -334,15 +358,34 @@ public final class WorldHost {
     }
 
     /**
-     * Builds the noise world and its sample scene from the given content and the given tick hooks.
+     * Builds the noise world and its sample scene from the given content and the given tick hooks, using
+     * the default chunk budget.
      *
-     * <p>{@link NoiseTerrainGenerator} paints the six biomes of the served catalogue and the host scans out
-     * from the centre of {@link #MAP_SIZE} for the first buildable tile. The scene is derived from the
-     * catalogue, never from constants in this class: one finished building of every declared building type
-     * around that anchor, one unit of every declared unit type below them, and the first two units ordered
-     * across the map so successive snapshots show the real movement pipeline working instead of a frozen
-     * picture. {@link WorldContent#startingResources()} is deposited into the player's warehouses after the
-     * scene exists, because a stock has to live in a warehouse to be spendable.
+     * <p>Exactly {@code new WorldHost(seed, content, tickHooks, DEFAULT_CHUNK_BUDGET)}.
+     *
+     * @param seed      seed of the noise terrain, of the spawn anchor and of the engine's own streams
+     * @param content   the catalogue to serve, for example the one a plugin registered
+     * @param tickHooks the plugin hooks to run after every fixed step, in order; never {@code null}
+     */
+    public WorldHost(long seed, WorldContent content, List<WorldTickHook> tickHooks) {
+        this(seed, content, tickHooks, DEFAULT_CHUNK_BUDGET);
+    }
+
+    /**
+     * Builds the unbounded noise world and its sample scene from the given content, tick hooks and chunk
+     * budget.
+     *
+     * <p>{@link NoiseTerrainGenerator} paints the six biomes of the served catalogue and the builder's
+     * {@code infiniteTerrain(seed)} gives the world an {@link InfiniteTerrainMap}: any signed tile
+     * coordinate exists, the focus streams chunks around the camera, and the budget evicts the least
+     * recently used chunks beyond it, so memory stays bounded however far a unit walks. The host scans out
+     * from {@code (0, 0)} for the first buildable tile, bounded by {@value #SEARCH_RADIUS_TILES} tiles. The
+     * scene is derived from the catalogue, never from constants in this class: one finished building of
+     * every declared building type around that anchor, one unit of every declared unit type below them, and
+     * the first two units ordered across the map so successive snapshots show the real movement pipeline
+     * working instead of a frozen picture. {@link WorldContent#startingResources()} is deposited into the
+     * player's warehouses after the scene exists, because a stock has to live in a warehouse to be
+     * spendable.
      *
      * <p>The hooks run at the end of every fixed step, after the engine tick, in the order given; see
      * {@link #step()}. The list is copied, so a caller may change its own list afterwards without
@@ -350,16 +393,23 @@ public final class WorldHost {
      *
      * <p>No thread is started until {@link #start()}.
      *
-     * @param seed      seed of the noise terrain, of the spawn anchor and of the engine's own streams
-     * @param content   the catalogue to serve, for example the one a plugin registered
-     * @param tickHooks the plugin hooks to run after every fixed step, in order; never {@code null}
-     * @throws IllegalStateException when the content declares starting resources no warehouse accepts, or
-     *     defines no buildable terrain to put the world on
+     * @param seed        seed of the noise terrain, of the spawn anchor and of the engine's own streams
+     * @param content     the catalogue to serve, for example the one a plugin registered
+     * @param tickHooks   the plugin hooks to run after every fixed step, in order; never {@code null}
+     * @param chunkBudget hard upper bound on chunks kept in memory; must be positive
+     * @throws IllegalArgumentException when {@code chunkBudget} is not positive
+     * @throws IllegalStateException    when the content declares starting resources no warehouse accepts,
+     *     defines no buildable terrain to put the world on, or paints no buildable tile within
+     *     {@value #SEARCH_RADIUS_TILES} tiles of the origin
      */
-    public WorldHost(long seed, WorldContent content, List<WorldTickHook> tickHooks) {
+    public WorldHost(long seed, WorldContent content, List<WorldTickHook> tickHooks, int chunkBudget) {
+        if (chunkBudget <= 0) {
+            throw new IllegalArgumentException("chunk budget must be positive, was " + chunkBudget);
+        }
         this.seed = seed;
         this.worldContent = Objects.requireNonNull(content, "content");
         this.tickHooks = List.copyOf(Objects.requireNonNull(tickHooks, "tickHooks"));
+        this.chunkBudget = chunkBudget;
         this.content = registryOf(this.worldContent);
         BiomeTable biomes = biomeTable(this.content, this.worldContent);
         this.player = Player.of(1, "Player 1", 0xFF4FC3F7);
@@ -369,6 +419,8 @@ public final class WorldHost {
                 .chunkSize(NoiseTerrainGenerator.DEFAULT_CHUNK_SIZE)
                 .viewRadiusChunks(2)
                 .generator(new NoiseTerrainGenerator(seed, biomes))
+                .infiniteTerrain(seed)
+                .maxLoadedChunks(chunkBudget)
                 .player(player)
                 .build();
         this.spawnAnchor = findSpawnAnchor(engine.world());
@@ -450,41 +502,42 @@ public final class WorldHost {
     }
 
     /**
-     * Finds the deterministic spawn anchor: the first buildable tile on rings growing out from the centre
-     * of the reported map.
+     * Finds the deterministic spawn anchor: the first buildable tile on rings growing out from the world
+     * origin {@code (0, 0)}.
+     *
+     * <p>The search is bounded by {@value #SEARCH_RADIUS_TILES} tiles. There is no map edge to fall back on,
+     * so the radius is what keeps startup fast; if no buildable tile exists inside it the content cannot
+     * carry the sample scene and the constructor fails with a clear message instead of searching an endless
+     * landscape.
      *
      * <p>The scan is a pure function of the terrain field: no random stream, no clock and no content
      * iteration order. Within one ring the tiles are visited in row-major order ({@code dy} then {@code dx}),
      * so two hosts with the same seed and the same catalogue answer the same anchor. "Buildable" is the same
-     * predicate the engine uses for construction ({@link io.github.sob1234509876.oc.rts.map.TerrainMap#isBuildable}),
-     * so the tile can carry a building of any served catalogue without a second rule.
+     * predicate the engine uses for construction
+     * ({@link io.github.sob1234509876.oc.rts.map.TerrainMap#isBuildable}), so the tile can carry a building
+     * of any served catalogue without a second rule.
      *
-     * @return the first buildable tile near the centre; never {@code null} once the catalogue has buildable
-     *     terrain, which the constructor guarantees
+     * @return the first buildable tile within the search radius; never {@code null}
+     * @throws IllegalStateException when no buildable tile exists within {@value #SEARCH_RADIUS_TILES}
+     *     tiles of the origin
      */
     private static GridPos findSpawnAnchor(World world) {
-        int centre = MAP_SIZE / 2;
-        for (int ring = 0; ring <= MAP_SIZE; ring++) {
+        for (int ring = 0; ring <= SEARCH_RADIUS_TILES; ring++) {
             for (int dy = -ring; dy <= ring; dy++) {
                 for (int dx = -ring; dx <= ring; dx++) {
                     if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
                         continue;
                     }
-                    int x = centre + dx;
-                    int y = centre + dy;
-                    if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) {
-                        continue;
-                    }
-                    GridPos tile = new GridPos(x, y);
+                    GridPos tile = new GridPos(dx, dy);
                     if (world.map().isBuildable(tile)) {
                         return tile;
                     }
                 }
             }
         }
-        // Defensive only: a catalogue without buildable terrain is rejected before the engine is built. A
-        // world that paints no buildable tile inside the reported square still has to report something.
-        return new GridPos(centre, centre);
+        throw new IllegalStateException("world content paints no buildable tile within "
+                + SEARCH_RADIUS_TILES + " tiles of the origin (0, 0), so there is nowhere to place the"
+                + " sample scene or a starting base");
     }
 
     /**
@@ -493,9 +546,9 @@ public final class WorldHost {
      *
      * <p>The preferred grid is relative to {@link #spawnAnchor}, so the scene follows the buildable ground
      * the host found instead of a fixed patch of a flat map. A preferred tile is only a hint: each building
-     * is placed by the same deterministic ring search a starting base uses, and falls back to a row-major
-     * scan of the reported map. Noise terrain therefore cannot drop a warehouse into water, and the result
-     * is still a pure function of the seed and the catalogue.
+     * is placed by the same deterministic ring search a starting base uses, with a bounded wider ring as
+     * its fallback. Noise terrain therefore cannot drop a warehouse into water, and the result is still a
+     * pure function of the seed and the catalogue.
      *
      * <p>Building footprints differ per catalogue, so the grid spacing is a constant that is wider than any
      * plausible building rather than something computed per type; the scene is a starting picture, not a
@@ -512,12 +565,12 @@ public final class WorldHost {
                     originY + (index / SCENE_COLUMNS) * SCENE_SPACING);
             GridPos origin = scanFreeOrigin(world, type, preferred, SCENE_SEARCH_RADIUS);
             if (origin == null) {
-                origin = scanFreeOriginMap(world, type);
+                origin = scanFreeOrigin(world, type, preferred, SEARCH_RADIUS_TILES);
             }
             if (origin == null) {
                 throw new IllegalStateException("world content " + worldContent.id()
-                        + " has no buildable tile for the sample " + type.key().path() + " near "
-                        + spawnAnchor + " or anywhere else in the map");
+                        + " has no buildable tile for the sample " + type.key().path() + " within "
+                        + SEARCH_RADIUS_TILES + " tiles of " + spawnAnchor);
             }
             world.spawnBuilding(type, player, origin);
             index++;
@@ -529,11 +582,12 @@ public final class WorldHost {
             GridPos preferred = new GridPos(originX + index * 2, originY + SCENE_UNIT_OFFSET_Y);
             GridPos tile = scanFreeTile(world, preferred, SCENE_SEARCH_RADIUS, NO_TILES);
             if (tile == null) {
-                tile = scanFreeTileMap(world, NO_TILES);
+                tile = scanFreeTile(world, preferred, SEARCH_RADIUS_TILES, NO_TILES);
             }
             if (tile == null) {
                 throw new IllegalStateException("world content " + worldContent.id()
-                        + " has no free buildable tile for the sample " + type.key().path());
+                        + " has no free buildable tile for the sample " + type.key().path() + " within "
+                        + SEARCH_RADIUS_TILES + " tiles of " + spawnAnchor);
             }
             units.add(world.spawnUnit(type, player, tile));
             index++;
@@ -546,11 +600,9 @@ public final class WorldHost {
         }
     }
 
-    /** A movement target near the anchor, clamped to the reported map so a unit never walks off it. */
+    /** A movement target near the anchor; the world is unbounded, so there is no edge to clamp to. */
     private GridPos sceneMoveTarget(int dx, int dy) {
-        int x = Math.max(0, Math.min(MAP_SIZE - 1, spawnAnchor.x() + dx));
-        int y = Math.max(0, Math.min(MAP_SIZE - 1, spawnAnchor.y() + dy));
-        return new GridPos(x, y);
+        return new GridPos(spawnAnchor.x() + dx, spawnAnchor.y() + dy);
     }
 
     /**
@@ -567,8 +619,10 @@ public final class WorldHost {
      * order and takes the first origin where the building fits on buildable ground and overlaps no living
      * entity, and the builder is placed on the first free tile in rings around the warehouse. Two joins
      * therefore never pick the same tiles: the second search sees the first base as occupied. If the
-     * anchored search exhausts its rings, a row-major scan of the whole map is the documented fallback, so a
-     * crowded or watery map cannot make the result random.
+     * anchored search exhausts its rings, a wider ring search around the same anchor is the documented
+     * fallback. It is bounded by {@value #SEARCH_RADIUS_TILES} tiles because the world has no map to scan;
+     * a crowded or watery anchor therefore cannot make the result random, and a site that does not exist
+     * inside the bound leaves the player without a base instead of searching forever.
      */
     private void spawnStartingBase(Player player) {
         World world = engine.world();
@@ -643,10 +697,11 @@ public final class WorldHost {
         return spawnAnchor.plus(dx, dy);
     }
 
-    /** The warehouse origin for a player: rings around the slot anchor first, then the whole map. */
+    /** The warehouse origin for a player: near rings around the slot anchor, then the bounded wider rings. */
     private GridPos findWarehouseSite(World world, BuildingType type, int playerId) {
-        GridPos site = scanFreeOrigin(world, type, baseAnchor(playerId), BASE_SITE_SEARCH_RADIUS);
-        return site != null ? site : scanFreeOriginMap(world, type);
+        GridPos anchor = baseAnchor(playerId);
+        GridPos site = scanFreeOrigin(world, type, anchor, BASE_SITE_SEARCH_RADIUS);
+        return site != null ? site : scanFreeOrigin(world, type, anchor, SEARCH_RADIUS_TILES);
     }
 
     /** Visits rings around an anchor in row-major order and returns the first origin the building fits. */
@@ -667,19 +722,6 @@ public final class WorldHost {
         return null;
     }
 
-    /** Row-major fallback of {@link #findWarehouseSite(World, BuildingType, int)}. */
-    private static GridPos scanFreeOriginMap(World world, BuildingType type) {
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                GridPos origin = new GridPos(x, y);
-                if (freeOrigin(world, type, origin)) {
-                    return origin;
-                }
-            }
-        }
-        return null;
-    }
-
     /**
      * Whether a building of the type can be spawned at the origin without overlapping anything alive.
      *
@@ -688,10 +730,6 @@ public final class WorldHost {
      * top of a unit either.
      */
     private static boolean freeOrigin(World world, BuildingType type, GridPos origin) {
-        if (origin.x() < 0 || origin.y() < 0
-                || origin.x() + type.sizeX() > MAP_SIZE || origin.y() + type.sizeY() > MAP_SIZE) {
-            return false;
-        }
         if (!world.canPlace(type, origin)) {
             return false;
         }
@@ -704,12 +742,12 @@ public final class WorldHost {
         return true;
     }
 
-    /** The builder tile for a warehouse: rings around a tile just below the footprint, then the whole map. */
+    /** The builder tile for a warehouse: near rings around the footprint, then the bounded wider rings. */
     private static GridPos findBuilderTile(World world, BuildingType warehouse, GridPos origin) {
         TileRect footprint = warehouse.footprint(origin.x(), origin.y());
         GridPos anchor = new GridPos(origin.x() + warehouse.sizeX() / 2, origin.y() + warehouse.sizeY() + 1);
         GridPos tile = scanFreeTile(world, anchor, BASE_UNIT_SEARCH_RADIUS, footprint);
-        return tile != null ? tile : scanFreeTileMap(world, footprint);
+        return tile != null ? tile : scanFreeTile(world, anchor, SEARCH_RADIUS_TILES, footprint);
     }
 
     /** Visits rings around an anchor in row-major order and returns the first free buildable tile. */
@@ -730,19 +768,6 @@ public final class WorldHost {
         return null;
     }
 
-    /** Row-major fallback of {@link #findBuilderTile(World, BuildingType, GridPos)}. */
-    private static GridPos scanFreeTileMap(World world, TileRect excluded) {
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                GridPos tile = new GridPos(x, y);
-                if (freeTile(world, tile, excluded)) {
-                    return tile;
-                }
-            }
-        }
-        return null;
-    }
-
     /**
      * Whether a tile can carry a freshly spawned unit without touching any existing entity.
      *
@@ -751,9 +776,6 @@ public final class WorldHost {
      * deterministic.
      */
     private static boolean freeTile(World world, GridPos tile, TileRect excluded) {
-        if (tile.x() < 0 || tile.y() < 0 || tile.x() >= MAP_SIZE || tile.y() >= MAP_SIZE) {
-            return false;
-        }
         if (!world.map().isBuildable(tile) || excluded.contains(tile)) {
             return false;
         }
@@ -1084,7 +1106,7 @@ public final class WorldHost {
     }
 
     /**
-     * The deterministic buildable tile the host found near the centre of the map.
+     * The deterministic buildable tile the host found near the world origin.
      *
      * <p>The sample scene's preferred grid and every human starting base anchor are expressed relative to
      * this tile. It is computed once at construction by {@link #findSpawnAnchor(World)}, from the seed and
@@ -1353,14 +1375,17 @@ public final class WorldHost {
         }
     }
 
-    /** Reported map width in tiles. */
-    public int width() {
-        return MAP_SIZE;
-    }
-
-    /** Reported map height in tiles. */
-    public int height() {
-        return MAP_SIZE;
+    /**
+     * The least-recently-used chunk budget of the unbounded terrain.
+     *
+     * <p>This is a memory ceiling, not a world size: it is the {@code --chunks N} value the host was built
+     * with (or {@link #DEFAULT_CHUNK_BUDGET}). Exposed so a diagnostic can report it and a check can assert
+     * that the configured budget really reached the engine.
+     *
+     * @return the positive chunk budget
+     */
+    public int chunkBudget() {
+        return chunkBudget;
     }
 
     /** Pixel size of one tile reported to the browser. */
@@ -1374,24 +1399,25 @@ public final class WorldHost {
     }
 
     /**
-     * Captures a default snapshot window: the centre of the map with {@value #DEFAULT_SNAPSHOT_RADIUS}
-     * tiles of radius on every side.
+     * Captures a default snapshot window: the spawn anchor with {@value #DEFAULT_SNAPSHOT_RADIUS} tiles of
+     * radius on every side.
      *
      * <p>The shape is intentionally small and stable:
      * <pre>{@code
-     * {"tick":42,"originX":96,"originY":96,"width":64,"height":64,"tilePixels":16,
+     * {"tick":42,"originX":-32,"originY":-32,"width":64,"height":64,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
-     *  "entities":[{"id":1,"kind":"worker","x":12.5,"y":8.5,"player":1,"health":1.0}, ...],
+     *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0}, ...],
      *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0},
      *             {"id":3,"name":"alice","gold":300,"wood":60}]}
      * }</pre>
      *
-     * <p>{@code width} and {@code height} are the <em>window</em> size, not {@link #MAP_SIZE}, and
-     * {@code originX}/{@code originY} are the window's top left tile. {@code tiles} is row major for that
-     * window and has exactly {@code width * height} terrain content paths. Entities are <em>not</em>
-     * clipped to the window: the array is the whole living entity list, each with absolute map coordinates,
-     * so the client can map an entity into the window when it is visible and still track it when it is not.
-     * Entities, players and the document itself are deterministic for an unchanged tick.
+     * <p>{@code width} and {@code height} are the <em>window</em> size; the document deliberately carries no
+     * map width or height, because the world is unbounded. {@code originX}/{@code originY} are the window's
+     * top left tile and may be negative or arbitrarily large. {@code tiles} is row major for that window and
+     * has exactly {@code width * height} terrain content paths. Entities are <em>not</em> clipped to the
+     * window: the array is the whole living entity list, each with absolute world coordinates, so the client
+     * can map an entity into the window when it is visible and still track it when it is not. Entities,
+     * players and the document itself are deterministic for an unchanged tick.
      *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
@@ -1409,45 +1435,50 @@ public final class WorldHost {
      * <p>Amounts are emitted as JSON integers saturated to {@link Long#MAX_VALUE}; the browser could not
      * use more precision than a number anyway, and a stock that large is already far past playable.
      *
-     * <p>The default window is 64 x 64 tiles, about the same size as the old whole-map document, but the
-     * map it samples is {@value #MAP_SIZE} x {@value #MAP_SIZE}. The document is rebuilt per request rather
-     * than cached, because a cached document could disagree with the tick the browser reports in its HUD.
+     * <p>The default window is 64 x 64 tiles around the spawn anchor. The document is rebuilt per request
+     * rather than cached, because a cached document could disagree with the tick the browser reports in its
+     * HUD.
      *
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson() {
-        return snapshotJson(MAP_SIZE / 2, MAP_SIZE / 2, DEFAULT_SNAPSHOT_RADIUS);
+        return snapshotJson(spawnAnchor.x(), spawnAnchor.y(), DEFAULT_SNAPSHOT_RADIUS);
     }
 
     /**
-     * Captures one square window of the world around a requested tile.
+     * Captures one square window of the unbounded world around any requested tile.
      *
      * <p>The window is {@code 2 * radius} tiles on a side; {@code radius} is clamped to
      * [{@value #MIN_SNAPSHOT_RADIUS}, {@value #MAX_SNAPSHOT_RADIUS}] and defaults to
-     * {@value #DEFAULT_SNAPSHOT_RADIUS} in {@link #snapshotJson()}. The centre is clamped into the reported
-     * map and the origin is shifted inwards when the requested square would cross an edge, so a corner
-     * request still describes a full window fully inside {@code [0, MAP_SIZE)} and never reads a tile out
-     * of range. A request without parameters (see {@code HttpWebServer}) is exactly {@link #snapshotJson()},
-     * so an old client still receives a valid document.
+     * {@value #DEFAULT_SNAPSHOT_RADIUS} in {@link #snapshotJson()}. <strong>Only the radius is clamped.</strong>
+     * The centre is accepted exactly as requested, so {@code cx=100000&cy=-50000} describes a window with
+     * origin {@code 99984,-50016}; there is no map edge to shift the window inwards against. The origin is
+     * only saturated at the edges of the {@code int} coordinate space so the window cannot overflow, which is
+     * a limit of Java coordinates rather than a world edge. A request without parameters (see
+     * {@code HttpWebServer}) uses {@link #spawnAnchor()} as its centre, so an old client still receives a
+     * valid document.
      *
      * <p>Reading a window also moves the engine focus to its centre, in the same lock and on the same call,
      * so {@code ChunkStreamer} keeps the camera area loaded. That is a cache and streaming decision only:
      * the JSON remains a pure read of the tick and the terrain field.
      *
-     * @param centreX requested window centre, in tiles; clamped into the map
-     * @param centreY requested window centre, in tiles; clamped into the map
+     * @param centreX requested window centre, in tiles; any {@code int}, no map bounds
+     * @param centreY requested window centre, in tiles; any {@code int}, no map bounds
      * @param radius  requested half side, in tiles; clamped to the documented range
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson(int centreX, int centreY, int radius) {
         int clampedRadius = clampSnapshotRadius(radius);
         int windowSize = clampedRadius * 2;
-        int maxOrigin = MAP_SIZE - windowSize;
-        int centreLimit = MAP_SIZE - 1;
-        int cx = Math.max(0, Math.min(centreLimit, centreX));
-        int cy = Math.max(0, Math.min(centreLimit, centreY));
-        int originX = Math.max(0, Math.min(cx - clampedRadius, maxOrigin));
-        int originY = Math.max(0, Math.min(cy - clampedRadius, maxOrigin));
+        // The terrain itself accepts any signed int. The window origin is computed in long and saturated
+        // only so that origin + windowSize stays representable; that is a coordinate-space limit, not a
+        // world boundary, and the checks use much smaller centres.
+        long lowestOrigin = Integer.MIN_VALUE;
+        long highestOrigin = (long) Integer.MAX_VALUE - windowSize;
+        int originX = (int) Math.max(lowestOrigin,
+                Math.min(highestOrigin, (long) centreX - clampedRadius));
+        int originY = (int) Math.max(lowestOrigin,
+                Math.min(highestOrigin, (long) centreY - clampedRadius));
         synchronized (stateLock) {
             engine.focus(Vec2.of(originX + clampedRadius + 0.5f, originY + clampedRadius + 0.5f));
             return buildSnapshotJson(originX, originY, windowSize);
@@ -1459,8 +1490,9 @@ public final class WorldHost {
      *
      * <p>Exposed so the HTTP route and its checks apply exactly the same rule: a missing parameter becomes
      * {@link #DEFAULT_SNAPSHOT_RADIUS}, and a value below {@value #MIN_SNAPSHOT_RADIUS} or above
-     * {@value #MAX_SNAPSHOT_RADIUS} is clamped rather than rejected. The bounds keep the document small
-     * (at most 128 x 128 tiles) and guarantee a full window always fits inside the reported map.
+     * {@value #MAX_SNAPSHOT_RADIUS} is clamped rather than rejected. The bounds keep the document small (at
+     * most 128 x 128 tiles). They are the <em>only</em> clamp the snapshot applies: centre coordinates are
+     * unbounded.
      *
      * @param radius the requested radius in tiles
      * @return the radius the snapshot will actually use
@@ -1513,9 +1545,9 @@ public final class WorldHost {
     /**
      * Serialises one already clamped window; the caller holds {@link #stateLock}.
      *
-     * <p>The window is a square of {@code size} tiles with its top left at {@code (originX, originY)} and
-     * is guaranteed by {@link #snapshotJson(int, int, int)} to lie fully inside the reported map, so the
-     * terrain loop can never step outside it.
+     * <p>The window is a square of {@code size} tiles with its top left at {@code (originX, originY)}.
+     * There is no map to lie inside: the unbounded terrain answers every signed coordinate, and the origin
+     * is saturated by {@link #snapshotJson(int, int, int)} so {@code origin + size} cannot overflow.
      */
     private String buildSnapshotJson(int originX, int originY, int size) {
         List<Entity> entities = new ArrayList<>(engine.world().entities());

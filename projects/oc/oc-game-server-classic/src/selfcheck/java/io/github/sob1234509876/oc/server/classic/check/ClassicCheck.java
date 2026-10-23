@@ -18,8 +18,10 @@ import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.AttackOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
@@ -588,9 +590,9 @@ public final class ClassicCheck {
 
         WorldHost host = new WorldHost(1L, classic);
         try {
-            check.equal(WorldHost.MAP_SIZE, host.width(), "报出的地图宽度是 256");
-            check.equal(WorldHost.MAP_SIZE, host.height(), "报出的地图高度是 256");
-            check.equal(256, host.width(), "地图宽度常量是 256");
+            check.equal(WorldHost.DEFAULT_CHUNK_BUDGET, host.chunkBudget(), "报出的区块预算是 4096");
+            check.that(host.engine().map() instanceof InfiniteTerrainMap,
+                    "经典世界也托管在无界 InfiniteTerrainMap 上");
             check.equal(TILE_PIXELS, host.tilePixels(), "报出的 tilePixels 是 16");
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
             check.equal(ClassicContent.ID, host.worldContent().id(), "主机服务的正是 oc-classic");
@@ -613,10 +615,10 @@ public final class ClassicCheck {
                     "快照宽度是默认窗口的 64");
             check.equal((long) (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2), longOf(document.get("height")),
                     "快照高度是默认窗口的 64");
-            check.equal((long) (WorldHost.MAP_SIZE / 2 - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longOf(document.get("originX")), "快照 originX 是默认窗口的左上角");
-            check.equal((long) (WorldHost.MAP_SIZE / 2 - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longOf(document.get("originY")), "快照 originY 是默认窗口的左上角");
+            check.equal((long) (host.spawnAnchor().x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longOf(document.get("originX")), "快照以出生锚点为中心（originX）");
+            check.equal((long) (host.spawnAnchor().y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longOf(document.get("originY")), "快照以出生锚点为中心（originY）");
 
             List<Object> entities;
             try {
@@ -629,7 +631,7 @@ public final class ClassicCheck {
 
             Set<String> kinds = new LinkedHashSet<>();
             boolean shaped = true;
-            boolean insideMap = true;
+            boolean finiteCoordinates = true;
             for (Object raw : entities) {
                 if (!(raw instanceof Map<?, ?> entity)) {
                     shaped = false;
@@ -644,13 +646,11 @@ public final class ClassicCheck {
                     break;
                 }
                 kinds.add(text);
-                if (xValue.doubleValue() < 0 || xValue.doubleValue() >= WorldHost.MAP_SIZE
-                        || yValue.doubleValue() < 0 || yValue.doubleValue() >= WorldHost.MAP_SIZE) {
-                    insideMap = false;
-                }
+                finiteCoordinates &= Double.isFinite(xValue.doubleValue())
+                        && Double.isFinite(yValue.doubleValue());
             }
             check.that(shaped, "每个实体都有 kind 与坐标");
-            check.that(insideMap, "每个实体都在 64x64 地图内");
+            check.that(finiteCoordinates, "每个实体的坐标都是有限的绝对值（世界无界）");
             check.that(contentKinds.containsAll(kinds), "快照里的 kind 全部来自本内容的目录: " + kinds);
             check.that(manifestEntities.keySet().containsAll(kinds),
                     "快照里的 kind 全部出现在 manifest.entities 里: " + kinds);
@@ -848,21 +848,22 @@ public final class ClassicCheck {
      */
     private static void deterministicWorld(Check check) {
         check.section("经典世界的确定性");
-        String first = runClassicWorld(600);
-        String second = runClassicWorld(600);
-        check.that(!first.isEmpty(), "600 tick 后拿到了快照");
-        check.that(first.equals(second), "同一脚本两次 600 tick 的快照 JSON 字节完全相同");
-        check.equal(first.length(), second.length(), "两份快照长度相同");
-        check.that(first.contains("\"tick\":600"), "两次运行都停在 tick 600");
-        check.that(first.contains("\"player\":2"), "快照里有 AI 的玩家 2 实体（AI 真的进入了世界）");
-        check.note("确定性快照长度: " + first.length() + " 字节");
+        ClassicRun first = runClassicWorld(600);
+        ClassicRun second = runClassicWorld(600);
+        String snapshot = first.snapshot();
+        check.that(!snapshot.isEmpty(), "600 tick 后拿到了快照");
+        check.that(snapshot.equals(second.snapshot()), "同一脚本两次 600 tick 的快照 JSON 字节完全相同");
+        check.equal(snapshot.length(), second.snapshot().length(), "两份快照长度相同");
+        check.that(snapshot.contains("\"tick\":600"), "两次运行都停在 tick 600");
+        check.that(snapshot.contains("\"player\":2"), "快照里有 AI 的玩家 2 实体（AI 真的进入了世界）");
+        check.note("确定性快照长度: " + snapshot.length() + " 字节");
 
         // How much the hooks actually did inside the real host: the bootstrap places four entities, so
         // anything beyond that is work the AI's own decisions produced during the run.
         Set<String> aiKinds = new LinkedHashSet<>();
         List<String> aiEntities = new ArrayList<>();
         try {
-            Map<String, Object> document = object(Json.parse(first));
+            Map<String, Object> document = object(Json.parse(snapshot));
             for (Object raw : array(document.get("entities"))) {
                 Map<String, Object> entity = object(raw);
                 if (longOf(entity.get("player")) == ClassicAi.PLAYER_ID) {
@@ -878,20 +879,58 @@ public final class ClassicCheck {
         check.note("600 tick 后玩家 2 有 " + aiEntities.size() + " 个实体，种类 " + aiKinds);
         check.note("玩家 2 的实体: " + aiEntities);
         check.that(aiEntities.size() > 4, "600 tick 内 AI 在真实主机里自己生产或建造了新的实体（不只是开局基地）");
+
+        // The unbounded world has no map edge to keep the AI in, so its own search radius is the bound:
+        // every AI entity has to stay within SITE_SEARCH_RADIUS_TILES of the base it chose.
+        check.that(first.base() != null, "AI 在 600 tick 内建立了自己的基地");
+        check.note("AI 基地: " + first.base() + "，600 tick 后最远实体距离: "
+                + first.farthestEntityTiles() + " 格（上限 " + ClassicAi.SITE_SEARCH_RADIUS_TILES + "）");
+        check.that(first.entitiesWithinRadius(),
+                "600 tick 内 AI 的所有实体都在其基地 " + ClassicAi.SITE_SEARCH_RADIUS_TILES + " 格半径内");
+        check.equal(first.entitiesWithinRadius(), second.entitiesWithinRadius(),
+                "两次运行对 AI 半径约束给出相同结果");
     }
 
-    /** One scripted run: 600 synchronous steps of a host built with the classic content and its hooks. */
-    private static String runClassicWorld(int ticks) {
+    /** One scripted run: 600 synchronous steps of a host with the classic content, its economy and AI. */
+    private static ClassicRun runClassicWorld(int ticks) {
         WorldHost host = new WorldHost(1L, new ClassicContent(),
                 List.of(new ClassicEconomy(), new ClassicAi()));
         try {
             for (int tick = 0; tick < ticks; tick++) {
                 host.step();
             }
-            return host.snapshotJson();
+            String snapshot = host.snapshotJson();
+            Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+            if (enemy == null) {
+                return new ClassicRun(snapshot, null, -1f, false);
+            }
+            World world = host.engine().world();
+            List<Building> aiBuildings = new ArrayList<>(world.buildingsOf(enemy));
+            aiBuildings.sort(Comparator.comparing(Building::id));
+            GridPos base = aiBuildings.isEmpty() ? null : aiBuildings.get(0).origin();
+            List<Entity> aiEntityList = new ArrayList<>(aiBuildings);
+            aiEntityList.addAll(world.unitsOf(enemy));
+            float farthest = 0f;
+            boolean within = base != null;
+            for (Entity entity : aiEntityList) {
+                if (!entity.isAlive() || base == null) {
+                    continue;
+                }
+                GridPos tile = entity.position().tile();
+                float distance = Math.max(Math.abs(tile.x() - base.x()),
+                        Math.abs(tile.y() - base.y()));
+                farthest = Math.max(farthest, distance);
+                within &= distance <= ClassicAi.SITE_SEARCH_RADIUS_TILES;
+            }
+            return new ClassicRun(snapshot, base, farthest, within);
         } finally {
             host.stop();
         }
+    }
+
+    /** The result of one scripted run: the snapshot plus the AI base and its radius evidence. */
+    private record ClassicRun(String snapshot, GridPos base, float farthestEntityTiles,
+            boolean entitiesWithinRadius) {
     }
 
     // ------------------------------------------------------------------ 8) the plugin seam

@@ -14,7 +14,7 @@
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS |
 | 依赖 | `oc-game-server`（插件 API）与 `oc-rts-engine`（目录类型）；引擎会带上 `oc-googology` |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（291 项检查） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（293 项检查） |
 | 世界内容 | `oc-classic` |
 | 素材 | `assets/manifest.json` 与 96x96 的 `assets/atlas.png` |
 | 帮助 | [03 插件](../oc-game-server/help/03-plugins.md) 与 [05 浏览器端点](../oc-game-server/help/05-browser-endpoint.md)，中文 |
@@ -133,10 +133,10 @@ projects/oc/oc-googology/build/libs/oc-googology-2.0a.jar
 自检末尾打印一行：
 
 ```text
-classic plugin self check: all 291 checks passed.
+classic plugin self check: all 293 checks passed.
 ```
 
-291 条来自十二节：内容目录 82、五级数值阶梯 40、兵营等级门槛 14、矿场收益阶梯 20、矿场收益 18、开局资源 10、素材清单与图集 17、世界主机与快照 30、敌人 AI 25、确定性 6、插件接口 17、插件加载器 12。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写。
+293 条来自十二节：内容目录 82、五级数值阶梯 40、兵营等级门槛 14、矿场收益阶梯 20、矿场收益 18、开局资源 10、素材清单与图集 17、世界主机与快照 30、敌人 AI 25、确定性 8（含 600 tick 内 AI 实体不超出 64 格半径）、插件接口 17、插件加载器 12。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写。
 
 ## 模块布局
 
@@ -149,7 +149,7 @@ classic plugin self check: all 291 checks passed.
 | `src/main/resources/omnicom-plugin.properties` | 描述文件：`id=oc-classic`、`version=1.0`、`main`、`description` |
 | `src/main/resources/assets/manifest.json` | 服务器要合并的图集清单 |
 | `src/main/resources/assets/atlas.png` | 96x96 的单位与建筑图集 |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 291 条检查的自检程序 |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 293 条检查的自检程序 |
 | `build.gradle` | `selfcheck` 任务，以及挂在它类路径上的服务器检查报告器 |
 
 ## 相关

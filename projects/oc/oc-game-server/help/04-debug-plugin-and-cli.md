@@ -171,12 +171,14 @@ GCM 认证的是密文与传给它的 nonce，**不覆盖** magic，也**不覆�
 | `engine-world-tick` | tick 号（临时世界恒为 0） | `World.tickNumber()` |
 | `engine-world-default-dimension` | `overworld` | `World.defaultDimensionId()` |
 | `engine-world-terrain` | `debug:grass` | `world.map().terrainAt(0, 0).key()` |
-| `engine-chunk-size` | 16 | `ChunkedMap.chunkSize()` |
+| `engine-chunk-size` | 16 | `StreamingTerrainMap.chunkSize()` |
 | `engine-chunk-terrain-count` | `N of 256`（命中格数 + `" of "` + 区块格数平方） | `Chunk.count(TerrainType)` 与 `Chunk.size()` |
-| `engine-chunks-loaded` | 已加载区块数 | `TerrainMap.loadedChunkCount()` |
-| `engine-chunks-generated` | 已生成区块数（自校验断言为 1） | `ChunkedMap.generatedChunkCount()` |
+| `engine-chunks-loaded` | 已加载区块数 | `StreamingTerrainMap.loadedChunkCount()` |
+| `engine-chunks-generated` | 已生成区块数（自校验断言为 1） | `StreamingTerrainMap.generatedChunkCount()` |
+| `engine-chunks-budget` | `4096`（无界地图的内存上限，不是地图大小） | `StreamingTerrainMap.maxLoadedChunks()` |
+| `engine-map-bounded` | `false`（临时世界是 `InfiniteTerrainMap`；若是历史 `ChunkedMap` 则为 `true`） | `map instanceof ChunkedMap` |
 
-一共 **36 个字段**，全部由代码里数得出来：`facts()` 是唯一往报告里放东西的地方。
+一共 **38 个字段**，全部由代码里数得出来：`facts()` 是唯一往报告里放东西的地方。
 
 ### 引擎那一段数字
 
@@ -188,9 +190,9 @@ GCM 认证的是密文与传给它的 nonce，**不覆盖** magic，也**不覆�
   ```
   它证明的是"服务器类路径上这个库能做什么"，与任何一局对局无关（超运算见引擎的 [12-numbers-and-googology.md](../../oc-rts-engine/help/12-numbers-and-googology.md)）。
 - **一个 `Natural`**：`Natural.tetration(Natural.TEN, Natural.of(10))` 就是十的十层幂塔。精确求值会贵到离谱，所以引擎把它保持成结构性数值，报告只显示 `10^^10` 这个符号值加两条 `NaturalFormat` 渲染——这正是值得在调试报告里展示的行为。
-- **一个一次性的 `World`**：`flatWorld()` 在**处理器内部**构造：`ContentRegistry.builder("debug")` 现场建一个只有 `grass` 的内容目录，`new World(0L, content)` 建世界，`DimensionId.overworld()` + `DimensionProfile.earth()` + `new ChunkedMap(new FlatChunkGenerator(...))` 加一个平坦维度。它**从不 tick、从不存进字段、从不交给任何人**，请求结束就丢。用平坦生成器是为了让这个世界只花两张表，而不是一片噪声场。
+- **一个一次性的 `World`**：`flatWorld()` 在**处理器内部**构造：`ContentRegistry.builder("debug")` 现场建一个只有 `grass` 的内容目录，`new World(0L, content)` 建世界，`DimensionId.overworld()` + `DimensionProfile.earth()` + `new InfiniteTerrainMap(new FlatChunkGenerator(...))` 加一个平坦维度。它**从不 tick、从不存进字段、从不交给任何人**，请求结束就丢。用平坦生成器是为了让这个世界只花两张表，而不是一片噪声场；用 `InfiniteTerrainMap` 是因为托管世界就是无界的，报告必须通过 `StreamingTerrainMap` 读取它，而不能再强转成有限的 `ChunkedMap`。区块预算和已加载区块数因此取代了并不存在的地图大小。
 
-自校验在本机量到的文本报告是 **1526 字节**（断言上限是 3072，协议行上限是 4096）；路径更长的机器上这个数会更大一些。所以报告离"答复超长导致断连"还有一倍余量（见 [02](02-accounts-and-encryption.md) 的常见坑第 5 条）。
+自校验量到的文本报告约 **1.6 KiB**（断言上限是 3072，协议行上限是 4096）；路径更长的机器上这个数会更大一些。所以报告离"答复超长导致断连"还有一倍余量（见 [02](02-accounts-and-encryption.md) 的常见坑第 5 条）。
 
 ## 命令行客户端
 

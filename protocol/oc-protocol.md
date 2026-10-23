@@ -321,7 +321,7 @@ Textures and other plugin assets are **ordinary HTTP content**, not OC/1 message
 
 ## World snapshot
 
-The server can also publish a live world for the browser view. The snapshot is **ordinary HTTP content**, exactly like the plugin assets, not an OC/1 message: the client reads it with `fetch`, it has nothing to do with the WebSocket, and it needs no login. The map is 256 x 256 tiles, but one snapshot carries only a square window of it.
+The server can also publish a live world for the browser view. The snapshot is **ordinary HTTP content**, exactly like the plugin assets, not an OC/1 message: the client reads it with `fetch`, it has nothing to do with the WebSocket, and it needs no login. The world is **unbounded**: the server hosts an `InfiniteTerrainMap` whose only limit is a loaded-chunk budget (`--chunks N`, default `4096`), so every signed tile coordinate has terrain and one snapshot carries only a square window of it.
 
 | Route | Content |
 | --- | --- |
@@ -330,24 +330,24 @@ The server can also publish a live world for the browser view. The snapshot is *
 
 | Parameter | Default | Accepted range | Meaning |
 | --- | --- | --- | --- |
-| `cx` | `128` (map centre) | clamped to `0..255` | window centre X, in tiles |
-| `cy` | `128` (map centre) | clamped to `0..255` | window centre Y, in tiles |
+| `cx` | the spawn anchor (`spawnAnchor().x()`, within 64 tiles of `(0, 0)`) | **any signed `int`**, no map bounds | window centre X, in tiles |
+| `cy` | the spawn anchor (`spawnAnchor().y()`) | **any signed `int`**, no map bounds | window centre Y, in tiles |
 | `r` | `32` | clamped to `16..64` | window radius, in tiles |
 
-The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maximum is 128 x 128. No parameters means the map centre with the default radius, which keeps an old client receiving a valid document. A malformed numeric value falls back to the default.
+The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maximum is 128 x 128. **Only `r` is clamped.** `cx` and `cy` are used exactly as requested, so the origin is `cx - r` / `cy - r`: it may be negative (for example `cx=0` gives `originX=-16`) or huge (for example `cx=100000&cy=-50000` gives `99984,-50016`), and no edge shifts it. No parameters means the spawn anchor with the default radius, which keeps an old client receiving a valid document. A malformed numeric value falls back to the default.
 
 ```json
 {
   "tick": 42,
-  "originX": 96,
-  "originY": 96,
+  "originX": -32,
+  "originY": -32,
   "width": 64,
   "height": 64,
   "tilePixels": 16,
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
-    {"id": 1, "kind": "warehouse", "x": 117.5, "y": 127.5, "player": 1, "health": 1.00},
-    {"id": 4, "kind": "worker", "x": 119.8, "y": 143.3, "player": 1, "health": 1.00}
+    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
@@ -357,14 +357,14 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
 ```
 
 - A successful answer is `200` with `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`; only `GET` and `HEAD` are allowed, other methods answer `405` with `Allow: GET, HEAD`.
-- `originX` / `originY` are the window's top left tile. `width` / `height` are the **window** size (`2 * r`), not the map size. When the requested square would cross an edge the origin is shifted inwards, so the window is always full size and entirely inside `[0, 256)`; the server never reads an out-of-range tile.
-- `tiles` is row major for the window and has exactly `width * height` entries; every entry is a terrain content path (`water`, `sand`, `grass`, `forest`, `hill`, `rock`, depending on the served catalogue). Terrain comes from a deterministic seeded noise field: the same seed and content reproduce the same map.
-- `entities` is sorted by id and is **not clipped to the window**: it is still the whole living entity list, and `x` / `y` are absolute map coordinates (entity centre in tiles, rounded to one decimal). The client maps an entity into the window with `originX` / `originY`; an entity outside the window but inside the 256 x 256 map stays in the array. `kind` is the engine's content path (`worker`, `soldier`, `medic`, `warehouse`, ...), with the same shape for units and buildings.
+- `originX` / `originY` are the window's top left **world** tile; `width` / `height` are the **window** size (`2 * r`). The document carries **no** `mapWidth` / `mapHeight` / `mapSize`: there is no map size, and a client must treat the world as unbounded. `--chunks` caps the chunks kept in memory, not the coordinates that exist.
+- `tiles` is row major for the window and has exactly `width * height` entries; every entry is a terrain content path (`water`, `sand`, `grass`, `forest`, `hill`, `rock`, depending on the served catalogue). Terrain comes from a deterministic seeded noise field: the same seed and content reproduce the same tile at any coordinate, and a window at `100000,-50000` matches the generator there tile for tile.
+- `entities` is sorted by id and is **not clipped to the window**: it is still the whole living entity list, and `x` / `y` are absolute world coordinates (entity centre in tiles, rounded to one decimal), which may be negative. The client maps an entity into the window with `originX` / `originY`; an entity outside the window stays in the array. `kind` is the engine's content path (`worker`, `soldier`, `medic`, `warehouse`, ...), with the same shape for units and buildings.
 - `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name and the two starting resources as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. The field is additive: an older server may omit it, and a client must keep working without it. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold and wood in the HUD; before that row exists it shows dashes.
 - A default 64 x 64 window is about 32 KB of JSON; the maximum 128 x 128 window is about 130 KB. Reading a window also moves the engine focus to its centre, so the chunk streamer keeps the camera area loaded.
 - When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
-- `--world` defaults to `on`, `--seed` defaults to `1`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
-- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. Mapping the window to the camera is a client change on top of this contract; a client that sends no parameters still works against the centre window.
+- `--world` defaults to `on`, `--seed` defaults to `1`, `--chunks` defaults to `4096`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
+- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. Mapping the window to the camera is a client change on top of this contract; a client that sends no parameters still works against the spawn-anchor window. The bundled `web-client/` still validates against a 256-tile fallback map size in this stage, so a client that wants to render negative origins or coordinates outside `[0, 256)` must treat the world as unbounded.
 
 ## Version compatibility
 

@@ -26,10 +26,10 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 305 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 789 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 163, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
-| debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 34, request registry 14, real socket 19 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 813 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 187, `WorldTickHookCheck` 23, `PlayerCommandCheck` 87, `JoinBaseCheck` 60 |
+| debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 37, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |
-| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 291 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
+| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 293 | [README](projects/oc/oc-game-server-classic/README.md); twelve sections from the catalogue (82) to the plugin loader (12) |
 | client render math | `node scripts/check-render-math.ts` | 158 | counted from the `check(...)` calls in [check-render-math.ts](web-client/scripts/check-render-math.ts); the script prints the passed total |
 
 **No commit may leave any of these red, and no existing check may be removed or weakened to make a new feature pass.** If a total changes, grep the old number and update every document that quotes it.
@@ -134,7 +134,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix.** Add a `players` array to `/world/snapshot`, for example `[{"id":3,"name":"alice","gold":300,"wood":60}]`, built from each player's `logistics().available()` bundle and the `gold` / `wood` item paths the served catalogue registers; emit one row per player, sorted by id, with `0` for a path the catalogue does not define. Parse and validate it in `view.ts`, keep it on `ServerWorldView`, and render a HUD line for `myPlayerId` (`资源：alice · 金 300 · 木 60`), with dashes when the world has no row for the player yet. Refresh after a successful `BUILD` / `TRAIN` and on every snapshot. Extend `WorldHostCheck` and the snapshot section of the protocol document and its Chinese twin.
 
-**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (163) asserts the `players` shape and values; 789 stays green.
+**Acceptance.** Immediately after `LOGIN` the HUD shows 300 gold and 60 wood; placing a tier 1 mine (80 gold) lowers gold to 220 within one 500 ms poll; training a tier 1 soldier (20 gold) lowers it again; `--world off` still shows the demo map with no resource line; `WorldHostCheck` (187) asserts the `players` shape and values; 813 stays green.
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [view.ts](web-client/src/render/view.ts), [main.ts](web-client/src/main.ts), [index.html](web-client/index.html), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md).
 
@@ -176,9 +176,39 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 
 **Fix (stage g3, client).** `WorldView` now carries `originX` / `originY` and the full map size (`mapWidth` / `mapHeight`); terrain lookup subtracts the origin and returns `void` outside the received window, entities stay in absolute map coordinates, and the renderer draws or picks an entity only when its tile is inside the window. `main.ts` sends `GET /world/snapshot?cx=<cameraTileX>&cy=<cameraTileY>&r=32` from the camera focus, asks for a new window when the focus comes within 8 tiles of the window edge, keeps the old window until the new one arrives, and discards an out-of-order answer with a monotonic request id; the no-parameter request remains the first, deterministic centre request. The camera is clamped to the 256×256 map instead of the 64×64 window, so panning is not blocked by the loaded window, and the HUD shows the window origin and the map size. `web-client/README.md` and `README_zh_CN.md` document the streaming.
 
-**Acceptance (met).** The server serves deterministic noise terrain on a reported 256×256 map with a buildable spawn anchor and a `cx` / `cy` / `r` window; the same `--seed` reproduces the same terrain and anchor on a new host; two seeds give different worlds; starting bases still find buildable land; `WorldHostCheck` (163) is extended, not weakened. The client now requests camera-centred windows, translates absolute coordinates through `originX` / `originY`, keeps the old window until a newer one arrives, ignores out-of-order responses, and clamps the camera to the map; `check-render-math` covers the window parsing, the 8-tile edge trigger, the map-edge guard, request ordering and the map clamp, and now prints **158** passing checks (142 plus 16).
+**Acceptance (met, server map size later superseded by stage i2).** The server serves deterministic noise terrain on a reported 256×256 map with a buildable spawn anchor and a `cx` / `cy` / `r` window; the same `--seed` reproduces the same terrain and anchor on a new host; two seeds give different worlds; starting bases still find buildable land; `WorldHostCheck` (187) is extended, not weakened. The client now requests camera-centred windows, translates absolute coordinates through `originX` / `originY`, keeps the old window until a newer one arrives, ignores out-of-order responses, and clamps the camera to the map; `check-render-math` covers the window parsing, the 8-tile edge trigger, the map-edge guard, request ordering and the map clamp, and now prints **158** passing checks (142 plus 16).
 
 **Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [OcRtsEngineBuilder.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java), [NoiseChunkGenerator.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java), [ChunkStreamer.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [view.ts](web-client/src/render/view.ts), [stream.ts](web-client/src/render/stream.ts), [camera.ts](web-client/src/render/camera.ts), [renderer.ts](web-client/src/render/renderer.ts), [input.ts](web-client/src/render/input.ts), [main.ts](web-client/src/main.ts), [index.html](web-client/index.html), [client README](web-client/README.md), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md), [05 browser endpoint](projects/oc/oc-game-server/help/05-browser-endpoint.md).
+
+**Cost.** large.
+
+### h. The server still assumed a finite map — done (stage i2)
+
+**Symptom.** The engine could already generate any signed tile, but `WorldHost` still reported a
+`MAP_SIZE = 256` map: the spawn anchor scanned a 256-tile square, snapshots clamped the centre into
+`0..255`, scene and base placement fell back to a row-major scan of the whole map, the classic AI's site
+search did the same, and `oc-debug` cast `world.map()` to the finite `ChunkedMap`.
+
+**Fix (stage i2, server).** `WorldHost` now builds the world with `OcRtsEngineBuilder.infiniteTerrain(seed)`
+and a positive `maxLoadedChunks` budget (`WorldHost.DEFAULT_CHUNK_BUDGET = 4096`, exposed as `--chunks N`);
+the map size constant is deleted and with it every `width()` / `height()` / `MAP_SIZE` reference. The spawn
+anchor scans rings from `(0,0)` with a 64-tile bound, and every former whole-map fallback (scene, human base,
+builder tile) became a bounded ring search around the same anchor. `snapshotJson(cx, cy, r)` accepts any
+signed centre and clamps only `r` to `16..64`; origins may be negative or huge, the JSON carries no map
+width/height, and a request without parameters is centred on the spawn anchor. `ClassicAi` uses a fixed
+`(192,192)` opening anchor far from the host scene and a 64-tile site search from its own oldest building;
+`DebugPlugin` reads the throwaway world through `StreamingTerrainMap`, reports `engine-map-bounded: false`
+and `engine-chunks-budget: 4096`, and no longer casts to `ChunkedMap`. `WorldHostCheck` grew from 163 to 187
+assertions (startup time and chunk budget, `(0,0)` anchor, negative and far origins, far-window terrain,
+a full HTTP far-centre window, unchanged scene/base buildability), the classic determinism section asserts
+all AI entities stay within 64 tiles of its base over 600 ticks, and the debug check asserts the unbounded
+report. Totals: game server 813 (was 789), debug 85 (was 82), classic 293 (was 291).
+
+**Known limit.** `web-client/` is deliberately untouched in this stage; it still validates against
+`DEFAULT_MAP_SIZE_TILES = 256` and rejects negative entity coordinates, so rendering the new negative-origin
+windows needs a separate client stage.
+
+**Files.** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java), [OcGameServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/OcGameServer.java), [HttpWebServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/HttpWebServer.java), [ClassicAi.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicAi.java), [DebugPlugin.java](projects/oc/oc-game-server-debug/src/main/java/io/github/sob1234509876/oc/server/debug/DebugPlugin.java), [WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java), [ClassicCheck.java](projects/oc/oc-game-server-classic/src/selfcheck/java/io/github/sob1234509876/oc/server/classic/check/ClassicCheck.java), [DebugPluginCheck.java](projects/oc/oc-game-server-debug/src/selfcheck/java/io/github/sob1234509876/oc/server/debug/check/DebugPluginCheck.java), [05 browser endpoint](projects/oc/oc-game-server/help/05-browser-endpoint.md), [protocol](protocol/oc-protocol.md), [protocol zh](protocol/oc-protocol_zh_CN.md).
 
 **Cost.** large.
 
@@ -191,10 +221,11 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 - **No save or load of world state.** Only user records persist in `data/users.txt` through `LocalUserStore`; entity positions, terrain edits and production queues are lost on restart, and the engine's `ChunkStore` seam is not connected on the server.
 - **The leather/stone/iron/gold/diamond art progression is documented but not machine-asserted.** The classic README describes the ladder; no check proves the atlas pixels or the tier art actually follow it (the stat and cost ladder is checked).
 - **The debug plugin has no browser-side equivalent.** The page can call `engine-info`, but only after the operator pastes `debug.key` by hand; there is no browser CLI or debug panel comparable to `oc-debug`'s CLI.
+- **The bundled web client is still finite-map shaped.** `web-client/src/render/view.ts` defaults an omitted `mapWidth` / `mapHeight` to `256` and rejects entities with negative coordinates, so the unbounded server contract is not yet rendered by the page; this needs a client-only stage.
 
 ## 6. Suggested next features
 
-1. **Expose the terrain generator's thresholds.** The server already uses `NoiseChunkGenerator` + `NoiseSettings` for the 256 x 256 world (stage g2); expose the sea/forest/hill/rock thresholds as content or server options so worlds can be tuned without a code change.
+1. **Expose the terrain generator's thresholds.** The server already uses `NoiseTerrainGenerator`'s biome table for the unbounded world (stage i2); expose the sea/forest/hill/rock thresholds as content or server options so worlds can be tuned without a code change.
 2. **Ranged units and a second building line.** Add a unit with `range > 1` and a building that produces it, reusing `CombatSystem`'s range and cooldown rules; the current melee-only ladder proves the combat layer but not projection.
 3. **Save and load.** Use the engine's `ChunkStore` seam plus a serialized snapshot of players, entities and production queues; today only accounts survive a restart.
 4. **A WebSocket gameplay end-to-end check.** Start a real server, connect a real client socket, `LOGIN`, send `ORDER` / `BUILD` / `TRAIN`, and assert both the wire answers and the resulting snapshot. This closes the largest debt above.
@@ -208,7 +239,7 @@ Every subsection uses the same six fields: **Symptom** (现象), **Cause** (原�
 - **Determinism inside the simulation.** No `java.util.Random`, no wall clock (`System.currentTimeMillis`, `System.nanoTime`) and no threads inside the simulation. Use `DeterministicRandom`, fixed ticks and explicit id/coordinate tie-breaks. The server's pacing thread is the one place a clock may drive the simulation; transport and storage code may read a clock for timestamps, but the simulation must not.
 - **Daemon threads only in the server.** Plugin threads must be daemon and stopped in `onDisable`; a non-daemon thread keeps the JVM alive after shutdown.
 - **One verified stage per commit.** Run the six Java checks and both client checks before committing; do not mix a refactor and a feature in one commit.
-- **When a total changes, update every document that quotes it.** Grep the old number (for example `789` before the next change) across the repository; the READMEs, `help/` and the protocol may all mention it.
+- **When a total changes, update every document that quotes it.** Grep the old number (for example `813` before the next change) across the repository; the READMEs, `help/` and the protocol may all mention it.
 - **The docs are bilingual.** Every statement changed in an English file must be changed in its `_zh_CN.md` twin. The `help/` chapters are a Chinese documentation set by design; `protocol/oc-protocol.md` is English by default with `protocol/oc-protocol_zh_CN.md` as its twin, so both must move together.
 - **Runtime folders are not source.** `plugins/` is the operator drop zone and `data/` is server state; `plugins/*.jar` and `data/` are gitignored. Never commit a plugin jar, a key or an account file.
 

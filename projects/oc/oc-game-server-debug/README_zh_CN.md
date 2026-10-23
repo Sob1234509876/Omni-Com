@@ -14,7 +14,7 @@
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS |
 | 依赖 | `oc-game-server`（被动的插件 API）与 `oc-rts-engine`（报告要打印的引擎事实） |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server-debug:selfcheck`（82 项检查，含一次真实 socket 往返） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server-debug:selfcheck`（85 项检查，含一次真实 socket 往返） |
 | 请求 | `engine-info`，只读，要求同一条连接上成功 `LOGIN` |
 | 帮助 | [`../oc-game-server/help/04-debug-plugin-and-cli.md`](../oc-game-server/help/04-debug-plugin-and-cli.md) —— 对应的中文章节 |
 
@@ -28,10 +28,10 @@
 自检末尾打印一行：
 
 ```text
-debug plugin self check: all 82 checks passed.
+debug plugin self check: all 85 checks passed.
 ```
 
-82 条来自四节：信封 15 条、密钥文件与 `engine-info` 报告 34 条、请求注册表 14 条、真实 socket 端到端 19 条。断言记录器用的是游戏服务器模块那一个，只挂在本模块自检的类路径上，所以这里没有重复的断言辅助类。
+85 条来自四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。断言记录器用的是游戏服务器模块那一个，只挂在本模块自检的类路径上，所以这里没有重复的断言辅助类。
 
 ### 命令行选项
 
@@ -68,7 +68,7 @@ debug plugin self check: all 82 checks passed.
 | 其它任何东西 | `ERR unsupported request` |
 | 打不开的信封 | `ERR bad request` |
 
-两条请求行在去掉首尾空白后按大小写敏感比较。一份报告按固定顺序带 36 个字段：先是服务器版本与插件（名字、版本、数据目录、密钥文件、已注册的请求名、已服务数），然后是 JVM 与机器（厂商、名称、版本、操作系统、处理器数、运行时间、堆、存活线程），最后是引擎（九个超运算等级、由 `NaturalFormat` 渲染的结构化 `10^^10`，以及一个一次性 `World` 的维度、实体、tick、地形与区块）。每次请求都重新构造这张表，所以不可能出现过期的事实；文本报告大约 1.5 KiB，离 4096 字节的协议行上限还有很大余量。
+两条请求行在去掉首尾空白后按大小写敏感比较。一份报告按固定顺序带 38 个字段：先是服务器版本与插件（名字、版本、数据目录、密钥文件、已注册的请求名、已服务数），然后是 JVM 与机器（厂商、名称、版本、操作系统、处理器数、运行时间、堆、存活线程），最后是引擎（九个超运算等级、由 `NaturalFormat` 渲染的结构化 `10^^10`，以及一个一次性无界 `World` 的维度、实体、tick、地形与区块）。地图通过 `StreamingTerrainMap` 读取，不再强转成有限的 `ChunkedMap`：`engine-map-bounded` 报 `false`，`engine-chunks-budget` 报 4096 区块的内存上限来取代地图大小。每次请求都重新构造这张表，所以不可能出现过期的事实；文本报告大约 1.6 KiB，离 4096 字节的协议行上限还有很大余量。
 
 ## 它做不到什么
 
@@ -88,7 +88,7 @@ debug plugin self check: all 82 checks passed.
 | `src/main/java/.../debug/DebugKeyFile.java` | `debug.key`：读它、用 `CREATE_NEW` 只创建一次、永不覆盖 |
 | `src/main/java/.../debug/cli/DebugCli.java` | CLI：读密钥、封信封、`LOGIN`、`REQ engine-info`、打印 |
 | `src/main/java/module-info.java` | requires `oc.projects.oc.game.server`、`oc.projects.oc.rts.engine` 与 `java.management`；导出两个包 |
-| `src/selfcheck/java/.../debug/check/DebugPluginCheck.java` | 82 条检查的自检程序 |
+| `src/selfcheck/java/.../debug/check/DebugPluginCheck.java` | 85 条检查的自检程序 |
 | `build.gradle` | `selfcheck` 与 `debugCli` 任务，以及挂在自检类路径上的服务器自检输出 |
 
 ## 相关

@@ -11,7 +11,7 @@
 - 来源（`Origin`）规则：同源、白名单、空白名单的含义。
 - 静态文件路由：方法、路径穿越、SPA 回退、缓存与缺失的静态根。
 - 插件资源路由：`/plugin-assets/...` 与静态根的关系（细节在协议文档）。
-- 世界快照路由：`/world/snapshot` 的窗口参数（`cx` / `cy` / `r`）、JSON 形状、503 规则与 `--world` / `--seed`。
+- 世界快照路由：`/world/snapshot` 的窗口参数（`cx` / `cy` / `r`）、无界世界（任意中心、负原点、没有地图宽高）、JSON 形状、503 规则与 `--world` / `--seed` / `--chunks`。
 - WebSocket 帧规则、关闭码、空闲超时（`--ws-idle`）、服务端 ping 心跳，以及二进制帧的处理。
 - 常见坑：工作目录、反向代理、`--http-port 0`、关闭世界。
 
@@ -24,7 +24,7 @@
 | `GET` / `HEAD` 其它路径 | 从 `--static-root`（默认 `web-client/dist`）发静态文件，也就是构建好的浏览器客户端 |
 | `/ws` 的 WebSocket 升级 | 升级成 RFC 6455 WebSocket，之后一个文本帧就是一条命令行 |
 | `/plugin-assets/...`（端点持有 `PluginLoader` 时） | 从插件 jar 的 `assets/` 发资源，见下面的「插件资源路由」 |
-| `GET /world/snapshot[?cx=&cy=&r=]` | 把 `--world` 启动的服务器世界当前 tick 的一个窗口以 JSON 发给浏览器，见下面的「世界快照」 |
+| `GET /world/snapshot[?cx=&cy=&r=]` | 把 `--world` 启动的无界服务器世界当前 tick 的一个窗口以 JSON 发给浏览器，见下面的「世界快照」 |
 
 它存在的原因很直接：**浏览器不会说那条加密 TCP 信道**。TCP 信道在握手阶段自己实现 X25519、HKDF-SHA256 与
 AES-256-GCM（见 [02](02-accounts-and-encryption.md)），浏览器没有对应的 API；WebSocket 则是浏览器原生就有的。
@@ -227,7 +227,8 @@ built”的 `404`。这条日志只写一次，避免每个请求刷一行。
 ## 世界快照路由
 
 `/world/snapshot` 是浏览器画面读取真实引擎世界的唯一入口。它是**普通 HTTP**，和插件资源一样不需要登录、不经过
-WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHost`，`--seed`（默认 `1`）决定世界种子。
+WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHost`，`--seed`（默认 `1`）决定世界种子，
+`--chunks`（默认 `4096`）决定无界地形在内存里最多保留多少个区块（这是内存上限，不是地图大小）。
 服务器用一个 daemon 线程按固定 20 ticks/s 推进 `OcRtsEngine`，快照在同一个锁下读取，所以请求不会看到半个 tick。
 
 ### 成功响应
@@ -245,31 +246,34 @@ WebSocket。`--world`（默认 `on`，`off` 关闭）决定是否启动 `WorldHo
 
 | 参数 | 默认 | 允许范围 | 含义 |
 | --- | --- | --- | --- |
-| `cx` | `128`（地图中心） | 夹到 `0..255` | 窗口中心的 tile X |
-| `cy` | `128`（地图中心） | 夹到 `0..255` | 窗口中心的 tile Y |
+| `cx` | 出生锚点（`spawnAnchor().x()`，在 `(0,0)` 附近的 64 格搜索半径内） | **任意有符号 int**，没有地图边界 | 窗口中心的 tile X |
+| `cy` | 出生锚点（`spawnAnchor().y()`） | **任意有符号 int**，没有地图边界 | 窗口中心的 tile Y |
 | `r` | `32` | 夹到 `16..64` | 窗口半径，单位 tile |
 
-窗口是边长 `2 * r` 的正方形，所以默认窗口是 64×64，最大是 128×128。不带任何参数就是地图中心 +
-默认半径；旧客户端不用改请求也能拿到一份合法文档。例如：
+窗口是边长 `2 * r` 的正方形，所以默认窗口是 64×64，最大是 128×128。**唯一被夹紧的参数是 `r`**：
+`cx` / `cy` 原样使用，窗口原点就是 `cx - r` / `cy - r`，因此可以是负数（例如 `cx=0` 给出 `originX=-16`），
+也可以是很大的数（例如 `cx=100000, cy=-50000` 给出 `99984, -50016`）。世界没有边缘，也就没有“把窗口
+往内平移”这件事。不带任何参数时窗口以出生锚点为中心；旧客户端不用改请求也能拿到一份合法文档。例如：
 
 ```text
 GET /world/snapshot
-GET /world/snapshot?cx=128&cy=128&r=16
-GET /world/snapshot?cx=240&cy=8&r=64
+GET /world/snapshot?cx=0&cy=0&r=16
+GET /world/snapshot?cx=100000&cy=-50000&r=16
+GET /world/snapshot?cx=-100000&cy=50000&r=64
 ```
 
 ```json
 {
   "tick": 42,
-  "originX": 96,
-  "originY": 96,
+  "originX": -32,
+  "originY": -32,
   "width": 64,
   "height": 64,
   "tilePixels": 16,
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
-    {"id": 1, "kind": "warehouse", "x": 117.5, "y": 127.5, "player": 1, "health": 1.00},
-    {"id": 4, "kind": "worker", "x": 119.8, "y": 143.3, "player": 1, "health": 1.00}
+    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00},
+    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
@@ -278,17 +282,18 @@ GET /world/snapshot?cx=240&cy=8&r=64
 }
 ```
 
-- 地图是 **256×256**（`WorldHost.MAP_SIZE`），但快照只发一个窗口。`originX` / `originY` 是窗口左上角的
-  地图 tile；`width` / `height` 是**窗口**的宽高（`2 * r`），不是整张地图。窗口贴边时原点会被整体
-  向内平移，所以它始终是完整大小并完全落在地图内，服务端不会读到越界 tile。
+- 世界是**无界**的：托管世界建在引擎的 `InfiniteTerrainMap` 上，任意有符号 tile 坐标都有地形。
+  快照只发一个窗口，`originX` / `originY` 是窗口左上角的**世界** tile；`width` / `height` 是**窗口**的
+  宽高（`2 * r`）。JSON **不带** `mapWidth` / `mapHeight` / `mapSize`：没有地图大小可报，客户端应把
+  世界当成无界的。`--chunks N` 只限制内存里保留的区块数，不限制可访问的坐标。
 - `tiles` 是窗口内的 row major 数组，恰好 `width * height` 个条目；每个字符串是地形的内容路径
   （`water`、`sand`、`grass`、`forest`、`hill`、`rock`，取决于内容目录），和 `TerrainType.key().path()`
-  一致。地形由确定性噪声生成，同一 seed 同一内容复现同一张地图。
-- `entities` 按 id 排序，并且**不按窗口裁剪**：它仍然是整个世界所有存活实体的列表，`x` / `y` 是地图
-  **绝对坐标**（保留一位小数）。客户端用 `originX` / `originY` 把实体换算到窗口内；窗口外（但仍在
-  256×256 内）的实体照样出现在数组里，方便客户端追踪“在屏幕外但还活着”的单位。`kind` 是引擎的内容
-  路径（`worker`、`soldier`、`medic`、`warehouse`、`barracks`、`workshop`、`ore_silo`），建筑与单位形状
-  相同。
+  一致。地形由确定性噪声生成，同一 seed 同一内容在任意坐标复现同一块地形；`100000, -50000` 的窗口
+  与生成器在该坐标的采样逐格一致。
+- `entities` 按 id 排序，并且**不按窗口裁剪**：它仍然是整个世界所有存活实体的列表，`x` / `y` 是
+  **绝对坐标**（保留一位小数），可以为负。客户端用 `originX` / `originY` 把实体换算到窗口内；窗口外的
+  实体照样出现在数组里，方便客户端追踪“在屏幕外但还活着”的单位。`kind` 是引擎的内容路径（`worker`、
+  `soldier`、`medic`、`warehouse`、`barracks`、`workshop`、`ore_silo`），建筑与单位形状相同。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
   `name`，以及扁平的金币/木材数量 `gold` / `wood`。这两个键就是经典内容目录注册的物品路径；快照不重复
   它们的显示名，其它物品类型暂时不进快照。金额来自玩家仓库的可用数量（引擎的投放点规则，与建造/训练
@@ -318,8 +323,10 @@ GET /world/snapshot?cx=240&cy=8&r=64
 的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。Vite dev proxy 把 `/world` 转发到
 同一个 Java 服务器。
 
-本阶段只改服务端：`web-client/` 还没有读取 `originX` / `originY`，也没有把相机中心作为 `cx` / `cy` 发出去。
-它目前仍请求无参数快照，拿到的是地图中心 64×64 窗口；把窗口映射到相机、按相机请求新窗口是下一阶段的工作。
+本阶段只改服务端：协议已经把世界定义成无界的，`originX` / `originY` 可以为负，快照不再带地图宽高。
+仓库里当前的 `web-client/` 仍以 256 格的兜底地图大小校验快照（并拒绝负的实体坐标），所以在更新客户端之前，
+出生锚点附近的负坐标窗口可能被客户端判为非法而退回占位地图；把客户端改成无界世界是单独的客户端阶段，
+本阶段按任务要求不修改 `web-client/`。
 
 ## 帧规则
 

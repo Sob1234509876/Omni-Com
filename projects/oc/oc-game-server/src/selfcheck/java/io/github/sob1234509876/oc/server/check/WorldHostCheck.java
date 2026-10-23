@@ -13,7 +13,9 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -70,6 +72,7 @@ public final class WorldHostCheck {
      */
     public static void run(Check check) {
         check.section("服务器世界主机");
+        startupAndBudget(check);
         hostAndSnapshot(check);
         terrainAndAnchor(check);
         snapshotWindows(check);
@@ -83,21 +86,67 @@ public final class WorldHostCheck {
         }
     }
 
+    /**
+     * The world is unbounded, so its cost is a chunk budget rather than a map size, and starting it must not
+     * walk an endless landscape. This measures construction time and asserts the configured budget reaches
+     * both the host and the engine map.
+     */
+    private static void startupAndBudget(Check check) {
+        check.section("世界：启动耗时与区块预算");
+        long startedAt = System.nanoTime();
+        WorldHost host = new WorldHost(WorldHost.DEFAULT_SEED);
+        long startMillis = (System.nanoTime() - startedAt) / 1_000_000L;
+        try {
+            check.note("世界启动耗时: " + startMillis + " ms（含出生锚点搜索、样例场景与开局资源）");
+            check.that(startMillis < 3_000L, "世界在 3 秒内启动（实测 " + startMillis + " ms）");
+            check.equal(4096, WorldHost.DEFAULT_CHUNK_BUDGET, "默认区块预算是 4096");
+            check.equal(WorldHost.DEFAULT_CHUNK_BUDGET, host.chunkBudget(),
+                    "宿主报告默认区块预算");
+            check.that(host.engine().map() instanceof InfiniteTerrainMap,
+                    "托管的引擎世界就是无界 InfiniteTerrainMap");
+            check.equal(host.chunkBudget(),
+                    ((InfiniteTerrainMap) host.engine().map()).maxLoadedChunks(),
+                    "引擎地图拿到了宿主配置的区块预算");
+        } finally {
+            host.stop();
+        }
+
+        WorldHost small = new WorldHost(1L, new PlayersContent(true), List.of(), 64);
+        try {
+            check.equal(64, small.chunkBudget(), "自定义区块预算 64 被宿主接受");
+            check.equal(64, ((InfiniteTerrainMap) small.engine().map()).maxLoadedChunks(),
+                    "自定义区块预算真的传给了引擎地图");
+        } finally {
+            small.stop();
+        }
+        try {
+            new WorldHost(1L, new PlayersContent(true), List.of(), 0);
+            check.that(false, "区块预算 0 被拒绝");
+        } catch (IllegalArgumentException rejected) {
+            check.that(true, "区块预算 0 被拒绝（" + rejected.getMessage() + "）");
+        }
+    }
+
     /** Builds a host, validates its document, starts it and proves the tick thread really advances. */
     private static void hostAndSnapshot(Check check) {
         WorldHost host = new WorldHost(WorldHost.DEFAULT_SEED);
         try {
             check.equal(0L, host.tick(), "未启动时 tick() 为 0");
             check.that(!host.running(), "未启动时 running() 为 false");
-            check.equal(WorldHost.MAP_SIZE, host.width(), "报出的地图宽度是 MAP_SIZE");
-            check.equal(WorldHost.MAP_SIZE, host.height(), "报出的地图高度是 MAP_SIZE");
-            check.equal(256, host.width(), "地图宽度是 256");
-            check.equal(256, host.height(), "地图高度是 256");
             check.equal(16, host.tilePixels(), "报出的 tilePixels 是 16");
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
 
             String initial = host.snapshotJson();
             validateSnapshot(check, initial, "tick 0 快照");
+            Map<String, Object> initialDocument = MiniJson.parseObject(initial);
+            check.that(!initialDocument.containsKey("mapWidth")
+                            && !initialDocument.containsKey("mapHeight")
+                            && !initialDocument.containsKey("mapSize"),
+                    "快照不含地图宽高字段（世界无界）");
+            check.equal((long) (host.spawnAnchor().x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longField(initialDocument, "originX"), "无参数快照以出生锚点为中心（originX）");
+            check.equal((long) (host.spawnAnchor().y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longField(initialDocument, "originY"), "无参数快照以出生锚点为中心（originY）");
             check.that(initial.contains("\"entities\":[{\"id\":1"), "快照从实体 1 开始，说明样例场景存在");
             check.that(initial.contains("\"kind\":\"worker\""), "快照里有 worker 内容路径");
             check.that(initial.contains("\"kind\":\"warehouse\""), "快照里有 warehouse 内容路径");
@@ -125,36 +174,34 @@ public final class WorldHostCheck {
     }
 
     /**
-     * The noise terrain and the deterministic spawn anchor: the map is 256 x 256, at least four terrain
-     * paths appear in one 128 x 128 sample, the anchor is buildable and two hosts with the same seed agree
-     * on it, and neither the sample scene nor a joining player's base stands on water.
+     * The noise terrain and the deterministic spawn anchor: the world has no size, the anchor is found from
+     * {@code (0, 0)} inside the documented search radius, at least four terrain paths appear in one 128 x 128
+     * sample around it, two hosts with the same seed agree on it, and neither the sample scene nor a joining
+     * player's base stands on water.
      */
     private static void terrainAndAnchor(Check check) {
         check.section("世界：噪声地形与出生锚点");
         WorldHost first = new WorldHost(1L);
         WorldHost second = new WorldHost(1L);
         try {
-            check.equal(256, WorldHost.MAP_SIZE, "地图边长常量是 256");
-            check.equal(256, first.width(), "宿主报出的宽度是 256");
-            check.equal(256, first.height(), "宿主报出的高度是 256");
-
-            String wide = first.snapshotJson(WorldHost.MAP_SIZE / 2, WorldHost.MAP_SIZE / 2,
-                    WorldHost.MAX_SNAPSHOT_RADIUS);
-            Set<String> paths = tilePaths(wide);
-            check.that(paths.size() >= 4,
-                    "128x128 的样例里至少有四种地形路径: " + paths);
-            check.equal(WorldHost.MAX_SNAPSHOT_RADIUS * 2, tileRows(wide).size(),
-                    "128x128 的样例有 128 行地形");
+            check.equal(64, WorldHost.SEARCH_RADIUS_TILES, "无界世界的确定性搜索半径是 64");
 
             GridPos anchor = first.spawnAnchor();
-            check.that(anchor.x() >= 0 && anchor.x() < WorldHost.MAP_SIZE
-                            && anchor.y() >= 0 && anchor.y() < WorldHost.MAP_SIZE,
-                    "出生锚点在地图内: " + anchor);
+            check.that(Math.max(Math.abs(anchor.x()), Math.abs(anchor.y()))
+                            <= WorldHost.SEARCH_RADIUS_TILES,
+                    "出生锚点在 (0,0) 的 " + WorldHost.SEARCH_RADIUS_TILES + " 格搜索半径内: " + anchor);
             check.that(first.engine().world().map().isBuildable(anchor),
                     "出生锚点是可建造地块: " + anchor);
             check.equal(anchor, second.spawnAnchor(), "同一种子、同一内容给出相同的出生锚点");
             check.that(second.engine().world().map().isBuildable(second.spawnAnchor()),
                     "第二个宿主的出生锚点同样是可建造地块");
+
+            String wide = first.snapshotJson(anchor.x(), anchor.y(), WorldHost.MAX_SNAPSHOT_RADIUS);
+            Set<String> paths = tilePaths(wide);
+            check.that(paths.size() >= 4,
+                    "出生锚点附近 128x128 的样例里至少有四种地形路径: " + paths);
+            check.equal(WorldHost.MAX_SNAPSHOT_RADIUS * 2, tileRows(wide).size(),
+                    "128x128 的样例有 128 行地形");
 
             boolean everySceneBuilding = true;
             for (Building building : first.engine().world().buildings()) {
@@ -190,25 +237,35 @@ public final class WorldHostCheck {
     }
 
     /**
-     * The snapshot window: default origin and size, {@code r=16} producing 32 x 32, the radius clamp, corner
-     * clipping, and the absolute coordinates of the entity list.
+     * The snapshot window of an unbounded world: defaults around the spawn anchor, negative origins for a
+     * request near {@code (0, 0)}, the radius clamp (and only the radius clamp), a far window at
+     * {@code (100000, -50000)} whose terrain comes from the same generator, and the absolute coordinates of
+     * the entity list.
      */
     private static void snapshotWindows(Check check) {
         check.section("世界：窗口快照");
         WorldHost host = new WorldHost(1L);
         try {
+            GridPos anchor = host.spawnAnchor();
             Map<String, Object> defaults = MiniJson.parseObject(host.snapshotJson());
-            int defaultOrigin = WorldHost.MAP_SIZE / 2 - WorldHost.DEFAULT_SNAPSHOT_RADIUS;
-            check.equal((long) defaultOrigin, longField(defaults, "originX"),
-                    "无参数快照的 originX 是默认窗口的左上角");
-            check.equal((long) defaultOrigin, longField(defaults, "originY"),
-                    "无参数快照的 originY 是默认窗口的左上角");
+            check.equal((long) (anchor.x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longField(defaults, "originX"), "无参数快照以出生锚点为中心（originX）");
+            check.equal((long) (anchor.y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
+                    longField(defaults, "originY"), "无参数快照以出生锚点为中心（originY）");
             check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L, longField(defaults, "width"),
                     "无参数快照的宽度是默认半径的两倍");
             check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L, longField(defaults, "height"),
                     "无参数快照的高度是默认半径的两倍");
             check.equal(64, tileRows(host.snapshotJson()).size(), "无参数快照的 tiles 有 64 行");
             check.equal(64 * 64, tileCount(host.snapshotJson()), "无参数快照的 tiles 恰好有 4096 个条目");
+
+            // A request at the origin proves the origin may go negative: there is no corner to clip against.
+            Map<String, Object> origin = MiniJson.parseObject(host.snapshotJson(0, 0, 16));
+            check.equal(-16L, longField(origin, "originX"), "原点请求的 originX 是 -16，不再被夹到 0");
+            check.equal(-16L, longField(origin, "originY"), "原点请求的 originY 是 -16，不再被夹到 0");
+            check.equal(32L, longField(origin, "width"), "原点请求得到 32 宽的完整窗口");
+            check.equal(32 * 32, tileCount(host.snapshotJson(0, 0, 16)),
+                    "原点请求的 tiles 仍是 1024 个条目，没有越界");
 
             Map<String, Object> small = MiniJson.parseObject(host.snapshotJson(128, 128, 16));
             check.equal(128L - 16L, longField(small, "originX"), "r=16 时 originX 是 112");
@@ -233,41 +290,57 @@ public final class WorldHostCheck {
                     longField(MiniJson.parseObject(host.snapshotJson(128, 128, 1_000)), "width"),
                     "过大的半径被夹到 64（窗口 128）");
 
-            Map<String, Object> corner = MiniJson.parseObject(host.snapshotJson(0, 0, 16));
-            check.equal(0L, longField(corner, "originX"), "左上角请求的 originX 被夹到 0");
-            check.equal(0L, longField(corner, "originY"), "左上角请求的 originY 被夹到 0");
-            check.equal(32L, longField(corner, "width"), "左上角请求仍然得到 32 宽的完整窗口");
-            check.equal(32 * 32, tileCount(host.snapshotJson(0, 0, 16)),
-                    "左上角请求的 tiles 仍是 1024 个条目，没有越界");
-            Map<String, Object> farCorner = MiniJson.parseObject(
-                    host.snapshotJson(WorldHost.MAP_SIZE, WorldHost.MAP_SIZE, 16));
-            check.equal((long) (WorldHost.MAP_SIZE - 32), longField(farCorner, "originX"),
-                    "右下角请求的 originX 被夹到 MAP_SIZE - 32");
-            check.equal((long) (WorldHost.MAP_SIZE - 32), longField(farCorner, "originY"),
-                    "右下角请求的 originY 被夹到 MAP_SIZE - 32");
-            check.equal(32 * 32, tileCount(host.snapshotJson(WorldHost.MAP_SIZE, WorldHost.MAP_SIZE, 16)),
-                    "右下角请求的 tiles 仍是 1024 个条目，没有越界");
+            // A far centre is not moved: only the radius is clamped.
+            int farX = 100_000;
+            int farY = -50_000;
+            Map<String, Object> far = MiniJson.parseObject(host.snapshotJson(farX, farY, 16));
+            check.equal((long) (farX - 16), longField(far, "originX"),
+                    "远景窗口的 originX 是请求中心减半径（99984）");
+            check.equal((long) (farY - 16), longField(far, "originY"),
+                    "远景窗口的 originY 是请求中心减半径（-50016），可以为负");
+            check.equal(32L, longField(far, "width"), "远景窗口仍是 32 宽");
+            check.equal(32L, longField(far, "height"), "远景窗口仍是 32 高");
+            check.equal(32 * 32, tileCount(host.snapshotJson(farX, farY, 16)),
+                    "远景窗口的 tiles 恰好有 1024 个条目");
+            List<List<String>> farRows = tilesOf(host.snapshotJson(farX, farY, 16));
+            check.equal(host.engine().world().map().terrainAt(farX - 16, farY - 16).key().path(),
+                    farRows.get(0).get(0), "远景窗口左上角地块与生成器同一坐标一致");
+            check.equal(host.engine().world().map().terrainAt(farX + 15, farY + 15).key().path(),
+                    farRows.get(31).get(31), "远景窗口右下角地块与生成器同一坐标一致");
+            check.that(!tilePaths(host.snapshotJson(farX, farY, 16)).isEmpty(),
+                    "远景窗口确实包含地形: " + tilePaths(host.snapshotJson(farX, farY, 16)));
 
-            List<List<String>> window = tilesOf(host.snapshotJson(128, 128, 16));
-            check.equal(host.engine().world().map().terrainAt(128 - 16, 128 - 16).key().path(),
-                    window.get(0).get(0), "窗口左上角地块与引擎同一坐标一致");
-            check.equal(host.engine().world().map().terrainAt(128 + 15, 128 + 15).key().path(),
-                    window.get(31).get(31), "窗口右下角地块与引擎同一坐标一致");
+            Map<String, Object> negativeFar = MiniJson.parseObject(
+                    host.snapshotJson(-100_000, 50_000, 16));
+            check.equal(-100_016L, longField(negativeFar, "originX"),
+                    "负方向远景窗口的 originX 是 -100016");
+            check.equal(49_984L, longField(negativeFar, "originY"),
+                    "负方向远景窗口的 originY 是 49984");
+            check.equal(32 * 32, tileCount(host.snapshotJson(-100_000, 50_000, 16)),
+                    "负方向远景窗口的 tiles 恰好有 1024 个条目");
 
+            // Entities are the whole living list in absolute world coordinates, with no map bound.
             List<?> entities = (List<?>) MiniJson.parseObject(host.snapshotJson()).get("entities");
-            boolean absolute = entities != null;
+            check.that(entities != null, "快照包含 entities 数组");
             if (entities != null) {
-                for (Object raw : entities) {
-                    if (!(raw instanceof Map<?, ?> entity)
-                            || !(entity.get("x") instanceof Number x) || !(entity.get("y") instanceof Number y)
-                            || x.doubleValue() < 0 || x.doubleValue() >= WorldHost.MAP_SIZE
-                            || y.doubleValue() < 0 || y.doubleValue() >= WorldHost.MAP_SIZE) {
+                List<Entity> live = new ArrayList<>(host.engine().world().entities());
+                live.removeIf(entity -> !entity.isAlive());
+                live.sort(Comparator.comparing(Entity::id));
+                check.equal(live.size(), entities.size(), "entities 就是世界里的全部存活实体");
+                boolean absolute = entities.size() == live.size();
+                for (int index = 0; index < Math.min(entities.size(), live.size()); index++) {
+                    if (!(entities.get(index) instanceof Map<?, ?> entity)
+                            || !(entity.get("x") instanceof Number x)
+                            || !(entity.get("y") instanceof Number y)) {
                         absolute = false;
                         break;
                     }
+                    Entity expected = live.get(index);
+                    absolute &= Math.abs(x.doubleValue() - expected.position().x()) <= 0.05
+                            && Math.abs(y.doubleValue() - expected.position().y()) <= 0.05;
                 }
+                check.that(absolute, "entities 保留世界绝对坐标，不按地图裁剪、可以为负");
             }
-            check.that(absolute, "entities 保留地图绝对坐标，且都在 0..255 内");
         } finally {
             host.stop();
         }
@@ -431,11 +504,25 @@ public final class WorldHostCheck {
             check.equal(112L, longField(windowDocument, "originX"), "带参数快照的 originX 是 112");
             check.equal(1024, tileCount(windowed.text()), "带参数快照的 tiles 恰好有 1024 个条目");
 
+            Response far = request(port, "GET", "/world/snapshot?cx=100000&cy=-50000&r=16");
+            check.equal(200, far.status(), "远景 GET /world/snapshot?cx=100000&cy=-50000&r=16 返回 200");
+            Map<String, Object> farDocument = MiniJson.parseObject(far.text());
+            check.equal(99_984L, longField(farDocument, "originX"), "HTTP 远景窗口的 originX 是 99984");
+            check.equal(-50_016L, longField(farDocument, "originY"), "HTTP 远景窗口的 originY 是 -50016");
+            check.equal(32L, longField(farDocument, "width"), "HTTP 远景窗口的宽是 32");
+            check.equal(1024, tileCount(far.text()), "HTTP 远景窗口的 tiles 恰好有 1024 个条目");
+            check.equal(tilesOf(host.snapshotJson(100_000, -50_000, 16)), tilesOf(far.text()),
+                    "HTTP 远景窗口的地形与直接快照同一坐标完全一致");
+            check.that(!tilePaths(far.text()).isEmpty(), "HTTP 远景窗口确实包含地形: " + tilePaths(far.text()));
+
             Response clamped = request(port, "GET", "/world/snapshot?cx=0&cy=0&r=999");
             check.equal(200, clamped.status(), "超范围半径的 HTTP 请求仍返回 200");
             Map<String, Object> clampedDocument = MiniJson.parseObject(clamped.text());
             check.equal(128L, longField(clampedDocument, "width"), "HTTP 请求的超大半径被夹到 64（窗口 128）");
-            check.equal(0L, longField(clampedDocument, "originX"), "HTTP 角落请求的 originX 被夹到 0");
+            check.equal(-64L, longField(clampedDocument, "originX"),
+                    "HTTP 原点请求的 originX 是 -64，只夹半径、不夹地图");
+            check.equal(-64L, longField(clampedDocument, "originY"),
+                    "HTTP 原点请求的 originY 是 -64，只夹半径、不夹地图");
             check.equal(128 * 128, tileCount(clamped.text()), "夹紧后的 HTTP 窗口恰好有 16384 个条目");
 
             host.stop();
@@ -551,10 +638,12 @@ public final class WorldHostCheck {
         int height = (int) number(document, "height");
         check.that(tick >= 0, label + "：tick 不是负数");
         check.that(width > 0 && height > 0, label + "：宽高是正数");
-        check.that(originX >= 0 && originY >= 0
-                        && originX + width <= WorldHost.MAP_SIZE && originY + height <= WorldHost.MAP_SIZE,
-                label + "：originX/originY 与窗口宽高都落在地图 " + WorldHost.MAP_SIZE + "x"
-                        + WorldHost.MAP_SIZE + " 内");
+        check.that(!document.containsKey("mapWidth") && !document.containsKey("mapHeight")
+                        && !document.containsKey("mapSize"),
+                label + "：没有地图宽高字段（世界无界，originX/originY 可以是负数或很大）");
+        check.that((long) originX == number(document, "originX")
+                        && (long) originY == number(document, "originY"),
+                label + "：originX/originY 是 int 范围内的绝对 tile 坐标");
 
         Object tilesValue = document.get("tiles");
         int tileCount = 0;
@@ -600,11 +689,10 @@ public final class WorldHostCheck {
                 }
                 double xValue = xNumber.doubleValue();
                 double yValue = yNumber.doubleValue();
-                // Entities keep absolute map coordinates, not window-relative ones: a window near a corner
-                // legitimately carries an entity outside its tile square.
-                if (!Double.isFinite(xValue) || !Double.isFinite(yValue)
-                        || xValue < 0 || xValue >= WorldHost.MAP_SIZE
-                        || yValue < 0 || yValue >= WorldHost.MAP_SIZE) {
+                // Entities keep absolute world coordinates, not window-relative ones: a window far from the
+                // spawn legitimately carries entities outside its tile square, and the origin may be
+                // negative or huge.
+                if (!Double.isFinite(xValue) || !Double.isFinite(yValue)) {
                     everyEntityValid = false;
                     break;
                 }
@@ -612,7 +700,7 @@ public final class WorldHostCheck {
         }
         check.that(entitiesShaped, label + "：entities 是数组");
         check.that(entityCount > 0, label + "：样例场景至少有一个实体");
-        check.that(everyEntityValid, label + "：每个实体都有 id/kind/x/y 且位于地图内");
+        check.that(everyEntityValid, label + "：每个实体都有 id/kind/x/y，坐标是有限的绝对世界坐标");
 
         Object playersValue = document.get("players");
         boolean playersShaped = playersValue instanceof List<?> players && !players.isEmpty();

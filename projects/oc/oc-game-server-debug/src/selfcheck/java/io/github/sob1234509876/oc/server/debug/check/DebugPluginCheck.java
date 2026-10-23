@@ -205,6 +205,15 @@ public final class DebugPluginCheck {
                 "报告里有临时 World 的维度与区块统计");
         check.that(text.contains("engine-world-terrain: debug:grass"), "报告里有临时 World 的地形");
         check.that(text.contains("plugin-read-only: true"), "报告自报为只读");
+        // The report inspects the same unbounded map type the server hosts: the old ChunkedMap cast would
+        // fail here, so these facts prove engine-info works on an infinite world.
+        check.that(text.contains("engine-map-bounded: false"),
+                "报告在无界 InfiniteTerrainMap 上裁定世界无界（不再强转 ChunkedMap）");
+        check.that(text.contains("engine-chunks-budget: "
+                        + io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap.DEFAULT_MAX_LOADED_CHUNKS),
+                "报告里有区块预算，而不是地图大小");
+        check.that(text.contains("engine-chunks-loaded: 1"),
+                "报告里只有被查看过的 1 个区块（无界地图按需生成）");
         // The request and the response travel as one base64 protocol line, and the server's default ceiling is
         // 4096 bytes, so a report that grew past that would be delivered as a disconnect instead. Measured
         // here with headroom, because the text grows with a longer data directory path on a real machine.

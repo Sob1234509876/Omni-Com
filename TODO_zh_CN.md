@@ -26,10 +26,10 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 215 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 305 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 789 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 163、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
-| debug | `:projects:oc:oc-game-server-debug:selfcheck` | 82 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 34、请求注册表 14、真实 socket 19 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 813 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 187、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
+| debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 37、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
-| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 291 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
+| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 293 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
 | client render math | `node scripts/check-render-math.ts` | 158 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
@@ -134,7 +134,7 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策。** 给 `/world/snapshot` 加 `players` 数组，例如 `[{"id":3,"name":"alice","gold":300,"wood":60}]`，从每个玩家的 `logistics().available()` bundle 构建，并用当前内容目录注册的 `gold` / `wood` 物品路径读取；每个玩家一行、按 id 排序，目录没定义的路径报 `0`。在 `view.ts` 解析并校验，放到 `ServerWorldView` 上，并为 `myPlayerId` 渲染一行 HUD（`资源：alice · 金 300 · 木 60`），世界里还没有这一行时显示破折号。成功的 `BUILD` / `TRAIN` 之后以及每次快照时刷新。扩展 `WorldHostCheck` 以及协议文档和它的中文孪生文件的快照一节。
 
-**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（163 条）断言 `players` 的形状与数值；789 条保持全绿。
+**验收标准。** `LOGIN` 后 HUD 立刻显示 300 金币与 60 木材；放一座一级矿场（80 金币）后，下一次 500 毫秒轮询内金币变成 220；训练一个一级近战（20 金币）后再次下降；`--world off` 仍显示占位地图且没有资源行；`WorldHostCheck`（187 条）断言 `players` 的形状与数值；813 条保持全绿。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[main.ts](web-client/src/main.ts)、[index.html](web-client/index.html)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)。
 
@@ -176,9 +176,34 @@ cd web-client; pnpm install; pnpm dev
 
 **建议对策（stage g3，客户端）。** `WorldView` 现在带有 `originX` / `originY` 与完整地图大小（`mapWidth` / `mapHeight`）；地形查找先减去原点，窗口外返回 `void`，实体保持绝对地图坐标，渲染器与拾取都只在实体瓦片位于窗口内时才绘制或选中。`main.ts` 由相机焦点发 `GET /world/snapshot?cx=<相机 tileX>&cy=<相机 tileY>&r=32`，焦点进入窗口边缘 8 格以内就请求以相机为中心的新窗口；新窗口到达前保留旧窗口，并用单调递增的请求 id 丢弃乱序回答；无参数请求保留为第一次的确定性中心请求。相机夹紧到 256×256 地图而不是 64×64 窗口，所以平移不会被已加载窗口挡住；HUD 显示窗口原点与地图大小。`web-client/README.md` 与 `README_zh_CN.md` 记录了窗口流送。
 
-**验收标准（已满足）。** 服务端在 256×256 的报告地图上提供确定性噪声地形、可建造出生锚点和 `cx` / `cy` / `r` 窗口快照；同一个 `--seed` 在新宿主上复现同一地形与锚点；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（163 条）只扩展、不削弱。客户端现在请求以相机为中心的窗口，用 `originX` / `originY` 翻译绝对坐标，在新窗口到达前保留旧窗口，忽略乱序回答，并把相机夹紧到地图；`check-render-math` 覆盖窗口解析、8 格边缘触发、地图边缘保护、请求排序与地图夹紧，现在打印 **158** 项通过（142 + 16）。
+**验收标准（已满足；服务端地图大小后来被 stage i2 取代）。** 服务端在 256×256 的报告地图上提供确定性噪声地形、可建造出生锚点和 `cx` / `cy` / `r` 窗口快照；同一个 `--seed` 在新宿主上复现同一地形与锚点；两个种子给出不同世界；开局基地仍能找到可建陆地；`WorldHostCheck`（187 条）只扩展、不削弱。客户端现在请求以相机为中心的窗口，用 `originX` / `originY` 翻译绝对坐标，在新窗口到达前保留旧窗口，忽略乱序回答，并把相机夹紧到地图；`check-render-math` 覆盖窗口解析、8 格边缘触发、地图边缘保护、请求排序与地图夹紧，现在打印 **158** 项通过（142 + 16）。
 
 **涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[OcRtsEngineBuilder.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[NoiseChunkGenerator.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/NoiseChunkGenerator.java)、[ChunkStreamer.java](projects/oc/oc-rts-engine/src/main/java/io/github/sob1234509876/oc/rts/map/ChunkStreamer.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[view.ts](web-client/src/render/view.ts)、[stream.ts](web-client/src/render/stream.ts)、[camera.ts](web-client/src/render/camera.ts)、[renderer.ts](web-client/src/render/renderer.ts)、[input.ts](web-client/src/render/input.ts)、[main.ts](web-client/src/main.ts)、[index.html](web-client/index.html)、[客户端 README](web-client/README.md)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)、[05 浏览器端点](projects/oc/oc-game-server/help/05-browser-endpoint.md)。
+
+**代价。** 大。
+
+### h. 服务端仍然假设有限地图 —— 已完成（stage i2）
+
+**现象。** 引擎早就能生成任意有符号 tile，但 `WorldHost` 仍报告 `MAP_SIZE = 256` 的地图：出生锚点只扫
+256 格，快照把中心夹进 `0..255`，场景与基地在锚点搜索失败时回退到全图扫描，经典 AI 的选址也一样，
+`oc-debug` 还把 `world.map()` 强转成有限的 `ChunkedMap`。
+
+**建议对策（stage i2，服务端，已实现）。** `WorldHost` 改用 `OcRtsEngineBuilder.infiniteTerrain(seed)`
+加一个正的 `maxLoadedChunks` 预算（`WorldHost.DEFAULT_CHUNK_BUDGET = 4096`，暴露成 `--chunks N`）；
+地图大小常量被删除，`width()` / `height()` / `MAP_SIZE` 的所有引用一并消失。出生锚点从 `(0,0)` 向外
+最多扫 64 格，所有原来的全图回退（场景、真人基地、工程师站位）都改成同一锚点周围的定长环形搜索。
+`snapshotJson(cx, cy, r)` 接受任意有符号中心，只把 `r` 夹在 `16..64`；原点可以为负或很大，JSON 不再带
+地图宽高，无参数请求以出生锚点为中心。`ClassicAi` 用远离主场景的固定 `(192,192)` 开局锚点，并只在自己
+最老建筑周围 64 格内选址；`DebugPlugin` 通过 `StreamingTerrainMap` 读取一次性世界，报告
+`engine-map-bounded: false` 与 `engine-chunks-budget: 4096`，不再强转 `ChunkedMap`。`WorldHostCheck` 从
+163 条增加到 187 条（启动耗时与区块预算、`(0,0)` 锚点、负原点与远景窗口、远景地形、真实 HTTP 远景窗口、
+场景与加入基地仍落在可建造地），经典确定性一节断言 600 tick 内 AI 所有实体都在其基地 64 格内，调试
+自校验断言无界报告。总数：game server 813（原 789）、debug 85（原 82）、classic 293（原 291）。
+
+**已知限制。** 本阶段按要求不修改 `web-client/`；它仍按 `DEFAULT_MAP_SIZE_TILES = 256` 校验并拒绝负实体
+坐标，所以渲染新的负原点窗口需要单独的客户端阶段。
+
+**涉及文件。** [WorldHost.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/world/WorldHost.java)、[OcGameServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/OcGameServer.java)、[HttpWebServer.java](projects/oc/oc-game-server/src/main/java/io/github/sob1234509876/oc/server/ws/HttpWebServer.java)、[ClassicAi.java](projects/oc/oc-game-server-classic/src/main/java/io/github/sob1234509876/oc/server/classic/ClassicAi.java)、[DebugPlugin.java](projects/oc/oc-game-server-debug/src/main/java/io/github/sob1234509876/oc/server/debug/DebugPlugin.java)、[WorldHostCheck.java](projects/oc/oc-game-server/src/selfcheck/java/io/github/sob1234509876/oc/server/check/WorldHostCheck.java)、[ClassicCheck.java](projects/oc/oc-game-server-classic/src/selfcheck/java/io/github/sob1234509876/oc/server/classic/check/ClassicCheck.java)、[DebugPluginCheck.java](projects/oc/oc-game-server-debug/src/selfcheck/java/io/github/sob1234509876/oc/server/debug/check/DebugPluginCheck.java)、[05 浏览器端点](projects/oc/oc-game-server/help/05-browser-endpoint.md)、[协议](protocol/oc-protocol.md)、[协议中文](protocol/oc-protocol_zh_CN.md)。
 
 **代价。** 大。
 
@@ -191,10 +216,11 @@ cd web-client; pnpm install; pnpm dev
 - **世界状态没有存档/读档。** 只有用户记录通过 `LocalUserStore` 持久化在 `data/users.txt`；实体位置、地形编辑与生产队列在重启后丢失，引擎的 `ChunkStore` 接缝在服务器上也没有接上。
 - **皮革/石头/铁/金/钻石的美术递进只有文档，没有机器断言。** 经典 README 描述了这条阶梯；没有检查证明图集像素或各级美术真的遵循它（数值与成本阶梯是有检查的）。
 - **调试插件没有浏览器端对应物。** 页面能调用 `engine-info`，但只能由操作员手工粘贴 `debug.key`；没有与 `oc-debug` CLI 相当的浏览器 CLI 或调试面板。
+- **仓库里的浏览器客户端仍然按有限地图编写。** `web-client/src/render/view.ts` 把缺省的 `mapWidth` / `mapHeight` 当成 `256`，并拒绝负坐标实体，所以页面还渲染不了无界服务器的契约；这需要单独的客户端阶段。
 
 ## 6. 建议的后续功能
 
-1. **把地形生成器的阈值暴露出来。** 服务端在 stage g2 已为 256×256 世界使用 `NoiseChunkGenerator` + `NoiseSettings`；把海平面/森林线/山线/岩石线暴露成内容或服务器选项，让世界无需改代码即可调参。
+1. **把地形生成器的阈值暴露出来。** 服务端在 stage i2 已为无界世界使用 `NoiseTerrainGenerator` 的生物群系表；把海平面/森林线/山线/岩石线暴露成内容或服务器选项，让世界无需改代码即可调参。
 2. **远程单位与第二条建筑线。** 加一个 `range > 1` 的单位和能生产它的建筑，复用 `CombatSystem` 的射程与冷却规则；现在只有近战阶梯，证明了战斗层但没证明投射。
 3. **存档与读档。** 用引擎的 `ChunkStore` 接缝，加上玩家、实体与生产队列的序列化快照；今天只有账号能活过重启。
 4. **WebSocket 游戏命令端到端检查。** 启动真实服务器，连真实客户端 socket，`LOGIN`，发 `ORDER` / `BUILD` / `TRAIN`，同时断言线上回答与产生的快照。这能补上上面最大的欠账。
@@ -208,7 +234,7 @@ cd web-client; pnpm install; pnpm dev
 - **模拟内部保持确定性。** 模拟里不用 `java.util.Random`，不读墙钟（`System.currentTimeMillis`、`System.nanoTime`），不起线程。用 `DeterministicRandom`、固定 tick，并显式按 id/坐标打破平局。服务器的节拍线程是唯一允许用时钟驱动模拟的地方；传输与存储代码可以为时间戳读时钟，但模拟本身不行。
 - **服务器里只用 daemon 线程。** 插件线程必须是 daemon，并在 `onDisable` 里停掉；非 daemon 线程会让 JVM 在关闭后继续活着。
 - **一次提交只做一个已验证阶段。** 提交前跑六个 Java 检查和两个客户端检查；不要把重构和功能混在同一次提交里。
-- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如下次改动前的 `789`）；README、`help/` 与协议都可能提到它。
+- **总数变了就更新每一份引用它的文档。** 在仓库里 grep 旧数字（例如下次改动前的 `813`）；README、`help/` 与协议都可能提到它。
 - **文档是双语的。** 英文文件里改动的每一句话，都必须同步改它的 `_zh_CN.md` 孪生。`help/` 章节按设计是中文文档集；`protocol/oc-protocol.md` 默认英文，`protocol/oc-protocol_zh_CN.md` 是它的孪生，所以两者必须一起动。
 - **运行目录不是源码。** `plugins/` 是操作员拖放区，`data/` 是服务器状态；`plugins/*.jar` 与 `data/` 都被 gitignore。绝不提交插件 jar、密钥或账号文件。
 

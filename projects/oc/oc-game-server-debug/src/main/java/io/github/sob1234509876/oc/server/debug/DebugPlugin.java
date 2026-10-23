@@ -12,6 +12,8 @@ import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
 import io.github.sob1234509876.oc.rts.map.Chunk;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
+import io.github.sob1234509876.oc.rts.map.StreamingTerrainMap;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
 import io.github.sob1234509876.oc.server.plugin.RequestHandler;
@@ -291,7 +293,11 @@ public final class DebugPlugin implements Plugin {
                 .map(HyperOperation::label)
                 .orElse("none (the level is not a classic hyperoperation)"));
 
-        ChunkedMap map = (ChunkedMap) world.map();
+        // The report must work for the hosted world, which is an unbounded InfiniteTerrainMap. The map is
+        // inspected through the streaming contract, never through the finite ChunkedMap type: every signed
+        // tile coordinate exists, and the loaded count plus the budget describe the memory ceiling instead
+        // of a map size that no longer exists.
+        StreamingTerrainMap map = (StreamingTerrainMap) world.map();
         Chunk chunk = map.chunk(new ChunkPos(0, 0));
         facts.put("engine-world-dimensions", String.valueOf(world.dimensionCount()));
         facts.put("engine-world-entities", String.valueOf(world.entityCount()));
@@ -304,6 +310,8 @@ public final class DebugPlugin implements Plugin {
                 + (chunk.size() * chunk.size()));
         facts.put("engine-chunks-loaded", String.valueOf(map.loadedChunkCount()));
         facts.put("engine-chunks-generated", String.valueOf(map.generatedChunkCount()));
+        facts.put("engine-chunks-budget", String.valueOf(map.maxLoadedChunks()));
+        facts.put("engine-map-bounded", String.valueOf(map instanceof ChunkedMap));
     }
 
     /** The hyperoperation levels the googology library names, as {@code rank:label notation} triples. */
@@ -320,12 +328,14 @@ public final class DebugPlugin implements Plugin {
     }
 
     /**
-     * A throwaway world: one dimension, a flat grass map, no players and no systems.
+     * A throwaway world: one dimension, an unbounded flat grass map, no players and no systems.
      *
      * <p>Built inside the handler and dropped when the request ends; it is never ticked, never stored in a
-     * field and never handed to anybody. The generator is flat so the world costs a couple of tables instead
-     * of a noise field, and the terrain comes from a content registry this method creates, so nothing is
-     * borrowed from a running server.
+     * field and never handed to anybody. The map is an {@link InfiniteTerrainMap} over a flat generator, the
+     * same implementation the server hosts, so the report exercises the streaming/unbounded path instead of
+     * the historical finite {@code ChunkedMap}. The generator is flat so the world costs a couple of tables
+     * instead of a noise field, and the terrain comes from a content registry this method creates, so
+     * nothing is borrowed from a running server.
      */
     private static World flatWorld() {
         ContentRegistry content = ContentRegistry.builder("debug")
@@ -333,7 +343,7 @@ public final class DebugPlugin implements Plugin {
                 .build();
         World world = new World(0L, content);
         world.addDimension(DimensionId.overworld(), DimensionProfile.earth(),
-                new ChunkedMap(new FlatChunkGenerator(content.terrain("grass"))));
+                new InfiniteTerrainMap(new FlatChunkGenerator(content.terrain("grass"))));
         return world;
     }
 
