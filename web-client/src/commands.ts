@@ -11,9 +11,13 @@
  *
  * The server owns the truth: this is only the catalogue the browser panel offers. A path the served
  * world does not know is answered with `ERR unknown building`, so keep this list in step with the
- * classic content when it grows.
+ * classic content when it grows (for example the tier-one lumber camp).
  */
-export const BUILDING_PATHS = ["building.armory.t1", "building.mine.t1"] as const;
+export const BUILDING_PATHS = [
+  "building.armory.t1",
+  "building.mine.t1",
+  "building.lumbercamp.t1",
+] as const;
 
 /**
  * Unit content paths the classic plugin currently ships, in training-menu order.

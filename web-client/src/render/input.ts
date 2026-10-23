@@ -4,15 +4,25 @@
  * Every listener is attached to the canvas itself, never to `window` or `document`, so the protocol
  * form keeps its normal typing, wheel and keyboard behaviour. Keyboard input starts working when the
  * canvas is clicked (which focuses it) and stops when focus moves back to a form field.
+ *
+ * Selection model (see the READMEs for the user-facing table):
+ * - a plain left click replaces the selection with the entity under the cursor;
+ * - Shift+left click adds or removes one unit;
+ * - a left drag that starts on empty ground draws a marquee and selects the own units inside it;
+ * - a left drag that starts on an entity still selects that entity;
+ * - the middle button, or Space held with the left button, pans the camera. A left drag on empty
+ *   ground is deliberately no longer a camera pan, because that gesture is the marquee.
  */
 
-import type { Camera, TileCoord } from "./camera";
-import { entityInWindow, isBuildingKind, isWorldTile, type WorldView } from "./view";
+import type { Camera, TileCoord, TileRange } from "./camera";
+import { marqueeTileRange, screenRectBetween, type ScreenRect } from "./marquee";
+import { entityInWindow, isBuildingEntityKind, isWorldTile, type WorldView } from "./view";
 
 const DRAG_THRESHOLD_PX = 4;
 const KEY_PAN_SPEED_PX_PER_SECOND = 560;
 const ZOOM_STEP = 1.18;
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const SPACE_KEY = " ";
 const PAN_KEYS: ReadonlySet<string> = new Set<string>([
   "w",
   "a",
@@ -24,10 +34,21 @@ const PAN_KEYS: ReadonlySet<string> = new Set<string>([
   "arrowright",
 ]);
 
+/** How one click changes the selection: replace it, or add/remove the clicked unit. */
+export type SelectionMode = "replace" | "toggle";
+
 export interface InputHooks {
   /** The world currently rendered; read lazily so the demo map could be replaced later. */
   readonly getWorld: () => WorldView;
-  readonly onSelectionChange: (id: number | null) => void;
+  /** Apply one click's selection change. `mode` is `toggle` for Shift+left click. */
+  readonly onSelect: (id: number | null, mode: SelectionMode) => void;
+  /**
+   * A finished marquee drag: every own unit drawn inside this inclusive tile range should become the
+   * selection. The camera itself never moved during the drag, so the range is stable.
+   */
+  readonly onMarquee?: (range: TileRange) => void;
+  /** Whether an empty-ground left drag may draw a marquee; placement mode returns false. */
+  readonly isMarqueeEnabled?: () => boolean;
   readonly onHoverChange?: (tile: TileCoord | null) => void;
   readonly onCameraChange?: () => void;
   /** A right click on a world tile; `targetId` is the entity under the cursor, if any. */
@@ -49,6 +70,8 @@ interface ScreenPoint {
   readonly y: number;
 }
 
+type DragMode = "none" | "camera" | "entity" | "marquee";
+
 function sameTile(left: TileCoord | null, right: TileCoord | null): boolean {
   if (left === null || right === null) {
     return left === right;
@@ -66,6 +89,9 @@ export class InputController {
   private pointerActive = false;
   private dragging = false;
   private activePointerId: number | null = null;
+  private dragMode: DragMode = "none";
+  private downTargetId: number | null = null;
+  private downShift = false;
   private downX = 0;
   private downY = 0;
   private lastX = 0;
@@ -87,6 +113,7 @@ export class InputController {
     canvas.addEventListener("pointerleave", this.handlePointerLeave);
     canvas.addEventListener("lostpointercapture", this.handleLostPointerCapture);
     canvas.addEventListener("contextmenu", this.handleContextMenu);
+    canvas.addEventListener("auxclick", this.handleAuxClick);
     canvas.addEventListener("wheel", this.handleWheel, { passive: false });
     canvas.addEventListener("keydown", this.handleKeyDown);
     canvas.addEventListener("keyup", this.handleKeyUp);
@@ -96,6 +123,20 @@ export class InputController {
   /** Tile under the pointer, or null when it is outside the canvas. */
   get hoverTile(): TileCoord | null {
     return this.hoverTileValue;
+  }
+
+  /**
+   * The marquee rectangle in CSS pixels while a left drag on empty ground is in progress, otherwise
+   * null. The renderer draws it on top of the world frame; it is already normalised.
+   */
+  get marqueeRect(): ScreenRect | null {
+    if (this.dragMode !== "marquee" || !this.dragging) {
+      return null;
+    }
+    return screenRectBetween(
+      { x: this.downX, y: this.downY },
+      { x: this.pointerX, y: this.pointerY },
+    );
   }
 
   /** Applies held-key panning. The main loop calls this once per animation frame. */
@@ -136,6 +177,7 @@ export class InputController {
     this.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
     this.canvas.removeEventListener("lostpointercapture", this.handleLostPointerCapture);
     this.canvas.removeEventListener("contextmenu", this.handleContextMenu);
+    this.canvas.removeEventListener("auxclick", this.handleAuxClick);
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("keydown", this.handleKeyDown);
     this.canvas.removeEventListener("keyup", this.handleKeyUp);
@@ -184,7 +226,7 @@ export class InputController {
       if (!entityInWindow(world, entity)) {
         continue;
       }
-      const building = isBuildingKind(entity.kind);
+      const building = isBuildingEntityKind(entity.kind);
       const point = this.camera.worldToScreen(
         entity.x * this.camera.tileSize,
         entity.y * this.camera.tileSize,
@@ -204,16 +246,36 @@ export class InputController {
     return bestId;
   }
 
-  private setSelection(id: number | null): void {
-    this.hooks.onSelectionChange(id);
-  }
-
   private zoomAtCenter(factor: number): void {
     this.camera.zoomAt(this.camera.viewportWidth / 2, this.camera.viewportHeight / 2, factor);
     if (this.hoverTileValue !== null) {
       this.updateHover(this.pointerX, this.pointerY);
     }
     this.hooks.onCameraChange?.();
+  }
+
+  /** Starts one pointer drag of a concrete mode; shared by left, middle and Space+left drags. */
+  private beginDrag(event: PointerEvent, mode: DragMode): void {
+    const point = this.localPoint(event);
+    this.pointerX = point.x;
+    this.pointerY = point.y;
+    this.activePointerId = event.pointerId;
+    this.pointerActive = true;
+    this.dragging = false;
+    this.dragMode = mode;
+    this.downShift = event.shiftKey;
+    this.downX = point.x;
+    this.downY = point.y;
+    this.lastX = point.x;
+    this.lastY = point.y;
+    this.updateHover(point.x, point.y);
+    this.canvas.focus({ preventScroll: true });
+    try {
+      this.canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is an optimisation; dragging still works while the pointer stays over the canvas.
+    }
+    event.preventDefault();
   }
 
   private releasePointer(): void {
@@ -229,6 +291,19 @@ export class InputController {
     this.activePointerId = null;
     this.pointerActive = false;
     this.dragging = false;
+    this.dragMode = "none";
+    this.downTargetId = null;
+    this.downShift = false;
+  }
+
+  /** Resolves a completed click: placement consumes it first, then the selection changes. */
+  private finishClick(screenX: number, screenY: number, shift: boolean): void {
+    const targetId = this.pickEntity(screenX, screenY);
+    const tile = this.hoverTileValue;
+    const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId) === true;
+    if (!consumed) {
+      this.hooks.onSelect(targetId, shift ? "toggle" : "replace");
+    }
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
@@ -246,27 +321,35 @@ export class InputController {
       event.preventDefault();
       return;
     }
+    if (event.button === 1) {
+      // Middle-button drag is the camera pan that does not collide with the marquee.
+      this.downTargetId = null;
+      this.beginDrag(event, "camera");
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
-    const point = this.localPoint(event);
-    this.pointerX = point.x;
-    this.pointerY = point.y;
-    this.activePointerId = event.pointerId;
-    this.pointerActive = true;
-    this.dragging = false;
-    this.downX = point.x;
-    this.downY = point.y;
-    this.lastX = point.x;
-    this.lastY = point.y;
-    this.updateHover(point.x, point.y);
-    this.canvas.focus({ preventScroll: true });
-    try {
-      this.canvas.setPointerCapture(event.pointerId);
-    } catch {
-      // Capture is an optimisation; dragging still works while the pointer stays over the canvas.
+    this.downTargetId = null;
+    if (this.isPressed(SPACE_KEY)) {
+      // Space held keeps the old left-drag camera pan available as a keyboard modifier.
+      this.beginDrag(event, "camera");
+      return;
     }
-    event.preventDefault();
+    const point = this.localPoint(event);
+    const targetId = this.pickEntity(point.x, point.y);
+    this.downTargetId = targetId;
+    if (targetId !== null) {
+      // A left drag that starts on an entity selects it; it never becomes a marquee and never pans.
+      this.beginDrag(event, "entity");
+      return;
+    }
+    if (this.hooks.isMarqueeEnabled?.() === false) {
+      // Placement mode: an empty-ground drag keeps panning the camera, and its left click places.
+      this.beginDrag(event, "camera");
+      return;
+    }
+    this.beginDrag(event, "marquee");
   };
 
   private readonly handlePointerMove = (event: PointerEvent): void => {
@@ -279,12 +362,16 @@ export class InputController {
     }
 
     const totalDistance = Math.hypot(point.x - this.downX, point.y - this.downY);
+    const wasDragging = this.dragging;
     if (!this.dragging && totalDistance >= DRAG_THRESHOLD_PX) {
       this.dragging = true;
-      this.camera.pan(-(point.x - this.downX), -(point.y - this.downY));
-      this.hooks.onCameraChange?.();
-    } else if (this.dragging) {
-      this.camera.pan(-(point.x - this.lastX), -(point.y - this.lastY));
+    }
+    if (this.dragMode === "camera" && this.dragging) {
+      // On the frame that crosses the threshold, apply the whole movement since pointerdown; later
+      // frames apply only their own delta. This keeps the grabbed world point under the cursor.
+      const dx = wasDragging ? point.x - this.lastX : point.x - this.downX;
+      const dy = wasDragging ? point.y - this.lastY : point.y - this.downY;
+      this.camera.pan(-dx, -dy);
       this.hooks.onCameraChange?.();
     }
     this.lastX = point.x;
@@ -302,20 +389,48 @@ export class InputController {
       event.preventDefault();
       return;
     }
+    if (event.button === 1) {
+      if (event.pointerId === this.activePointerId) {
+        this.releasePointer();
+      }
+      return;
+    }
     if (event.pointerId !== this.activePointerId) {
       return;
     }
     const point = this.localPoint(event);
+    this.pointerX = point.x;
+    this.pointerY = point.y;
     this.updateHover(point.x, point.y);
+    const mode = this.dragMode;
     const wasDragging = this.dragging;
+    const downTargetId = this.downTargetId;
+    const shift = this.downShift;
+    const marquee = mode === "marquee" && wasDragging ? this.marqueeRect : null;
     this.releasePointer();
-    if (!wasDragging) {
-      const targetId = this.pickEntity(point.x, point.y);
-      const tile = this.hoverTileValue;
-      const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId) === true;
-      if (!consumed) {
-        this.setSelection(targetId);
+
+    if (mode === "marquee") {
+      if (wasDragging) {
+        if (marquee !== null && this.hooks.isMarqueeEnabled?.() !== false) {
+          this.hooks.onMarquee?.(marqueeTileRange(this.camera, marquee));
+        }
+        return;
       }
+      this.finishClick(point.x, point.y, shift);
+      return;
+    }
+    if (mode === "entity") {
+      if (!wasDragging) {
+        this.finishClick(point.x, point.y, shift);
+      } else if (downTargetId !== null) {
+        this.hooks.onSelect(downTargetId, shift ? "toggle" : "replace");
+      }
+      return;
+    }
+    // Camera mode (middle button, Space+left, or placement-mode left drag). A left click that never
+    // crossed the drag threshold is still a placement click / selection click.
+    if (mode === "camera" && event.button === 0 && !wasDragging) {
+      this.finishClick(point.x, point.y, shift);
     }
   };
 
@@ -333,6 +448,13 @@ export class InputController {
     event.preventDefault();
   };
 
+  private readonly handleAuxClick = (event: MouseEvent): void => {
+    // Middle click must not start the browser's auto-scroll; it belongs to camera panning.
+    if (event.button === 1) {
+      event.preventDefault();
+    }
+  };
+
   private readonly handlePointerCancel = (event: PointerEvent): void => {
     if (event.pointerId !== this.activePointerId) {
       return;
@@ -342,6 +464,14 @@ export class InputController {
   };
 
   private readonly handlePointerLeave = (): void => {
+    // Pointer capture keeps a drag (marquee or camera) alive outside the canvas; do not cancel it.
+    if (
+      this.pointerActive &&
+      this.activePointerId !== null &&
+      this.canvas.hasPointerCapture(this.activePointerId)
+    ) {
+      return;
+    }
     if (this.pointerActive) {
       this.releasePointer();
     }
@@ -354,6 +484,8 @@ export class InputController {
     }
     this.pointerActive = false;
     this.dragging = false;
+    this.dragMode = "none";
+    this.downTargetId = null;
     this.activePointerId = null;
   };
 
@@ -384,7 +516,13 @@ export class InputController {
       if (this.hooks.onCancel?.() === true) {
         return;
       }
-      this.setSelection(null);
+      this.hooks.onSelect(null, "replace");
+      return;
+    }
+    if (key === " ") {
+      // Space is the camera-pan modifier for the left button; stop the page from scrolling.
+      event.preventDefault();
+      this.pressedKeys.add(SPACE_KEY);
       return;
     }
     if (key === "f") {

@@ -35,10 +35,14 @@ import {
   type Atlas,
 } from "./render/atlas";
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
-import { Camera, type TileCoord } from "./render/camera";
-import { InputController, type InputHooks } from "./render/input";
+import { Camera, type TileCoord, type TileRange } from "./render/camera";
+import {
+  InputController,
+  type InputHooks,
+  type SelectionMode,
+} from "./render/input";
 import { alphaFor, interpolate, type Frame } from "./render/interpolate";
-import { WorldRenderer } from "./render/renderer";
+import { toggleSelection } from "./render/marquee";import { WorldRenderer } from "./render/renderer";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
@@ -50,8 +54,9 @@ import {
   demoWorld,
   entityById,
   fetchWorldSnapshot,
-  isBuildingKind,
+  isBuildingEntityKind,
   kindName,
+  marqueeSelection,
   ownershipOf,
   ownershipTag,
   type EntityView,
@@ -59,6 +64,8 @@ import {
   type ServerWorldView,
   type WorldView,
 } from "./render/view";
+import { toastTone } from "./toast";
+import { ToastConsole } from "./toastview";
 
 function required<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -84,6 +91,11 @@ const helloButton = required<HTMLButtonElement>("#hello");
 const quitButton = required<HTMLButtonElement>("#quit");
 const statusLine = required<HTMLSpanElement>("#status");
 const logPane = required<HTMLPreElement>("#log");
+const logOverlay = required<HTMLDivElement>("#log-overlay");
+const openLogButton = required<HTMLButtonElement>("#open-log");
+const closeLogButton = required<HTMLButtonElement>("#log-close");
+const clearLogButton = required<HTMLButtonElement>("#log-clear");
+const toastStack = required<HTMLDivElement>("#toast-stack");
 const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
 const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
@@ -114,6 +126,46 @@ const commandButtons: readonly HTMLButtonElement[] = [
   helloButton,
   quitButton,
 ];
+
+/** The transient exchange popups; the full history stays in the `#log` overlay below. */
+const toastConsole = new ToastConsole(toastStack);
+
+/**
+ * Opens or closes the full-history overlay. The small "日志" button and Escape are the two ways in and
+ * out; focus moves to the close button while it is open so a keyboard user is not left behind it.
+ */
+function setLogOpen(open: boolean): void {
+  logOverlay.hidden = !open;
+  if (open) {
+    closeLogButton.focus({ preventScroll: true });
+  } else {
+    openLogButton.focus({ preventScroll: true });
+  }
+}
+
+openLogButton.addEventListener("click", () => {
+  setLogOpen(true);
+});
+closeLogButton.addEventListener("click", () => {
+  setLogOpen(false);
+});
+clearLogButton.addEventListener("click", () => {
+  logPane.textContent = "";
+  toastConsole.clear();
+});
+logOverlay.addEventListener("click", (event) => {
+  if (event.target === logOverlay) {
+    setLogOpen(false);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !logOverlay.hidden) {
+    event.preventDefault();
+    // Do not let the same Escape also cancel an armed BUILD behind the overlay.
+    event.stopImmediatePropagation();
+    setLogOpen(false);
+  }
+});
 
 type StatusState = "idle" | "ok" | "error" | "busy";
 type LogKind = "info" | "send" | "recv" | "error";
@@ -150,10 +202,39 @@ function log(kind: LogKind, message: string): void {
   logPane.scrollTop = logPane.scrollHeight;
 }
 
-function reportError(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
+/** A popup without a command half, for notices such as an unsolicited server line. */
+function toastMessage(message: string, tone: "info" | "error" = "info"): void {
+  toastConsole.push({ tone, command: null, answer: message });
+}
+
+/** A popup for one command/answer exchange; `ERR ...` automatically gets the error tone. */
+function toastExchange(command: string, answer: string, clientRefusal = false): void {
+  toastConsole.push({ tone: toastTone(answer, clientRefusal), command, answer });
+}
+
+/**
+ * Reports a client-side refusal: the UI could not or would not send a command. It is logged, toasted
+ * as an error (bright and bold for about eight seconds) and put on the status line.
+ *
+ * The WebSocket layer can report the same failure twice (its `onError` hook and the rejected `send`);
+ * identical refusals within half a second therefore keep the log and status lines but not a second popup.
+ */
+let lastRefusalMessage = "";
+let lastRefusalAt = Number.NEGATIVE_INFINITY;
+function refuse(message: string): void {
+  const now = performance.now();
+  const duplicate = message === lastRefusalMessage && now - lastRefusalAt < 500;
+  lastRefusalMessage = message;
+  lastRefusalAt = now;
   log("error", message);
+  if (!duplicate) {
+    toastMessage(message, "error");
+  }
   setStatus(message, "error");
+}
+
+function reportError(error: unknown): void {
+  refuse(error instanceof Error ? error.message : String(error));
 }
 
 function isOkAnswer(answer: string): boolean {
@@ -224,10 +305,10 @@ async function handshake(seq: number): Promise<void> {
       return;
     }
     log("recv", answer);
+    toastExchange(line, answer);
     if (answer !== HELLO_ANSWER) {
       const message = `协议版本不匹配：期望 ${HELLO_ANSWER}，收到 ${answer}`;
-      log("error", message);
-      setStatus(message, "error");
+      refuse(message);
       active.close("protocol version mismatch");
       return;
     }
@@ -308,25 +389,26 @@ function openConnection(): void {
         if (seq !== connectionSeq) {
           return;
         }
-        log("error", error.message);
-        setStatus("连接出错", "error");
+        refuse(error.message);
       },
       onNotice: (message) => {
         if (seq !== connectionSeq) {
           return;
         }
         log("info", message);
+        toastMessage(message, "info");
       },
       onLine: (line) => {
         if (seq !== connectionSeq) {
           return;
         }
-        log("recv", `（没有对应的命令）${line}`);
+        const message = `（没有对应的命令）${line}`;
+        log("recv", message);
+        toastMessage(message, "info");
       },
     });
   } catch (error) {
     connectButton.disabled = false;
-    setStatus("连接失败", "error");
     reportError(error);
   }
 }
@@ -389,13 +471,17 @@ async function sendHeartbeat(): Promise<void> {
       return;
     }
     log("recv", answer);
+    toastExchange(line, answer);
     if (answer !== "PONG") {
-      log("error", `心跳收到意外回答：${answer}`);
+      const message = `心跳收到意外回答：${answer}`;
+      log("error", message);
+      toastMessage(message, "error");
     }
   } catch (error: unknown) {
     if (socket === active) {
-      const message = error instanceof Error ? error.message : String(error);
-      log("error", `心跳失败：${message}`);
+      const message = `心跳失败：${error instanceof Error ? error.message : String(error)}`;
+      log("error", message);
+      toastMessage(message, "error");
     }
   } finally {
     // An old connection's failure must not clear the flag of a newer one.
@@ -412,7 +498,7 @@ async function sendAnswered(
 ): Promise<string | undefined> {
   const active = socket;
   if (active === null) {
-    setStatus("还没有连接", "error");
+    refuse("还没有连接");
     return undefined;
   }
   log("send", displayLine);
@@ -420,6 +506,7 @@ async function sendAnswered(
   try {
     const answer = await active.send(line);
     log("recv", answer);
+    toastExchange(displayLine, answer);
     return answer;
   } catch (error) {
     reportError(error);
@@ -435,7 +522,7 @@ async function doPing(): Promise<void> {
   if (answer === "PONG") {
     setStatus("PING → PONG", "ok");
   } else {
-    setStatus(`PING 收到意外回答：${answer}`, "error");
+    refuse(`PING 收到意外回答：${answer}`);
   }
 }
 
@@ -455,11 +542,11 @@ async function doLogin(): Promise<void> {
   const user = userInput.value.trim();
   const password = passwordInput.value;
   if (user === "") {
-    setStatus("请先填写用户名", "error");
+    refuse("请先填写用户名");
     return;
   }
   if (password === "") {
-    setStatus("请先填写密码", "error");
+    refuse("请先填写密码");
     return;
   }
 
@@ -501,7 +588,7 @@ async function fetchWhoAmI(): Promise<void> {
   }
   const playerId = parseWhoAmI(answer);
   if (playerId === null) {
-    setStatus(`WHOAMI 收到意外回答：${answer}`, "error");
+    refuse(`WHOAMI 收到意外回答：${answer}`);
     return;
   }
   myPlayerId = playerId;
@@ -514,11 +601,11 @@ async function doRegister(): Promise<void> {
   const user = userInput.value.trim();
   const password = passwordInput.value;
   if (user === "") {
-    setStatus("请先填写用户名", "error");
+    refuse("请先填写用户名");
     return;
   }
   if (password === "") {
-    setStatus("请先填写密码", "error");
+    refuse("请先填写密码");
     return;
   }
 
@@ -545,7 +632,7 @@ async function doRegister(): Promise<void> {
 
 async function doEngineInfo(): Promise<void> {
   if (!loggedIn) {
-    setStatus("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端", "error");
+    refuse("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端");
     return;
   }
 
@@ -580,7 +667,7 @@ async function doEngineInfo(): Promise<void> {
   }
   const payloadBase64 = answer.slice(2).trim();
   if (payloadBase64 === "") {
-    setStatus("engine-info 的 OK 回答里没有 base64 载荷", "error");
+    refuse("engine-info 的 OK 回答里没有 base64 载荷");
     return;
   }
 
@@ -610,7 +697,7 @@ async function doEngineInfo(): Promise<void> {
 
     log("info", `engine-info 报告（${plaintextBytes.length} 字节明文）：\n${rendered}`);
     if (text.startsWith("ERR ")) {
-      setStatus(`oc-debug 拒绝：${text}`, "error");
+      refuse(`oc-debug 拒绝：${text}`);
     } else {
       setStatus("engine-info 已解开：只读报告", "ok");
     }
@@ -621,7 +708,7 @@ async function doEngineInfo(): Promise<void> {
 
 async function doHello(): Promise<void> {
   if (!loggedIn) {
-    setStatus("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端", "error");
+    refuse("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端");
     return;
   }
 
@@ -644,7 +731,7 @@ async function doHello(): Promise<void> {
   }
   const payloadBase64 = answer.slice(2).trim();
   if (payloadBase64 === "") {
-    setStatus("hello 的 OK 回答里没有 base64 载荷", "error");
+    refuse("hello 的 OK 回答里没有 base64 载荷");
     return;
   }
 
@@ -665,7 +752,7 @@ async function doQuit(): Promise<void> {
   if (answer === "OK bye") {
     setStatus("服务器已确认 QUIT，连接即将关闭", "ok");
   } else {
-    setStatus(`QUIT 收到意外回答：${answer}`, "error");
+    refuse(`QUIT 收到意外回答：${answer}`);
   }
 }
 
@@ -722,7 +809,8 @@ const camera = new Camera(
 const renderer = new WorldRenderer(gameCanvas);
 
 let atlas: Atlas | null = null;
-let selectedId: number | null = null;
+/** Every selected entity id, in selection order. A plain click replaces it; Shift+click toggles. */
+let selectedIds: number[] = [];
 let hoverTile: TileCoord | null = null;
 let viewHidden = false;
 let worldSource: WorldSource = "demo";
@@ -756,8 +844,7 @@ function isMine(entity: EntityView | undefined): boolean {
 
 /** A building is either one of the fallback renderer's known kinds or a `building.*` content path. */
 function isBuildingEntity(entity: EntityView): boolean {
-  const kind = kindName(entity.kind);
-  return kind.startsWith("building.") || isBuildingKind(kind);
+  return isBuildingEntityKind(entity.kind);
 }
 
 /** The engineer is `unit.engineer` in the classic catalogue; the demo/legacy name is `engineer`. */
@@ -766,8 +853,43 @@ function isEngineerEntity(entity: EntityView): boolean {
   return kind === "engineer" || kind.endsWith(".engineer");
 }
 
-function selectedEntity(): EntityView | undefined {
-  return entityById(world, selectedId);
+/** Every selected entity that still exists, in selection order. */
+function selectedEntities(): EntityView[] {
+  const found: EntityView[] = [];
+  for (const id of selectedIds) {
+    const entity = entityById(world, id);
+    if (entity !== undefined) {
+      found.push(entity);
+    }
+  }
+  return found;
+}
+
+/** The single selected entity, or undefined when nothing or more than one thing is selected. */
+function singleSelectedEntity(): EntityView | undefined {
+  if (selectedIds.length !== 1) {
+    return undefined;
+  }
+  return entityById(world, selectedIds[0] ?? null);
+}
+
+/** Selected entities that may receive an order: own, and not a building. */
+function selectedOwnUnits(): EntityView[] {
+  return selectedEntities().filter((entity) => isMine(entity) && !isBuildingEntity(entity));
+}
+
+/** Drops ids whose entity no longer exists after a snapshot replaced the world. */
+function pruneSelection(): void {
+  const living = selectedIds.filter((id) => entityById(world, id) !== undefined);
+  if (living.length !== selectedIds.length) {
+    selectedIds = living;
+  }
+  if (placementPath !== null) {
+    const single = singleSelectedEntity();
+    if (single === undefined || !isMine(single) || !isEngineerEntity(single)) {
+      cancelPlacement(false);
+    }
+  }
 }
 
 /**
@@ -823,16 +945,19 @@ function updateHud(force = false, now = performance.now()): void {
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
-  const selected = selectedEntity();
+  const selection = selectedEntities();
+  const only = selection.length === 1 ? selection[0] : undefined;
   hudSelected.textContent =
-    selected === undefined
+    selection.length === 0
       ? "选中：无"
-      : `选中：e${selected.id} ${contentLabel(selected.kind)} ` +
-        `[${ownershipTag(ownershipOf(selected.playerId, myPlayerId))}] ` +
-        `(${selected.x.toFixed(1)}, ${selected.y.toFixed(1)})`;
+      : only === undefined
+        ? `已选：${selection.length} 个单位`
+        : `选中：e${only.id} ${contentLabel(only.kind)} ` +
+          `[${ownershipTag(ownershipOf(only.playerId, myPlayerId))}] ` +
+          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})`;
   hudBuilding.textContent =
-    selected !== undefined && isMine(selected) && isBuildingEntity(selected)
-      ? `建筑：${contentLabel(selected.kind)} #${selected.id}`
+    only !== undefined && isMine(only) && isBuildingEntity(only)
+      ? `建筑：${contentLabel(only.kind)} #${only.id}`
       : "建筑：—";
 }
 
@@ -843,51 +968,105 @@ function updateHud(force = false, now = performance.now()): void {
 
 function requireLoggedInForGameplay(): boolean {
   if (!loggedIn || socket === null) {
-    setStatus("请先 LOGIN：游戏命令需要同一条连接上的登录", "error");
+    refuse("请先 LOGIN：游戏命令需要同一条连接上的登录");
     return false;
   }
   return true;
 }
 
-/** Logs the command and its answer, and puts `ERR ...` on the red status line. */
-async function sendGameplayCommand(
+/**
+ * Sends one order per selected unit and shows the whole exchange as a single toast.
+ *
+ * The wire queue is in order, so the commands are awaited one by one. History gets one `→` line and one
+ * `←` line per unit; the toast joins the command lines and the answers so a group order still fits the
+ * popup's two lines. An `ERR ...` answer makes the toast an error and wins the status line.
+ */
+async function sendGameplayBatch(
   label: string,
-  line: string,
+  wireLines: readonly string[],
+  displayLines: readonly string[],
   confirmation: string,
 ): Promise<void> {
   if (!requireLoggedInForGameplay()) {
     return;
   }
-  const answer = await sendAnswered(label, line);
-  if (answer === undefined) {
+  const active = socket;
+  if (active === null) {
+    refuse("还没有连接");
     return;
   }
-  if (isErrorAnswer(answer)) {
-    setStatus(answer, "error");
+  if (wireLines.length === 0) {
+    refuse("没有可以下达命令的单位");
     return;
   }
-  if (!isOkAnswer(answer)) {
-    setStatus(`${label} 收到意外回答：${answer}`, "error");
+  setStatus(`等待 ${label} 的回答…`, "busy");
+  const commandText = displayLines.join(" · ");
+  const answers: string[] = [];
+  for (const [index, line] of wireLines.entries()) {
+    log("send", displayLines[index] ?? line);
+    try {
+      const answer = await active.send(line);
+      answers.push(answer);
+      log("recv", answer);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      log("error", message);
+      toastConsole.push({
+        tone: "error",
+        command: commandText,
+        answer: [...answers, message].join(" · "),
+      });
+      setStatus(message, "error");
+      return;
+    }
+  }
+  const failed = answers.length !== wireLines.length || answers.some(isErrorAnswer);
+  toastConsole.push({
+    tone: failed ? "error" : "info",
+    command: commandText,
+    answer: answers.join(" · "),
+  });
+  const firstError = answers.find(isErrorAnswer);
+  if (firstError !== undefined) {
+    setStatus(firstError, "error");
     return;
   }
-  const detail = answer === "OK" ? "" : `：${answer.slice(2).trim()}`;
-  const text = `${confirmation}${detail}`;
+  const unexpected = answers.find((answer) => !isOkAnswer(answer));
+  if (unexpected !== undefined) {
+    setStatus(`${label} 收到意外回答：${unexpected}`, "error");
+    return;
+  }
+  const details = answers
+    .map((answer) => (answer === "OK" ? "" : answer.slice(2).trim()))
+    .filter((detail) => detail !== "");
+  const detailText = details.length === 0 ? "" : `：${details.join("；")}`;
+  const text = `${confirmation}${detailText}`;
   setStatus(text, "ok");
-  // The answer is already logged raw above; add the human line so the translation is visible there too.
+  // The raw answers are already in the history; this line adds the human confirmation.
   log("info", text);
   // A successful BUILD/TRAIN changes the warehouse stock, so refresh the snapshot instead of waiting up to
   // 500 ms for the next poll. The poll skips itself while another request is still in flight.
   void pollWorldSnapshot();
 }
 
+/** One-unit convenience wrapper around {@link sendGameplayBatch}. */
+function sendGameplayCommand(
+  label: string,
+  line: string,
+  confirmation: string,
+): Promise<void> {
+  return sendGameplayBatch(label, [line], [line], confirmation);
+}
+
 function updateGameplayPanel(): void {
-  const selected = selectedEntity();
-  const ownUnit = selected !== undefined && isMine(selected) && !isBuildingEntity(selected);
+  const selected = singleSelectedEntity();
+  const resolved = selectedEntities();
+  const ownUnits = resolved.filter((entity) => isMine(entity) && !isBuildingEntity(entity));
   const ownBuilding = selected !== undefined && isMine(selected) && isBuildingEntity(selected);
   const ownEngineer = selected !== undefined && isMine(selected) && isEngineerEntity(selected);
   const gameplayReady = loggedIn && socket !== null;
 
-  orderStopButton.disabled = !(gameplayReady && ownUnit);
+  orderStopButton.disabled = !(gameplayReady && ownUnits.length > 0);
 
   trainSection.hidden = !(gameplayReady && ownBuilding);
   trainTarget.textContent =
@@ -920,15 +1099,18 @@ function updateGameplayPanel(): void {
     gameplayNote.textContent = "先连接并 LOGIN；游戏命令都要求同一条连接已登录";
   } else if (myPlayerId === null) {
     gameplayNote.textContent = "等待 WHOAMI 回答玩家 id…";
-  } else if (ownBuilding) {
+  } else if (ownBuilding && selected !== undefined) {
     gameplayNote.textContent = `玩家 ${myPlayerId}：TRAIN 一次只排一个单位`;
-  } else if (ownEngineer) {
+  } else if (ownEngineer && selected !== undefined) {
     gameplayNote.textContent = `玩家 ${myPlayerId}：点 BUILD 进入放置模式`;
-  } else if (selected === undefined) {
+  } else if (resolved.length === 0) {
     gameplayNote.textContent = `玩家 ${myPlayerId}：选中自己的单位或建筑后可用`;
-  } else if (!isMine(selected)) {
+  } else if (resolved.length > 1) {
+    gameplayNote.textContent =
+      `玩家 ${myPlayerId}：已选 ${resolved.length} 个单位，右键移动/攻击，STOP 停止全部`;
+  } else if (selected !== undefined && !isMine(selected)) {
     gameplayNote.textContent = `玩家 ${myPlayerId}：选中的实体 e${selected.id} 不属于你`;
-  } else if (ownUnit) {
+  } else if (ownUnits.length > 0) {
     gameplayNote.textContent = `玩家 ${myPlayerId}：右键地面移动，右键敌方实体攻击`;
   } else {
     gameplayNote.textContent = `玩家 ${myPlayerId}：没有可用的操作`;
@@ -936,22 +1118,29 @@ function updateGameplayPanel(): void {
 }
 
 function doOrderStop(): void {
-  const selected = selectedEntity();
-  if (selected === undefined || !isMine(selected)) {
-    setStatus("先选中自己的单位，再点 STOP", "error");
+  const units = selectedOwnUnits();
+  if (units.length === 0) {
+    const selected = selectedEntities();
+    if (selected.length > 0 && selected.every(isBuildingEntity)) {
+      refuse("STOP 只能下达给单位，不能下达给建筑");
+    } else {
+      refuse("先选中自己的单位，再点 STOP");
+    }
     return;
   }
-  if (isBuildingEntity(selected)) {
-    setStatus("STOP 只能下达给单位，不能下达给建筑", "error");
-    return;
-  }
-  void sendGameplayCommand("ORDER STOP", orderStop(selected.id), `已停止 ${describeEntity(selected)}`);
+  const lines = units.map((unit) => orderStop(unit.id));
+  const first = units[0];
+  const confirmation =
+    units.length === 1 && first !== undefined
+      ? `已停止 ${describeEntity(first)}`
+      : `已停止 ${units.length} 个单位`;
+  void sendGameplayBatch("ORDER STOP", lines, lines, confirmation);
 }
 
 function doTrain(unitPath: string): void {
-  const selected = selectedEntity();
+  const selected = singleSelectedEntity();
   if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
-    setStatus("先选中自己的建筑，再训练单位", "error");
+    refuse("先选中自己的建筑，再训练单位");
     return;
   }
   void sendGameplayCommand(
@@ -966,9 +1155,9 @@ function armBuild(buildingPath: string): void {
   if (!requireLoggedInForGameplay()) {
     return;
   }
-  const selected = selectedEntity();
+  const selected = singleSelectedEntity();
   if (selected === undefined || !isMine(selected) || !isEngineerEntity(selected)) {
-    setStatus("先选中自己的工程师，再点 BUILD", "error");
+    refuse("先选中自己的工程师，再点 BUILD");
     return;
   }
   placementPath = buildingPath;
@@ -1000,30 +1189,34 @@ function doRightClick(tile: TileCoord, targetId: number | null): void {
   if (!requireLoggedInForGameplay()) {
     return;
   }
-  const selected = selectedEntity();
-  if (selected === undefined || !isMine(selected)) {
-    setStatus("先选中自己的单位，再右键下达命令", "error");
-    return;
-  }
-  if (isBuildingEntity(selected)) {
-    setStatus("右键命令只能下达给单位，不能下达给建筑", "error");
+  const units = selectedOwnUnits();
+  if (units.length === 0) {
+    const selected = selectedEntities();
+    if (selected.length > 0 && selected.every(isBuildingEntity)) {
+      refuse("右键命令只能下达给单位，不能下达给建筑");
+    } else {
+      refuse("先选中自己的单位，再右键下达命令");
+    }
     return;
   }
   const target = entityById(world, targetId);
   if (target !== undefined && !isMine(target)) {
-    void sendGameplayCommand(
-      "ORDER ATTACK",
-      orderAttack(selected.id, target.id),
-      `已攻击 ${describeEntity(target)}`,
-    );
+    const lines = units.map((unit) => orderAttack(unit.id, target.id));
+    const confirmation =
+      units.length === 1
+        ? `已攻击 ${describeEntity(target)}`
+        : `${units.length} 个单位攻击 ${describeEntity(target)}`;
+    void sendGameplayBatch("ORDER ATTACK", lines, lines, confirmation);
     return;
   }
   // The wire takes whole tile indices; the engine turns that GridPos into the tile's centre.
-  void sendGameplayCommand(
-    "ORDER MOVE",
-    orderMove(selected.id, tile.x, tile.y),
-    `已移动 ${describeEntity(selected)}`,
-  );
+  const lines = units.map((unit) => orderMove(unit.id, tile.x, tile.y));
+  const first = units[0];
+  const confirmation =
+    units.length === 1 && first !== undefined
+      ? `已移动 ${describeEntity(first)}`
+      : `${units.length} 个单位移动到 ${tile.x},${tile.y}`;
+  void sendGameplayBatch("ORDER MOVE", lines, lines, confirmation);
 }
 
 /** Places the armed building; returns true when the click was consumed by placement mode. */
@@ -1032,12 +1225,12 @@ function doLeftClick(tile: TileCoord): boolean {
     return false;
   }
   const path = placementPath;
-  const engineer = selectedEntity();
+  const engineer = singleSelectedEntity();
   placementPath = null;
   updateGameplayPanel();
   updateHud(true);
   if (engineer === undefined || !isMine(engineer) || !isEngineerEntity(engineer)) {
-    setStatus("放置时选中的工程师已失效，BUILD 没有发送", "error");
+    refuse("放置时选中的工程师已失效，BUILD 没有发送");
     return true;
   }
   void sendGameplayCommand(
@@ -1057,6 +1250,38 @@ function doCancel(): boolean {
   return true;
 }
 
+/** Applies one click: replace the whole selection, or toggle one unit for Shift+left click. */
+function applySelection(id: number | null, mode: SelectionMode): void {
+  if (mode === "replace") {
+    selectedIds = id === null ? [] : [id];
+  } else if (id !== null) {
+    const entity = entityById(world, id);
+    if (entity !== undefined) {
+      // A building has no group order, so Shift+click on one behaves like a plain click.
+      selectedIds = isBuildingEntity(entity) ? [id] : toggleSelection(selectedIds, id);
+    }
+  }
+  pruneSelection();
+  if (placementPath !== null) {
+    const single = singleSelectedEntity();
+    if (single === undefined || !isMine(single) || !isEngineerEntity(single)) {
+      cancelPlacement(false);
+    }
+  }
+  updateHud(true);
+  updateGameplayPanel();
+}
+
+/** Replaces the selection with every own unit drawn inside the finished marquee. */
+function applyMarquee(range: TileRange): void {
+  selectedIds = marqueeSelection(world, range, myPlayerId);
+  if (placementPath !== null) {
+    cancelPlacement(false);
+  }
+  updateHud(true);
+  updateGameplayPanel();
+}
+
 // Filled once from the command catalogue below; keeping them in arrays lets the panel show and hide
 // whole sections without rebuilding DOM on every snapshot.
 const trainButtons: HTMLButtonElement[] = [];
@@ -1064,17 +1289,9 @@ const buildButtons: HTMLButtonElement[] = [];
 
 const inputHooks: InputHooks = {
   getWorld: () => world,
-  onSelectionChange: (id) => {
-    selectedId = id;
-    if (placementPath !== null) {
-      const next = entityById(world, id);
-      if (next === undefined || !isMine(next) || !isEngineerEntity(next)) {
-        cancelPlacement(false);
-      }
-    }
-    updateHud(true);
-    updateGameplayPanel();
-  },
+  onSelect: (id, mode) => applySelection(id, mode),
+  onMarquee: (range) => applyMarquee(range),
+  isMarqueeEnabled: () => placementPath === null,
   onHoverChange: (tile) => {
     hoverTile = tile;
     updateHud(true);
@@ -1105,9 +1322,10 @@ function useWorld(next: WorldView, fromDemo = false): void {
   if (fromDemo) {
     // The demo and server id spaces are unrelated; never let a demo selection silently become a
     // different server entity (or keep an armed BUILD aimed at a demo engineer).
-    selectedId = null;
+    selectedIds = [];
     placementPath = null;
   }
+  pruneSelection();
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1168,6 +1386,7 @@ function applySnapshot(snapshot: ServerWorldView): void {
     // Adopt the new entity set immediately (positions already start at the previous frame) so the
     // HUD and the gameplay panel see a dead or changed selection before the next animation frame.
     world = interpolate(previous, currentFrame, 0);
+    pruneSelection();
     updateHud(true);
     updateGameplayPanel();
   }
@@ -1296,8 +1515,9 @@ function animationFrame(now: number): void {
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
-      selectedId,
+      selectedIds,
       placementTile: placementPath === null ? null : hoverTile,
+      marquee: input.marqueeRect,
       myPlayerId,
     });
     updateHud(false, now);
@@ -1406,7 +1626,7 @@ orderStopButton.addEventListener("click", doOrderStop);
 // The canvas owns Escape for its own focus; this fallback keeps "cancel placement" working while
 // focus is still on the BUILD button that armed the mode.
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || placementPath === null) {
+  if (event.key !== "Escape" || placementPath === null || !logOverlay.hidden) {
     return;
   }
   if (event.ctrlKey || event.metaKey || event.altKey) {

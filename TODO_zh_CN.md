@@ -25,11 +25,11 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | 检查 | Gradle 任务 | 总数 | 总数来源 |
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 215 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 215 checks passed.` |
-| engine | `:projects:oc:oc-rts-engine:scenario` | 305 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
+| engine | `:projects:oc:oc-rts-engine:scenario` | 336 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
 | game server | `:projects:oc:oc-game-server:selfcheck` | 813 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 187、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 37、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
-| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 293 | [README](projects/oc/oc-game-server-classic/README.md)；十二节，从内容目录（82）到插件加载器（12） |
+| classic | `:projects:oc:oc-game-server-classic:selfcheck` | 349 | [README](projects/oc/oc-game-server-classic/README.md)；十三节，从内容目录（82）到插件加载器（12） |
 | client render math | `node scripts/check-render-math.ts` | 165 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
@@ -198,7 +198,7 @@ cd web-client; pnpm install; pnpm dev
 `engine-map-bounded: false` 与 `engine-chunks-budget: 4096`，不再强转 `ChunkedMap`。`WorldHostCheck` 从
 163 条增加到 187 条（启动耗时与区块预算、`(0,0)` 锚点、负原点与远景窗口、远景地形、真实 HTTP 远景窗口、
 场景与加入基地仍落在可建造地），经典确定性一节断言 600 tick 内 AI 所有实体都在其基地 64 格内，调试
-自校验断言无界报告。总数：game server 813（原 789）、debug 85（原 82）、classic 293（原 291）。
+自校验断言无界报告。那一阶段的总数：game server 813（原 789）、debug 85（原 82）、classic 293（原 291）；伐木场与建筑目标阶段之后 classic 是 349，engine 是 336。
 
 **已知限制。** 本阶段按要求不修改 `web-client/`；它仍按 `DEFAULT_MAP_SIZE_TILES = 256` 校验并拒绝负实体
 坐标，所以渲染新的负原点窗口需要单独的客户端阶段。该阶段就是下面的 i3：客户端现在把世界当作无界处理。

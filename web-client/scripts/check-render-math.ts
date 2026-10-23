@@ -2,9 +2,9 @@
  * Offline checks for the pure render math.
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
- * the check exercises the same `camera.ts`, `view.ts`, `atlas.ts`, `fallback.ts` and
- * `interpolate.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is
- * only used for type checking.
+ * the check exercises the same `camera.ts`, `view.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
+ * `fallback.ts` and `interpolate.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json`
+ * is only used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
@@ -46,10 +46,27 @@ import {
   terrainColor,
 } from "../src/render/fallback.ts";
 import {
+  marqueeTileRange,
+  screenRectBetween,
+  toggleSelection,
+} from "../src/render/marquee.ts";
+import {
+  TOAST_ERROR_LIFETIME_MS,
+  TOAST_LIFETIME_MS,
+  TOAST_VISIBLE_CAP,
+  capToasts,
+  isErrAnswer,
+  toastLifetimeMs,
+  toastTone,
+  trimToastLine,
+} from "../src/toast.ts";
+import {
   demoWorld,
+  entityInMarquee,
   entityInWindow,
   isBuildingKind,
   isWorldTile,
+  marqueeSelection,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
   OWNERSHIP_NEUTRAL_COLOR,
@@ -236,6 +253,121 @@ check(
     !isWorldTile(-0.5, 0) &&
     !isWorldTile(0, Number.NaN),
 );
+
+// ---------------------------------------------------------------------------------------------
+// Marquee selection: canvas rectangle -> signed world tiles, own-unit containment, shift toggle
+// ---------------------------------------------------------------------------------------------
+
+// The camera sits west and north of the world origin, so the converted range is entirely negative:
+// screen (100,120) -> world (-3500,-1780) -> tile (-110,-56); no truncation toward zero is allowed.
+const marqueeCamera = new Camera(32, 1, -3_200, -1_600);
+marqueeCamera.setViewport(800, 600);
+const marqueeRect = screenRectBetween({ x: 100, y: 120 }, { x: 300, y: 260 });
+const marqueeRange = marqueeTileRange(marqueeCamera, marqueeRect);
+check(
+  "框选矩形转换为负世界瓦片范围（100,120)-(300,260) -> (-110,-56)-(-104,-52)",
+  marqueeRange.minX === -110 &&
+    marqueeRange.maxX === -104 &&
+    marqueeRange.minY === -56 &&
+    marqueeRange.maxY === -52,
+  `${marqueeRange.minX},${marqueeRange.minY}..${marqueeRange.maxX},${marqueeRange.maxY}`,
+);
+check(
+  "反方向拖拽得到同一个矩形与同一个瓦片范围",
+  JSON.stringify(screenRectBetween({ x: 300, y: 260 }, { x: 100, y: 120 })) ===
+    JSON.stringify(marqueeRect) &&
+    JSON.stringify(marqueeTileRange(marqueeCamera, screenRectBetween({ x: 300, y: 260 }, { x: 100, y: 120 }))) ===
+      JSON.stringify(marqueeRange),
+);
+const zeroRect = screenRectBetween({ x: 101, y: 121 }, { x: 101, y: 121 });
+check(
+  "零面积矩形仍选中指针下的单格（负坐标按 floor）",
+  JSON.stringify(marqueeTileRange(marqueeCamera, zeroRect)) ===
+    JSON.stringify({ minX: -110, maxX: -110, minY: -56, maxY: -56 }),
+  JSON.stringify(marqueeTileRange(marqueeCamera, zeroRect)),
+);
+
+const marqueeWorld: WorldView = {
+  originX: 0,
+  originY: 0,
+  width: 8,
+  height: 8,
+  tiles: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => "grass" as TerrainId)),
+  entities: [
+    { id: 1, kind: "worker", x: 2.4, y: 2.6, playerId: 1 },
+    { id: 2, kind: "soldier", x: 3.1, y: 4.9, playerId: 1 },
+    { id: 3, kind: "worker", x: 2.5, y: 2.5, playerId: 2 },
+    { id: 4, kind: "warehouse", x: 2.5, y: 2.5, playerId: 1 },
+    { id: 5, kind: "worker", x: 7.5, y: 7.5, playerId: 1 },
+    { id: 6, kind: "worker", x: 2.5, y: 3, playerId: 0 },
+    { id: 7, kind: "building.lumbercamp.t1", x: 3, y: 3, playerId: 1 },
+  ],
+};
+const marqueeSquare = { minX: 2, minY: 2, maxX: 4, maxY: 4 };
+const marqueeIds = marqueeSelection(marqueeWorld, marqueeSquare, 1);
+check(
+  "框选只选自己的单位：敌人、中立、自己的建筑都被排除",
+  JSON.stringify(marqueeIds) === JSON.stringify([1, 2]),
+  marqueeIds.join(","),
+);
+check(
+  "位于范围外的自己单位不被选中（x=7.5）",
+  !marqueeIds.includes(5) && entityInMarquee(marqueeWorld.entities[4]!, marqueeSquare, 1) === false,
+);
+check(
+  "范围左/上边界包含，右/下边界之外排除（[min, max+1)）",
+  entityInMarquee({ id: 8, kind: "worker", x: 2, y: 2, playerId: 1 }, marqueeSquare, 1) === true &&
+    entityInMarquee({ id: 9, kind: "worker", x: 5, y: 2.5, playerId: 1 }, marqueeSquare, 1) ===
+      false &&
+    entityInMarquee({ id: 10, kind: "worker", x: 4.999, y: 4.999, playerId: 1 }, marqueeSquare, 1) ===
+      true,
+);
+check(
+  "Shift 切换：先加后减，顺序稳定且不会重复",
+  JSON.stringify(toggleSelection([], 1)) === JSON.stringify([1]) &&
+    JSON.stringify(toggleSelection(toggleSelection([], 1), 2)) === JSON.stringify([1, 2]) &&
+    JSON.stringify(toggleSelection(toggleSelection(toggleSelection([], 1), 2), 1)) ===
+      JSON.stringify([2]) &&
+    JSON.stringify(toggleSelection([2], 2)) === JSON.stringify([]),
+  JSON.stringify(toggleSelection([2], 2)),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Toast console rules: normal/error lifetime, error tone, visible cap, trimming
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "普通 toast 约 4 秒，错误 toast 约 8 秒",
+  TOAST_LIFETIME_MS === 4_000 &&
+    TOAST_ERROR_LIFETIME_MS === 8_000 &&
+    toastLifetimeMs("info") === 4_000 &&
+    toastLifetimeMs("error") === 8_000,
+  `${toastLifetimeMs("info")} / ${toastLifetimeMs("error")}`,
+);
+check(
+  "ERR 回答与客户端拒绝都是错误 toast，普通 OK 不是",
+  isErrAnswer("ERR") &&
+    isErrAnswer("ERR login first") &&
+    !isErrAnswer("ERROR tolerated") &&
+    toastTone("ERR login first") === "error" &&
+    toastTone("OK player 7") === "info" &&
+    toastTone("OK", true) === "error",
+);
+check(
+  "最多 5 条 toast 可见，超出时丢掉最旧的",
+  TOAST_VISIBLE_CAP === 5 &&
+    JSON.stringify(capToasts([1, 2, 3, 4, 5, 6])) === JSON.stringify([2, 3, 4, 5, 6]) &&
+    JSON.stringify(capToasts([1, 2, 3])) === JSON.stringify([1, 2, 3]) &&
+    capToasts([]).length === 0,
+);
+check(
+  "toast 文本折叠换行并截断到一行",
+  trimToastLine("  engine-info\n  报告  ") === "engine-info 报告" &&
+    trimToastLine("abcdef", 5) === "abcd…" &&
+    trimToastLine("abcdef", 2) === "a…",
+  trimToastLine("abcdef", 5),
+);
+
 
 
 
@@ -1318,7 +1450,14 @@ check(
 
 check(
   "建筑目录与面板一致",
-  JSON.stringify(BUILDING_PATHS) === JSON.stringify(["building.armory.t1", "building.mine.t1"]),
+  JSON.stringify(BUILDING_PATHS) ===
+    JSON.stringify(["building.armory.t1", "building.mine.t1", "building.lumbercamp.t1"]),
+  BUILDING_PATHS.join(", "),
+);
+check(
+  "建筑目录包含新的木材营地 building.lumbercamp.t1",
+  BUILDING_PATHS.includes("building.lumbercamp.t1") &&
+    build(1, "building.lumbercamp.t1", 5, 6) === "BUILD 1 building.lumbercamp.t1 5 6",
   BUILDING_PATHS.join(", "),
 );
 check(

@@ -14,6 +14,8 @@
  * as its fallback terrain.
  */
 
+import type { TileRange } from "./camera";
+
 export type TerrainId = string;
 
 /** Terrain path the engine uses outside a loaded window (and its fallback content). */
@@ -168,6 +170,17 @@ export function isBuildingKind(kind: string): boolean {
   return BUILDING_KINDS.has(kindName(kind));
 }
 
+/**
+ * Whether an entity kind is a building, including the engine's `building.*` content paths.
+ *
+ * The fallback set above only covers the classic short names. Real snapshots carry content paths such
+ * as `building.lumbercamp.t1`, which the fallback renderer cannot know by name; the namespace prefix is
+ * the stable rule the gameplay panel, picking and marquee selection all share.
+ */
+export function isBuildingEntityKind(kind: string): boolean {
+  return kindName(kind).startsWith("building.") || isBuildingKind(kind);
+}
+
 /** One integer position inside a window's `tiles` array. */
 export interface WindowIndex {
   readonly x: number;
@@ -229,6 +242,54 @@ export function terrainAt(world: WorldView, x: number, y: number): TerrainId {
  */
 export function entityInWindow(world: WorldView, entity: EntityView): boolean {
   return windowTileIndex(world, entity.x, entity.y) !== null;
+}
+
+/** Whether the entity is an own unit: owned by `myPlayerId` and not a building. */
+export function isOwnUnit(entity: EntityView, myPlayerId: number | null): boolean {
+  return ownershipOf(entity.playerId, myPlayerId) === "mine" && !isBuildingEntityKind(entity.kind);
+}
+
+/**
+ * Whether one entity's drawn ground position falls inside an inclusive tile range.
+ *
+ * The range covers `[minX, maxX + 1)` in world units, so a unit exactly on the left or top edge is
+ * inside and one on the far side of the right or bottom edge is not. Only own units qualify: enemy and
+ * neutral entities are excluded, and a building is never marquee-selected even when it belongs to the
+ * player. The renderer only draws entities inside the loaded window, so the caller also filters with
+ * {@link entityInWindow}.
+ */
+export function entityInMarquee(
+  entity: EntityView,
+  range: TileRange,
+  myPlayerId: number | null,
+): boolean {
+  if (!isOwnUnit(entity, myPlayerId)) {
+    return false;
+  }
+  return (
+    entity.x >= range.minX &&
+    entity.x < range.maxX + 1 &&
+    entity.y >= range.minY &&
+    entity.y < range.maxY + 1
+  );
+}
+
+/** Every own unit drawn inside the rectangle, in world entity order. */
+export function marqueeSelection(
+  world: WorldView,
+  range: TileRange,
+  myPlayerId: number | null,
+): number[] {
+  const ids: number[] = [];
+  for (const entity of world.entities) {
+    if (!entityInWindow(world, entity)) {
+      continue;
+    }
+    if (entityInMarquee(entity, range, myPlayerId)) {
+      ids.push(entity.id);
+    }
+  }
+  return ids;
 }
 
 /** Entity lookup for the HUD and the selection ring. */

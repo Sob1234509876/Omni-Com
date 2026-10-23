@@ -57,24 +57,38 @@ After connecting, the page sends `HELLO 1` first and enables the command buttons
 2. Paste the contents of the server's `data/oc-debug/debug.key` into the `debug.key` text box.
 3. Click `engine-info`: the page seals an envelope with `INFO json`, sends `REQ engine-info <base64>`, then opens the reply and formats the JSON.
 4. Type a name into the `hello` name box (default `world`) and click `hello`: the page sends `REQ hello <base64(UTF-8 name)>`,
-   decodes the reply's base64 into UTF-8 text, and shows it in the log. This requires installing the `oc-hello` plugin described in the next section first.
+   decodes the reply's base64 into UTF-8 text, and shows it in a toast and in the log overlay. This requires installing the `oc-hello` plugin described in the next section first.
 5. `PING`, `COUNT`, and `QUIT` work as the protocol table says.
 
-Creating an account takes only two steps: click `REGISTER` once (the username is 3-32 characters and may use only letters, digits, `_`, `.`, and `-`; the password is at least 6 characters; the server validates both rules), then click `LOGIN` to sign in; a successful registration does **not** log in automatically. A reply of `OK …` from the server means the account was created; a duplicate name gets `ERR …`, and the page shows the message the server gave verbatim in the status line and the log.
+Creating an account takes only two steps: click `REGISTER` once (the username is 3-32 characters and may use only letters, digits, `_`, `.`, and `-`; the password is at least 6 characters; the server validates both rules), then click `LOGIN` to sign in; a successful registration does **not** log in automatically. A reply of `OK …` from the server means the account was created; a duplicate name gets `ERR …`, and the page shows the message the server gave verbatim in the status line, as an error toast and in the log overlay.
 
 OC/1 uses text frames only. If the server sends a binary frame, the page just logs one line, "the server sent a binary frame, ignored (the protocol uses text frames only)",
 **without closing the connection**, and it does not drop commands still waiting for a reply; this matches the server's behavior of replying `ERR binary frames are not commands` and keeping the connection.
 
 **Heartbeat.** While a connection is usable the page sends `PING` every 20 seconds (`HEARTBEAT_MS` in
 [`src/heartbeat.ts`](src/heartbeat.ts)) through the same in-order queue as every other command; the server answers `PONG`, and both
-lines appear in the log. The timer starts only after the `HELLO 1` / `OK OC/1` handshake succeeds, never queues a second `PING`
+lines appear in the log overlay as one exchange toast. The timer starts only after the `HELLO 1` / `OK OC/1` handshake succeeds, never queues a second `PING`
 while one is waiting, and is cleared on close and before a reconnect. This keeps an idle page alive against the WebSocket idle
 timeout (`/world/snapshot` is plain HTTP and does not refresh the socket); the `PING` button remains a manual one-off.
+
+## The toast console and the log overlay
+
+The permanent protocol log panel is gone. Each command/answer exchange now appears as a toast in the bottom-right corner:
+one line for the sent command (`→`) and one for the answer (`←`), both trimmed to a single line so the whole exchange fits
+one or two lines. A normal toast fades after about **4 seconds**; an error toast — an `ERR ...` answer or a client-side
+refusal such as "log in first" — stays about **8 seconds** and is set apart by brightness and weight only (white border and
+bold white text), because the page chrome is greyscale. The newest toast is on top, at most **5** are visible, and a sixth
+push drops the oldest. Batch orders use one toast whose command and answer halves join the per-unit lines with ` · `.
+
+Nothing is lost: the small **日志** button at the top of the protocol panel opens a full-screen history overlay with the
+original `#log` text in order. It has a **关闭** (close) button, a **清空** (clear) action that empties both the history and
+the visible toasts, closes on `Esc` or a backdrop click, and returns focus to the button. The status line, the connection
+form, the HUD, the gameplay panel and every element id the TypeScript binds are unchanged.
 
 ## The game view
 
 The left side of the page is the whole Canvas 2D world view, and the right side (below it on narrow screens) is the original protocol panel; the panel's
-`connect`, `REGISTER`, `LOGIN`, `PING`, `COUNT`, `engine-info`, `hello`, `QUIT`, and log behavior are exactly as before.
+`connect`, `REGISTER`, `LOGIN`, `PING`, `COUNT`, `engine-info`, `hello`, and `QUIT` commands are unchanged, while their exchanges are shown as toasts with the full history still available behind the **日志** button.
 No new dependencies are installed: still the two devDependencies `typescript` and `vite`.
 
 ```shell
@@ -83,7 +97,8 @@ pnpm dev
 ```
 
 Just open the address Vite prints; the view can be seen even when the Java server is not running, only the protocol panel cannot connect. The
-**Hide game view / Show game view** button at the top of the right-hand protocol panel collapses the Canvas, letting the protocol panel fill the whole page and making the log easier to read. (The page's own interface is currently Chinese — `index.html` has `lang="zh-CN"` — so the on-screen labels differ from these English names.)
+**Hide game view / Show game view** button at the top of the right-hand protocol panel collapses the Canvas, letting the protocol panel fill the whole page;
+the toast stack and the **日志** history overlay work in either view. (The page's own interface is currently Chinese — `index.html` has `lang="zh-CN"` — so the on-screen labels differ from these English names.)
 
 **Monochrome chrome.** The page chrome — panels, buttons, headings, HUD chips, the protocol log, the gameplay panel and the status line — is deliberately greyscale, with no hue at all; the error state is bright white text with a white left bar rather than red. The canvas is the exception: it is game content, so it keeps its own colours. The tab icon comes from [`oc.png`](public/oc.png) (copied unchanged from the repository-root `oc.png`), referenced by the `icon` and `apple-touch-icon` links in `index.html`.
 
@@ -97,7 +112,7 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通 [我] (12.5, 8.5)`); the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (…)`), and `选中：无` means nothing is selected;
+- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通 [我] (12.5, 8.5)`) when exactly one entity is selected; the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (…)`), and `选中：无` means nothing is selected. With more than one unit selected the same chip becomes `已选：3 个单位`, and the single-entity detail plus the building chip are intentionally suppressed;
 - the display name and id of the selected building when it belongs to the player (`建筑：兵工厂 1 级 #42`), again falling back to the raw kind (`建筑：building.armory.t1 #42`).
 
 **Ownership rings.** Every entity also gets a thin ground ring under its sprite: blue `#3b82f6` when its `playerId` is the local player, red `#ef4444` for any other player, and grey `#9ca3af` when the owner is missing, zero, or no `myPlayerId` is known yet (which is the whole demo map). The gold selection ring is unchanged, is drawn after the ownership ring and stays on top. The classification lives in `src/render/view.ts` (`ownershipOf`, `ownershipColor`) so the ring and the HUD tag cannot disagree.
@@ -156,23 +171,32 @@ They take effect after the first click on the view; keyboard events are bound on
 
 | Action | Effect |
 | --- | --- |
-| Left click | selects the entity under the cursor; clicking empty ground clears the selection |
-| Right click empty ground | sends `ORDER MOVE <selected> <tileX> <tileY>` for the selected unit, but only when that entity belongs to the player |
-| Right click an entity that is not mine | sends `ORDER ATTACK <selected> <enemyId>` |
-| Left drag | pans the camera (movements under 4 pixels count as a click) |
+| Left click | replaces the selection with the entity under the cursor; clicking empty ground clears it |
+| Shift + left click | adds the clicked unit, or removes it when it is already selected (a building still replaces the selection, because it has no group order) |
+| Left drag on empty ground | draws a marquee rectangle and selects every **own unit** whose drawn position is inside it; the rectangle is converted from canvas space to world tiles, so it works in negative coordinates too. Enemy and neutral units and all buildings are excluded |
+| Left drag starting on an entity | still selects that entity (it never becomes a marquee) |
+| Middle-button drag, or Space held + left drag | pans the camera. A left drag on empty ground is the marquee, so it no longer pans |
+| Right click empty ground | sends `ORDER MOVE <id> <tileX> <tileY>` for **every selected own unit**, one line per unit |
+| Right click an entity that is not mine | sends `ORDER ATTACK <id> <enemyId>` for every selected own unit |
 | Wheel | zooms around the cursor, keeping the tile under the cursor fixed |
 | `WASD` / arrow keys | pan the camera |
 | `+` / `-` | zoom in / out around the center of the view |
 | `F` | resets the camera to its starting point and 1× |
 | `Esc` | cancels an armed BUILD placement; with no placement armed it clears the selection |
 
+Selection is shared by every order path: the renderer draws the gold ring on every selected entity, the HUD shows
+`已选：N 个单位` when more than one is selected, and the gameplay panel enables `STOP` as soon as at least one own unit is
+selected. `STOP` sends `ORDER STOP <id>` for each of those units. A left click still goes through placement mode first:
+while a `BUILD` is armed, the next left click on the canvas places the site and does not change the selection, and an
+empty-ground left drag in that mode keeps panning the camera.
+
 The **Gameplay** panel below the protocol commands drives the rest of the grammar. It only enables a command when the selection belongs to the player id in the HUD (`entity.playerId === myPlayerId`), so a click on someone else's unit can never send an order by accident:
 
-- `STOP` sends `ORDER STOP <selected>` for the selected own unit.
-- With an own building selected, the panel shows one `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` … `unit.melee.t5`, `unit.engineer`). The button text is the manifest display name when one is available (`普通`, `强化`, `精英`, `将领`, `战王`, `工程师` for the classic units), with the raw path in the tooltip; without a name it falls back to the raw path. A tier the current armory cannot produce is still offered and the server's `ERR ...` is shown in red.
-- With the own engineer selected, the panel shows one `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`, `building.mine.t1`). Its text is the manifest display name (`兵工厂 1 级`, `矿井 普通`) or the raw path when there is none. Pressing one arms placement: the status line shows the mode, the tile under the cursor is highlighted, and the **next left click on the canvas** sends the command; the mode then clears. `Esc` cancels without deselecting the engineer.
+- `STOP` sends `ORDER STOP <selected>` for every selected own unit; it is enabled as soon as the selection contains one.
+- With an own building selected (exactly one entity), the panel shows one `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` … `unit.melee.t5`, `unit.engineer`). The button text is the manifest display name when one is available (`普通`, `强化`, `精英`, `将领`, `战王`, `工程师` for the classic units), with the raw path in the tooltip; without a name it falls back to the raw path. A tier the current armory cannot produce is still offered and the server's `ERR ...` is shown in the status line and as an error toast. The TRAIN/BUILD sections appear only when the selection is exactly one own building/engineer.
+- With the own engineer selected (exactly one entity), the panel shows one `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`, `building.mine.t1`, `building.lumbercamp.t1`). Its text is the manifest display name (`兵工厂 1 级`, `矿井 普通`, the lumber camp's own name when the manifest provides one) or the raw path when there is none. Pressing one arms placement: the status line shows the mode, the tile under the cursor is highlighted, and the **next left click on the canvas** sends the command; the mode then clears. `Esc` cancels without deselecting the engineer.
 
-`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer is written to the log; an `ERR ...` answer is also shown verbatim in the red status line, while a success gets a short confirmation that uses the display name and keeps the raw id in parentheses, for example `已下训练 普通 (unit.melee.t1)` or `已在 20,40 下达 BUILD 兵工厂 1 级 (building.armory.t1)`. The wire command itself is unchanged and still carries `unit.melee.t1` / `building.armory.t1`. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
+`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer appears in the log overlay and as an exchange toast (a group order is one toast whose command and answer halves join the per-unit lines); an `ERR ...` answer becomes an error toast and is also shown verbatim in the red status line, while a success gets a short confirmation that uses the display name and keeps the raw id in parentheses, for example `已下训练 普通 (unit.melee.t1)` or `已在 20,40 下达 BUILD 兵工厂 1 级 (building.armory.t1)`. The wire command itself is unchanged and still carries `unit.melee.t1` / `building.armory.t1`. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
 
 **Textures are provided by plugins**: each plugin packs `assets/manifest.json` and images into its own jar, the server merges them into
 `GET /plugin-assets/manifest.json`, and the client reads that on startup and loads each image by its `atlasUrl`. When several plugins provide textures at once they are merged in array order,
@@ -181,7 +205,7 @@ The **Gameplay** panel below the protocol commands drives the rest of the gramma
 
 The manifest may also carry **display names**: `entities.<kind>.name` beside the animation fields, and a name for a terrain tile either
 as the named object form `tiles.<path>: {"rect": [x, y, w, h], "name": "草地"}` or, in the legacy array form, not at all. The client
-merges the names with the frames (last plugin wins) and the HUD, the TRAIN/BUILD button labels and the success log lines use them;
+merges the names with the frames (last plugin wins) and the HUD, the TRAIN/BUILD button labels and the success status/toast lines use them;
 a missing or blank name always falls back to the raw content path, so a manifest without names behaves exactly as before. Names are
 display-only: the protocol commands keep sending the content path.
 When the manifest is missing, the request fails, an image fails to load, or the response is `[]`, the client automatically falls back to procedural drawing: every terrain type gets its own color and detail,
@@ -195,14 +219,15 @@ The rendering math and the pure client rules (camera floor semantics and the ±5
 cursor-centered zoom, placeholder map determinism, unbounded signed snapshot parsing, negative-origin window
 translation, the 8-tile camera-driven window trigger, signed window origins and request ordering, snapshot
 interpolation and snapping, rejection of out-of-bounds atlas frames, manifest display names and raw-id fallback, the
-on-disk classic manifest, plugin atlas merging and fallback, and the heartbeat constant/start rule) can be checked
-offline:
+on-disk classic manifest, plugin atlas merging and fallback, the heartbeat constant/start rule, the marquee
+rectangle-to-negative-tile conversion and own-only containment, Shift+click toggle, the toast lifetime/cap/error-tone
+rules, and the building catalogue including `building.lumbercamp.t1`) can be checked offline:
 
 ```shell
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 165 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 177 passing checks.
 
 ## hello plugin demo
 
@@ -283,22 +308,25 @@ plugin directory, or an account's password/permissions.
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | page structure (Canvas view + HUD + protocol panel), no inline scripts; the module entry is `src/main.ts` |
+| `index.html` | page structure (Canvas view + HUD + protocol panel + toast stack + log overlay), no inline scripts; the module entry is `src/main.ts` |
 | `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
-| `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers |
+| `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the gameplay panel offers (including `building.lumbercamp.t1`) |
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, log, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), and the animation loop that interpolates between the last two frames of the same window |
+| `src/toast.ts` | pure toast rules: 4 s / 8 s lifetimes, `ERR`/refusal tone, the five-toast cap, and one-line trimming |
+| `src/toastview.ts` | DOM half of the toast stack: one exchange element with `→`/`←` lines, per-toast timers, newest on top, oldest dropped |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, `WHOAMI`/gameplay panel, display-name labels, multi-selection and group orders, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), and the animation loop that interpolates between the last two frames of the same window |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, floor-based camera focus tile, and the ±500,000-tile numeric safety bound for the unbounded world |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring and the thin ownership ring when there is no atlas |
 | `src/render/interpolate.ts` | pure snapshot interpolation: `Frame`, `alphaFor` for one poll interval, and `interpolate` with the appear/disappear/snap rules |
+| `src/render/marquee.ts` | pure marquee geometry: drag-corner normalisation and the canvas rectangle to signed world-tile range conversion, plus the Shift+click add/remove rule |
 | `src/render/stream.ts` | pure window-streaming rules: signed edge distance, the 8-tile trigger, the `centre - radius` origin for any signed centre, the duplicate-origin guard, and the monotonic request tracker |
-| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes (window origin and window size, no map size), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
-| `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, and the placement highlight |
-| `src/render/input.ts` | pointer/keyboard controls bound only to the canvas, entity picking, right-click orders, and placement clicks |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` shapes (window origin and window size, no map size), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, own-only marquee containment, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
+| `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, a gold selection ring for every selected entity, the marquee rectangle, and the placement highlight |
+| `src/render/input.ts` | pointer/keyboard controls bound only to the canvas: click and Shift+click selection, empty-ground marquee drag, entity drag selection, middle/Space camera pan, entity picking, right-click orders, and placement clicks |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing, snapshot interpolation, ownership colours, the heartbeat rule, and gameplay command builders |
+| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, marquee selection (negative tiles, own-only containment, Shift toggle), the toast lifetime/cap rules, and the lumber-camp catalogue entry |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

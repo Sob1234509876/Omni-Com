@@ -156,13 +156,13 @@
         margin: 0;
         padding: 6px 12px;
         border: 1px solid #3a3a3a;
-        border-radius: 999px;
+        border-radius: 12px;
         background: rgba(0, 0, 0, 0.82);
         color: var(--muted);
         font-size: 12px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        line-height: 1.4;
+        text-align: center;
+        white-space: normal;
         pointer-events: none;
       }
 
@@ -206,12 +206,20 @@
         font-size: 13px;
       }
 
-      #toggle-view {
+      #toggle-view,
+      #open-log {
         flex: 0 0 auto;
         margin-top: 2px;
         padding: 6px 10px;
         font-size: 12px;
         white-space: nowrap;
+      }
+
+      .console-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 6px;
+        align-items: flex-start;
       }
 
       .notice {
@@ -449,6 +457,148 @@
         word-break: break-word;
       }
 
+      /* The toast console replaces the permanent log panel: one exchange per popup, bottom right.
+         Error and normal toasts differ only by brightness and weight; the chrome stays greyscale. */
+      .toast-stack {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: min(420px, calc(100vw - 28px));
+        pointer-events: none;
+      }
+
+      .toast {
+        pointer-events: auto;
+        padding: 8px 10px;
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.9);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+        color: #c8c8c8;
+        font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+        animation: toast-in 120ms ease-out;
+      }
+
+      .toast-line {
+        display: flex;
+        gap: 6px;
+        min-width: 0;
+        margin: 0;
+      }
+
+      .toast-arrow {
+        flex: 0 0 auto;
+        color: #9a9a9a;
+      }
+
+      .toast-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .toast-error {
+        border-color: #ffffff;
+        background: rgba(20, 20, 20, 0.96);
+        box-shadow:
+          inset 0 0 0 1px #ffffff,
+          0 6px 18px rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toast-error .toast-arrow {
+        color: #ffffff;
+      }
+
+      @keyframes toast-in {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .toast {
+          animation: none;
+        }
+      }
+
+      /* The full history the toasts summarise. `#log` keeps its id and its text semantics, so the
+         existing TypeScript binding keeps working; it is simply no longer a permanent panel. */
+      .log-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.74);
+      }
+
+      .log-overlay[hidden] {
+        display: none;
+      }
+
+      .log-overlay-panel {
+        display: flex;
+        flex-direction: column;
+        width: min(980px, 100%);
+        max-height: min(86vh, 900px);
+        overflow: hidden;
+        border: 1px solid #3a3a3a;
+        border-radius: 10px;
+        background: #0a0a0a;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+      }
+
+      .log-overlay-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #3a3a3a;
+        background: #161616;
+      }
+
+      .log-overlay-head h2 {
+        margin: 0;
+        color: #e6e6e6;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+      }
+
+      .log-overlay-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .log-overlay .log {
+        flex: 1 1 auto;
+        min-height: 40vh;
+        max-height: none;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+      }
+
+      @media (max-width: 900px) {
+        .log-overlay {
+          padding: 10px;
+        }
+      }
+
       .footnote {
         margin: 10px 0 0;
         color: var(--muted);
@@ -515,7 +665,8 @@
           <span id="hud-building">建筑：—</span>
         </div>
         <p class="controls-hint">
-          左键选中 · 右键移动/攻击 · 拖拽平移 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
+          左键点选 · Shift+左键加减选单个单位 · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
+          · 右键移动/攻击所有选中单位 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
         </p>
       </section>
 
@@ -525,7 +676,10 @@
             <h1>Omni Com <span>OC/1</span></h1>
             <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
           </div>
-          <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
+          <div class="console-actions">
+            <button id="open-log" type="button">日志</button>
+            <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
+          </div>
         </header>
 
         <section class="notice">
@@ -629,21 +783,38 @@
             <div id="build-buttons" class="row"></div>
           </div>
           <p class="footnote">
-            右键地面发 <code>ORDER MOVE</code>，右键敌方实体发 <code>ORDER ATTACK</code>；左键仍然只选中。
+            左键点选，Shift+左键加减选单个单位，空地左键拖拽框选自己的单位；右键对所有选中单位发
+            <code>ORDER MOVE</code>（目标是敌方实体时发 <code>ORDER ATTACK</code>），STOP 停止所有选中单位。
             BUILD 按钮进入放置模式后，下一次左键点地面才发 <code>BUILD</code>，<kbd>Esc</kbd> 取消放置。
           </p>
         </section>
 
-        <section class="panel">
-          <h2>日志</h2>
-          <pre id="log" class="log" aria-live="polite"></pre>
-          <p class="footnote">
-            <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
-            打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
-          </p>
-        </section>
+        <p class="footnote">
+          <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
+          打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
+        </p>
       </aside>
     </main>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+    <div id="log-overlay" class="log-overlay" hidden>
+      <section
+        class="log-overlay-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="log-overlay-title"
+      >
+        <header class="log-overlay-head">
+          <h2 id="log-overlay-title">日志</h2>
+          <div class="log-overlay-actions">
+            <button id="log-clear" type="button">清空</button>
+            <button id="log-close" type="button">关闭</button>
+          </div>
+        </header>
+        <pre id="log" class="log" aria-live="polite"></pre>
+      </section>
+    </div>
 
     <noscript>这个页面需要 JavaScript，并且只通过 WebSocket 与服务器通信；启用 JavaScript 后重新打开。</noscript>
     <script type="module" src="/src/main.ts"></script>

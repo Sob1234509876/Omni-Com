@@ -6,9 +6,9 @@
  * pixels. It never assumes the two sizes are equal.
  *
  * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows, ownership
- * rings, selection rings, then entities sorted by y so lower entities overlap higher ones, then health
- * bars. Ownership rings are thinner than selection rings and are drawn first, so the gold selection ring
- * always stays on top.
+ * rings, one gold selection ring per selected entity, then entities sorted by y so lower entities
+ * overlap higher ones, then health bars, and finally the marquee rectangle. Ownership rings are thinner
+ * than selection rings and are drawn first, so every gold selection ring always stays on top.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -17,6 +17,7 @@
 
 import type { Atlas, AtlasEntity, AtlasSource, AtlasTile, EntitySprite, SpriteRect } from "./atlas";
 import type { Camera, TileCoord } from "./camera";
+import type { ScreenRect } from "./marquee";
 import {
   drawBuildingShape,
   drawGroundShadow,
@@ -30,7 +31,7 @@ import {
 } from "./fallback";
 import {
   entityInWindow,
-  isBuildingKind,
+  isBuildingEntityKind,
   kindName,
   ownershipColor,
   terrainAt,
@@ -46,10 +47,12 @@ export interface RenderOptions {
   readonly clockSeconds: number;
   /** Tile under the mouse, or null when the pointer is outside the canvas. */
   readonly hoverTile: TileCoord | null;
-  /** Currently selected entity id, or null. */
-  readonly selectedId: number | null;
+  /** Every selected entity id; each one gets the gold selection ring. */
+  readonly selectedIds: readonly number[];
   /** Tile armed for build placement, or null; drawn with a stronger highlight than plain hover. */
   readonly placementTile: TileCoord | null;
+  /** Canvas-space marquee rectangle while a left drag is selecting, or null. */
+  readonly marquee: ScreenRect | null;
   /**
    * Engine player id answered by `WHOAMI`, or null before login and in the demo world.
    *
@@ -259,13 +262,14 @@ export class WorldRenderer {
 
     // Ground pass: every shadow first, then every ownership ring, then every selection ring, so a shadow
     // never hides a ring and the gold selection ring is never hidden by an ownership ring.
+    const selectedIds = new Set(options.selectedIds);
     for (const item of prepared) {
       drawGroundShadow(
         context,
         item.screenX,
         item.screenY,
         tileOnScreen,
-        isBuildingKind(item.entity.kind),
+        isBuildingEntityKind(item.entity.kind),
       );
     }
     // Ownership pass: one thin ring per entity, first, so the gold selection ring can stay on top.
@@ -275,19 +279,19 @@ export class WorldRenderer {
         item.screenX,
         item.screenY,
         tileOnScreen,
-        isBuildingKind(item.entity.kind),
+        isBuildingEntityKind(item.entity.kind),
         ownershipColor(item.entity.playerId, options.myPlayerId),
       );
     }
     for (const item of prepared) {
-      const selected = item.entity.selected === true || item.entity.id === options.selectedId;
+      const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
       if (selected) {
         drawSelectionRing(
           context,
           item.screenX,
           item.screenY,
           tileOnScreen,
-          isBuildingKind(item.entity.kind),
+          isBuildingEntityKind(item.entity.kind),
         );
       }
     }
@@ -295,7 +299,7 @@ export class WorldRenderer {
     // Entity pass, sorted by y: entities lower on the screen are drawn later and overlap higher ones.
     for (const item of prepared) {
       const entity = item.entity;
-      const building = isBuildingKind(entity.kind);
+      const building = isBuildingEntityKind(entity.kind);
       const entry = atlas === null ? undefined : lookupEntity(atlas, entity.kind);
       if (entry !== undefined) {
         drawEntitySprite(
@@ -329,13 +333,32 @@ export class WorldRenderer {
 
       const ratio = entity.healthRatio;
       if (ratio !== undefined) {
-        const selected = entity.selected === true || entity.id === options.selectedId;
+        const selected = entity.selected === true || selectedIds.has(entity.id);
         if (ratio < 0.999 || selected) {
           const barWidth = tileOnScreen * (building ? 1.5 : 0.9);
           const top = item.screenY - tileOnScreen * (building ? 1.55 : 0.98);
           drawHealthBar(context, item.screenX, top, barWidth, ratio, tileOnScreen);
         }
       }
+    }
+
+    // Marquee last, so the rectangle is visible over terrain, rings and sprites. It is in CSS pixels
+    // because the context was already scaled for the device pixel ratio.
+    if (options.marquee !== null) {
+      const marquee = options.marquee;
+      context.save();
+      context.fillStyle = "rgba(230, 245, 255, 0.14)";
+      context.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
+      context.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      context.lineWidth = 1;
+      context.setLineDash([6, 4]);
+      context.strokeRect(
+        marquee.x + 0.5,
+        marquee.y + 0.5,
+        Math.max(0, marquee.width - 1),
+        Math.max(0, marquee.height - 1),
+      );
+      context.restore();
     }
   }
 }
