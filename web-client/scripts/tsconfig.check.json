@@ -37,6 +37,7 @@
     "../src/render/tooltip.ts",
     "../src/render/events.ts",
     "../src/render/flash.ts",
-    "../src/render/resources.ts"
+    "../src/render/resources.ts",
+    "../src/render/latex.ts"
   ]
 }

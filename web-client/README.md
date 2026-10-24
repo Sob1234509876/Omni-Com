@@ -11,7 +11,7 @@ The Java side and the Web side of this repository are two **completely parallel*
 | | Java side | Web side |
 | --- | --- | --- |
 | Build tool | Gradle wrapper (`gradlew` / `gradlew.bat`) | pnpm |
-| Third-party dependencies | **Zero**; only JDK 17 and JPMS | the two devDependencies `typescript` and `vite` |
+| Third-party dependencies | **Zero**; only JDK 17 and JPMS | the runtime dependency `katex` plus the two devDependencies `typescript` and `vite` |
 | Network | Not needed; `./gradlew build --offline` builds and runs the self-checks | the first `pnpm install` **needs the network**; dev/build works offline afterwards |
 | Who calls whom | Gradle **never** calls npm or pnpm | pnpm **never** calls Gradle |
 
@@ -33,7 +33,7 @@ That gives two hard rules:
 | pnpm | 10+; `package.json` declares `packageManager: "pnpm@10"` |
 | Browser | a modern browser with native ES modules, WebSocket, and WebCrypto |
 
-Dependency ranges are pinned in `package.json`: `typescript` **^6.0.3** and `vite` **^6.0.0** (resolving to Vite 6.x).
+Dependency ranges are pinned in `package.json`: the runtime `katex` **^0.19.0**, `typescript` **^6.0.3** and `vite` **^6.0.0** (resolving to Vite 6.x).
 
 ## Running it
 
@@ -87,6 +87,19 @@ Nothing is lost: the small **日志** button in the top-right chrome opens a ful
 visible toasts, closes on `Esc` or a backdrop click, and returns focus to the button. The status line, the connection
 form, the HUD, the command bar and every element id the TypeScript binds are unchanged.
 
+## LaTeX
+
+Any label, log line, toast or tooltip may contain inline math `$...$` or display math `$$...$$`. Rendering uses
+[KaTeX](https://katex.org/) (`katex@0.19.0`, already a dependency): `\$` is a literal dollar and never starts
+math, an unterminated `$` stays plain text, `$$` takes precedence over `$`, and an empty pair is left literal.
+If KaTeX is unavailable or throws, that segment falls back to **escaped plain text** containing the original
+text, never to an exception. KaTeX is loaded **lazily** with `await import("katex")` on the first formula, so a
+page that never shows math never downloads the library. Only `katex/dist/katex.min.css` (which brings the 60
+font files) is imported statically, so Vite bundles it. The math inherits the surrounding chrome colour
+(`color: inherit`), and KaTeX's own red parse-error colour is overridden, so the greyscale chrome stays
+greyscale. Plain text without a `$` is still rendered as the same single text node as before, with no layout
+shift.
+
 ## The game view
 
 The game view now fills the whole page: one Canvas 2D world view with every panel floating over it. The permanent
@@ -97,7 +110,7 @@ chip, the `工兵` shortcut, **日志**, **隐藏游戏画面** and the small **
 the `debug.key` field now live in a translucent overlay opened by **连接** and closed by **连接** or `Esc`. The overlay
 container is transparent and takes no pointer input outside its panel, so the canvas is never dimmed and clicks on the
 world still reach it. Exchanges are shown as toasts, with the full history still available behind the **日志** button.
-No new dependencies are installed: still the two devDependencies `typescript` and `vite`.
+No new dependencies are installed: the only runtime dependency is the already-installed `katex` **^0.19.0**, and the two devDependencies remain `typescript` and `vite`.
 
 ```shell
 cd web-client
@@ -371,13 +384,13 @@ neutral excluded, empty rectangle empty) with `selectByPriority`, Shift+click to
 lifetime/cap/error-tone rules, the entity status rules (integer progress formatting, the bar/queue/size helpers and the optional
 `footprint` / `progress` / `queue` / `queueTicks` / `contents` fields), the warehouse stock label, the unit cargo label
 (`携带：…` for one item, two items, none, and an unknown path falling back to the raw path), the building catalogue including `building.lumbercamp.t1` and `building.warehouse`, the build-placement ghost (classic 3x3
-footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, occupancy from the entity list, the reach boundary at 16 and 17 tiles, the blocked > out-of-reach > legal precedence and the five reason texts), the minimap (aspect-fit layout, floor-based panel-to-world mapping in both directions including negative origins, and the safety-bound camera jump), the double-click same-kind rule (own only, in-window only, the building case), the engineer selection rule, the tooltip text composition and window clamping, the snapshot diff events (the 10% health-drop threshold and the five-second per-entity de-duplication), the warehouse total aggregation, and the command bar (the action set for nothing / units / engineer / building / a mixed unit-and-building selection with its unit-actions-only rule, the 12-chip cap and `+N` overflow, the two-character chip abbreviation for single-character and digit-leading names, and the health-bar ratio at 0 / 50 / 100 % with an absent report treated as full) can be checked offline:
+footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, occupancy from the entity list, the reach boundary at 16 and 17 tiles, the blocked > out-of-reach > legal precedence and the five reason texts), the minimap (aspect-fit layout, floor-based panel-to-world mapping in both directions including negative origins, and the safety-bound camera jump), the double-click same-kind rule (own only, in-window only, the building case), the engineer selection rule, the tooltip text composition and window clamping, the snapshot diff events (the 10% health-drop threshold and the five-second per-entity de-duplication), the warehouse total aggregation, the LaTeX splitter (plain / one or two inline spans / display / escaped or unterminated dollar / empty pair / mixed, always one plain segment when there is no dollar) with the escaped plain-text fallback and a real KaTeX render, and the command bar (the action set for nothing / units / engineer / building / a mixed unit-and-building selection with its unit-actions-only rule, the 12-chip cap and `+N` overflow, the two-character chip abbreviation for single-character and digit-leading names, and the health-bar ratio at 0 / 50 / 100 % with an absent report treated as full) can be checked offline:
 
 ```shell
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 323 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 349 passing checks.
 
 ## hello plugin demo
 
@@ -458,7 +471,7 @@ plugin directory, or an account's password/permissions.
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | page structure (Canvas view + HUD + top-right chrome and connection overlay + minimap + bottom command/context bar + warehouse panel + hover tooltip + toast stack + log overlay), the greyscale translucent chrome and the three-zone bottom-bar / responsive layout, no inline scripts; the module entry is `src/main.ts` |
+| `index.html` | page structure (Canvas view + HUD + top-right chrome and connection overlay + minimap + bottom command/context bar + warehouse panel + hover tooltip + toast stack + log overlay), the greyscale translucent chrome and the three-zone bottom-bar / responsive layout, the KaTeX colour overrides that keep math greyscale, no inline scripts; the module entry is `src/main.ts` |
 | `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
 | `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER`, `ORDER ATTACKMOVE`, `BUILD`, `TRAIN`), `parseWhoAmI`, and the catalogue the context panel offers (including `building.lumbercamp.t1` and `building.warehouse`) |
@@ -466,7 +479,7 @@ plugin directory, or an account's password/permissions.
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
 | `src/toast.ts` | pure toast rules: 4 s / 8 s lifetimes, `ERR`/refusal tone, the five-toast cap, and one-line trimming |
 | `src/toastview.ts` | DOM half of the toast stack: one exchange element with `→`/`←` lines, per-toast timers, newest on top, oldest dropped |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the Shift-click toggle for units and buildings, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the single-own-unit cargo line (`携带：…`), the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM and its measurement, the read-only warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, and the minimap render plus its click/drag camera jump |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the Shift-click toggle for units and buildings, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the single-own-unit cargo line (`携带：…`), the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM and its measurement, the static `katex/dist/katex.min.css` import that pairs with the lazy KaTeX chunk, LaTeX rendering for the log, status, toasts, tooltip, HUD, warehouse panel and command-bar labels, the read-only warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, and the minimap render plus its click/drag camera jump |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, floor-based camera focus tile, and the ±500,000-tile numeric safety bound for the unbounded world |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring, the thin ownership ring, the greyscale building construction bar and the `生产中×N` queue marker drawn when there is no atlas, plus the brief achromatic selection-flash halo |
@@ -476,6 +489,7 @@ plugin directory, or an account's password/permissions.
 | `src/render/picking.ts` | pure click picking: a unit from its visible body capsule (not a small circle at its feet) and a building from its whole footprint, with units outranking buildings and the frontmost entity winning ties |
 | `src/render/commandbar.ts` | pure command-bar rules: the action set for nothing / units / one or several own engineers / own buildings of one kind / a mixed unit-and-building selection (unit actions only), the per-building train list (only an armory trains units; a mine, lumber camp or warehouse trains nothing), the batch-TRAIN hint for several same-kind buildings, the selected-units chip list capped at 12 plus `+N`, the two-character manifest-name abbreviation, and the clamped health-bar ratio with an absent report treated as full |
 | `src/render/tooltip.ts` | pure hover-tooltip rules: display name, a separate bold owner field, optional health percentage, building footprint and queue summary, and the window-edge clamp with its cursor gap |
+| `src/render/latex.ts` | LaTeX support: the total `$...$` / `$$...$$` splitter (`\$` literal, unterminated dollars plain, `$$` first, empty pairs ignored, one plain segment without a dollar), the KaTeX renderer with `throwOnError: false` / `displayMode` / `output: "html"` and its escaped plain-text fallback, lazy `import("katex")`, and the `renderLatexInto` DOM helper that keeps text escaped and never renders the same node twice |
 | `src/render/events.ts` | pure snapshot diff events: building completion (`progress !== 1` →`1`), a 10-point health drop on one of the local player's entities, the nearby attacker's melee tier for the toast, and the five-second per-entity de-duplicator |
 | `src/render/resources.ts` | pure read-only warehouse total: sum the `contents` of own buildings, label items, sort by display name, and count own warehouses |
 | `src/render/interpolate.ts` | pure snapshot interpolation: `Frame`, `alphaFor` for one poll interval, and `interpolate` with the appear/disappear/snap rules |
@@ -487,7 +501,7 @@ plugin directory, or an account's password/permissions.
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, the white own-unit outline and red enemy base tint, a gold selection ring for every selected entity, the brief selection-flash halo above the sprite and below that ring, the marquee rectangle, the per-tile green/red/amber placement ghost, and the construction bar / production marker above buildings |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas: click and Shift+click selection, double-click detection with the drag/marquee guard, hover entity picking for the tooltip, empty-ground marquee drag, entity drag selection, middle/Space camera pan, entity picking, right-click orders, placement clicks, the `O` engineer shortcut, and the Ctrl/Shift/plain 1..9 control-group key mapping |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates, queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, marquee selection (negative tiles, combat > builder > building priority, own-only candidates, empty input, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, queue marker, size label, stock label, unit cargo label with one/two/none/unknown items, income suffix, queue-item ratio and `i/n`, under-construction test) and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition and clamping, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, the selection flash (`FLASH_MS = 250`, intensity 1 at the start / 0.5 at half / 0 at and after the end, a negative elapsed time clamped to 1, newly selected ids only, finished-entry pruning, and the achromatic colour), and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full) |
+| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates, queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, marquee selection (negative tiles, combat > builder > building priority, own-only candidates, empty input, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, queue marker, size label, stock label, unit cargo label with one/two/none/unknown items, income suffix, queue-item ratio and `i/n`, under-construction test) and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition and clamping, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, the selection flash (`FLASH_MS = 250`, intensity 1 at the start / 0.5 at half / 0 at and after the end, a negative elapsed time clamped to 1, newly selected ids only, finished-entry pruning, and the achromatic colour), the LaTeX splitter and escaped fallback (plain / one or two inline spans / display / escaped dollar / unterminated dollar / empty pair / mixed / no dollar, `renderTexSegment` with a missing or throwing KaTeX and with the real library), and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full) |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

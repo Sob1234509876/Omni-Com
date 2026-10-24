@@ -914,6 +914,32 @@
         color: #e6e6e6;
       }
 
+      /* ---------------------------------------------------------------------
+         KaTeX math. Every surface that can show server or manifest text (the log,
+         status chip, toasts, tooltip, HUD and command bar) may contain `$...$`
+         or `$$...$$`; the stylesheet itself is imported by src/main.ts so Vite
+         bundles its font files. Math takes the surrounding chrome colour instead
+         of a colour of its own. KaTeX paints a formula it cannot parse red with
+         an inline style; the chrome is greyscale by design, so that inline colour
+         is overridden here too. */
+      .katex {
+        color: inherit;
+      }
+
+      .katex [style*="color"],
+      .katex-error {
+        color: inherit !important;
+      }
+
+      /* Display math inside a one-line chrome chip must not turn into a tall block. */
+      #status .katex-display,
+      .toast .katex-display,
+      .entity-tooltip .katex-display,
+      .selection-chip .katex-display {
+        display: inline-block;
+        margin: 0;
+      }
+
       /* The toast console: one exchange per popup, bottom-right, but raised above the
          bottom bar so the three HUD zones and the popups never overlap. */
       .toast-stack {

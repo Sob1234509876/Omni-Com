@@ -1,3 +1,6 @@
+// The stylesheet is static so Vite bundles KaTeX's 60 font files with the page. The JavaScript entry
+// is not: `render/latex.ts` loads `katex` with a dynamic import on the first formula only.
+import "katex/dist/katex.min.css";
 import {
   ENGINE_INFO_REQUEST,
   HELLO_ANSWER,
@@ -114,6 +117,7 @@ import {
   type ServerWorldView,
   type WorldView,
 } from "./render/view";
+import { renderLatexInto } from "./render/latex";
 import { toastTone } from "./toast";
 import { ToastConsole } from "./toastview";
 
@@ -297,7 +301,9 @@ let heartbeatTimer: number | null = null;
 let heartbeatInFlight = false;
 
 function setStatus(text: string, state: StatusState): void {
-  statusLine.textContent = text;
+  // The helper's plain-text fast path keeps the old single text node, so a message without `$` has the
+  // same layout as before; math is upgraded in place when the lazy KaTeX chunk resolves.
+  void renderLatexInto(statusLine, text);
   statusLine.dataset.state = state;
   // The chip is narrow in the top-right chrome; the title keeps the full message reachable.
   statusLine.title = text;
@@ -312,7 +318,15 @@ function setCommandsEnabled(enabled: boolean): void {
 function log(kind: LogKind, message: string): void {
   const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
   const marker = kind === "send" ? "→" : kind === "recv" ? "←" : kind === "error" ? "!" : "·";
-  logPane.textContent += `[${stamp}] ${marker} ${message}\n`;
+  // One inline span per line keeps the history append-only: the pure-inline wrapper preserves the
+  // `pre-wrap` stream exactly like the old `textContent +=`, while math on this line can be upgraded
+  // without walking (or re-rendering) the lines already in the log.
+  const line = document.createElement("span");
+  line.className = "log-line";
+  void renderLatexInto(line, `[${stamp}] ${marker} ${message}\n`).then(() => {
+    logPane.scrollTop = logPane.scrollHeight;
+  });
+  logPane.append(line);
   logPane.scrollTop = logPane.scrollHeight;
 }
 
@@ -1215,7 +1229,7 @@ function updateWarehousePanel(): void {
     row.className = "warehouse-item";
     const name = document.createElement("span");
     name.className = "warehouse-item-name";
-    name.textContent = item.name;
+    void renderLatexInto(name, item.name);
     const amount = document.createElement("span");
     amount.className = "warehouse-amount";
     amount.textContent = String(item.amount);
@@ -1232,29 +1246,44 @@ function updateHud(force = false, now = performance.now()): void {
   }
   lastHudUpdate = now;
   reconcileLocalPlayerId();
-  hudAtlas.textContent =
-    atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
-  hudWorld.textContent =
-    worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo";
+  void renderLatexInto(
+    hudAtlas,
+    atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin)),
+  );
+  void renderLatexInto(
+    hudWorld,
+    worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo",
+  );
   // The world is unbounded, so the HUD shows where the camera is and which window is loaded. Both
   // may be negative and keep counting as the owner pans in any direction.
   const focus = camera.centerTile();
-  hudWindow.textContent = `坐标：${focus.x},${focus.y} · 窗口：${world.originX},${world.originY}`;
-  hudPlayer.textContent = !loggedIn
-    ? "玩家：未登录"
-    : myPlayerId === null
-      ? "玩家：获取 id 中…"
-      : `玩家：${myPlayerId}`;
+  void renderLatexInto(
+    hudWindow,
+    `坐标：${focus.x},${focus.y} · 窗口：${world.originX},${world.originY}`,
+  );
+  void renderLatexInto(
+    hudPlayer,
+    !loggedIn
+      ? "玩家：未登录"
+      : myPlayerId === null
+        ? "玩家：获取 id 中…"
+        : `玩家：${myPlayerId}`,
+  );
   const resources = myPlayerRow();
-  hudResources.textContent =
+  void renderLatexInto(
+    hudResources,
     resources === undefined
       ? "资源：金 — · 木 —"
       : `资源：${resources.name} · 金 ${resources.gold}${incomeSuffix(resources.goldPerMinute)}` +
-        ` · 木 ${resources.wood}${incomeSuffix(resources.woodPerMinute)}`;
+          ` · 木 ${resources.wood}${incomeSuffix(resources.woodPerMinute)}`,
+  );
   hudResources.classList.toggle("unavailable", resources === undefined);
-  hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
-  hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
-  hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
+  void renderLatexInto(
+    hudTile,
+    hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`,
+  );
+  void renderLatexInto(hudZoom, `缩放：${camera.zoom.toFixed(2)}×`);
+  void renderLatexInto(hudFps, fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—");
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
   const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
@@ -1265,17 +1294,19 @@ function updateHud(force = false, now = performance.now()): void {
     only !== undefined && !isBuildingEntity(only) && isMine(only)
       ? unitCargoLabel(only, itemLabel)
       : null;
-  hudSelected.textContent =
+  void renderLatexInto(
+    hudSelected,
     groupPrefix +
-    (selection.length === 0
-      ? "选中：无"
-      : only === undefined
-        ? `已选：${selection.length} 个实体`
-        : `选中：e${only.id} ${contentLabel(only.kind)} ` +
-          `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
-          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
-          (cargo === null ? "" : ` · ${cargo}`));
-  hudBuildingText.textContent =
+      (selection.length === 0
+        ? "选中：无"
+        : only === undefined
+          ? `已选：${selection.length} 个实体`
+          : `选中：e${only.id} ${contentLabel(only.kind)} ` +
+            `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
+            `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
+            (cargo === null ? "" : ` · ${cargo}`)),
+  );
+  let buildingText =
     only !== undefined && isBuildingEntity(only)
       ? `建筑：${contentLabel(only.kind)} #${only.id}`
       : "建筑：—";
@@ -1283,15 +1314,16 @@ function updateHud(force = false, now = performance.now()): void {
   if (selectedBuilding !== undefined) {
     const footprint = sizeLabel(selectedBuilding);
     if (footprint !== null) {
-      hudBuildingText.textContent += ` · ${footprint}`;
+      buildingText += ` · ${footprint}`;
     }
     // A warehouse reports its stored items on the same row as its size; other buildings have no
     // `contents`, so the label is simply absent.
     const stock = warehouseContentsLabel(selectedBuilding);
     if (stock !== null) {
-      hudBuildingText.textContent += ` · ${stock}`;
+      buildingText += ` · ${stock}`;
     }
   }
+  void renderLatexInto(hudBuildingText, buildingText);
   // The inline construction bar is part of the selection HUD: a finished building (or a unit) keeps it
   // hidden, and a snapshot without `progress` (an older server) never shows it.
   const showConstruction = selectedBuilding !== undefined && underConstruction(selectedBuilding);
@@ -1336,7 +1368,7 @@ function renderQueueList(building: EntityView | undefined): void {
     row.title = `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick`;
     const name = document.createElement("span");
     name.className = "hud-queue-name";
-    name.textContent = contentLabel(item.kind);
+    void renderLatexInto(name, contentLabel(item.kind));
     const bar = document.createElement("span");
     bar.className = "hud-queue-bar";
     bar.setAttribute("aria-hidden", "true");
@@ -1517,7 +1549,7 @@ function renderSelectionChips(resolved: readonly EntityView[]): void {
     );
     const label = document.createElement("span");
     label.className = "selection-chip-label";
-    label.textContent = chip.label;
+    void renderLatexInto(label, chip.label);
     const bar = document.createElement("span");
     bar.className = "selection-chip-bar";
     bar.setAttribute("aria-hidden", "true");
@@ -1607,24 +1639,28 @@ function updateGameplayPanel(): void {
 
   const showTrain = model.actions.some((action) => action.kind === "train");
   trainSection.hidden = !showTrain;
-  trainTarget.textContent =
+  void renderLatexInto(
+    trainTarget,
     showTrain && trainBuilding !== undefined
       ? selectedOwnBuildings.length === 1
         ? `· e${trainBuilding.id} ${contentLabel(trainBuilding.kind)}`
         : `· ${selectedOwnBuildings.length} 座 ${contentLabel(trainBuilding.kind)}（一次点击各排一个）`
-      : "";
+      : "",
+  );
   for (const button of trainButtons) {
     button.disabled = !(gameplayReady && sameKindOwnBuildings);
   }
 
   const showBuild = model.actions.some((action) => action.kind === "build");
   buildSection.hidden = !showBuild;
-  buildTarget.textContent =
+  void renderLatexInto(
+    buildTarget,
     showBuild && single !== undefined
       ? `· e${single.id} ${contentLabel(single.kind)}`
       : showBuild
         ? `· ${model.unitCount} 个工兵`
-        : "";
+        : "",
+  );
   for (const button of buildButtons) {
     button.disabled = !(gameplayReady && ownEngineer);
     const armed =
@@ -1643,10 +1679,10 @@ function updateGameplayPanel(): void {
   upgradeSection.hidden = upgradeOffer === null;
   if (upgradeOffer === null) {
     upgradeButton.disabled = true;
-    upgradeTarget.textContent = "";
+    void renderLatexInto(upgradeTarget, "");
   } else {
-    upgradeTarget.textContent = `· e${upgradeOffer.buildingId} ${upgradeOffer.targetName}`;
-    upgradeButton.textContent = upgradeOffer.label;
+    void renderLatexInto(upgradeTarget, `· e${upgradeOffer.buildingId} ${upgradeOffer.targetName}`);
+    void renderLatexInto(upgradeButton, upgradeOffer.label);
     upgradeButton.title = upgradeOffer.affordable
       ? `UPGRADE ${upgradeOffer.buildingId}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
       : `UPGRADE ${upgradeOffer.buildingId}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
@@ -1654,7 +1690,7 @@ function updateGameplayPanel(): void {
   }
 
   renderSelectionChips(resolved);
-  gameplayNote.textContent = commandBarNote(model);
+  void renderLatexInto(gameplayNote, commandBarNote(model));
   updateCommandContextVisibility();
 }
 
@@ -2122,6 +2158,19 @@ const input = new InputController(gameCanvas, camera, inputHooks);
 /** Last rendered tooltip content; a moving cursor only repositions the same DOM. */
 let tooltipSignature = "";
 
+/** Places the visible tooltip at its clamped position beside the cursor. */
+function positionTooltip(): void {
+  const box = tooltipElement.getBoundingClientRect();
+  const anchor = input.hoverClientPoint;
+  const position = clampTooltipPosition(
+    anchor,
+    { width: box.width, height: box.height },
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+  tooltipElement.style.left = `${position.x}px`;
+  tooltipElement.style.top = `${position.y}px`;
+}
+
 /** Hides the tooltip and forgets its content, so the next show rebuilds the text. */
 function hideTooltip(): void {
   tooltipSignature = "";
@@ -2137,6 +2186,10 @@ function hideTooltip(): void {
  * drawing, then it names the entity, its owner tag and health and appends a building's footprint and
  * queue summary. The box is measured after its text is set and clamped to the browser window by
  * `clampTooltipPosition`, flipping to the other side of the cursor where necessary.
+ *
+ * Label and detail lines may carry `$...$` like every other server/manifest string. They are painted
+ * as their source immediately and upgraded to KaTeX when the lazy chunk resolves; the box is then
+ * measured and placed a second time, because a formula is not the same width as its source.
  */
 function updateTooltip(): void {
   const entity = entityById(world, input.hoverEntityId);
@@ -2163,31 +2216,35 @@ function updateTooltip(): void {
     tooltipSignature = signature;
     const name = document.createElement("div");
     name.className = "entity-tooltip-name";
-    name.textContent = content.name;
     const owner = document.createElement("div");
     owner.className = "entity-tooltip-owner";
-    owner.textContent = `归属：${content.ownerTag}`;
-    const rows = content.lines.map((line) => {
+    const rows = content.lines.map(() => {
       const row = document.createElement("div");
       row.className = "entity-tooltip-line";
-      row.textContent = line;
       return row;
     });
     tooltipElement.replaceChildren(name, owner, ...rows);
+
+    const renders: Promise<void>[] = [
+      renderLatexInto(name, content.name),
+      renderLatexInto(owner, `归属：${content.ownerTag}`),
+      ...content.lines.map((line, index) => {
+        const row = rows[index];
+        return row === undefined ? Promise.resolve() : renderLatexInto(row, line);
+      }),
+    ];
+    // Re-place once the formulas have replaced their source text; a newer hover invalidates this.
+    void Promise.all(renders).then(() => {
+      if (tooltipSignature === signature && !tooltipElement.hidden) {
+        positionTooltip();
+      }
+    });
   }
 
   // Unhide before measuring: a hidden element has an empty box. This happens inside one frame, so the
   // browser paints only the final position.
   tooltipElement.hidden = false;
-  const box = tooltipElement.getBoundingClientRect();
-  const anchor = input.hoverClientPoint;
-  const position = clampTooltipPosition(
-    anchor,
-    { width: box.width, height: box.height },
-    { width: window.innerWidth, height: window.innerHeight },
-  );
-  tooltipElement.style.left = `${position.x}px`;
-  tooltipElement.style.top = `${position.y}px`;
+  positionTooltip();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2594,7 +2651,7 @@ function refreshContentLabels(): void {
       continue;
     }
     const label = contentLabel(path);
-    button.textContent = label;
+    void renderLatexInto(button, label);
     button.title = label === path ? `TRAIN ${path}` : `TRAIN ${label} (${path})`;
   }
   for (const button of buildButtons) {
@@ -2603,7 +2660,7 @@ function refreshContentLabels(): void {
       continue;
     }
     const label = contentLabel(path);
-    button.textContent = label;
+    void renderLatexInto(button, label);
     button.title = label === path ? `BUILD ${path}` : `BUILD ${label} (${path})`;
   }
 }

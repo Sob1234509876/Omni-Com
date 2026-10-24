@@ -6,6 +6,7 @@
  * so "newest on top" holds even while the fifth-oldest toast is removed.
  */
 
+import { renderLatexInto } from "./render/latex";
 import {
   TOAST_VISIBLE_CAP,
   toastLifetimeMs,
@@ -32,7 +33,9 @@ function appendLine(host: HTMLElement, arrow: string, text: string): void {
 
   const body = document.createElement("span");
   body.className = "toast-text";
-  body.textContent = trimToastLine(text);
+  // A plain answer keeps its old single text node; `$...$` is upgraded to KaTeX when it arrives. The
+  // trim happens first so whitespace collapsing does not split a formula across the visible line.
+  void renderLatexInto(body, trimToastLine(text));
 
   line.append(marker, body);
   host.append(line);

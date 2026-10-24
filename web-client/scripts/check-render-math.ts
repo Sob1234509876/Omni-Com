@@ -4,7 +4,7 @@
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
- * `events.ts`, `flash.ts` and `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `events.ts`, `flash.ts`, `resources.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -225,6 +225,13 @@ import {
   isWarehouseKind,
   warehouseResourceTotals,
 } from "../src/render/resources.ts";
+import {
+  escapeHtml,
+  plainTexFallback,
+  renderTexSegment,
+  splitTex,
+  type TexSegment,
+} from "../src/render/latex.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -3681,6 +3688,171 @@ check(
   orderStop(7) === "ORDER STOP 7" &&
     orderMove(7, 8, 9) === "ORDER MOVE 7 8 9" &&
     build(7, "building.lumbercamp.t1", 10, 11) === "BUILD 7 building.lumbercamp.t1 10 11",
+);
+
+// ---------------------------------------------------------------------------------------------
+// LaTeX segments: the inline `$...$` / display `$$...$$` splitter, plain-text fallback and KaTeX
+// ---------------------------------------------------------------------------------------------
+
+/** A compact, readable form of a split result for failure details. */
+function segmentKinds(segments: readonly TexSegment[]): string {
+  return segments.map((segment) => `${segment.kind}:${segment.text}`).join(" | ");
+}
+
+const noDollarSegments = splitTex("plain text, no maths");
+check(
+  "不含 $ 的字符串恰好产生一个纯文本片段",
+  noDollarSegments.length === 1 &&
+    noDollarSegments[0]?.kind === "text" &&
+    noDollarSegments[0]?.text === "plain text, no maths",
+  segmentKinds(noDollarSegments),
+);
+check(
+  "空字符串与单独的 $ 都是纯文本（函数始终有返回值）",
+  JSON.stringify(splitTex("")) === JSON.stringify([{ kind: "text", text: "" }]) &&
+    JSON.stringify(splitTex("$")) === JSON.stringify([{ kind: "text", text: "$" }]),
+  segmentKinds(splitTex("$")),
+);
+
+const inlineSegments = splitTex("area $x^2$ end");
+check(
+  "一个行内公式：前后纯文本 + 去掉了 $ 的 TeX 源码",
+  JSON.stringify(inlineSegments) ===
+    JSON.stringify([
+      { kind: "text", text: "area " },
+      { kind: "inline", text: "x^2" },
+      { kind: "text", text: " end" },
+    ]),
+  segmentKinds(inlineSegments),
+);
+check(
+  "两个行内公式保留中间纯文本",
+  JSON.stringify(splitTex("$a$ + $b$")) ===
+    JSON.stringify([
+      { kind: "inline", text: "a" },
+      { kind: "text", text: " + " },
+      { kind: "inline", text: "b" },
+    ]),
+  segmentKinds(splitTex("$a$ + $b$")),
+);
+
+const displaySegments = splitTex("before $$x^2$$ after");
+check(
+  "独立公式：$$ 优先于 $，且前后文本保留",
+  JSON.stringify(displaySegments) ===
+    JSON.stringify([
+      { kind: "text", text: "before " },
+      { kind: "display", text: "x^2" },
+      { kind: "text", text: " after" },
+    ]),
+  segmentKinds(displaySegments),
+);
+
+const escapedSegments = splitTex("price \\$5");
+check(
+  "转义美元 $ 是字面美元，永远不开始数学",
+  escapedSegments.length === 1 &&
+    escapedSegments[0]?.kind === "text" &&
+    escapedSegments[0]?.text === "price $5",
+  segmentKinds(escapedSegments),
+);
+check(
+  "转义美元之后仍可开始一个真正的行内公式",
+  JSON.stringify(splitTex("\\$$x$")) ===
+    JSON.stringify([
+      { kind: "text", text: "$" },
+      { kind: "inline", text: "x" },
+    ]),
+  segmentKinds(splitTex("\\$$x$")),
+);
+check(
+  "未闭合的 $ 与 $$ 保持纯文本",
+  JSON.stringify(splitTex("cost $5")) === JSON.stringify([{ kind: "text", text: "cost $5" }]) &&
+    JSON.stringify(splitTex("$$open")) === JSON.stringify([{ kind: "text", text: "$$open" }]),
+  `${segmentKinds(splitTex("cost $5"))} / ${segmentKinds(splitTex("$$open"))}`,
+);
+check(
+  "空的 $$$$ 与 $$  $$（含空白）对都按纯文本忽略",
+  JSON.stringify(splitTex("$$$$")) === JSON.stringify([{ kind: "text", text: "$$$$" }]) &&
+    JSON.stringify(splitTex("a $$  $$ b")) ===
+      JSON.stringify([{ kind: "text", text: "a $$  $$ b" }]),
+  `${segmentKinds(splitTex("$$$$"))} / ${segmentKinds(splitTex("a $$  $$ b"))}`,
+);
+
+const mixedSegments = splitTex("a $x$ b $$y$$ c");
+check(
+  "混合文本：纯文本 / 行内 / 纯文本 / 独立 / 纯文本按顺序排列",
+  JSON.stringify(mixedSegments) ===
+    JSON.stringify([
+      { kind: "text", text: "a " },
+      { kind: "inline", text: "x" },
+      { kind: "text", text: " b " },
+      { kind: "display", text: "y" },
+      { kind: "text", text: " c" },
+    ]),
+  segmentKinds(mixedSegments),
+);
+check(
+  "拆分器是全集：任何字符串都不会抛出，且总返回至少一个片段",
+  (() => {
+    const inputs = ["", "$", "$$", "$$$", "\\", "\\$", "$x", "x$", "$$x", "$$$$$", "a $ b $$ c"];
+    try {
+      return inputs.every((input) => {
+        const segments = splitTex(input);
+        return (
+          segments.length > 0 &&
+          (input === "" || segments.some((segment) => segment.text !== ""))
+        );
+      });
+    } catch {
+      return false;
+    }
+  })(),
+);
+
+check(
+  "纯文本回退转义 < > & 引号，并保留公式的 $ 定界符",
+  escapeHtml("<b>&\"'") === "&lt;b&gt;&amp;&quot;&#39;" &&
+    plainTexFallback("inline", "<b> & </b>") ===
+      escapeHtml("$<b> & </b>$") &&
+    plainTexFallback("display", "<b> & </b>") ===
+      escapeHtml("$$<b> & </b>$$") &&
+    plainTexFallback("inline", "<b> & </b>").includes("&lt;b&gt;") &&
+    plainTexFallback("inline", "<b> & </b>").includes("&amp;") &&
+    !plainTexFallback("inline", "<b> & </b>").includes("<b>"),
+  plainTexFallback("inline", "<b> & </b>"),
+);
+
+const missingKatex = await renderTexSegment("inline", "<x> & y", async () => null);
+check(
+  "KaTeX 不可用时回退为转义纯文本，而不是抛出",
+  missingKatex === plainTexFallback("inline", "<x> & y") &&
+    missingKatex.includes("&lt;x&gt;") &&
+    missingKatex.includes("&amp;"),
+  missingKatex,
+);
+const throwingKatex = await renderTexSegment("display", "<x> & y", async () => ({
+  renderToString: (): string => {
+    throw new Error("synthetic KaTeX failure");
+  },
+}));
+check(
+  "KaTeX 抛出异常时同样回退为转义纯文本",
+  throwingKatex === plainTexFallback("display", "<x> & y") &&
+    throwingKatex.includes("&lt;") &&
+    throwingKatex.includes("&amp;"),
+  throwingKatex,
+);
+
+const renderedInline = await renderTexSegment("inline", "x^2");
+const renderedDisplay = await renderTexSegment("display", "x^2");
+check(
+  "可用时用 KaTeX 渲染：行内输出 katex，独立公式输出 katex-display",
+  renderedInline.includes('class="katex"') &&
+    !renderedInline.includes("katex-display") &&
+    renderedDisplay.includes('class="katex"') &&
+    renderedDisplay.includes("katex-display"),
+  `${renderedInline.slice(0, 60)} / ${renderedDisplay.slice(0, 80)}`,
 );
 
 // ---------------------------------------------------------------------------------------------
