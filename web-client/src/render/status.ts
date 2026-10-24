@@ -112,7 +112,12 @@ function compareItemPaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function itemLabel(path: string): string {
+/**
+ * The display name of one resource item: `金` / `木` for the classic items, otherwise the path's own
+ * name with any namespace prefix removed. The warehouse panel uses the same fallback for unknown
+ * items, so the HUD chip and the panel cannot disagree about a known item.
+ */
+export function itemDisplayName(path: string): string {
   const separator = path.lastIndexOf(":");
   const name = separator < 0 ? path : path.slice(separator + 1);
   return ITEM_LABELS[name] ?? name;
@@ -136,7 +141,7 @@ export function warehouseContentsLabel(entity: EntityView): string | null {
     if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
       continue;
     }
-    parts.push(`${itemLabel(path)} ${amount}`);
+    parts.push(`${itemDisplayName(path)} ${amount}`);
   }
   return parts.length === 0 ? null : `库存：${parts.join(" · ")}`;
 }

@@ -31,6 +31,10 @@
     "../src/render/interpolate.ts",
     "../src/render/marquee.ts",
     "../src/render/placement.ts",
-    "../src/render/minimap.ts"
+    "../src/render/minimap.ts",
+    "../src/render/selection.ts",
+    "../src/render/tooltip.ts",
+    "../src/render/events.ts",
+    "../src/render/resources.ts"
   ]
 }

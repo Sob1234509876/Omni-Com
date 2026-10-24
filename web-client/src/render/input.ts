@@ -21,6 +21,10 @@ import { marqueeTileRange, screenRectBetween, type ScreenRect } from "./marquee"
 import { entityInWindow, isBuildingEntityKind, isWorldTile, type WorldView } from "./view";
 
 const DRAG_THRESHOLD_PX = 4;
+/** Two clicks on the same target within this window count as a double click. */
+const DOUBLE_CLICK_MS = 350;
+/** How far a double click's second press may drift from the first, in CSS pixels. */
+const DOUBLE_CLICK_SLOP_PX = 6;
 const KEY_PAN_SPEED_PX_PER_SECOND = 560;
 const ZOOM_STEP = 1.18;
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
@@ -71,6 +75,14 @@ export interface InputHooks {
   /** A right click on a world tile; `targetId` is the entity under the cursor, if any. */
   readonly onRightClick?: (tile: TileCoord, targetId: number | null) => void;
   /**
+   * A second click on the same entity (or on empty ground) within the double-click window. The page
+   * replaces the selection with the whole-world same-kind rule, or with a single clicked building.
+   * A drag never counts as either half of a double click.
+   */
+  readonly onDoubleClick?: (targetId: number | null) => void;
+  /** The `O` hotkey: the page selects every own engineer in the loaded window. */
+  readonly onSelectEngineers?: () => void;
+  /**
    * A plain left click on a world tile, before selection. Returning `true` consumes the click, which is
    * how the build placement mode places a site instead of changing the selection.
    */
@@ -108,6 +120,13 @@ export class InputController {
   private readonly hooks: InputHooks;
   private readonly pressedKeys = new Set<string>();
   private hoverTileValue: TileCoord | null = null;
+  /** The entity body under the pointer, or null; refreshed with the hover tile. */
+  private hoverEntityIdValue: number | null = null;
+  /** Last pointer position in client (viewport) pixels, used to place the DOM tooltip. */
+  private hoverClientX = 0;
+  private hoverClientY = 0;
+  /** The last completed click, for double-click detection; null after a drag or a placement click. */
+  private lastClick: { at: number; id: number | null; x: number; y: number } | null = null;
 
   private pointerActive = false;
   private dragging = false;
@@ -146,6 +165,16 @@ export class InputController {
   /** Tile under the pointer, or null when it is outside the canvas. */
   get hoverTile(): TileCoord | null {
     return this.hoverTileValue;
+  }
+
+  /** Entity under the pointer, or null when it is outside the canvas or over empty ground. */
+  get hoverEntityId(): number | null {
+    return this.hoverEntityIdValue;
+  }
+
+  /** Pointer position in client pixels; the tooltip anchors to it. */
+  get hoverClientPoint(): ScreenPoint {
+    return { x: this.hoverClientX, y: this.hoverClientY };
   }
 
   /**
@@ -223,13 +252,27 @@ export class InputController {
     // The world is unbounded, so every whole tile is addressable. The camera is not clamped to the
     // loaded window, so this tile may be outside it; it is still a real tile for commands and the HUD.
     const next: TileCoord | null = isWorldTile(tile.x, tile.y) ? tile : null;
+    // The entity under the cursor is refreshed even when the tile did not change: a moving unit can
+    // slide under a stationary pointer, and the tooltip must follow the same picker that clicks use.
+    this.hoverEntityIdValue = this.pickEntity(screenX, screenY);
+    const rect = this.canvas.getBoundingClientRect();
+    this.hoverClientX = rect.left + screenX;
+    this.hoverClientY = rect.top + screenY;
     if (!sameTile(next, this.hoverTileValue)) {
       this.hoverTileValue = next;
       this.hooks.onHoverChange?.(next);
     }
   }
 
+  /** Re-picks the hovered tile and entity without pointer movement (moving world, camera, zoom). */
+  refreshHover(): void {
+    if (this.hoverTileValue !== null) {
+      this.updateHover(this.pointerX, this.pointerY);
+    }
+  }
+
   private clearHover(): void {
+    this.hoverEntityIdValue = null;
     if (this.hoverTileValue !== null) {
       this.hoverTileValue = null;
       this.hooks.onHoverChange?.(null);
@@ -319,14 +362,43 @@ export class InputController {
     this.downShift = false;
   }
 
-  /** Resolves a completed click: placement consumes it first, then the selection changes. */
+  /** Forgets the pending first click; every drag and every consumed placement click does this. */
+  private resetDoubleClick(): void {
+    this.lastClick = null;
+  }
+
+  /**
+   * Resolves a completed click: placement consumes it first, then it is either the second half of a
+   * double click or a normal selection change. A double click only counts when both clicks landed on
+   * the same target within {@link DOUBLE_CLICK_MS} and barely moved; any drag clears the first click,
+   * so a click that ends a marquee (or follows a camera/entity drag) can never complete one.
+   */
   private finishClick(screenX: number, screenY: number, shift: boolean): void {
     const targetId = this.pickEntity(screenX, screenY);
     const tile = this.hoverTileValue;
     const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId) === true;
-    if (!consumed) {
-      this.hooks.onSelect(targetId, shift ? "toggle" : "replace");
+    if (consumed) {
+      this.resetDoubleClick();
+      return;
     }
+
+    const now = performance.now();
+    const previous = this.lastClick;
+    const isDoubleClick =
+      this.hooks.onDoubleClick !== undefined &&
+      previous !== null &&
+      now - previous.at <= DOUBLE_CLICK_MS &&
+      previous.id === targetId &&
+      Math.hypot(screenX - previous.x, screenY - previous.y) <= DOUBLE_CLICK_SLOP_PX;
+    if (isDoubleClick) {
+      // A double click replaces the selection as a whole, so the single-click half is not repeated.
+      this.resetDoubleClick();
+      this.hooks.onDoubleClick?.(targetId);
+      return;
+    }
+
+    this.hooks.onSelect(targetId, shift ? "toggle" : "replace");
+    this.lastClick = { at: now, id: targetId, x: screenX, y: screenY };
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
@@ -336,6 +408,7 @@ export class InputController {
     if (event.button === 2) {
       // The right button never starts a drag; it only aims an order. Focus the canvas so the keyboard
       // shortcuts (including Escape) keep working after the click.
+      this.resetDoubleClick();
       const point = this.localPoint(event);
       this.pointerX = point.x;
       this.pointerY = point.y;
@@ -346,6 +419,7 @@ export class InputController {
     }
     if (event.button === 1) {
       // Middle-button drag is the camera pan that does not collide with the marquee.
+      this.resetDoubleClick();
       this.downTargetId = null;
       this.beginDrag(event, "camera");
       return;
@@ -356,6 +430,7 @@ export class InputController {
     this.downTargetId = null;
     if (this.isPressed(SPACE_KEY)) {
       // Space held keeps the old left-drag camera pan available as a keyboard modifier.
+      this.resetDoubleClick();
       this.beginDrag(event, "camera");
       return;
     }
@@ -388,6 +463,8 @@ export class InputController {
     const wasDragging = this.dragging;
     if (!this.dragging && totalDistance >= DRAG_THRESHOLD_PX) {
       this.dragging = true;
+      // A drag is never half of a double click; drop any first click that came before it.
+      this.resetDoubleClick();
     }
     if (this.dragMode === "camera" && this.dragging) {
       // On the frame that crosses the threshold, apply the whole movement since pointerdown; later
@@ -431,6 +508,10 @@ export class InputController {
     const shift = this.downShift;
     const marquee = mode === "marquee" && wasDragging ? this.marqueeRect : null;
     this.releasePointer();
+    if (wasDragging) {
+      // The mouseup that ends a marquee or any other drag is not a click and must not seed one.
+      this.resetDoubleClick();
+    }
 
     if (mode === "marquee") {
       if (wasDragging) {
@@ -482,6 +563,7 @@ export class InputController {
     if (event.pointerId !== this.activePointerId) {
       return;
     }
+    this.resetDoubleClick();
     this.releasePointer();
     this.clearHover();
   };
@@ -498,6 +580,7 @@ export class InputController {
     if (this.pointerActive) {
       this.releasePointer();
     }
+    this.resetDoubleClick();
     this.clearHover();
   };
 
@@ -510,6 +593,7 @@ export class InputController {
     this.dragMode = "none";
     this.downTargetId = null;
     this.activePointerId = null;
+    this.resetDoubleClick();
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
@@ -566,6 +650,15 @@ export class InputController {
           this.updateHover(this.pointerX, this.pointerY);
         }
         this.hooks.onCameraChange?.();
+      }
+      return;
+    }
+    if (key === "o") {
+      // Select every own engineer in the loaded window. The snapshot has no order state, so this is
+      // deliberately "all engineers", never "idle engineers"; the button is labelled 工兵.
+      event.preventDefault();
+      if (!event.repeat) {
+        this.hooks.onSelectEngineers?.();
       }
       return;
     }

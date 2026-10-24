@@ -45,6 +45,7 @@ import {
 } from "./render/atlas";
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord, type TileRange } from "./render/camera";
+import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
 import {
   InputController,
   type ControlGroupMode,
@@ -61,9 +62,12 @@ import {
   type PlacementTileState,
 } from "./render/placement";
 import { WorldRenderer } from "./render/renderer";
+import { warehouseResourceTotals } from "./render/resources";
+import { doubleClickSelection, engineerSelection, isEngineerKind } from "./render/selection";
 import {
   formatProgressPercent,
   incomeSuffix,
+  itemDisplayName,
   progressBarRatio,
   queueItemNumber,
   queueProgressRatio,
@@ -77,12 +81,12 @@ import {
   shouldRequestWindow,
   windowCentre,
 } from "./render/stream";
+import { clampTooltipPosition, tooltipContent } from "./render/tooltip";
 import {
   demoWorld,
   entityById,
   fetchWorldSnapshot,
   isBuildingEntityKind,
-  kindName,
   marqueeSelection,
   ownershipOf,
   ownershipTag,
@@ -140,8 +144,12 @@ const hudBuildingProgress = required<HTMLSpanElement>("#hud-building-progress");
 const hudBuildingFill = required<HTMLSpanElement>("#hud-building-fill");
 const hudBuildingPercent = required<HTMLSpanElement>("#hud-building-percent");
 const hudQueue = required<HTMLDivElement>("#hud-queue");
+const warehouseSummary = required<HTMLParagraphElement>("#warehouse-summary");
+const warehouseItems = required<HTMLUListElement>("#warehouse-items");
+const tooltipElement = required<HTMLDivElement>("#entity-tooltip");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const orderStopButton = required<HTMLButtonElement>("#order-stop");
+const selectEngineersButton = required<HTMLButtonElement>("#select-engineers");
 const gameplayNote = required<HTMLSpanElement>("#gameplay-note");
 const trainSection = required<HTMLDivElement>("#train-section");
 const trainTarget = required<HTMLSpanElement>("#train-target");
@@ -871,6 +879,8 @@ let worldPollTimer: number | null = null;
 let worldRequestInFlight = false;
 /** Monotonic ids for snapshot requests; a response older than the newest request is discarded. */
 const snapshotRequests = new SnapshotRequestTracker();
+/** Five-second per-entity de-duplication for events derived from snapshot diffs. */
+const snapshotEventDedupe = new EventDeduplicator();
 /** One log line when the server stops answering, instead of one per 500 ms poll. */
 let snapshotFailureLogged = false;
 /** Monotonic time of the last edge-triggered request, so a failing server is not retried per frame. */
@@ -892,8 +902,7 @@ function isBuildingEntity(entity: EntityView): boolean {
 
 /** The engineer is `unit.engineer` in the classic catalogue; the demo/legacy name is `engineer`. */
 function isEngineerEntity(entity: EntityView): boolean {
-  const kind = kindName(entity.kind);
-  return kind === "engineer" || kind.endsWith(".engineer");
+  return isEngineerKind(entity.kind);
 }
 
 /** Every selected entity that still exists, in selection order. */
@@ -1031,6 +1040,62 @@ function myPlayerRow(): PlayerView | undefined {
   return world.players?.find((player) => player.id === myPlayerId);
 }
 
+/** Last DOM signature of the warehouse panel; avoids rebuilding the tiny list on every HUD tick. */
+let warehousePanelSignature = "";
+
+/**
+ * Rebuilds the read-only warehouse total in the top-right corner.
+ *
+ * The pure aggregation lives in `resources.ts`: every own building's `contents` is summed, items are
+ * labelled from the manifest first and the classic `金` / `木` table second, and rows are sorted by
+ * display name. The panel only reads the snapshot; there is no marked-resource feature because the
+ * server has none. With no own warehouse the summary says so instead of showing an empty list.
+ */
+function updateWarehousePanel(): void {
+  const totals = warehouseResourceTotals(world, myPlayerId, (path) => {
+    const fromManifest = entityDisplayName(atlas, path);
+    return fromManifest === path ? itemDisplayName(path) : fromManifest;
+  });
+  const signature =
+    `${totals.warehouseCount}|` +
+    totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
+  if (signature === warehousePanelSignature) {
+    return;
+  }
+  warehousePanelSignature = signature;
+
+  if (totals.warehouseCount === 0 && totals.items.length === 0) {
+    warehouseSummary.textContent = "未发现自己的仓库";
+    warehouseItems.hidden = true;
+    warehouseItems.replaceChildren();
+    return;
+  }
+  if (totals.items.length === 0) {
+    warehouseSummary.textContent = `${totals.warehouseCount} 个仓库：暂无库存`;
+    warehouseItems.hidden = true;
+    warehouseItems.replaceChildren();
+    return;
+  }
+  // A building that reports contents is what matters, even if its kind is not one the client knows
+  // as a warehouse; the count line then also names that the total is not backed by a known warehouse.
+  warehouseSummary.textContent =
+    totals.warehouseCount === 0 ? "未发现自己的仓库 · 库存合计" : `${totals.warehouseCount} 个仓库`;
+  const rows = totals.items.map((item) => {
+    const row = document.createElement("li");
+    row.className = "warehouse-item";
+    const name = document.createElement("span");
+    name.className = "warehouse-item-name";
+    name.textContent = item.name;
+    const amount = document.createElement("span");
+    amount.className = "warehouse-amount";
+    amount.textContent = String(item.amount);
+    row.append(name, amount);
+    return row;
+  });
+  warehouseItems.replaceChildren(...rows);
+  warehouseItems.hidden = false;
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -1094,6 +1159,7 @@ function updateHud(force = false, now = performance.now()): void {
     hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
   }
   renderQueueList(selectedBuilding);
+  updateWarehousePanel();
   // While a BUILD is armed the status line belongs to the placement ghost: it names the reason for the
   // tile under the cursor (可建造 / 地形不可建 / ...). Without a hovered tile it restores the reminder.
   updatePlacementStatus();
@@ -1479,6 +1545,45 @@ function applyMarquee(range: TileRange): void {
 }
 
 /**
+ * Applies one double click: own same-kind units in the loaded window, or exactly one clicked building.
+ * The pure rule lives in `selection.ts`; this wrapper only resets the group provenance and refreshes
+ * the two panels. A double click always replaces the selection, never merges with it.
+ */
+function applyDoubleClick(id: number | null): void {
+  selectedGroup = null;
+  selectedIds = doubleClickSelection(world, id, myPlayerId);
+  // Replacing the selection can invalidate an armed BUILD; pruning reports and cancels that case.
+  pruneSelection();
+  updateHud(true);
+  updateGameplayPanel();
+}
+
+/**
+ * The `工兵` button / `O` hotkey: select every own engineer in the loaded window.
+ *
+ * The snapshot has no order or busy flag, so this cannot be honest about "idle": it selects all own
+ * engineers and the status line says how many. The button is labelled 工兵 for the same reason, and
+ * both READMEs spell the limitation out.
+ */
+function selectEngineers(): void {
+  selectedGroup = null;
+  selectedIds = engineerSelection(world, myPlayerId);
+  if (placementPath !== null) {
+    cancelPlacement(false);
+  }
+  pruneSelection();
+  updateHud(true);
+  updateGameplayPanel();
+  if (myPlayerId === null) {
+    setStatus("先连接并 LOGIN，才能选择自己的工兵", "idle");
+  } else if (selectedIds.length === 0) {
+    setStatus("已载入窗口内没有自己的工兵", "idle");
+  } else {
+    setStatus(`已选 ${selectedIds.length} 个工兵（快照没有订单状态，不区分是否空闲）`, "ok");
+  }
+}
+
+/**
  * Applies one number-key action to a control group.
  *
  * Recall first prunes ids the current world no longer reports, so a group can never select a dead
@@ -1544,6 +1649,7 @@ const buildButtons: HTMLButtonElement[] = [];
 const inputHooks: InputHooks = {
   getWorld: () => world,
   onSelect: (id, mode) => applySelection(id, mode),
+  onDoubleClick: (id) => applyDoubleClick(id),
   onMarquee: (range) => applyMarquee(range),
   isMarqueeEnabled: () => placementPath === null,
   onHoverChange: (tile) => {
@@ -1559,9 +1665,83 @@ const inputHooks: InputHooks = {
   onLeftClick: (tile) => doLeftClick(tile),
   onCancel: () => doCancel(),
   onControlGroup: (group, mode) => doControlGroup(group, mode),
+  onSelectEngineers: () => selectEngineers(),
 };
 
 const input = new InputController(gameCanvas, camera, inputHooks);
+
+// ---------------------------------------------------------------------------------------------
+// Hover tooltip. A DOM element, not canvas: it stays crisp at any zoom, keeps the canvas untouched
+// and cannot intercept pointer input (the stylesheet sets `pointer-events: none`). The pure text and
+// clamping rules live in `render/tooltip.ts`; this half only measures the box and parks it.
+// ---------------------------------------------------------------------------------------------
+
+/** Last rendered tooltip content; a moving cursor only repositions the same DOM. */
+let tooltipSignature = "";
+
+/** Hides the tooltip and forgets its content, so the next show rebuilds the text. */
+function hideTooltip(): void {
+  tooltipSignature = "";
+  if (!tooltipElement.hidden) {
+    tooltipElement.hidden = true;
+  }
+}
+
+/**
+ * Shows or hides the entity tooltip for the pointer's current entity.
+ *
+ * It is suppressed while the game view is hidden, while a BUILD is armed and while a marquee drag is
+ * drawing, then it names the entity, its owner tag and health and appends a building's footprint and
+ * queue summary. The box is measured after its text is set and clamped to the browser window by
+ * `clampTooltipPosition`, flipping to the other side of the cursor where necessary.
+ */
+function updateTooltip(): void {
+  const entity = entityById(world, input.hoverEntityId);
+  if (
+    viewHidden ||
+    placementPath !== null ||
+    input.marqueeRect !== null ||
+    entity === undefined
+  ) {
+    hideTooltip();
+    return;
+  }
+
+  const content = tooltipContent(
+    contentLabel(entity.kind),
+    entity,
+    ownershipOf(entity.playerId, myPlayerId),
+  );
+  const signature =
+    `${entity.id}\u0000${myPlayerId ?? "none"}\u0000${content.name}\u0000` +
+    content.lines.join("\u0001");
+  if (signature !== tooltipSignature) {
+    tooltipSignature = signature;
+    const name = document.createElement("div");
+    name.className = "entity-tooltip-name";
+    name.textContent = content.name;
+    const rows = content.lines.map((line) => {
+      const row = document.createElement("div");
+      row.className = "entity-tooltip-line";
+      row.textContent = line;
+      return row;
+    });
+    tooltipElement.replaceChildren(name, ...rows);
+  }
+
+  // Unhide before measuring: a hidden element has an empty box. This happens inside one frame, so the
+  // browser paints only the final position.
+  tooltipElement.hidden = false;
+  const box = tooltipElement.getBoundingClientRect();
+  const anchor = input.hoverClientPoint;
+  const position = clampTooltipPosition(
+    anchor,
+    { width: box.width, height: box.height },
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+  tooltipElement.style.left = `${position.x}px`;
+  tooltipElement.style.top = `${position.y}px`;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Minimap input. The panel owns only its own small canvas: these listeners never cover the game view,
@@ -1673,6 +1853,26 @@ function nextSnapshotCentre(): TileCoord {
 }
 
 /**
+ * Derives the two client-side events from the previous and the current snapshot and shows each one as
+ * a toast (and in the full log history). No server change is involved: a completed building and an
+ * entity that lost at least 10% health are both inferred from fields the snapshot already carries.
+ * The de-duplicator keeps one entity quiet for five seconds, so a long fight does not toast per poll.
+ */
+function emitSnapshotEvents(previous: WorldView, current: WorldView): void {
+  const events = diffSnapshotEvents(
+    previous,
+    current,
+    (kind) => contentLabel(kind),
+    performance.now(),
+    snapshotEventDedupe,
+  );
+  for (const event of events) {
+    log("info", event.text);
+    toastMessage(event.text, "info");
+  }
+}
+
+/**
  * Adopts one valid snapshot.
  *
  * A snapshot of the same window is interpolated from the previous frame as before. A snapshot of a
@@ -1682,6 +1882,12 @@ function nextSnapshotCentre(): TileCoord {
 function applySnapshot(snapshot: ServerWorldView): void {
   const wasDemo = worldSource === "demo";
   const previous = currentFrame;
+  // Events compare the two consecutive received snapshots before either frame is replaced. On the
+  // very first snapshot there is nothing to compare against, so nothing is derived.
+  const previousSnapshot = previous?.view;
+  if (previousSnapshot !== undefined) {
+    emitSnapshotEvents(previousSnapshot, snapshot);
+  }
   const sameWindow =
     previous !== null &&
     previous.view.originX === snapshot.originX &&
@@ -1844,6 +2050,9 @@ function animationFrame(now: number): void {
     // from the camera that just moved. Both canvases are independent, so neither covers the other.
     minimapRenderer.render(world, camera, myPlayerId);
     updateHud(false, now);
+    // Re-pick the hovered entity in case a unit slid under a stationary pointer, then park the tooltip.
+    input.refreshHover();
+    updateTooltip();
   }
   rafId = window.requestAnimationFrame(animationFrame);
 }
@@ -1868,6 +2077,7 @@ function setViewVisible(visible: boolean): void {
   toggleViewButton.textContent = viewHidden ? "显示游戏画面" : "隐藏游戏画面";
   toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
   if (viewHidden) {
+    hideTooltip();
     stopGameLoop();
     stopWorldPolling();
   } else {
@@ -1945,6 +2155,7 @@ function refreshContentLabels(): void {
 refreshContentLabels();
 
 orderStopButton.addEventListener("click", doOrderStop);
+selectEngineersButton.addEventListener("click", selectEngineers);
 
 // The canvas owns Escape for its own focus; this fallback keeps "cancel placement" working while
 // focus is still on the BUILD button that armed the mode.
@@ -1966,6 +2177,7 @@ updateGameplayPanel();
 // listener covers tab switching, so a hidden tab does not interpolate or draw at all.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    hideTooltip();
     stopWorldPolling();
     stopGameLoop();
   } else if (!viewHidden) {

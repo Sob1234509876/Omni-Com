@@ -3,8 +3,8 @@
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
- * `fallback.ts` and `interpolate.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json`
- * is only used for type checking.
+ * `fallback.ts`, `interpolate.ts`, `selection.ts`, `tooltip.ts`, `events.ts` and `resources.ts` the
+ * browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
@@ -151,6 +151,27 @@ import {
   minimapPointForTile,
   minimapTileAt,
 } from "../src/render/minimap.ts";
+import {
+  doubleClickSelection,
+  engineerSelection,
+  isEngineerKind,
+} from "../src/render/selection.ts";
+import {
+  TOOLTIP_GAP_PX,
+  TOOLTIP_MARGIN_PX,
+  clampTooltipPosition,
+  tooltipContent,
+} from "../src/render/tooltip.ts";
+import {
+  EVENT_DEDUPE_MS,
+  EventDeduplicator,
+  HEALTH_DROP_THRESHOLD,
+  diffSnapshotEvents,
+} from "../src/render/events.ts";
+import {
+  isWarehouseKind,
+  warehouseResourceTotals,
+} from "../src/render/resources.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -2251,6 +2272,343 @@ check(
   JSON.stringify(
     minimapCameraTarget({ originX: 600_000, originY: -600_000, width: 2, height: 2 }, 45, 45, 32),
   ),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Double-click same-kind selection and the engineer shortcut
+// ---------------------------------------------------------------------------------------------
+
+/** An 8x8 grass window with own/enemy/outside same-kind units plus two buildings. */
+const selectionWorld: WorldView = {
+  originX: 0,
+  originY: 0,
+  width: 8,
+  height: 8,
+  tiles: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => "grass" as TerrainId)),
+  entities: [
+    { id: 1, kind: "unit.melee.t1", x: 1.2, y: 1.2, playerId: 1 },
+    { id: 2, kind: "unit.melee.t1", x: 2.2, y: 2.2, playerId: 1 },
+    { id: 3, kind: "unit.melee.t1", x: 3.2, y: 3.2, playerId: 2 },
+    // Same kind and owner, but its ground tile is outside the loaded 8x8 window.
+    { id: 4, kind: "unit.melee.t1", x: 9.2, y: 1.2, playerId: 1 },
+    { id: 5, kind: "unit.engineer", x: 4.2, y: 4.2, playerId: 1 },
+    { id: 6, kind: "unit.engineer", x: 5.2, y: 5.2, playerId: 2 },
+    { id: 7, kind: "unit.engineer", x: 20.2, y: 5.2, playerId: 1 },
+    {
+      id: 8,
+      kind: "building.armory.t1",
+      x: 3.5,
+      y: 5.5,
+      playerId: 1,
+      footprint: { width: 3, height: 3 },
+      progress: 1,
+    },
+    {
+      id: 9,
+      kind: "building.warehouse",
+      x: 6.5,
+      y: 6.5,
+      playerId: 2,
+      footprint: { width: 3, height: 3 },
+    },
+  ],
+};
+const doubleClickedWorker = doubleClickSelection(selectionWorld, 1, 1);
+check(
+  "双击单位只选窗口内自己的同类：排除敌人、中立与窗口外的同 kind 单位",
+  JSON.stringify(doubleClickedWorker) === JSON.stringify([1, 2]),
+  doubleClickedWorker.join(","),
+);
+check(
+  "双击敌方单位仍然只选自己的同类，不会把敌方单位选进来",
+  JSON.stringify(doubleClickSelection(selectionWorld, 3, 1)) === JSON.stringify([1, 2]),
+  doubleClickSelection(selectionWorld, 3, 1).join(","),
+);
+check(
+  "双击结果只包含窗口内实体：窗口外的同类单位 id 不会出现在选中里",
+  doubleClickedWorker.every((id) => {
+    const entity = selectionWorld.entities.find((candidate) => candidate.id === id);
+    return entity !== undefined && entityInWindow(selectionWorld, entity);
+  }) && !doubleClickedWorker.includes(4),
+  doubleClickedWorker.join(","),
+);
+check(
+  "双击建筑只选该建筑：自己的与敌人的都只返回一个 id",
+  JSON.stringify(doubleClickSelection(selectionWorld, 8, 1)) === JSON.stringify([8]) &&
+    JSON.stringify(doubleClickSelection(selectionWorld, 9, 1)) === JSON.stringify([9]),
+  `${doubleClickSelection(selectionWorld, 8, 1).join(",")} / ` +
+    `${doubleClickSelection(selectionWorld, 9, 1).join(",")}`,
+);
+check(
+  "双击空地清空选中",
+  JSON.stringify(doubleClickSelection(selectionWorld, null, 1)) === JSON.stringify([]),
+);
+const engineers = engineerSelection(selectionWorld, 1);
+check(
+  "工兵快捷键只选窗口内自己的工程师（敌方与窗口外都被排除）",
+  JSON.stringify(engineers) === JSON.stringify([5]) && isEngineerKind("unit.engineer"),
+  engineers.join(","),
+);
+check(
+  "工程师 kind 判定覆盖 unit.engineer、engineer 与带命名空间的路径，不误判战斗单位",
+  isEngineerKind("engineer") &&
+    isEngineerKind("oc:unit.engineer") &&
+    !isEngineerKind("unit.melee.t1") &&
+    !isEngineerKind("building.warehouse"),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Hover tooltip: text composition and window clamping
+// ---------------------------------------------------------------------------------------------
+
+const unitTooltip = tooltipContent(
+  "普通",
+  { id: 11, kind: "unit.melee.t1", x: 1, y: 1, playerId: 1, healthRatio: 0.72 },
+  "mine",
+);
+check(
+  "提示框显示清单名、归属标签与生命百分比",
+  unitTooltip.name === "普通" &&
+    JSON.stringify(unitTooltip.lines) === JSON.stringify(["我 · 生命 72%"]),
+  `${unitTooltip.name} / ${unitTooltip.lines.join(" / ")}`,
+);
+const buildingTooltip = tooltipContent(
+  "兵工厂 1 级",
+  {
+    id: 12,
+    kind: "building.armory.t1",
+    x: 2,
+    y: 2,
+    playerId: 2,
+    healthRatio: 0.42,
+    footprint: { width: 3, height: 3 },
+    queue: 2,
+  },
+  "enemy",
+);
+check(
+  "提示框为建筑追加尺寸与队列摘要（敌 · 生命 42% / 尺寸 / 生产中）",
+  buildingTooltip.name === "兵工厂 1 级" &&
+    JSON.stringify(buildingTooltip.lines) ===
+      JSON.stringify(["敌 · 生命 42%", "尺寸：3×3", "生产中 ×2"]),
+  buildingTooltip.lines.join(" / "),
+);
+const noHealthTooltip = tooltipContent(
+  "矿井",
+  { id: 13, kind: "building.mine.t1", x: 0, y: 0, playerId: 1, footprint: { width: 3, height: 3 } },
+  "mine",
+);
+check(
+  "没有 healthRatio 的旧快照不编造生命值，建筑仍显示尺寸",
+  JSON.stringify(noHealthTooltip.lines) === JSON.stringify(["我", "尺寸：3×3"]),
+  noHealthTooltip.lines.join(" / "),
+);
+const neutralTooltip = tooltipContent("worker", { id: 14, kind: "worker", x: 0, y: 0 }, "neutral");
+check(
+  "无主单位只有中立标签，queue=0 不显示队列摘要",
+  JSON.stringify(neutralTooltip.lines) === JSON.stringify(["中立"]),
+  neutralTooltip.lines.join(" / "),
+);
+check(
+  "提示框默认边距 8px、光标间距 14px",
+  TOOLTIP_MARGIN_PX === 8 && TOOLTIP_GAP_PX === 14,
+  `${TOOLTIP_MARGIN_PX} / ${TOOLTIP_GAP_PX}`,
+);
+const flippedTooltip = clampTooltipPosition(
+  { x: 900, y: 700 },
+  { width: 200, height: 80 },
+  { width: 1000, height: 800 },
+);
+check(
+  "靠近右/下边缘时提示框翻到光标另一侧，仍夹在窗口内",
+  JSON.stringify(flippedTooltip) === JSON.stringify({ x: 686, y: 606 }),
+  JSON.stringify(flippedTooltip),
+);
+const edgeTooltip = clampTooltipPosition(
+  { x: 995, y: 795 },
+  { width: 200, height: 80 },
+  { width: 1000, height: 800 },
+);
+check(
+  "指针在右下角极限位置时提示框完整落在窗口内",
+  edgeTooltip.x === 781 &&
+    edgeTooltip.y === 701 &&
+    edgeTooltip.x + 200 <= 1000 - TOOLTIP_MARGIN_PX &&
+    edgeTooltip.y + 80 <= 800 - TOOLTIP_MARGIN_PX,
+  JSON.stringify(edgeTooltip),
+);
+const tinyViewportTooltip = clampTooltipPosition(
+  { x: 50, y: 50 },
+  { width: 200, height: 100 },
+  { width: 100, height: 50 },
+);
+check(
+  "窗口比提示框还小时仍从左上边距开始，不返回负坐标",
+  JSON.stringify(tinyViewportTooltip) === JSON.stringify({ x: 8, y: 8 }),
+  JSON.stringify(tinyViewportTooltip),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Snapshot diff events: building completion, 10% health drop, five-second de-duplication
+// ---------------------------------------------------------------------------------------------
+
+function eventWorld(entities: readonly EntityView[]): WorldView {
+  return {
+    originX: 0,
+    originY: 0,
+    width: 8,
+    height: 8,
+    tiles: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => "grass" as TerrainId)),
+    entities,
+  };
+}
+
+const eventBefore = eventWorld([
+  { id: 1, kind: "building.armory.t1", x: 1, y: 1, playerId: 1, progress: 0.5, healthRatio: 1 },
+  { id: 2, kind: "building.warehouse", x: 2, y: 2, playerId: 1, progress: 1, healthRatio: 1 },
+  { id: 3, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, healthRatio: 1 },
+  { id: 4, kind: "unit.melee.t1", x: 4, y: 4, playerId: 2, healthRatio: 1 },
+  { id: 5, kind: "unit.melee.t1", x: 5, y: 5, playerId: 1, healthRatio: 0.5 },
+  { id: 8, kind: "unit.melee.t1", x: 6, y: 6, playerId: 1, healthRatio: 1 },
+]);
+const eventAfter = eventWorld([
+  { id: 1, kind: "building.armory.t1", x: 1, y: 1, playerId: 1, progress: 1, healthRatio: 1 },
+  { id: 2, kind: "building.warehouse", x: 2, y: 2, playerId: 1, progress: 1, healthRatio: 1 },
+  // Exactly a 10-point drop: 1 -> 0.9 must fire despite binary floating point.
+  { id: 3, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, healthRatio: 0.9 },
+  // 9-point drop: below the threshold.
+  { id: 4, kind: "unit.melee.t1", x: 4, y: 4, playerId: 2, healthRatio: 0.91 },
+  { id: 5, kind: "unit.melee.t1", x: 5, y: 5, playerId: 1, healthRatio: 0.4 },
+  // Appears only in the current snapshot: no previous health to compare.
+  { id: 7, kind: "unit.melee.t1", x: 7, y: 7, playerId: 1, healthRatio: 0.2 },
+]);
+const eventLabel = (kind: string): string =>
+  kind === "building.armory.t1"
+    ? "兵工厂 1 级"
+    : kind === "unit.melee.t1"
+      ? "普通"
+      : kind;
+const eventDedupe = new EventDeduplicator();
+const firstEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 1_000, eventDedupe);
+check(
+  "快照差分产出建筑完成与遭到攻击事件，且只比较两帧都存在的实体",
+  firstEvents
+    .map((event) => `${event.kind}:${event.entityId}`)
+    .join(",") === "building-complete:1,under-attack:3,under-attack:5",
+  firstEvents.map((event) => `${event.kind}:${event.entityId}`).join(","),
+);
+check(
+  "事件文案是 建筑完成：<名称> / 遭到攻击：<名称>",
+  firstEvents[0]?.text === "建筑完成：兵工厂 1 级" &&
+    firstEvents[1]?.text === "遭到攻击：普通" &&
+    firstEvents[2]?.text === "遭到攻击：普通",
+  firstEvents.map((event) => event.text).join(" / "),
+);
+check(
+  "生命下降至少 10% 才触发：1→0.9 触发，1→0.91 不触发，0.5→0.4 触发",
+  HEALTH_DROP_THRESHOLD === 0.1 &&
+    firstEvents.some((event) => event.entityId === 3) &&
+    !firstEvents.some((event) => event.entityId === 4) &&
+    firstEvents.some((event) => event.entityId === 5),
+);
+const tooSoonEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 5_999, eventDedupe);
+check(
+  "同一实体 5 秒内不会重复产生事件（4.999 秒时全部被抑制）",
+  EVENT_DEDUPE_MS === 5_000 && tooSoonEvents.length === 0,
+  tooSoonEvents.map((event) => event.text).join(" / "),
+);
+const afterFiveSeconds = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 6_000, eventDedupe);
+check(
+  "满 5 秒后同一实体可以再次产生事件",
+  afterFiveSeconds.length === 3,
+  afterFiveSeconds.map((event) => event.text).join(" / "),
+);
+const independentDedupe = new EventDeduplicator();
+check(
+  "去重按实体独立计时：一个实体的事件不会压制另一个实体",
+  independentDedupe.allow(1, 100) &&
+    independentDedupe.allow(2, 100) &&
+    !independentDedupe.allow(1, 5_099) &&
+    independentDedupe.allow(1, 5_100),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Warehouse resource total: own buildings only, summed and sorted by display name
+// ---------------------------------------------------------------------------------------------
+
+const warehouseWorld = eventWorld([
+  {
+    id: 1,
+    kind: "building.warehouse",
+    x: 0,
+    y: 0,
+    playerId: 1,
+    contents: { gold: 120, wood: 40 },
+  },
+  {
+    id: 2,
+    kind: "warehouse",
+    x: 4,
+    y: 4,
+    playerId: 1,
+    contents: { gold: 80, wood: 10, ore: 5 },
+  },
+  {
+    id: 3,
+    kind: "building.warehouse",
+    x: 6,
+    y: 6,
+    playerId: 2,
+    contents: { gold: 9_999 },
+  },
+  { id: 4, kind: "building.armory.t1", x: 2, y: 2, playerId: 1 },
+  { id: 5, kind: "unit.engineer", x: 1, y: 1, playerId: 1 },
+]);
+const warehouseTotals = warehouseResourceTotals(warehouseWorld, 1);
+const warehouseRows = warehouseTotals.items
+  .map((item) => `${item.name}=${item.amount}`)
+  .join(", ");
+check(
+  "仓库库存只合计自己的建筑：敌方仓库与自己无 contents 的建筑都不计入",
+  warehouseTotals.warehouseCount === 2 &&
+    warehouseRows === "ore=5, 木=50, 金=200",
+  `${warehouseTotals.warehouseCount} / ${warehouseRows}`,
+);
+check(
+  "仓库库存按显示名排序，数量是各仓库之和",
+  warehouseTotals.items.length === 3 &&
+    warehouseTotals.items.every((item) => item.amount > 0),
+  warehouseRows,
+);
+check(
+  "没有自己的仓库时数量为 0、列表为空；空仓库计数仍为 1",
+  warehouseResourceTotals(
+    eventWorld([
+      { id: 21, kind: "unit.engineer", x: 1, y: 1, playerId: 1 },
+      { id: 22, kind: "building.armory.t1", x: 2, y: 2, playerId: 1 },
+    ]),
+    1,
+  ).warehouseCount === 0 &&
+    warehouseResourceTotals(
+      eventWorld([{ id: 23, kind: "building.warehouse", x: 3, y: 3, playerId: 1 }]),
+      1,
+    ).items.length === 0 &&
+    warehouseResourceTotals(
+      eventWorld([{ id: 24, kind: "building.warehouse", x: 3, y: 3, playerId: 1 }]),
+      1,
+    ).warehouseCount === 1,
+);
+check(
+  "仓库 kind 判定同时接受 building.warehouse 与旧名 warehouse，拒绝其他建筑",
+  isWarehouseKind("building.warehouse") &&
+    isWarehouseKind("warehouse") &&
+    isWarehouseKind("oc:building.warehouse") &&
+    !isWarehouseKind("building.armory.t1"),
+);
+check(
+  "没有玩家 id 时仓库合计为空（不把无主建筑当成自己的）",
+  warehouseResourceTotals(warehouseWorld, null).warehouseCount === 0 &&
+    warehouseResourceTotals(warehouseWorld, null).items.length === 0,
 );
 
 // ---------------------------------------------------------------------------------------------
