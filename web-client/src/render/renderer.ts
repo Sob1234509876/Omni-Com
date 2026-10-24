@@ -5,12 +5,16 @@
  * pixels from `devicePixelRatio`, and the context is scaled so every drawing call below can use CSS
  * pixels. It never assumes the two sizes are equal.
  *
- * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows, ownership
- * rings, one gold selection ring per selected entity, then entities sorted by y so lower entities
- * overlap higher ones, then health bars, then the greyscale construction bar and `生产中 ×N` marker
- * above buildings, and finally the marquee rectangle. Ownership rings are thinner than selection rings
- * and are drawn first, so every gold selection ring always stays on top. The construction chrome sits
- * above the roof, never over the sprite.
+ * Draw order is terrain, tile grid (fallback only), the hover tile or the build-placement ghost, ground
+ * shadows, ownership rings, one gold selection ring per selected entity, then entities sorted by y so
+ * lower entities overlap higher ones, then health bars, then the greyscale construction bar and
+ * `生产中 ×N` marker above buildings, and finally the marquee rectangle. Ownership rings are thinner
+ * than selection rings and are drawn first, so every gold selection ring always stays on top. The
+ * construction chrome sits above the roof, never over the sprite.
+ *
+ * The placement ghost is the one deliberate exception to the greyscale chrome rule: it is canvas
+ * content, like the ownership rings, so each footprint tile is painted green, red or amber by its
+ * state. Everything in the HTML chrome around it stays grey.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -35,6 +39,11 @@ import {
 } from "./fallback";
 import { queueMarkerText } from "./status";
 import {
+  placementFillColor,
+  placementStrokeColor,
+  type PlacementPreview,
+} from "./placement";
+import {
   entityInWindow,
   isBuildingEntityKind,
   kindName,
@@ -55,8 +64,13 @@ export interface RenderOptions {
   readonly hoverTile: TileCoord | null;
   /** Every selected entity id; each one gets the gold selection ring. */
   readonly selectedIds: readonly number[];
-  /** Tile armed for build placement, or null; drawn with a stronger highlight than plain hover. */
-  readonly placementTile: TileCoord | null;
+  /**
+   * The armed build footprint under the cursor with its per-tile state, or null.
+   *
+   * When it is present it replaces the plain hover highlight: every footprint tile is painted with its
+   * legal / blocked / out-of-reach fill and outline, which is the pre-click validity feedback.
+   */
+  readonly placement: PlacementPreview | null;
   /** Canvas-space marquee rectangle while a left drag is selecting, or null. */
   readonly marquee: ScreenRect | null;
   /**
@@ -226,17 +240,40 @@ export class WorldRenderer {
     }
 
     const hover = options.hoverTile;
-    if (hover !== null && tileInWindow(world, hover.x, hover.y)) {
+    const placement = options.placement;
+    if (placement !== null) {
+      // Armed BUILD: one ghost cell per footprint tile. All fills are drawn first and all outlines
+      // second, so a neighbouring fill can never paint over an outline.
+      const ghostLineWidth = Math.max(1, 2 / size.devicePixelRatio);
+      for (const tile of placement.tiles) {
+        const point = camera.worldToScreen(tile.x * tileSize, tile.y * tileSize);
+        context.fillStyle = placementFillColor(tile.state);
+        context.fillRect(point.x, point.y, tileOnScreen, tileOnScreen);
+      }
+      for (const tile of placement.tiles) {
+        const point = camera.worldToScreen(tile.x * tileSize, tile.y * tileSize);
+        context.strokeStyle = placementStrokeColor(tile.state);
+        context.lineWidth = ghostLineWidth;
+        context.strokeRect(
+          point.x + ghostLineWidth / 2,
+          point.y + ghostLineWidth / 2,
+          Math.max(0, tileOnScreen - ghostLineWidth),
+          Math.max(0, tileOnScreen - ghostLineWidth),
+        );
+      }
+    } else if (hover !== null && tileInWindow(world, hover.x, hover.y)) {
       const hoverX = origin.x + (hover.x - range.minX) * tileOnScreen;
       const hoverY = origin.y + (hover.y - range.minY) * tileOnScreen;
-      const placement = options.placementTile;
-      const placing =
-        placement !== null && placement.x === hover.x && placement.y === hover.y;
-      context.fillStyle = placing ? "rgba(255, 209, 102, 0.28)" : "rgba(230, 245, 255, 0.12)";
+      context.fillStyle = "rgba(230, 245, 255, 0.12)";
       context.fillRect(hoverX, hoverY, tileOnScreen, tileOnScreen);
-      context.strokeStyle = placing ? "rgba(255, 226, 150, 0.95)" : "rgba(200, 235, 255, 0.75)";
-      context.lineWidth = Math.max(1, (placing ? 2.5 : 1.5) / size.devicePixelRatio);
-      context.strokeRect(hoverX + 0.5, hoverY + 0.5, tileOnScreen - 1, tileOnScreen - 1);
+      context.strokeStyle = "rgba(200, 235, 255, 0.75)";
+      context.lineWidth = Math.max(1, 1.5 / size.devicePixelRatio);
+      context.strokeRect(
+        hoverX + 0.5,
+        hoverY + 0.5,
+        Math.max(0, tileOnScreen - 1),
+        Math.max(0, tileOnScreen - 1),
+      );
     }
 
     const padding = Math.max(80, tileOnScreen * 3);

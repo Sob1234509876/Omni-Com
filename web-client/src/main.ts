@@ -53,6 +53,13 @@ import {
 } from "./render/input";
 import { alphaFor, interpolate, type Frame } from "./render/interpolate";
 import { toggleSelection } from "./render/marquee";
+import { MinimapRenderer, minimapCameraTarget } from "./render/minimap";
+import {
+  buildPlacementPreview,
+  placementReasonText,
+  type PlacementPreview,
+  type PlacementTileState,
+} from "./render/placement";
 import { WorldRenderer } from "./render/renderer";
 import {
   formatProgressPercent,
@@ -118,6 +125,7 @@ const closeLogButton = required<HTMLButtonElement>("#log-close");
 const clearLogButton = required<HTMLButtonElement>("#log-clear");
 const toastStack = required<HTMLDivElement>("#toast-stack");
 const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
+const minimapCanvas = required<HTMLCanvasElement>("#minimap-canvas");
 const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudWindow = required<HTMLSpanElement>("#hud-window");
@@ -836,6 +844,8 @@ const camera = new Camera(
   (world.height * TILE_SIZE_PX) / 2,
 );
 const renderer = new WorldRenderer(gameCanvas);
+/** The bottom-left overview panel; it draws into its own canvas and never covers the game view. */
+const minimapRenderer = new MinimapRenderer(minimapCanvas);
 
 let atlas: Atlas | null = null;
 /** Every selected entity id, in selection order. A plain click replaces it; Shift+click toggles. */
@@ -909,6 +919,62 @@ function singleSelectedEntity(): EntityView | undefined {
 /** Selected entities that may receive an order: own, and not a building. */
 function selectedOwnUnits(): EntityView[] {
   return selectedEntities().filter((entity) => isMine(entity) && !isBuildingEntity(entity));
+}
+
+/** The selected entity when it is exactly one own engineer, otherwise undefined. */
+function placementEngineer(): EntityView | undefined {
+  const selected = singleSelectedEntity();
+  return selected !== undefined && isMine(selected) && isEngineerEntity(selected)
+    ? selected
+    : undefined;
+}
+
+/**
+ * The ghost for the armed BUILD at the tile under the cursor, or null when no placement is armed, the
+ * pointer is outside the canvas, or the engineer selection is gone.
+ *
+ * The preview is pure math from `placement.ts`; it is recomputed for every frame and every hover so the
+ * ghost and the status line always describe the same tile. The same site state gates the click, so the
+ * picture, the reason in the status line and the sent (or withheld) command cannot disagree.
+ */
+function placementPreviewAt(tile: TileCoord | null): PlacementPreview | null {
+  if (placementPath === null || tile === null) {
+    return null;
+  }
+  const engineer = placementEngineer();
+  if (engineer === undefined) {
+    return null;
+  }
+  return buildPlacementPreview(world, placementPath, tile, engineer);
+}
+
+/** The existing status-line states, chosen by ghost state without adding any colour to the chrome. */
+function placementStatusState(state: PlacementTileState): StatusState {
+  switch (state) {
+    case "legal":
+      return "ok";
+    case "blocked":
+      return "error";
+    default:
+      return "busy";
+  }
+}
+
+/**
+ * Writes the placement reason to the status line while a BUILD is armed and a tile is hovered; with no
+ * hovered tile it falls back to the mode reminder. Called from `updateHud`, which the hover and camera
+ * hooks already force, so the line follows the cursor without a second HUD path.
+ */
+function updatePlacementStatus(): void {
+  if (placementPath === null) {
+    return;
+  }
+  const preview = placementPreviewAt(hoverTile);
+  if (preview === null) {
+    setStatus(`BUILD ${labelledContent(placementPath)}：左键点击地面放置 · Esc 取消`, "busy");
+    return;
+  }
+  setStatus(placementReasonText(preview.reason), placementStatusState(preview.state));
 }
 
 /** Drops ids whose entity no longer exists after a snapshot replaced the world. */
@@ -1028,6 +1094,9 @@ function updateHud(force = false, now = performance.now()): void {
     hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
   }
   renderQueueList(selectedBuilding);
+  // While a BUILD is armed the status line belongs to the placement ghost: it names the reason for the
+  // tile under the cursor (可建造 / 地形不可建 / ...). Without a hovered tile it restores the reminder.
+  updatePlacementStatus();
 }
 
 /**
@@ -1338,14 +1407,25 @@ function doLeftClick(tile: TileCoord): boolean {
     return false;
   }
   const path = placementPath;
-  const engineer = singleSelectedEntity();
-  placementPath = null;
-  updateGameplayPanel();
-  updateHud(true);
-  if (engineer === undefined || !isMine(engineer) || !isEngineerEntity(engineer)) {
+  const engineer = placementEngineer();
+  if (engineer === undefined) {
+    placementPath = null;
+    updateGameplayPanel();
+    updateHud(true);
     refuse("放置时选中的工程师已失效，BUILD 没有发送");
     return true;
   }
+  // The ghost and the click share one verdict. An illegal site keeps the mode armed and names the
+  // reason instead of sending a BUILD the server is guaranteed to refuse.
+  const preview = buildPlacementPreview(world, path, tile, engineer);
+  if (preview.state !== "legal") {
+    refuse(`BUILD 未发送：${placementReasonText(preview.reason)}`);
+    updateHud(true);
+    return true;
+  }
+  placementPath = null;
+  updateGameplayPanel();
+  updateHud(true);
   void sendGameplayCommand(
     "BUILD",
     build(engineer.id, path, tile.x, tile.y),
@@ -1482,6 +1562,68 @@ const inputHooks: InputHooks = {
 };
 
 const input = new InputController(gameCanvas, camera, inputHooks);
+
+// ---------------------------------------------------------------------------------------------
+// Minimap input. The panel owns only its own small canvas: these listeners never cover the game view,
+// so a click anywhere outside the 180px square still reaches the world canvas unchanged.
+// ---------------------------------------------------------------------------------------------
+
+/** Pointer currently dragging the minimap, or null; keeps a mouse and a touch drag apart. */
+let minimapPointerId: number | null = null;
+
+/** Centres the camera on the minimap's floor tile under the pointer, clamped to the camera bound. */
+function jumpCameraToMinimap(event: PointerEvent): void {
+  const rect = minimapCanvas.getBoundingClientRect();
+  const target = minimapCameraTarget(
+    world,
+    event.clientX - rect.left,
+    event.clientY - rect.top,
+    TILE_SIZE_PX,
+    Math.max(1, Math.min(rect.width, rect.height)),
+  );
+  if (target === null) {
+    // The pointer is on the letterbox or just outside the panel: leave the camera where it is.
+    return;
+  }
+  camera.setCenter(target.x, target.y);
+  updateHud(true);
+}
+
+function releaseMinimapPointer(): void {
+  minimapPointerId = null;
+}
+
+minimapCanvas.addEventListener("pointerdown", (event) => {
+  if (!event.isPrimary || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  // Keep the canvas focused: clicking the panel is a game action, so WASD, Escape and the group keys
+  // must keep working afterwards instead of falling through to the page body.
+  gameCanvas.focus({ preventScroll: true });
+  minimapPointerId = event.pointerId;
+  try {
+    minimapCanvas.setPointerCapture(event.pointerId);
+  } catch {
+    // Capture is an optimisation; a drag still works while the pointer stays over the panel.
+  }
+  jumpCameraToMinimap(event);
+});
+
+minimapCanvas.addEventListener("pointermove", (event) => {
+  if (event.pointerId !== minimapPointerId) {
+    return;
+  }
+  jumpCameraToMinimap(event);
+});
+
+minimapCanvas.addEventListener("pointerup", releaseMinimapPointer);
+minimapCanvas.addEventListener("pointercancel", releaseMinimapPointer);
+minimapCanvas.addEventListener("lostpointercapture", releaseMinimapPointer);
+minimapCanvas.addEventListener("contextmenu", (event) => {
+  // The right button is not a minimap control, but its browser menu must not open over the game view.
+  event.preventDefault();
+});
 
 /**
  * Draws a world that is not interpolated: the demo map, the very first server snapshot (there is no
@@ -1694,10 +1836,13 @@ function animationFrame(now: number): void {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
       selectedIds,
-      placementTile: placementPath === null ? null : hoverTile,
+      placement: placementPreviewAt(hoverTile),
       marquee: input.marqueeRect,
       myPlayerId,
     });
+    // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
+    // from the camera that just moved. Both canvases are independent, so neither covers the other.
+    minimapRenderer.render(world, camera, myPlayerId);
     updateHud(false, now);
   }
   rafId = window.requestAnimationFrame(animationFrame);

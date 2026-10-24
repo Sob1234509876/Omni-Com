@@ -120,6 +120,37 @@ import {
   windowEdgeDistance,
   windowNeedsStream,
 } from "../src/render/stream.ts";
+import {
+  DEFAULT_BUILDING_FOOTPRINT,
+  MAX_BUILD_REACH_TILES,
+  PLACEMENT_BLOCKED_FILL,
+  PLACEMENT_BLOCKED_STROKE,
+  PLACEMENT_LEGAL_FILL,
+  PLACEMENT_LEGAL_STROKE,
+  PLACEMENT_OUT_OF_REACH_FILL,
+  PLACEMENT_OUT_OF_REACH_STROKE,
+  buildPlacementPreview,
+  buildReachDistance,
+  combinePlacementStates,
+  entityFootprint,
+  entityFootprintCovers,
+  footprintForKind,
+  footprintTiles,
+  isWithinBuildReach,
+  placementFillColor,
+  placementReasonText,
+  placementStrokeColor,
+  tileOccupiedByEntities,
+  type Footprint,
+} from "../src/render/placement.ts";
+import {
+  MINIMAP_DOT_SIZE,
+  MINIMAP_PANEL_SIZE,
+  minimapCameraTarget,
+  minimapLayout,
+  minimapPointForTile,
+  minimapTileAt,
+} from "../src/render/minimap.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -1825,6 +1856,400 @@ check(
   [0, 10, 2.5].every((group) =>
     rejectsBadGroup(() => assignControlGroup(groups, group, [1])) &&
     rejectsBadGroup(() => addControlGroup(groups, group, [1])),
+  ),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Build placement ghost: footprint lookup, footprint tiles, occupancy, reach and state precedence
+// ---------------------------------------------------------------------------------------------
+
+const ONE_TILE_FOOTPRINT: Footprint = { width: 1, height: 1 };
+
+/** A 3x3 classic warehouse standing at (5,5), used by the occupancy checks. */
+const PLACEMENT_BUILDING: EntityView = {
+  id: 1,
+  kind: "building.warehouse",
+  x: 5,
+  y: 5,
+  playerId: 1,
+  footprint: { width: 3, height: 3 },
+};
+
+/** An own engineer standing at (1.4, 1.7), so its tile is the floor (1,1). */
+const PLACEMENT_ENGINEER: EntityView = {
+  id: 2,
+  kind: "unit.engineer",
+  x: 1.4,
+  y: 1.7,
+  playerId: 1,
+  footprint: { width: 1, height: 1 },
+};
+
+/** A grass 8x8 window with one water tile at (2,2), a 3x3 warehouse at (5,5) and the engineer. */
+function placementWorld(): WorldView {
+  const tiles: TerrainId[][] = Array.from({ length: 8 }, () =>
+    Array.from({ length: 8 }, () => "grass" as TerrainId),
+  );
+  const waterRow = tiles[2];
+  if (waterRow !== undefined) {
+    waterRow[2] = "water";
+  }
+  return {
+    originX: 0,
+    originY: 0,
+    width: 8,
+    height: 8,
+    tiles,
+    entities: [PLACEMENT_BUILDING, PLACEMENT_ENGINEER],
+  };
+}
+
+const placementFixture = placementWorld();
+
+check(
+  "建筑足迹查表：经典目录里的四种建筑都是 3×3（命名空间也能命中）",
+  BUILDING_PATHS.every((path) => {
+    const footprint = footprintForKind(path);
+    return footprint.width === 3 && footprint.height === 3;
+  }) && footprintForKind("oc:building.warehouse").height === 3,
+  BUILDING_PATHS.map((path) => `${path}=${footprintForKind(path).width}`).join(", "),
+);
+check(
+  "未知建筑 kind 的足迹回退到默认 3×3",
+  DEFAULT_BUILDING_FOOTPRINT.width === 3 &&
+    DEFAULT_BUILDING_FOOTPRINT.height === 3 &&
+    footprintForKind("building.mystery.t9").width === 3 &&
+    footprintForKind("building.mystery.t9").height === 3 &&
+    footprintForKind("").width === 3,
+  JSON.stringify(footprintForKind("building.mystery.t9")),
+);
+check(
+  "足迹瓦片列表按行优先展开，负原点与小尺寸也正确",
+  JSON.stringify(footprintTiles({ x: 2, y: 3 }, { width: 2, height: 2 })) ===
+    JSON.stringify([
+      { x: 2, y: 3 },
+      { x: 3, y: 3 },
+      { x: 2, y: 4 },
+      { x: 3, y: 4 },
+    ]) &&
+    footprintTiles({ x: -2, y: -1 }, { width: 3, height: 2 }).length === 6 &&
+    footprintTiles({ x: -2, y: -1 }, { width: 3, height: 2 })[5]?.x === 0 &&
+    footprintTiles({ x: 0, y: 0 }, { width: 0, height: 3 }).length === 0,
+  JSON.stringify(footprintTiles({ x: 2, y: 3 }, { width: 2, height: 2 })),
+);
+check(
+  "实体足迹占用：3×3 建筑覆盖右下角，不覆盖左/右一格之外",
+  entityFootprint(PLACEMENT_BUILDING).width === 3 &&
+    entityFootprintCovers(PLACEMENT_BUILDING, 5, 5) &&
+    entityFootprintCovers(PLACEMENT_BUILDING, 7, 7) &&
+    !entityFootprintCovers(PLACEMENT_BUILDING, 8, 5) &&
+    !entityFootprintCovers(PLACEMENT_BUILDING, 4, 5),
+);
+check(
+  "单位只占脚下 1 格，小数坐标按 floor（负坐标同样）",
+  entityFootprint(PLACEMENT_ENGINEER).width === 1 &&
+    entityFootprintCovers(PLACEMENT_ENGINEER, 1, 1) &&
+    !entityFootprintCovers(PLACEMENT_ENGINEER, 2, 1) &&
+    entityFootprintCovers({ ...PLACEMENT_ENGINEER, x: -0.2, y: -1.1 }, -1, -2) &&
+    !entityFootprintCovers({ ...PLACEMENT_ENGINEER, x: -0.2, y: -1.1 }, 0, -2),
+);
+check(
+  "占用测试来自实体列表：没有 footprint 的旧实体只占自己的一格",
+  tileOccupiedByEntities(placementFixture.entities, 6, 6) &&
+    tileOccupiedByEntities(placementFixture.entities, 1, 1) &&
+    !tileOccupiedByEntities(placementFixture.entities, 0, 0) &&
+    tileOccupiedByEntities([{ id: 9, kind: "warehouse", x: 4, y: 6, playerId: 1 }], 4, 6) &&
+    !tileOccupiedByEntities([{ id: 9, kind: "warehouse", x: 4, y: 6, playerId: 1 }], 5, 6),
+);
+check(
+  "工兵范围：恰好 16 格可达，17 格超出（MAX_BUILD_REACH_TILES = 16）",
+  MAX_BUILD_REACH_TILES === 16 &&
+    buildReachDistance({ x: 0, y: 0 }, { x: 16, y: 0 }, ONE_TILE_FOOTPRINT) === 16 &&
+    isWithinBuildReach({ x: 0, y: 0 }, { x: 16, y: 0 }, ONE_TILE_FOOTPRINT) &&
+    buildReachDistance({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT) === 17 &&
+    !isWithinBuildReach({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT),
+  `${buildReachDistance({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT)}`,
+);
+check(
+  "工兵范围对负坐标同样成立（-20 到 -4 是 16 格，到 -3 是 17 格）",
+  isWithinBuildReach({ x: -20, y: 0 }, { x: -4, y: 0 }, ONE_TILE_FOOTPRINT) &&
+    !isWithinBuildReach({ x: -20, y: 0 }, { x: -3, y: 0 }, ONE_TILE_FOOTPRINT),
+);
+check(
+  "范围按足迹矩形边缘计算：站在足迹内是 0 格，紧贴边缘是 1 格",
+  buildReachDistance({ x: 1, y: 1 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 0 &&
+    buildReachDistance({ x: 3, y: 3 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 1,
+);
+check(
+  "幽灵状态优先级：blocked > out-of-reach > legal",
+  combinePlacementStates(["legal", "out-of-reach"]) === "out-of-reach" &&
+    combinePlacementStates(["out-of-reach", "blocked", "legal"]) === "blocked" &&
+    combinePlacementStates(["legal", "legal"]) === "legal" &&
+    combinePlacementStates([]) === "legal",
+  combinePlacementStates(["legal", "out-of-reach"]),
+);
+
+const legalPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 1, y: 5 },
+  PLACEMENT_ENGINEER,
+);
+check(
+  "合法工地：9 个足迹格全部 legal，状态行显示可建造",
+  legalPreview.state === "legal" &&
+    legalPreview.reason === "legal" &&
+    legalPreview.tiles.length === 9 &&
+    legalPreview.tiles.every((tile) => tile.state === "legal") &&
+    placementReasonText(legalPreview.reason) === "可建造",
+  JSON.stringify(legalPreview.tiles[0]),
+);
+const waterPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 2, y: 2 },
+  PLACEMENT_ENGINEER,
+);
+check(
+  "水域阻挡：水格 blocked，整块工地报地形不可建",
+  waterPreview.state === "blocked" &&
+    waterPreview.reason === "blocked-terrain" &&
+    waterPreview.tiles[0]?.state === "blocked" &&
+    waterPreview.tiles[0]?.reason === "blocked-terrain" &&
+    placementReasonText(waterPreview.reason) === "地形不可建",
+  JSON.stringify(waterPreview.tiles[0]),
+);
+const occupiedPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 5, y: 5 },
+  PLACEMENT_ENGINEER,
+);
+check(
+  "实体阻挡：仓库覆盖的格子全部 blocked，整块工地报位置被占用",
+  occupiedPreview.state === "blocked" &&
+    occupiedPreview.reason === "blocked-occupied" &&
+    occupiedPreview.tiles.every(
+      (tile) => tile.state === "blocked" && tile.reason === "blocked-occupied",
+    ) &&
+    placementReasonText(occupiedPreview.reason) === "位置被占用",
+);
+const windowPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 6, y: 0 },
+  PLACEMENT_ENGINEER,
+);
+check(
+  "窗口边缘阻挡：足迹越过已载入窗口时报超出已载入窗口",
+  windowPreview.state === "blocked" &&
+    windowPreview.reason === "blocked-window" &&
+    windowPreview.tiles.some(
+      (tile) => tile.state === "blocked" && tile.reason === "blocked-window",
+    ) &&
+    placementReasonText(windowPreview.reason) === "超出已载入窗口",
+  JSON.stringify(windowPreview.tiles.find((tile) => tile.state === "blocked")),
+);
+const farEngineer: EntityView = {
+  id: 3,
+  kind: "unit.engineer",
+  x: 40.5,
+  y: 40.5,
+  playerId: 1,
+  footprint: { width: 1, height: 1 },
+};
+const reachPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 1, y: 5 },
+  farEngineer,
+);
+check(
+  "超出射程：所有可建格是 out-of-reach，状态行报 16 格",
+  reachPreview.state === "out-of-reach" &&
+    reachPreview.reason === "out-of-reach" &&
+    reachPreview.tiles.every((tile) => tile.state === "out-of-reach") &&
+    placementReasonText(reachPreview.reason) === "超出工兵范围 16 格",
+  `${reachPreview.state}/${reachPreview.reason}`,
+);
+const blockedFarPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 2, y: 2 },
+  farEngineer,
+);
+check(
+  "状态优先级在整块工地上生效：地形阻挡压过超出射程",
+  blockedFarPreview.state === "blocked" &&
+    blockedFarPreview.reason === "blocked-terrain",
+  `${blockedFarPreview.state}/${blockedFarPreview.reason}`,
+);
+
+/** A 4x4 world whose (0,0) tile is both water and under a 3x3 building, for reason precedence. */
+const precedenceTiles: TerrainId[][] = Array.from({ length: 4 }, (_, y) =>
+  Array.from({ length: 4 }, (_, x) => (x === 0 && y === 0 ? "water" : "grass") as TerrainId),
+);
+const precedenceWorld: WorldView = {
+  originX: 0,
+  originY: 0,
+  width: 4,
+  height: 4,
+  tiles: precedenceTiles,
+  entities: [
+    {
+      id: 9,
+      kind: "building.warehouse",
+      x: 0,
+      y: 0,
+      playerId: 1,
+      footprint: { width: 3, height: 3 },
+    },
+  ],
+};
+const occupiedAndWater = buildPlacementPreview(
+  precedenceWorld,
+  "building.warehouse",
+  { x: 0, y: 0 },
+  farEngineer,
+);
+const windowEdge = buildPlacementPreview(
+  precedenceWorld,
+  "building.warehouse",
+  { x: 2, y: 2 },
+  farEngineer,
+);
+check(
+  "每格原因顺序：窗口 > 占用 > 地形",
+  occupiedAndWater.tiles[0]?.reason === "blocked-occupied" &&
+    windowEdge.tiles.some((tile) => tile.reason === "blocked-window") &&
+    !windowEdge.tiles.some((tile) => tile.reason === "blocked-terrain"),
+  `${occupiedAndWater.tiles[0]?.reason} / ${windowEdge.tiles.map((tile) => tile.reason).join(",")}`,
+);
+check(
+  "状态行五种原因文本固定",
+  placementReasonText("legal") === "可建造" &&
+    placementReasonText("blocked-terrain") === "地形不可建" &&
+    placementReasonText("blocked-occupied") === "位置被占用" &&
+    placementReasonText("out-of-reach") === "超出工兵范围 16 格" &&
+    placementReasonText("blocked-window") === "超出已载入窗口",
+);
+check(
+  "幽灵颜色是画布内容：合法绿 25% 填充、阻挡红、超距琥珀",
+  PLACEMENT_LEGAL_FILL === "rgba(74, 222, 128, 0.25)" &&
+    PLACEMENT_LEGAL_STROKE.startsWith("rgba(74, 222, 128") &&
+    PLACEMENT_BLOCKED_FILL.startsWith("rgba(239, 68, 68") &&
+    PLACEMENT_BLOCKED_STROKE.startsWith("rgba(239, 68, 68") &&
+    PLACEMENT_OUT_OF_REACH_FILL.startsWith("rgba(245, 158, 11") &&
+    PLACEMENT_OUT_OF_REACH_STROKE.startsWith("rgba(245, 158, 11") &&
+    placementFillColor("legal") === PLACEMENT_LEGAL_FILL &&
+    placementFillColor("blocked") === PLACEMENT_BLOCKED_FILL &&
+    placementFillColor("out-of-reach") === PLACEMENT_OUT_OF_REACH_FILL &&
+    placementStrokeColor("legal") === PLACEMENT_LEGAL_STROKE &&
+    placementStrokeColor("blocked") === PLACEMENT_BLOCKED_STROKE &&
+    placementStrokeColor("out-of-reach") === PLACEMENT_OUT_OF_REACH_STROKE,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Minimap: layout fitting, panel<->world mapping in both directions, and the clamped camera jump
+// ---------------------------------------------------------------------------------------------
+
+/** A 64x64 window with a negative origin: the server's usual 2 * 32 window west and north of zero. */
+const squareMap = { originX: -100, originY: -50, width: 64, height: 64 };
+const squareLayout = minimapLayout(squareMap);
+check(
+  "小地图布局：64×64 窗口正好铺满 180px 面板，点是 2×2",
+  MINIMAP_PANEL_SIZE === 180 &&
+    MINIMAP_DOT_SIZE === 2 &&
+    near(squareLayout.scale, 180 / 64) &&
+    near(squareLayout.contentWidth, 180) &&
+    near(squareLayout.contentHeight, 180) &&
+    near(squareLayout.offsetX, 0) &&
+    near(squareLayout.offsetY, 0),
+  `${squareLayout.scale} / ${squareLayout.contentWidth}×${squareLayout.contentHeight}`,
+);
+const wideMap = { originX: 0, originY: 0, width: 44, height: 32 };
+const wideLayout = minimapLayout(wideMap);
+check(
+  "小地图布局：非方形窗口按比例信箱化，不被拉伸",
+  near(wideLayout.scale, 180 / 44) &&
+    near(wideLayout.contentWidth, 180) &&
+    near(wideLayout.contentHeight, (32 * 180) / 44) &&
+    near(wideLayout.offsetX, 0) &&
+    near(wideLayout.offsetY, (180 - (32 * 180) / 44) / 2),
+  `${wideLayout.scale} / ${wideLayout.contentHeight} / ${wideLayout.offsetY}`,
+);
+check(
+  "小地图映射：面板左上角就是负原点的窗口左上角，右下角是最后一格",
+  JSON.stringify(minimapPointForTile(squareMap, -100, -50)) ===
+    JSON.stringify({ x: 0, y: 0 }) &&
+    JSON.stringify(minimapTileAt(squareMap, 0, 0)) ===
+      JSON.stringify({ x: -100, y: -50 }) &&
+    JSON.stringify(minimapTileAt(squareMap, 179.999, 179.999)) ===
+      JSON.stringify({ x: -37, y: 13 }),
+  JSON.stringify(minimapTileAt(squareMap, 179.999, 179.999)),
+);
+check(
+  "小地图双向映射在负坐标下互相还原（含格内偏移）",
+  (() => {
+    const point = minimapPointForTile(squareMap, -95, -45);
+    const back = minimapTileAt(squareMap, point.x + 1, point.y + 1);
+    return (
+      near(point.x, 5 * (180 / 64)) &&
+      near(point.y, 5 * (180 / 64)) &&
+      back?.x === -95 &&
+      back?.y === -45
+    );
+  })(),
+);
+check(
+  "小地图取格使用 floor：格线属于右下方的格子",
+  (() => {
+    const boundary = minimapPointForTile(squareMap, -95, -45);
+    const before = minimapTileAt(squareMap, boundary.x - 0.001, boundary.y);
+    const on = minimapTileAt(squareMap, boundary.x, boundary.y);
+    const after = minimapTileAt(squareMap, boundary.x + squareLayout.scale + 0.001, boundary.y);
+    return before?.x === -96 && on?.x === -95 && after?.x === -94;
+  })(),
+  `${minimapTileAt(squareMap, 14.0625, 14.0625)?.x}`,
+);
+check(
+  "小地图点击在内容区外返回 null（面板外、信箱区与负数）",
+  minimapTileAt(squareMap, -0.001, 0) === null &&
+    minimapTileAt(squareMap, 0, -0.001) === null &&
+    minimapTileAt(squareMap, 180, 90) === null &&
+    minimapTileAt(wideMap, 90, 5) === null &&
+    minimapTileAt(wideMap, 100, 100)?.x === 24 &&
+    minimapTileAt(wideMap, 100, 100)?.y === 18 &&
+    minimapCameraTarget(squareMap, -5, 0, 32) === null,
+  JSON.stringify(minimapTileAt(wideMap, 100, 100)),
+);
+check(
+  "小地图点击把落点格的格中心设为镜头中心",
+  (() => {
+    const target = minimapCameraTarget({ originX: 10, originY: 20, width: 2, height: 2 }, 45, 45, 32);
+    return target !== null && near(target.x, 10.5 * 32) && near(target.y, 20.5 * 32);
+  })(),
+  JSON.stringify(
+    minimapCameraTarget({ originX: 10, originY: 20, width: 2, height: 2 }, 45, 45, 32),
+  ),
+);
+check(
+  "小地图镜头跳转被夹在 ±500000 瓦片安全边界上",
+  (() => {
+    const target = minimapCameraTarget(
+      { originX: 600_000, originY: -600_000, width: 2, height: 2 },
+      45,
+      45,
+      32,
+    );
+    return (
+      target !== null &&
+      target.x === CAMERA_SAFETY_BOUND_TILES * 32 &&
+      target.y === -CAMERA_SAFETY_BOUND_TILES * 32
+    );
+  })(),
+  JSON.stringify(
+    minimapCameraTarget({ originX: 600_000, originY: -600_000, width: 2, height: 2 }, 45, 45, 32),
   ),
 );
 

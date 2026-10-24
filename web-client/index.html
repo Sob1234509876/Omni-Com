@@ -85,6 +85,34 @@
         outline-offset: -2px;
       }
 
+      /* The minimap is a fixed square of greyscale chrome in the bottom-left corner of the view. It
+         owns only its own canvas area, so it never swallows pointer input meant for the world view,
+         and it is a small panel rather than a scrim, so the game view keeps its full brightness. */
+      .minimap {
+        position: absolute;
+        left: 14px;
+        bottom: 14px;
+        z-index: 2;
+        width: 180px;
+        height: 180px;
+        overflow: hidden;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      /* Terrain, ownership dots and the white camera outline are canvas content; the panel around
+         them is the only chrome. */
+      #minimap-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+        touch-action: none;
+      }
+
       .hud {
         position: absolute;
         top: 14px;
@@ -767,6 +795,14 @@
     <main class="app">
       <section id="game-view" class="stage" aria-label="游戏画面">
         <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面"></canvas>
+        <div id="minimap" class="minimap">
+          <canvas
+            id="minimap-canvas"
+            width="180"
+            height="180"
+            aria-label="小地图：显示已载入窗口，点击或拖动移动镜头"
+          ></canvas>
+        </div>
         <div class="hud" aria-live="off">
           <span id="hud-atlas">procedural</span>
           <span id="hud-world">世界：demo</span>
@@ -791,7 +827,7 @@
         <p class="controls-hint">
           左键点选 · Shift+左键加减选单个单位 · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
           · 右键移动/攻击所有选中单位 · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
-          · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
+          · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消 · 小地图左键/拖动移动镜头
         </p>
       </section>
 
@@ -910,7 +946,9 @@
           <p class="footnote">
             左键点选，Shift+左键加减选单个单位，空地左键拖拽框选自己的单位；右键对所有选中单位发
             <code>ORDER MOVE</code>（目标是敌方实体时发 <code>ORDER ATTACK</code>），STOP 停止所有选中单位。
-            BUILD 按钮进入放置模式后，下一次左键点地面才发 <code>BUILD</code>，<kbd>Esc</kbd> 取消放置。
+            BUILD 按钮进入放置模式后，鼠标下的建筑足迹会先按格预览：绿色可建造、红色被地形/实体/窗口阻挡、
+            琥珀色超出工兵 16 格范围；只有绿色位置才会发 <code>BUILD</code>，非法位置保持放置模式并报告原因，
+            <kbd>Esc</kbd> 取消放置。左下角小地图显示已载入窗口，左键点击或拖动可移动镜头。
           </p>
         </section>
 
