@@ -58,6 +58,7 @@ import {
   queueMarkerText,
   queueProgressRatio,
   sizeLabel,
+  unitCargoLabel,
   warehouseContentsLabel,
 } from "../src/render/status.ts";
 import {
@@ -162,6 +163,7 @@ import {
   doubleClickSelection,
   engineerSelection,
   isEngineerKind,
+  selectByPriority,
 } from "../src/render/selection.ts";
 import {
   ATTACK_MOVE_ACTION_LABEL,
@@ -399,8 +401,12 @@ const marqueeWorld: WorldView = {
 const marqueeSquare = { minX: 2, minY: 2, maxX: 4, maxY: 4 };
 const marqueeIds = marqueeSelection(marqueeWorld, marqueeSquare, 1);
 check(
-  "框选只选自己的单位：敌人、中立、自己的建筑都被排除",
-  JSON.stringify(marqueeIds) === JSON.stringify([1, 2]),
+  "框选优先级：战斗单位压过工兵与建筑，敌人和中立永不入选",
+  JSON.stringify(marqueeIds) === JSON.stringify([2]) &&
+    !marqueeIds.includes(3) &&
+    !marqueeIds.includes(4) &&
+    !marqueeIds.includes(6) &&
+    !marqueeIds.includes(7),
   marqueeIds.join(","),
 );
 check(
@@ -414,6 +420,91 @@ check(
       false &&
     entityInMarquee({ id: 10, kind: "worker", x: 4.999, y: 4.999, playerId: 1 }, marqueeSquare, 1) ===
       true,
+);
+check(
+  "框选的几何判定接受自己的建筑，但仍拒绝敌人与中立",
+  entityInMarquee({ id: 11, kind: "building.warehouse", x: 3, y: 3, playerId: 1 }, marqueeSquare, 1) ===
+    true &&
+    entityInMarquee({ id: 12, kind: "building.warehouse", x: 3, y: 3, playerId: 2 }, marqueeSquare, 1) ===
+      false &&
+    entityInMarquee({ id: 13, kind: "building.warehouse", x: 3, y: 3, playerId: 0 }, marqueeSquare, 1) ===
+      false,
+);
+
+// A marquee that covers only own builders and own buildings keeps the builders: the engineer group
+// outranks the building group. The enemy engineer must not join it.
+const builderWorld: WorldView = {
+  ...marqueeWorld,
+  entities: [
+    { id: 1, kind: "unit.engineer", x: 3, y: 3, playerId: 1 },
+    { id: 2, kind: "building.warehouse", x: 2.5, y: 2.5, playerId: 1 },
+    { id: 3, kind: "unit.engineer", x: 3, y: 3, playerId: 2 },
+  ],
+};
+const builderIds = marqueeSelection(builderWorld, marqueeSquare, 1);
+check(
+  "框选优先级：工兵压过建筑，敌人的工兵不入选",
+  JSON.stringify(builderIds) === JSON.stringify([1]),
+  builderIds.join(","),
+);
+
+// With no unit at all the marquee falls through to the own buildings it covers, enemy buildings stay out.
+const buildingWorld: WorldView = {
+  ...marqueeWorld,
+  entities: [
+    { id: 1, kind: "building.warehouse", x: 2.5, y: 2.5, playerId: 1 },
+    { id: 2, kind: "building.lumbercamp.t1", x: 3, y: 3, playerId: 1 },
+    { id: 3, kind: "building.warehouse", x: 3, y: 3, playerId: 2 },
+  ],
+};
+const buildingIds = marqueeSelection(buildingWorld, marqueeSquare, 1);
+check(
+  "框选只覆盖建筑时选中自己的全部建筑（敌人建筑除外）",
+  JSON.stringify(buildingIds) === JSON.stringify([1, 2]),
+  buildingIds.join(","),
+);
+
+// The same priority rule as a pure function, so the group choice can be read without a world or window.
+const priorityEntities: EntityView[] = [
+  { id: 21, kind: "unit.melee.t1", x: 2, y: 2, playerId: 1 },
+  { id: 22, kind: "unit.melee.t2", x: 3, y: 3, playerId: 1 },
+  { id: 23, kind: "unit.engineer", x: 3, y: 3, playerId: 1 },
+  { id: 24, kind: "building.warehouse", x: 3, y: 3, playerId: 1 },
+];
+check(
+  "selectByPriority：战斗组存在时只选战斗单位，混编的战斗单位都入选",
+  JSON.stringify(selectByPriority(priorityEntities)) === JSON.stringify([21, 22]),
+  selectByPriority(priorityEntities).join(","),
+);
+check(
+  "selectByPriority：没有战斗单位时工兵压过建筑",
+  JSON.stringify(selectByPriority(priorityEntities.slice(2))) === JSON.stringify([23]) &&
+    JSON.stringify(selectByPriority([priorityEntities[3]!])) === JSON.stringify([24]),
+  `${selectByPriority(priorityEntities.slice(2)).join(",")} / ${selectByPriority([priorityEntities[3]!]).join(",")}`,
+);
+check(
+  "空框选（没有实体）不选中任何东西",
+  selectByPriority([]).length === 0 &&
+    marqueeSelection({ ...marqueeWorld, entities: [] }, marqueeSquare, 1).length === 0 &&
+    marqueeSelection(buildingWorld, marqueeSquare, null).length === 0,
+  `${selectByPriority([]).length} / ${marqueeSelection({ ...marqueeWorld, entities: [] }, marqueeSquare, 1).length} / ${marqueeSelection(buildingWorld, marqueeSquare, null).length}`,
+);
+
+// Ownership is repeated by the optional player id, so a direct caller also cannot select an enemy or
+// neutral entity even when it is attack capable.
+const ownershipWorld: WorldView = {
+  ...marqueeWorld,
+  entities: [
+    { id: 1, kind: "unit.melee.t1", x: 3, y: 3, playerId: 2 },
+    { id: 2, kind: "unit.melee.t1", x: 3, y: 3, playerId: 0 },
+    { id: 3, kind: "building.warehouse", x: 3, y: 3, playerId: 1 },
+  ],
+};
+check(
+  "框选：敌人的战斗单位与中立实体不入选，自己的建筑照常入选",
+  JSON.stringify(marqueeSelection(ownershipWorld, marqueeSquare, 1)) === JSON.stringify([3]) &&
+    JSON.stringify(selectByPriority(ownershipWorld.entities, 1)) === JSON.stringify([3]),
+  marqueeSelection(ownershipWorld, marqueeSquare, 1).join(","),
 );
 check(
   "Shift 切换：先加后减，顺序稳定且不会重复",
@@ -771,6 +862,42 @@ check(
     warehouseContentsLabel({ id: 9, kind: "building.warehouse", x: 0, y: 0 }) === null &&
     warehouseContentsLabel({ ...detailedWarehouse, contents: { ore: 7 } }) === "库存：ore 7",
   detailedWarehouse === undefined ? "missing" : String(warehouseContentsLabel(detailedWarehouse)),
+);
+
+// The unit cargo line: one item, two items in the same fixed order, no cargo at all, and an item the
+// manifest does not know, which must keep its raw path instead of being hidden or renamed.
+const cargoNames: Readonly<Record<string, string>> = { gold: "金币", wood: "木材" };
+const cargoLabelFor = (path: string): string => cargoNames[path] ?? path;
+const cargoUnit: EntityView = {
+  id: 42,
+  kind: "unit.engineer",
+  x: 0,
+  y: 0,
+  contents: { gold: 7 },
+};
+check(
+  "携带标签：一个物品输出 携带：金币 7",
+  unitCargoLabel(cargoUnit, cargoLabelFor) === "携带：金币 7",
+  String(unitCargoLabel(cargoUnit, cargoLabelFor)),
+);
+check(
+  "携带标签：两个物品按固定顺序输出 携带：金币 7 · 木材 3",
+  unitCargoLabel({ ...cargoUnit, contents: { gold: 7, wood: 3 } }, cargoLabelFor) ===
+    "携带：金币 7 · 木材 3",
+  String(unitCargoLabel({ ...cargoUnit, contents: { gold: 7, wood: 3 } }, cargoLabelFor)),
+);
+check(
+  "携带标签：没有货物时不显示任何行",
+  unitCargoLabel({ ...cargoUnit, contents: undefined }, cargoLabelFor) === null &&
+    unitCargoLabel({ ...cargoUnit, contents: {} }, cargoLabelFor) === null &&
+    unitCargoLabel({ ...cargoUnit, contents: { gold: 0 } }, cargoLabelFor) === null,
+  String(unitCargoLabel({ ...cargoUnit, contents: {} }, cargoLabelFor)),
+);
+check(
+  "携带标签：清单里没有的物品回退到原始路径",
+  unitCargoLabel({ ...cargoUnit, contents: { "oc:unobtainium": 2 } }, cargoLabelFor) ===
+    "携带：oc:unobtainium 2",
+  String(unitCargoLabel({ ...cargoUnit, contents: { "oc:unobtainium": 2 } }, cargoLabelFor)),
 );
 check(
   "在建判定只对未完工的建筑成立（单位血量不算在建）",

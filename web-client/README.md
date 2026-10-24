@@ -30,7 +30,7 @@ That gives two hard rules:
 | Requirement | Version |
 | --- | --- |
 | Node.js | 18+ (required by Vite 6; 20+ recommended; `pnpm check:render` executes TypeScript directly and needs 24+) |
-| pnpm | 9+; `package.json` declares `packageManager: "pnpm@9"` |
+| pnpm | 10+; `package.json` declares `packageManager: "pnpm@10"` |
 | Browser | a modern browser with native ES modules, WebSocket, and WebCrypto |
 
 Dependency ranges are pinned in `package.json`: `typescript` **^6.0.3** and `vite` **^6.0.0** (resolving to Vite 6.x).
@@ -76,8 +76,8 @@ timeout (`/world/snapshot` is plain HTTP and does not refresh the socket); the `
 The permanent protocol log panel is gone. Each command/answer exchange now appears as a toast in the bottom-right corner,
 **above the three-zone bottom bar** (the stack is raised by the bar's height so the two never overlap): one line for the
 sent command (`→`) and one for the answer (`←`), both trimmed to a single line so the whole exchange fits one or two
-lines. A normal toast fades after about **4 seconds**; an error toast �?an `ERR ...` answer or a client-side refusal such
-as "log in first" �?stays about **8 seconds** and is set apart by brightness and weight only (white border and bold white
+lines. A normal toast fades after about **4 seconds**; an error toast —an `ERR ...` answer or a client-side refusal such
+as "log in first" —stays about **8 seconds** and is set apart by brightness and weight only (white border and bold white
 text), because the page chrome is greyscale. The newest toast is on top, at most **5** are visible, and a sixth push drops
 the oldest. Batch orders use one toast whose command and answer halves join the per-unit lines with ` · `.
 Snapshot-diff events (`建筑完成：…` / `遭到攻击：…`) use the same info toast (no command half) and are also written to the history.
@@ -107,15 +107,15 @@ pnpm dev
 Just open the address Vite prints; the view can be seen even when the Java server is not running, only the connection
 panel cannot connect. The **隐藏游戏画面 / 显示游戏画面** button in the top-right chrome hides the canvas, HUD and bottom
 bar and opens the connection panel in the old full-page console role; toggling back closes it again. The toast stack and
-the **日志** history overlay work in either view. (The page's own interface is currently Chinese �?`index.html` has
-`lang="zh-CN"` �?so the on-screen labels differ from these English names.)
+the **日志** history overlay work in either view. (The page's own interface is currently Chinese —`index.html` has
+`lang="zh-CN"` —so the on-screen labels differ from these English names.)
 
 **Three bottom zones.** The bottom bar is one CSS grid, so the three zones never overlap:
 
-- **bottom-left �?minimap:** the same fixed **180x180** panel on its own canvas, with the same click/drag camera
+- **bottom-left —minimap:** the same fixed **180x180** panel on its own canvas, with the same click/drag camera
   mapping as before. It is now the first grid cell instead of an absolutely positioned square, but visually and
   behaviourally it is still the bottom-left corner.
-- **bottom-centre �?command bar:** context sensitive. With nothing selected it shows exactly one hint line. With units
+- **bottom-centre —command bar:** context sensitive. With nothing selected it shows exactly one hint line. With units
   selected it shows the unit actions **停止** (`ORDER STOP`) and **攻击移动** (`ORDER ATTACKMOVE`, armed and then aimed
   with the next left click), plus the **selected-units strip**. Each chip shows the manifest name's first two
   characters and a thin health bar coloured by the same ownership rule as the ground rings and minimap dots (mine blue,
@@ -123,7 +123,7 @@ the **日志** history overlay work in either view. (The page's own interface is
   selected unit up to the first **12**, then a `+N` chip for the rest; clicking a chip replaces the selection with just
   that unit. The command bar always shows the current hint / armed-mode reminder, and an engineer selection
   additionally lists that engineer's **BUILD** entries in the context zone.
-- **bottom-right �?context panel:** for a selected own building it shows the **TRAIN** entries and the production queue
+- **bottom-right —context panel:** for a selected own building it shows the **TRAIN** entries and the production queue
   list (the same per-item `ticks / total` rows as before); for a selected engineer it shows the **BUILD** entries;
   otherwise it stays empty. A building's queue is still shown for an enemy building, because it is read-only
   information rather than an action.
@@ -135,15 +135,15 @@ sends a command the selection does not justify. The pure rule lives in [`src/ren
 
 **Smaller windows.** At 1280x720 and larger the three zones fit without touching each other, the minimap or the toast
 stack: the minimap is a 180px grid column and the toast stack is raised above the fixed-height bar. Below **1100px** the
-minimap shrinks to 140px and the context zone narrows to 220�?80px; below **900px** the HUD moves below the top-right
+minimap shrinks to 140px and the context zone narrows to 220—280px; below **900px** the HUD moves below the top-right
 chrome so the two do not share a row; below **760px** the minimap is hidden and the bottom bar stacks the command bar
 above the context zone (the context zone scrolls internally); below **520px** the warehouse panel is hidden and the
 top-right chrome / HUD use the full width. On a very short viewport (roughly below 520px tall) the bottom bar keeps its
 height and its panels scroll internally, and the toast stack keeps its place above it; the canvas behind remains
 usable but has less room.
 
-**Monochrome chrome.** The page chrome �?panels, buttons, headings, HUD chips, the log, the command bar, the context
-panel, the minimap frame and the status chip �?is deliberately greyscale, with no hue at all; the error state is bright
+**Monochrome chrome.** The page chrome —panels, buttons, headings, HUD chips, the log, the command bar, the context
+panel, the minimap frame and the status chip —is deliberately greyscale, with no hue at all; the error state is bright
 white text with a white left bar rather than red. The canvas is the exception: it is game content, so it keeps its own
 colours, and so do the minimap's terrain, ownership dots and white camera outline, the build-placement ghost's
 green/red/amber tiles and the chips' ownership-coloured health bars. Every floating surface is also **translucent**: the
@@ -151,29 +151,38 @@ HUD chips, the minimap panel, the command bar, the context panel, the warehouse 
 the hover tooltip, the toast stack and the log-overlay panel use `rgba(0, 0, 0, 0.72)` with a 1px grey border, no blur
 and no glow (`backdrop-filter: none`), so the game view stays visible behind them. Text on those surfaces is `#e6e6e6`
 or white, which keeps at least 7:1 contrast even over the brightest terrain, and nothing ever puts a scrim or a filter
-over the canvas �?the connection- and log-overlay containers are transparent and only their panels are darkened. The tab
+over the canvas —the connection- and log-overlay containers are transparent and only their panels are darkened. The tab
 icon comes from [`oc.png`](public/oc.png) (copied unchanged from the repository-root `oc.png`), referenced by the
 `icon` and `apple-touch-icon` links in `index.html`.
 
 The HUD is pinned to the top-left corner of the view and shows, in real time:
 
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
-- Camera coordinates and window origin: `坐标�?1234,-567 · 窗口�?1250,-582`. Both may be negative and keep counting as the owner pans; the window origin changes as the camera streams a new window. On the demo map the chip starts at `坐标�?2,16 · 窗口�?,0` (the demo island is its own window at origin `0,0`);
+- Camera coordinates and window origin: `坐标：1234,-567 · 窗口：1250,-582`. Both may be negative and keep counting as the owner pans; the window origin changes as the camera streams a new window. On the demo map the chip starts at `坐标：2,16 · 窗口：,0` (the demo island is its own window at origin `0,0`);
 - Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
-- the engine player id answered by `WHOAMI` (`玩家�?`; `玩家：—` before login, cleared again on every reconnect);
-- the local player's resources and income rates from the `players` row whose id matches `WHOAMI`: `资源：alice · �?300 (+30/�? · �?60 (+20/�?`. The rate suffix comes from `goldPerMinute` / `woodPerMinute` and is omitted when an older snapshot lacks those fields (and `+0/分` is shown when a new server reports zero, so the operator can see that no mine is running). The label greys out and shows dashes (`资源：金 �?· �?—`) while the world has no row for the player yet - before login, on the demo map, or against an older server whose snapshot has no `players` field;
+- the engine player id answered by `WHOAMI` (`玩家：`; `玩家：—` before login, cleared again on every reconnect);
+- the local player's resources and income rates from the `players` row whose id matches `WHOAMI`: `资源：alice · 金 300 (+30/分) · 木 60 (+20/分)`. The rate suffix comes from `goldPerMinute` / `woodPerMinute` and is omitted when an older snapshot lacks those fields (and `+0/分` is shown when a new server reports zero, so the operator can see that no mine is running). The label greys out and shows dashes (`资源：金 —· 木—`) while the world has no row for the player yet - before login, on the demo map, or against an older server whose snapshot has no `players` field;
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普�?[我] (12.5, 8.5)`) when exactly one entity is selected; the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (�?`), and `选中：无` means nothing is selected. With more than one unit selected the same chip becomes `已选：3 个单位`, and the single-entity detail plus the building chip are intentionally suppressed;
-- the display name and id of the selected building (`建筑：兵工厂 1 �?#42`), own or enemy, again falling back to the raw kind (`建筑：building.armory.t1 #42`). When the snapshot carries the footprint, the chip appends it as `· 尺寸�?×3`, and while the building is under construction a small inline bar shows the completion percentage (`�?42%`). A selected warehouse also appends its stored items, for example `· 库存：金 120 · �?40`; only positive amounts are shown, in a fixed gold/wood order. A snapshot without `w`/`h`/`progress`/`contents` (an older server, the demo world) simply omits those parts;
-- for the selected building, one small row per unfinished production job under the building chip: the manifest display name (raw `kind` when the manifest has no name), a thin `ticks / total` bar and the one-based `i/n` (`普�?▮▮�?1/2`). A job that has not started reports `ticks === total`, so its bar starts empty. The canvas keeps the existing `生产�?×N` marker; a legacy snapshot with `queue` but no `queueItems` shows the marker and no per-item rows.
+- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通[我] (12.5, 8.5)`) when exactly one entity is selected; the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (12.5, 8.5)`), and `选中：无` means nothing is selected. With more than one unit selected the same chip becomes `已选：3 个实体`, and the single-entity detail plus the building chip are intentionally suppressed;
+- when exactly one **own unit** is selected and its `contents` object is non-empty, the same row appends its cargo: `· 携带：金 7 · 木 3`. The item name comes from the plugin manifest first and the classic `金` / `木` labels second; a path the manifest does not know keeps its raw path. A unit with no cargo (or an older snapshot without `contents`) adds nothing at all, and an enemy unit never shows a cargo line. The pure formatter is `unitCargoLabel` in [`src/render/status.ts`](src/render/status.ts);
+- the display name and id of the selected building (`建筑：兵工厂 1 级 #42`), own or enemy, again falling back to the raw kind (`建筑：building.armory.t1 #42`). When the snapshot carries the footprint, the chip appends it as `· 尺寸：3×3`, and while the building is under construction a small inline bar shows the completion percentage (`▮42%`). A selected warehouse also appends its stored items, for example `· 库存：金 120 · 木40`; only positive amounts are shown, in a fixed gold/wood order. A snapshot without `w`/`h`/`progress`/`contents` (an older server, the demo world) simply omits those parts;
+- for the selected building, one small row per unfinished production job under the building chip: the manifest display name (raw `kind` when the manifest has no name), a thin `ticks / total` bar and the one-based `i/n` (`普通▮▮▮1/2`). A job that has not started reports `ticks === total`, so its bar starts empty. The canvas keeps the existing `生产中×N` marker; a legacy snapshot with `queue` but no `queueItems` shows the marker and no per-item rows.
+
+**Marquee selection priority.** A marquee can cover units and buildings at the same time, so the selection follows one rule. Among the own entities the rectangle covers, only the **highest priority group that is present** is selected:
+
+1. **combat units** - an own unit whose optional `role` is `combat` or whose optional `attackDamage` is positive; the current wire format carries neither, so the classic `unit.melee.*` line (and the demo's `soldier`) is recognised from the content path instead. Mixed combat kinds are allowed in one selection;
+2. **builder units** - own engineers (`unit.engineer` / `engineer`, including a namespaced path);
+3. **buildings** - own buildings, and only when no own unit is covered at all, so a marquee that contains only buildings selects every own building inside it.
+
+The groups are exclusive: a combat unit anywhere in the rectangle suppresses every builder and building, and a builder suppresses every building. Enemy and neutral entities never qualify, and an empty marquee selects nothing. The pure rule is `selectByPriority` in [`src/render/selection.ts`](src/render/selection.ts); `marqueeSelection` in [`src/render/view.ts`](src/render/view.ts) collects the own, in-window candidates and applies it. A plain click keeps its old rule (a building is selected by just clicking it) and Shift+click adds or removes either a unit or a building regardless of this priority.
 
 **Double-click selection.** A double click acts on the whole loaded window, not only the clicked entity. On a unit it replaces the selection with every **own unit of the same kind whose ground tile is inside the loaded window** (the same visibility rule the renderer and the picker use); on a building - own, enemy or neutral - it selects just that building. It always replaces the selection and never merges into it. A drag is never part of a double click: the mouseup that ends a marquee, or a click that follows a camera/entity drag, cannot complete one, and the two clicks must land on the same target within 350 ms without moving more than 6 px.
 
-**Hover tooltip.** While the game view is visible and the pointer rests on an entity, a small tooltip follows the cursor. It is a DOM element, not canvas: it shows the manifest display name, the ownership tag (`我` / `敌` / `中立`), the health percentage and - for a building - the reported footprint (`尺寸�?×3`) and the queue summary (`生产�?×N`). It is greyscale and translucent like the other chrome, sets `pointer-events: none` so it never steals a click, stays hidden during a marquee or an armed BUILD placement, and is clamped inside the browser window (near an edge it flips to the left of or above the cursor). A snapshot without `health` / `w` / `h` / `queue` omits those parts instead of inventing values.
+**Hover tooltip.** While the game view is visible and the pointer rests on an entity, a small tooltip follows the cursor. It is a DOM element, not canvas: it shows the manifest display name, the ownership tag (`我` / `敌` / `中立`), the health percentage and - for a building - the reported footprint (`尺寸：3×3`) and the queue summary (`生产中×N`). It is greyscale and translucent like the other chrome, sets `pointer-events: none` so it never steals a click, stays hidden during a marquee or an armed BUILD placement, and is clamped inside the browser window (near an edge it flips to the left of or above the cursor). A snapshot without `health` / `w` / `h` / `queue` omits those parts instead of inventing values.
 
-**Derived events.** The server has no event feed, so the client compares consecutive snapshots. A building that was not finished (`progress !== 1`) and now reports `progress === 1` toasts `建筑完成�?name>`; a player-owned entity whose health ratio dropped by at least 10 percentage points toasts `遭到攻击�?name>`. Only entities present in both snapshots are compared, and one entity is de-duplicated for five seconds, so a fight that drains health over several 500 ms polls does not toast on every poll. This is entirely client-side - no protocol or server change.
+**Derived events.** The server has no event feed, so the client compares consecutive snapshots. A building that was not finished (`progress !== 1`) and now reports `progress === 1` toasts `建筑完成：<name>`; a player-owned entity whose health ratio dropped by at least 10 percentage points toasts `遭到攻击：<name>`. Only entities present in both snapshots are compared, and one entity is de-duplicated for five seconds, so a fight that drains health over several 500 ms polls does not toast on every poll. This is entirely client-side - no protocol or server change.
 
 **Warehouse panel.** The top-right corner of the view holds a small **read-only** total of the local player's warehouses: the `contents` objects of all own buildings are summed per item, labelled with the item's display name and sorted by name. With no own warehouse it says `未发现自己的仓库`; an empty warehouse reports an empty total. The panel only reads the snapshot. It does not add a "marked resource" or resource-selection feature, because the server has neither and the client cannot honestly invent one.
 
@@ -204,8 +213,9 @@ consumes: terrain content paths become terrain ids, `originX` / `originY` are ke
 snapshot without that field stays valid, so an older server keeps working). The optional entity detail fields are
 additive too: `w` / `h` become `footprint`, `progress` becomes a clamped fraction, `queue` / `queueTicks` become the
 production queue size and the remaining ticks of the running job, `queueItems` becomes a validated array of
-`kind` / `ticks` / `total` jobs (a malformed entry is dropped), and a warehouse's `contents` becomes a validated
-object of positive integer amounts. Player rows keep the optional `goldPerMinute` / `woodPerMinute` as numbers, or
+`kind` / `ticks` / `total` jobs (a malformed entry is dropped), and `contents` becomes a validated object of
+positive integer amounts: a warehouse reports its stored items there, and a carrying unit reports its cargo in
+the same shape. Player rows keep the optional `goldPerMinute` / `woodPerMinute` as numbers, or
 leave them `undefined` for an older server. A snapshot without any of them converts exactly as before; a malformed
 optional field is ignored rather than rejecting the world.
 `terrainAt` translates an absolute tile by
@@ -231,7 +241,7 @@ and that bound is not gameplay: it exists because the engine stores positions in
 resolution is already about one world pixel near that magnitude. The camera is built once and is never rebuilt when a
 window arrives: a snapshot only changes which terrain is loaded, not where the camera may go. Panning therefore keeps
 working in every direction, into negative coordinates and far past the spawn. The HUD shows the camera coordinates and
-the loaded window origin (`坐标�?1234,-567 · 窗口�?1250,-582`), so the owner can watch both go negative and keep
+the loaded window origin (`坐标：1234,-567 · 窗口：1250,-582`), so the owner can watch both go negative and keep
 counting.
 
 **Movement smoothness.** A snapshot only arrives every 500 ms, so drawing each one as it landed made units step. The view now
@@ -240,7 +250,7 @@ frame at `interpolate(previous, current, alphaFor(now, currentFetchedAt, WORLD_P
 [`src/render/interpolate.ts`](src/render/interpolate.ts). Entities present in both frames are linearly interpolated; one that
 appears only in the new frame appears at its new position; one that disappears is gone; and an entity that moved more than
 4 tiles between the two polls, or whose kind or owner changed, snaps to the new frame instead of sliding across the map. That
-costs one poll interval of latency �?the picture is one snapshot behind the newest one �?which is the price of smooth motion
+costs one poll interval of latency —the picture is one snapshot behind the newest one —which is the price of smooth motion
 while the server keeps sending absolute positions per tick (the protocol does not change). The demo world is unaffected: it
 has no snapshots and keeps its own animation clock. The first snapshot after a start, and the first snapshot of a
 different streamed window, have no predecessor and are drawn directly; while the tab is hidden both the poll and the
@@ -256,8 +266,8 @@ They take effect after the first click on the view; keyboard events are bound on
 | Double-click a unit | replaces the selection with every **own unit of the same kind inside the loaded window**. Enemy/neutral units of that kind and same-kind units outside the window are excluded |
 | Double-click a building | replaces the selection with just that building, own or enemy. A drag is never half of a double click, so the click that ends a marquee (or follows a drag) cannot complete one |
 | Hover an entity | shows the greyscale DOM tooltip near the cursor (name, owner tag, health, building footprint, queue summary); it is hidden during a marquee or BUILD placement |
-| Shift + left click | adds the clicked unit, or removes it when it is already selected (a building still replaces the selection, because it has no group order) |
-| Left drag on empty ground | draws a marquee rectangle and selects every **own unit** whose drawn position is inside it; the rectangle is converted from canvas space to world tiles, so it works in negative coordinates too. Enemy and neutral units and all buildings are excluded |
+| Shift + left click | adds the clicked entity, or removes it when it is already selected. It works for units **and buildings** regardless of the marquee priority, and preserves the selection order |
+| Left drag on empty ground | draws a marquee rectangle and applies the **selection priority**: own combat units if any are covered, else own builder units (engineers), else own buildings. Enemy and neutral entities are always excluded, and a rectangle that covers only buildings selects every own building inside it. The rectangle is converted from canvas space to world tiles, so it works in negative coordinates too |
 | Left drag starting on an entity | still selects that entity (it never becomes a marquee) |
 | Middle-button drag, or Space held + left drag | pans the camera. A left drag on empty ground is the marquee, so it no longer pans |
 | Right click empty ground | sends `ORDER MOVE <id> <tileX> <tileY>` for **every selected own unit**, one line per unit |
@@ -270,13 +280,13 @@ They take effect after the first click on the view; keyboard events are bound on
 | `+` / `-` | zoom in / out around the center of the view |
 | `F` | resets the camera to its starting point and 1× |
 | `O` | selects every own engineer inside the loaded window (same as the `工兵` button in the top-right chrome). The snapshot has no order state, so this is all engineers, not only idle ones |
-| `Ctrl` + `1` �?`9` (`Cmd` works too) | assigns the current selection to that control group, replacing what the group held. The selection may include a building; an empty selection clears the group |
-| `1` �?`9` | recalls that control group. Dead entity ids are pruned first; an empty group is reported as `编队 N 为空` on the status line instead of silently clearing the selection. The HUD selection line is prefixed with `编队 N ·` while the selection came from that group |
-| `Shift` + `1` �?`9` | adds the current selection to that group without removing what it already held |
+| `Ctrl` + `1` —`9` (`Cmd` works too) | assigns the current selection to that control group, replacing what the group held. The selection may include a building; an empty selection clears the group |
+| `1` —`9` | recalls that control group. Dead entity ids are pruned first; an empty group is reported as `编队 N 为空` on the status line instead of silently clearing the selection. The HUD selection line is prefixed with `编队 N ·` while the selection came from that group |
+| `Shift` + `1` —`9` | adds the current selection to that group without removing what it already held |
 | `Esc` | cancels an armed BUILD placement or attack move; with neither armed it clears the selection. While the connection overlay is open, `Esc` closes that panel first |
 
 Selection is shared by every order path: the renderer draws the gold ring on every selected entity, the HUD shows
-`已选：N 个单位` when more than one is selected, and the command bar enables **停止** as soon as at least one own unit is
+`已选：N 个实体` when more than one is selected, and the command bar enables **停止** as soon as at least one own unit is
 selected. **停止** sends `ORDER STOP <id>` for each of those units, and **攻击移动** sends one
 `ORDER ATTACKMOVE <id> <x> <y>` line per own unit after the target tile is clicked. Control groups are selection state
 too: the pure `assign` / `add` / `recall` / `prune` / `describe` rules live in
@@ -301,7 +311,7 @@ can never send an order by accident:
   replaces the selection with just that unit. A selected building is not a chip (the HUD chip and the context panel
   describe it instead).
 - With an own building selected (exactly one entity), the **bottom-right context zone** shows one
-  `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` �?`unit.melee.t5`, `unit.engineer`),
+  `TRAIN <buildingId> <unitPath>` button per catalogued unit path (`unit.melee.t1` —`unit.melee.t5`, `unit.engineer`),
   followed by the production queue rows. The button text is the manifest display name when one is available (`普通`,
   `强化`, `精英`, `将领`, `战王`, `工程师` for the classic units), with the raw path in the tooltip; without a name it
   falls back to the raw path. A tier the current armory cannot produce is still offered and the server's `ERR ...` is
@@ -310,7 +320,7 @@ can never send an order by accident:
 - With the own engineer selected (exactly one entity), the same context zone shows one
   `BUILD <engineerId> <buildingPath> <tileX> <tileY>` button per catalogued building path (`building.armory.t1`,
   `building.mine.t1`, `building.lumbercamp.t1`, `building.warehouse`). Its text is the manifest display name
-  (`兵工�?1 级`, `矿井 普通`, the lumber camp's own name when the manifest provides one) or the raw path when there is
+  (`兵工厂1 级`, `矿井 普通`, the lumber camp's own name when the manifest provides one) or the raw path when there is
   none. Pressing one arms placement: the status chip shows the mode, the whole footprint under the cursor is previewed
   with its green legal / red blocked / amber out-of-reach tiles and the reason while hovering, and only a **legal** site
   lets the next left click on the canvas send the command; the mode then clears. An illegal click keeps the mode armed,
@@ -321,7 +331,7 @@ can never send an order by accident:
   reads `混合选择只提供单位动作` and the context zone stays empty. A selection that is neither an own unit group nor exactly
   one own building/engineer (an enemy entity, several buildings) offers no actions and says why in the hint line.
 
-`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer appears in the log overlay and as an exchange toast (a group order is one toast whose command and answer halves join the per-unit lines); an `ERR ...` answer becomes an error toast and is also shown verbatim in the status chip, while a success gets a short confirmation that uses the display name and keeps the raw id in parentheses, for example `已下训练 普�?(unit.melee.t1)` or `已在 20,40 下达 BUILD 兵工�?1 �?(building.armory.t1)`. The wire command itself is unchanged and still carries `unit.melee.t1` / `building.armory.t1`. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
+`WHOAMI` is sent automatically after `LOGIN` (and on a new login) and its `OK player <id>` answer is parsed into the HUD field. Every gameplay command and answer appears in the log overlay and as an exchange toast (a group order is one toast whose command and answer halves join the per-unit lines); an `ERR ...` answer becomes an error toast and is also shown verbatim in the status chip, while a success gets a short confirmation that uses the display name and keeps the raw id in parentheses, for example `已下训练 普通(unit.melee.t1)` or `已在 20,40 下达 BUILD 兵工厂1 级(building.armory.t1)`. The wire command itself is unchanged and still carries `unit.melee.t1` / `building.armory.t1`. The catalogue lives in [`src/commands.ts`](src/commands.ts) with a comment that the server owns the truth: adding content on the server means updating that list too. The wire format takes whole tile indices; the engine interprets a `GridPos` as that tile's centre.
 
 **Textures are provided by plugins**: each plugin packs `assets/manifest.json` and images into its own jar, the server merges them into
 `GET /plugin-assets/manifest.json`, and the client reads that on startup and loads each image by its `atlasUrl`. When several plugins provide textures at once they are merged in array order,
@@ -336,7 +346,7 @@ display-only: the protocol commands keep sending the content path.
 When the manifest is missing, the request fails, an image fails to load, or the response is `[]`, the client automatically falls back to procedural drawing: every terrain type gets its own color and detail,
 units are circles, buildings are blocks with a roof line, and at higher zoom there is a 1-pixel grid. The same pass draws
 the greyscale status chrome above a building: a thin construction bar (light grey track, white fill, one-pixel border)
-while the site is unfinished, and a small `生产�?×N` marker while its production queue is non-empty. Both sit above the
+while the site is unfinished, and a small `生产中×N` marker while its production queue is non-empty. Both sit above the
 roof, so they never cover the sprite.
 
 > The initial map is the deterministic `demoWorld(seed)` placeholder. As soon as the Java server answers
@@ -348,16 +358,18 @@ cursor-centered zoom, placeholder map determinism, unbounded signed snapshot par
 translation, the 8-tile camera-driven window trigger, signed window origins and request ordering, snapshot
 interpolation and snapping, rejection of out-of-bounds atlas frames, manifest display names and raw-id fallback, the
 on-disk classic manifest, plugin atlas merging and fallback, the heartbeat constant/start rule, the marquee
-rectangle-to-negative-tile conversion and own-only containment, Shift+click toggle, the toast lifetime/cap/error-tone
-rules, the entity status rules (integer progress formatting, the bar/queue/size helpers and the optional
-`footprint` / `progress` / `queue` / `queueTicks` / `contents` fields), the warehouse stock label, the building catalogue including `building.lumbercamp.t1` and `building.warehouse`, the build-placement ghost (classic 3x3
+rectangle-to-negative-tile conversion, the marquee selection priority (combat > builders > buildings, enemy and
+neutral excluded, empty rectangle empty) with `selectByPriority`, Shift+click toggle for units and buildings, the toast
+lifetime/cap/error-tone rules, the entity status rules (integer progress formatting, the bar/queue/size helpers and the optional
+`footprint` / `progress` / `queue` / `queueTicks` / `contents` fields), the warehouse stock label, the unit cargo label
+(`携带：…` for one item, two items, none, and an unknown path falling back to the raw path), the building catalogue including `building.lumbercamp.t1` and `building.warehouse`, the build-placement ghost (classic 3x3
 footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, occupancy from the entity list, the reach boundary at 16 and 17 tiles, the blocked > out-of-reach > legal precedence and the five reason texts), the minimap (aspect-fit layout, floor-based panel-to-world mapping in both directions including negative origins, and the safety-bound camera jump), the double-click same-kind rule (own only, in-window only, the building case), the engineer selection rule, the tooltip text composition and window clamping, the snapshot diff events (the 10% health-drop threshold and the five-second per-entity de-duplication), the warehouse total aggregation, and the command bar (the action set for nothing / units / engineer / building / a mixed unit-and-building selection with its unit-actions-only rule, the 12-chip cap and `+N` overflow, the two-character chip abbreviation for single-character and digit-leading names, and the health-bar ratio at 0 / 50 / 100 % with an absent report treated as full) can be checked offline:
 
 ```shell
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 270 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 291 passing checks.
 
 ## hello plugin demo
 
@@ -378,7 +390,7 @@ pnpm install && pnpm dev
 the file in `projects/oc/oc-game-server-hello/build/libs/` is authoritative.
 
 This jar also carries `assets/manifest.json` and a 128x128 `assets/atlas.png` (8x8 cells of 16x16): with the jar in `plugins/` and the server started, the
-browser view automatically renders all seven terrain content paths �?`water`, `sand`, `grass`, `forest`, `hill`, `rock`, `void` �?from that atlas. The manifest holds 20 tile rectangles (16 art tiles plus the four alias keys `forest`, `hill`, `rock`, `void`) and an empty `entities`, so units fall back to procedural shapes. This step demonstrates the whole chain from a plugin resource in the jar to the server route to the screen.
+browser view automatically renders all seven terrain content paths —`water`, `sand`, `grass`, `forest`, `hill`, `rock`, `void` —from that atlas. The manifest holds 20 tile rectangles (16 art tiles plus the four alias keys `forest`, `hill`, `rock`, `void`) and an empty `entities`, so units fall back to procedural shapes. This step demonstrates the whole chain from a plugin resource in the jar to the server route to the screen.
 No images need to be put into `public/`.
 
 `plugins/` is the operator drop zone: plugin jars and the jars they depend on all live at this level; see
@@ -422,7 +434,7 @@ SSH port forwarding, or an HTTPS reverse proxy.
 
 The connection overlay still offers only `PING`, `COUNT`, `REGISTER`, `LOGIN`, `REQ engine-info`, `REQ hello`, and
 `QUIT`; apart from `REGISTER` creating an account, none of those changes game state. The bottom command bar and its
-context zone send the server's gameplay grammar �?`WHOAMI`, `ORDER`, `BUILD`, and `TRAIN` �?which **does** change the
+context zone send the server's gameplay grammar —`WHOAMI`, `ORDER`, `BUILD`, and `TRAIN` —which **does** change the
 world: orders move and fight, `BUILD` places and pays for a site, and `TRAIN` queues a unit. Every gameplay
 command requires a successful `LOGIN` on the same connection and is validated by the server against ownership,
 entity existence, the served content, and the player's stock. The page never changes server configuration, the
@@ -446,26 +458,26 @@ plugin directory, or an account's password/permissions.
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
 | `src/toast.ts` | pure toast rules: 4 s / 8 s lifetimes, `ERR`/refusal tone, the five-toast cap, and one-line trimming |
 | `src/toastview.ts` | DOM half of the toast stack: one exchange element with `→`/`←` lines, per-toast timers, newest on top, oldest dropped |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM and its measurement, the read-only warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, and the minimap render plus its click/drag camera jump |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the Shift-click toggle for units and buildings, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the single-own-unit cargo line (`携带：…`), the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM and its measurement, the read-only warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, and the minimap render plus its click/drag camera jump |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, floor-based camera focus tile, and the ±500,000-tile numeric safety bound for the unbounded world |
 | `src/render/atlas.ts` | plugin manifest parsing (frames and display names), composite atlas (last wins), label helpers with raw-id fallback, and image loading; returns `null` on failure |
-| `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring, the thin ownership ring, the greyscale building construction bar and the `生产�?×N` queue marker drawn when there is no atlas |
-| `src/render/status.ts` | pure status chrome: percentage formatting, the clamped bar ratio, the `生产�?×N` marker text, the `尺寸：W×H` size label, the warehouse stock label and shared item display names, the `(+N/�?` income suffix and the per-queue-item bar ratio / `i/n` label, all tolerating the optional snapshot fields |
-| `src/render/selection.ts` | pure whole-world selection rules: the double-click same-kind rule (own and in-window only, the single-building case) and the all-own-engineers shortcut, with the engine kind test `unit.engineer` / `engineer` |
+| `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring, the thin ownership ring, the greyscale building construction bar and the `生产中×N` queue marker drawn when there is no atlas |
+| `src/render/status.ts` | pure status chrome: percentage formatting, the clamped bar ratio, the `生产中×N` marker text, the `尺寸：W×H` size label, the warehouse stock label (`库存：…`), the unit cargo label (`携带：…`, manifest names with a raw-path fallback) and shared item display names, the `(+N/分` income suffix and the per-queue-item bar ratio / `i/n` label, all tolerating the optional snapshot fields |
+| `src/render/selection.ts` | pure selection rules: the marquee priority (`selectByPriority`: combat units, else builders/engineers, else buildings, own only), the double-click same-kind rule (own and in-window only, the single-building case) and the all-own-engineers shortcut, with the combat-kind and `unit.engineer` / `engineer` tests |
 | `src/render/commandbar.ts` | pure command-bar rules: the action set for nothing / units / an own engineer / an own building / a mixed unit-and-building selection (unit actions only), the selected-units chip list capped at 12 plus `+N`, the two-character manifest-name abbreviation, and the clamped health-bar ratio with an absent report treated as full |
 | `src/render/tooltip.ts` | pure hover-tooltip rules: display name plus owner tag, optional health percentage, building footprint and queue summary, and the window-edge clamp with its cursor gap |
-| `src/render/events.ts` | pure snapshot diff events: building completion (`progress !== 1` �?`1`), a 10-point health drop, and the five-second per-entity de-duplicator |
+| `src/render/events.ts` | pure snapshot diff events: building completion (`progress !== 1` →`1`), a 10-point health drop, and the five-second per-entity de-duplicator |
 | `src/render/resources.ts` | pure read-only warehouse total: sum the `contents` of own buildings, label items, sort by display name, and count own warehouses |
 | `src/render/interpolate.ts` | pure snapshot interpolation: `Frame`, `alphaFor` for one poll interval, and `interpolate` with the appear/disappear/snap rules |
 | `src/render/marquee.ts` | pure marquee geometry: drag-corner normalisation and the canvas rectangle to signed world-tile range conversion, plus the Shift+click add/remove rule |
 | `src/render/stream.ts` | pure window-streaming rules: signed edge distance, the 8-tile trigger, the `centre - radius` origin for any signed centre, the duplicate-origin guard, and the monotonic request tracker |
 | `src/render/placement.ts` | pure build-placement ghost: footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, entity-footprint occupancy, the 16-tile reach approximation of the server's path rule, the blocked > out-of-reach > legal combination, the five status-line reason texts and the three ghost colours |
 | `src/render/minimap.ts` | pure minimap mapping (aspect-fit layout, floor-based panel-to-world and world-to-panel conversion for signed origins, the clamped camera target) plus the `MinimapRenderer` that draws terrain pixels, 2x2 ownership dots and the white camera rectangle on its own canvas |
-| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` / `QueueItemView` shapes (window origin and window size, no map size, optional footprint/progress/queue/queueItems/contents fields and player income rates), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, the under-construction test, own-only marquee containment, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` / `QueueItemView` shapes (window origin and window size, no map size, optional role/attackDamage/footprint/progress/queue/queueItems/contents fields and player income rates), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, the under-construction test, the own-unit-and-own-building marquee containment that feeds `selectByPriority`, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, a gold selection ring for every selected entity, the marquee rectangle, the per-tile green/red/amber placement ghost, and the construction bar / production marker above buildings |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas: click and Shift+click selection, double-click detection with the drag/marquee guard, hover entity picking for the tooltip, empty-ground marquee drag, entity drag selection, middle/Space camera pan, entity picking, right-click orders, placement clicks, the `O` engineer shortcut, and the Ctrl/Shift/plain 1..9 control-group key mapping |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates, queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, marquee selection (negative tiles, own-only containment, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, queue marker, size label, stock label, income suffix, queue-item ratio and `i/n`, under-construction test) and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition and clamping, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full) |
+| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates, queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, marquee selection (negative tiles, combat > builder > building priority, own-only candidates, empty input, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, queue marker, size label, stock label, unit cargo label with one/two/none/unknown items, income suffix, queue-item ratio and `i/n`, under-construction test) and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition and clamping, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full) |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

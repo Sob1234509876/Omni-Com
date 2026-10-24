@@ -126,9 +126,10 @@ export function itemDisplayName(path: string): string {
 /**
  * The warehouse stock chip: `库存：金 120 · 木 40`.
  *
- * Only positive integer amounts are shown, in a fixed item order, and a row with no `contents` (a unit,
- * a non-warehouse building, an empty warehouse or an older server) answers `null` so the HUD adds no
+ * Only positive integer amounts are shown, in a fixed item order, and a building with no `contents`
+ * (a non-warehouse building, an empty warehouse or an older server) answers `null` so the HUD adds no
  * label. The wording is the selection HUD's, not the wire format's: the snapshot keeps `gold` / `wood`.
+ * A unit's cargo uses {@link unitCargoLabel} instead, so the two rows cannot be confused.
  */
 export function warehouseContentsLabel(entity: EntityView): string | null {
   const contents = entity.contents;
@@ -144,4 +145,35 @@ export function warehouseContentsLabel(entity: EntityView): string | null {
     parts.push(`${itemDisplayName(path)} ${amount}`);
   }
   return parts.length === 0 ? null : `库存：${parts.join(" · ")}`;
+}
+
+/**
+ * The selected unit's cargo chip: `携带：金 120 · 木 40`.
+ *
+ * The snapshot reports a unit's cargo in the same `contents` object a warehouse uses. Only positive
+ * integer amounts are shown, in the same stable item order as the stock chip, and a unit with no cargo
+ * (or an older snapshot without `contents`) answers `null` so the HUD adds no line.
+ *
+ * `labelForPath` resolves an item path through the plugin manifest, which is where item display names
+ * live. A path the manifest does not know falls back to the path itself (`itemDisplayName` only maps
+ * the two classic items), so an unknown item is never hidden or renamed to something misleading.
+ */
+export function unitCargoLabel(
+  entity: EntityView,
+  labelForPath: (path: string) => string = itemDisplayName,
+): string | null {
+  const contents = entity.contents;
+  if (contents === undefined) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const path of Object.keys(contents).sort(compareItemPaths)) {
+    const amount = contents[path];
+    if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
+      continue;
+    }
+    const label = labelForPath(path).trim();
+    parts.push(`${label === "" ? path : label} ${amount}`);
+  }
+  return parts.length === 0 ? null : `携带：${parts.join(" · ")}`;
 }

@@ -4,8 +4,9 @@
  * The snapshot reports each warehouse's stored items in the optional `contents` object, but it has no
  * "marked resource" concept and no global inventory summary. The client therefore offers a read-only
  * total: sum the `contents` objects of the local player's buildings, label each item and sort the rows
- * by their display name. The panel never writes anything and does not invent a selection or marking
- * feature the server does not have.
+ * by their display name. A unit's `contents` is its cargo, not warehouse stock, so it is deliberately
+ * not summed here. The panel never writes anything and does not invent a selection or marking feature
+ * the server does not have.
  *
  * `scripts/check-render-math.ts` exercises this module offline; the DOM half is a tiny list in
  * `main.ts`.

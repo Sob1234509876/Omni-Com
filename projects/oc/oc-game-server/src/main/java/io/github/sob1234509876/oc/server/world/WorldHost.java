@@ -1484,14 +1484,17 @@ public final class WorldHost {
      * {@code kind} through the plugin manifest for the display name; a legacy client can ignore the whole
      * array and keep drawing the existing {@code 生产中 ×N} marker from {@code queue}.
      *
-     * <p><strong>Warehouse contents.</strong> A row describing a building whose content type is flagged
-     * as a warehouse also carries {@code contents}, a compact object of {@code path: amount} pairs for
-     * the items currently stored there, for example {@code "contents":{"gold":120,"wood":40}}. Only
-     * non-zero amounts are written and an empty warehouse omits the field; other buildings never carry
-     * it, because a producer's private buffer is not part of the logistics network. The field is
-     * additive: an older client ignores it, and a client that reads it can show the warehouse's stock
-     * in the selection HUD. It is read from {@link Building#inventory()}, the same source the player row
-     * sums, so the two cannot disagree about a stored item.
+     * <p><strong>Contents of a warehouse or a unit.</strong> A row describing a building whose content
+     * type is flagged as a warehouse also carries {@code contents}, a compact object of
+     * {@code path: amount} pairs for the items currently stored there, for example
+     * {@code "contents":{"gold":120,"wood":40}}. A row describing a unit whose cargo is non-empty carries
+     * the same object for the items it carries. Only non-zero amounts are written and an empty warehouse
+     * or an empty cargo hold omits the field; other buildings never carry it, because a producer's
+     * private buffer is not part of the logistics network. The field is additive: an older client
+     * ignores it, and a client that reads it can show the warehouse's stock or the unit's cargo in the
+     * selection HUD. It is read from {@link Building#inventory()} for a warehouse and
+     * {@link Unit#cargo()} for a unit, the same sources the logistics network uses, so the two cannot
+     * disagree about a stored or carried item.
      *
      * <p><strong>Upgrade offers.</strong> A finished building whose content type names a successor also
      * carries {@code upgrade}, for example
@@ -1696,7 +1699,7 @@ public final class WorldHost {
                     .append(",\"player\":").append(entity.owner().id().value())
                     .append(",\"health\":").append(twoDecimals(entity.health().fraction()));
             appendFootprintProgressAndQueue(json, entity, production);
-            appendWarehouseContents(json, entity);
+            appendContents(json, entity);
             appendUpgradeOffer(json, entity, goldItem, woodItem);
             json.append('}');
         }
@@ -1818,22 +1821,36 @@ public final class WorldHost {
     }
 
     /**
-     * Appends the compact inventory of a warehouse row: {@code ,"contents":{"gold":120,"wood":40}}.
+     * Appends the compact inventory of a warehouse row or a carrying unit row:
+     * {@code ,"contents":{"gold":120,"wood":40}}.
      *
-     * <p>Only a building whose type is flagged as a warehouse has an inventory that belongs to the
-     * player's logistics network, so only such a row carries the field. A producer's private input or
-     * output buffer is deliberately not reported: those goods are not spendable or stored in the same
-     * sense, and mixing them into a "stored" summary would invent a logistics view the engine does not
-     * have. Within the object only components with a non-zero amount are written, in the inventory's
-     * own insertion order (deterministic for a given command stream), and the field is omitted entirely
-     * for an empty warehouse. Amounts saturate exactly like the player row's.
+     * <p>A building only qualifies when its type is flagged as a warehouse, because only then is its
+     * inventory part of the player's logistics network; a producer's private input or output buffer is
+     * deliberately not reported, since those goods are not spendable or stored in the same sense and
+     * mixing them into a "stored" summary would invent a logistics view the engine does not have. A unit
+     * qualifies when its cargo is non-empty, because its hold is what the HUD's 携带 line describes. The
+     * object is read from {@link Building#inventory()} or {@link Unit#cargo()} respectively. Within the
+     * object only components with a non-zero amount are written, in the inventory's own insertion order
+     * (deterministic for a given command stream), and the field is omitted entirely for an empty
+     * warehouse or an empty cargo hold. Amounts saturate exactly like the player row's.
      */
-    private static void appendWarehouseContents(StringBuilder json, Entity entity) {
-        if (!(entity instanceof Building building) || !building.type().isWarehouse()) {
+    private static void appendContents(StringBuilder json, Entity entity) {
+        ItemBundle contents;
+        if (entity instanceof Building building) {
+            if (!building.type().isWarehouse()) {
+                return;
+            }
+            contents = building.inventory().contents();
+        } else if (entity instanceof Unit unit) {
+            if (!unit.isCarryingItems()) {
+                return;
+            }
+            contents = unit.cargo().contents();
+        } else {
             return;
         }
         boolean first = true;
-        for (ItemBundle.Amount component : building.inventory().contents().components()) {
+        for (ItemBundle.Amount component : contents.components()) {
             if (component.amount().isZero()) {
                 continue;
             }

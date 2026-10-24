@@ -79,6 +79,7 @@ import {
   queueItemNumber,
   queueProgressRatio,
   sizeLabel,
+  unitCargoLabel,
   warehouseContentsLabel,
 } from "./render/status";
 import {
@@ -1091,6 +1092,16 @@ function labelledContent(path: string): string {
   return label === path ? path : `${label} (${path})`;
 }
 
+/**
+ * The display name of an item: the manifest name when one exists, otherwise the classic `金` / `木`
+ * mapping with the raw path as the final fallback. This is the resolver the warehouse panel and the
+ * unit cargo line share, so both rows label the same item the same way.
+ */
+function itemLabel(path: string): string {
+  const fromManifest = entityDisplayName(atlas, path);
+  return fromManifest === path ? itemDisplayName(path) : fromManifest;
+}
+
 /** `e12 普通 (unit.melee.t1)` when named, plain `e12` when there is nothing to translate. */
 function describeEntity(entity: EntityView): string {
   const label = contentLabel(entity.kind);
@@ -1119,10 +1130,7 @@ let warehousePanelSignature = "";
  * server has none. With no own warehouse the summary says so instead of showing an empty list.
  */
 function updateWarehousePanel(): void {
-  const totals = warehouseResourceTotals(world, myPlayerId, (path) => {
-    const fromManifest = entityDisplayName(atlas, path);
-    return fromManifest === path ? itemDisplayName(path) : fromManifest;
-  });
+  const totals = warehouseResourceTotals(world, myPlayerId, itemLabel);
   const signature =
     `${totals.warehouseCount}|` +
     totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
@@ -1190,15 +1198,23 @@ function updateHud(force = false, now = performance.now()): void {
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
   const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
+  // A unit's cargo is part of its selection HUD row. Only an own unit has a meaningful cargo line:
+  // an enemy unit's hold is not something the local player commands, and a building reports 库存 on
+  // its own row instead (including warehouses).
+  const cargo =
+    only !== undefined && !isBuildingEntity(only) && isMine(only)
+      ? unitCargoLabel(only, itemLabel)
+      : null;
   hudSelected.textContent =
     groupPrefix +
     (selection.length === 0
       ? "选中：无"
       : only === undefined
-        ? `已选：${selection.length} 个单位`
+        ? `已选：${selection.length} 个实体`
         : `选中：e${only.id} ${contentLabel(only.kind)} ` +
           `[${ownershipTag(ownershipOf(only.playerId, myPlayerId))}] ` +
-          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})`);
+          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
+          (cargo === null ? "" : ` · ${cargo}`));
   hudBuildingText.textContent =
     only !== undefined && isBuildingEntity(only)
       ? `建筑：${contentLabel(only.kind)} #${only.id}`
@@ -1821,18 +1837,16 @@ function doCancel(): boolean {
   return true;
 }
 
-/** Applies one click: replace the whole selection, or toggle one unit for Shift+left click. */
+/** Applies one click: replace the whole selection, or toggle one entity for Shift+left click. */
 function applySelection(id: number | null, mode: SelectionMode): void {
   // A click is a fresh selection, not a recall: the HUD stops claiming it came from group N.
   selectedGroup = null;
   if (mode === "replace") {
     selectedIds = id === null ? [] : [id];
   } else if (id !== null) {
-    const entity = entityById(world, id);
-    if (entity !== undefined) {
-      // A building has no group order, so Shift+click on one behaves like a plain click.
-      selectedIds = isBuildingEntity(entity) ? [id] : toggleSelection(selectedIds, id);
-    }
+    // Shift adds or removes either a unit or a building; the priority rule is a marquee rule only, so
+    // a shift click never has to choose between groups. `toggleSelection` keeps the order stable.
+    selectedIds = toggleSelection(selectedIds, id);
   }
   pruneSelection();
   if (placementPath !== null) {

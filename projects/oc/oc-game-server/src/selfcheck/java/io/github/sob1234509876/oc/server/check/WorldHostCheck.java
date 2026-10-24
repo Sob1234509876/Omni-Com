@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.content.StartingResources;
@@ -82,6 +83,7 @@ public final class WorldHostCheck {
         snapshotPlayers(check);
         snapshotIncomeRates(check);
         snapshotEntityDetails(check);
+        snapshotContents(check);
         snapshotQueueTicks(check);
         determinism(check);
         try {
@@ -573,6 +575,70 @@ public final class WorldHostCheck {
         } finally {
             host.stop();
         }
+    }
+
+    /**
+     * The {@code contents} field of a unit and a warehouse row.
+     *
+     * <p>The fixture's engineer has a cargo hold. The check loads a real item into it and asserts the
+     * unit row carries exactly that {@code path: amount} pair; after emptying the hold the same row must
+     * omit the field entirely, never report an empty object. The fixture's warehouse holds the starting
+     * 300 gold / 60 wood, so its row keeps reporting its stored items exactly as before. Every generated
+     * snapshot also goes through {@link #validateSnapshot}.
+     */
+    private static void snapshotContents(Check check) {
+        check.section("快照：仓库库存与单位携带");
+        WorldHost host = new WorldHost(1L, new PlayersContent(true));
+        try {
+            Unit engineer = unitOf(host, PlayersContent.ENGINEER);
+            Building warehouse = buildingOf(host, PlayersContent.WAREHOUSE);
+            check.that(engineer != null && warehouse != null, "内容里有工程师和仓库");
+            if (engineer == null || warehouse == null) {
+                return;
+            }
+
+            ItemType gold = host.content().item(PlayersContent.GOLD);
+            check.equal(7L, engineer.cargo().insert(gold, 7).toLongSaturated(),
+                    "工程师的货舱装进了 7 金币");
+            Map<String, Object> carrying = MiniJson.parseObject(host.snapshotJson());
+            validateSnapshot(check, host.snapshotJson(), "带携带单位的快照");
+
+            Map<?, ?> unitRow = entityRow(carrying, engineer.id().value());
+            Map<?, ?> unitContents = contentsOf(unitRow);
+            check.that(unitContents != null, "有货物的单位行带 contents");
+            check.equal(7L, longField(unitContents, gold.key().path()),
+                    "单位 contents 里是 7 个 " + gold.key().path());
+
+            Map<?, ?> warehouseRow = entityRow(carrying, warehouse.id().value());
+            Map<?, ?> stock = contentsOf(warehouseRow);
+            check.that(stock != null, "仓库行仍然带 contents");
+            check.equal(300L, longField(stock, PlayersContent.GOLD), "仓库 contents 里是 300 金币");
+            check.equal(60L, longField(stock, PlayersContent.WOOD), "仓库 contents 里是 60 木材");
+
+            engineer.cargo().extractAll();
+            Map<?, ?> emptyRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
+                    engineer.id().value());
+            check.that(emptyRow != null && !emptyRow.containsKey("contents"),
+                    "货舱清空后省略 contents，而不是空对象");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** The first unit of the loaded world with the given content path, or {@code null}. */
+    private static Unit unitOf(WorldHost host, String path) {
+        for (Unit unit : host.engine().world().units()) {
+            if (unit.typeKey().path().equals(path)) {
+                return unit;
+            }
+        }
+        return null;
+    }
+
+    /** The {@code contents} object of a parsed row, or {@code null} when the field is absent. */
+    private static Map<?, ?> contentsOf(Map<?, ?> row) {
+        Object raw = row == null ? null : row.get("contents");
+        return raw instanceof Map<?, ?> contents ? contents : null;
     }
 
     /**

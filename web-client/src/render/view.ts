@@ -15,6 +15,7 @@
  */
 
 import type { TileRange } from "./camera";
+import { selectByPriority } from "./selection.ts";
 
 export type TerrainId = string;
 
@@ -57,6 +58,21 @@ export interface EntityView {
   readonly y: number;
   /** Server-side owner; used to tint the fallback shapes. */
   readonly playerId?: number;
+  /**
+   * Optional unit role from a snapshot's `role` field: `combat`, `worker` or `support`.
+   *
+   * The current server does not send it, so the marquee priority also recognises the classic
+   * `unit.melee.*` combat line from the kind. A future snapshot can describe a unit whose name does
+   * not reveal its role without the client having to guess.
+   */
+  readonly role?: string;
+  /**
+   * Optional attack damage from a snapshot's `attackDamage` field.
+   *
+   * A positive value means the unit is attack capable, which is the concrete half of the marquee
+   * priority's "combat" group. The current server and the demo omit it; see {@link role}.
+   */
+  readonly attackDamage?: number;
   /**
    * Optional animation frame sequence (indices into the kind's atlas row).
    *
@@ -102,12 +118,13 @@ export interface EntityView {
    */
   readonly queueItems?: readonly QueueItemView[];
   /**
-   * Stored items of a warehouse, keyed by item content path (`gold`, `wood`), from the snapshot's
-   * optional `contents` object.
+   * Items this entity currently stores or carries, keyed by item content path (`gold`, `wood`), from
+   * the snapshot's optional `contents` object.
    *
-   * Only a warehouse row carries it, only items with a positive amount are kept, and an older server
-   * omits it entirely. The HUD therefore has to treat a missing object as "no stock to show" rather
-   * than as an empty warehouse.
+   * A warehouse row reports its stored stock and a unit row reports its cargo; other buildings omit
+   * it. Only items with a positive amount are kept, and an older server omits it entirely. The HUD
+   * therefore has to treat a missing object as "nothing to show" rather than as an empty warehouse or
+   * empty cargo hold.
    */
   readonly contents?: Readonly<Record<string, number>>;
   /**
@@ -352,17 +369,18 @@ export function isOwnUnit(entity: EntityView, myPlayerId: number | null): boolea
  * Whether one entity's drawn ground position falls inside an inclusive tile range.
  *
  * The range covers `[minX, maxX + 1)` in world units, so a unit exactly on the left or top edge is
- * inside and one on the far side of the right or bottom edge is not. Only own units qualify: enemy and
- * neutral entities are excluded, and a building is never marquee-selected even when it belongs to the
- * player. The renderer only draws entities inside the loaded window, so the caller also filters with
- * {@link entityInWindow}.
+ * inside and one on the far side of the right or bottom edge is not. Own units **and own buildings**
+ * qualify; enemy and neutral entities are excluded. Which of those own entities the marquee ultimately
+ * selects is the priority rule in `selectByPriority` (`selection.ts`): combat units first, then
+ * engineers, then buildings. The renderer only draws entities inside the loaded window, so the caller
+ * also filters with {@link entityInWindow}.
  */
 export function entityInMarquee(
   entity: EntityView,
   range: TileRange,
   myPlayerId: number | null,
 ): boolean {
-  if (!isOwnUnit(entity, myPlayerId)) {
+  if (ownershipOf(entity.playerId, myPlayerId) !== "mine") {
     return false;
   }
   return (
@@ -373,22 +391,28 @@ export function entityInMarquee(
   );
 }
 
-/** Every own unit drawn inside the rectangle, in world entity order. */
+/**
+ * Every own entity the rectangle covers, selected by the marquee priority rule.
+ *
+ * The rectangle contributes every own unit and own building inside it, both inside the loaded window.
+ * `selectByPriority` then keeps only the highest priority group that is present: combat units, else
+ * builder units (engineers), else buildings. Enemy and neutral entities never reach that rule.
+ */
 export function marqueeSelection(
   world: WorldView,
   range: TileRange,
   myPlayerId: number | null,
 ): number[] {
-  const ids: number[] = [];
+  const candidates: EntityView[] = [];
   for (const entity of world.entities) {
     if (!entityInWindow(world, entity)) {
       continue;
     }
     if (entityInMarquee(entity, range, myPlayerId)) {
-      ids.push(entity.id);
+      candidates.push(entity);
     }
   }
-  return ids;
+  return selectByPriority(candidates, myPlayerId);
 }
 
 /** Entity lookup for the HUD and the selection ring. */
@@ -431,11 +455,11 @@ function terrainIdFromSnapshot(value: string): TerrainId {
 }
 
 /**
- * Reads the optional `contents` object of a warehouse row.
+ * Reads the optional `contents` object of a warehouse or a carrying unit.
  *
  * Missing, non-object, empty and all-zero objects all become `undefined`: the HUD shows nothing rather
- * than `库存：` with no items. A malformed entry is dropped instead of rejecting the whole world, and a
- * negative or fractional amount is never displayed as stock.
+ * than `库存：` or `携带：` with no items. A malformed entry is dropped instead of rejecting the whole
+ * world, and a negative or fractional amount is never displayed as stock or cargo.
  */
 function snapshotContents(value: unknown): Readonly<Record<string, number>> | undefined {
   if (!isRecord(value)) {
@@ -545,7 +569,8 @@ function optionalNonNegativeInteger(value: unknown): number | undefined {
  * The optional entity detail fields are additive for the same reason: `w` / `h` become `footprint`,
  * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
  * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, `contents` becomes a
- * validated object of positive integer amounts, and `upgrade` becomes a validated `{to, gold, wood}`
+ * validated object of positive integer amounts, `role` / `attackDamage` become the optional marquee
+ * priority metadata, and `upgrade` becomes a validated `{to, gold, wood}`
  * offer. A snapshot without any of them (an older server, the
  * demo world, every check fixture written before these fields existed) converts exactly as it did
  * before, with all of those properties `undefined`; a player row similarly keeps the optional
@@ -650,6 +675,10 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     // map to validate against.
     const player = finiteNumber(rawEntity["player"]);
     const health = finiteNumber(rawEntity["health"]);
+    const roleValue = rawEntity["role"];
+    const role =
+      typeof roleValue === "string" && roleValue.trim() !== "" ? roleValue.trim() : undefined;
+    const attackDamage = finiteNumber(rawEntity["attackDamage"]);
     const rawWidth = finiteNumber(rawEntity["w"]);
     const rawHeight = finiteNumber(rawEntity["h"]);
     const footprint =
@@ -674,6 +703,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       y,
       selected: false,
       ...(player === null ? {} : { playerId: Math.trunc(player) }),
+      ...(role === undefined ? {} : { role }),
+      ...(attackDamage === null || attackDamage < 0 ? {} : { attackDamage }),
       ...(health === null ? {} : { healthRatio: Math.min(1, Math.max(0, health)) }),
       ...(footprint === undefined ? {} : { footprint }),
       ...(progress === null ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
