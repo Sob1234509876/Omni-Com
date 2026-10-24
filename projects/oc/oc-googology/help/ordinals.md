@@ -433,8 +433,8 @@ switch (lean) {
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **351 项**，其中第 11–15 节是序数层，
-第 16–18 节是 BMS（标准式与比较、展开、非递归 BMS）：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **378 项**，其中第 11–15 节是序数层，
+第 16–18 节是 BMS（标准式与比较、展开、非递归 BMS），第 19–20 节是 BMS 极限之上的抽象序数名册：
 
 - **11) 序数**：`0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀` 严格递增；`1 + ω = ω`、`ω + ω = ω·2`、
   `ω + ω^2 = ω^2`、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、`ε₀[1] = ω^ω`、`ε₀[2] = ω^ω^ω`；
@@ -473,10 +473,15 @@ switch (lean) {
 第 17 节覆盖展开（文章三个实例、`S > S[n]`、`S[0] < S[1] < …`、16 个标准式 × 5 个下标的一致性）；
 第 18 节覆盖非递归 BMS（两条金例、BMS 分支与无限列的非递归展开）。
 
+第 19–20 节（抽象序数）也不在本篇范围内，单列在 [`abstract-ordinals.md`](abstract-ordinals.md)：
+SHO 及以上五个具名阶段的声明秩、声明未知对 `(SHO, MHO)`，以及"高于一切 BMS 值"的公理。它**不是**记法，
+不能接在本篇的 `Ordinal`/`Natural` 上使用。
+
 ## 相关文档
 
 - [`../README.md`](../README.md) —— 库总览与 `Natural` 的精确/结构形语义
 - [`bms.md`](bms.md) —— Bashicu 矩阵标准式、比较、展开与非递归 BMS（第 16–18 节）
+- [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的具名阶段名册（第 19–20 节），不是记法
 - [`../../oc-rts-engine/help/12-numbers-and-googology.md`](../../oc-rts-engine/help/12-numbers-and-googology.md) —— 引擎里数量类型的用法（中文）
 - [`../../oc-rts-engine/help/appendix-api-map.md`](../../oc-rts-engine/help/appendix-api-map.md) —— 全量类型与常量清单
 

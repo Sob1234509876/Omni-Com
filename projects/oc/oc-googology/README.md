@@ -16,9 +16,10 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (351 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (378 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
+| Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
 
 ## What it gives you
 
@@ -253,6 +254,53 @@ addition, multiplication by a finite coefficient or `ω^`, so it is not the modu
 See [`help/bms.md`](help/bms.md) for the rules and caveats, in Chinese.
 
 
+## Abstract ordinals (above BMS)
+
+Past `SHO`, the limit of BMS, the library has no notation - and it does not invent one. `AbstractOrdinal`
+is a **register of names with a declared order** for the stages the community names above that limit:
+
+| Rank | Constant | Name | Written as |
+| --- | --- | --- | --- |
+| 0 | `SHO` | Small Hydra Ordinal / BMO | `Y(1,3) = lim(BMS) = ψ(ψ_H(ε_{H+1}))` |
+| 1 | `OMEGA_SSO` | Ω Sequence System Ordinal / WSSO | `Y(1,3,4,2,5,8,10) = lim(TBMS)` |
+| 2 | `GHO` | No-Go Hydra Ordinal | `Y(1,3,4,3)` |
+| 3 | `SYO` | Small Yukito Ordinal | `lim(1-Y) = ω-Y(1,4)` |
+| 4 | `MHO` | Medium Hydra Ordinal / ω-Y sequence Ordinal | `lim(ω-Y)` |
+
+```java
+import io.github.sob1234509876.oc.googology.ComparisonResult;
+import io.github.sob1234509876.oc.googology.abstractordinal.AbstractOrdinal;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+
+AbstractOrdinal.SHO.rank();                                  // 0
+AbstractOrdinal.SHO.compareTo(AbstractOrdinal.OMEGA_SSO);    // < 0, the declared rank
+AbstractOrdinal.SHO.compareMagnitude(AbstractOrdinal.MHO);   // ComparisonResult.UNKNOWN
+AbstractOrdinal.declaredUnknownPairs();                      // one pair: SHO and MHO
+
+BmsOrdinal tsso = BmsOrdinal.of(new int[][]{{0, 0, 0, 0}, {1, 1, 1, 1}});
+AbstractOrdinal.SHO.compareWithBms(tsso);                    // ComparisonResult.GREATER, by axiom
+```
+
+These are **names, not a notation**: nothing here can be expanded into a fundamental sequence, added,
+multiplied, compared with a `Natural` or an `Ordinal`, or used as a value. `rank()` is the enum position,
+`compareTo` compares it (the inherited `Enum.compareTo` is `final`, and a static initialiser keeps the
+declared ranks equal to the positions), and `compareMagnitude` answers from the same rank - except for the
+one **declared but not established** pair, `(SHO, MHO)`, which answers `UNKNOWN` both ways. The name MHO
+used to mean the BMS limit (SHO here) and now means the limit of ω-Y, a later stage; the register follows
+the current usage for the rank but refuses to claim the two names are ordered.
+
+`compareWithBms(BmsOrdinal)` always answers `GREATER`, and `isAboveBms()` always returns `true`. That is
+**an axiom of the placeholder, not a computation**: the enum stores no ordinal to compare with, and it
+refuses to return a comparison that would silently drop the one fact it carries - that its stages lie
+beyond every matrix BMS can write. This is also why the BMS reference's below-limit nodes (`ψ(Ω^Ω) = FSO`,
+`ψ(M_ω) = SMO`, `ψ(ω-Projection) = TSSO`, and QSSO) are deliberately **not** constants: they are
+BMS-representable matrices, so the "above every BMS value" axiom would be false for them. They are listed
+as the rungs below the limit in [`help/abstract-ordinals.md`](help/abstract-ordinals.md).
+
+The Chinese guide has the full table, the sources (the Chinese Googology Wiki's ordinal table and the
+`SHO`, `ΩSSO` and `GHO` pages), the declared-unknown pair, the API and the common pitfalls.
+
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
@@ -268,6 +316,10 @@ See [`help/bms.md`](help/bms.md) for the rules and caveats, in Chinese.
   hyperoperation *levels* up to the notation's limit (`ε₀` for the default notation), and a custom
   notation can name its own; what the library still does not offer is the fast growing hierarchy, ordinal
   collapsing functions, or ordinals past `ε₀`.
+- **A notation above BMS.** `AbstractOrdinal` only *names* the stages at and above the BMS limit and gives
+  them a declared order; it is not a notation, has no fundamental sequence, arithmetic or value, and its
+  "greater than every BMS value" comparison is an explicit axiom. It does not say how far above BMS a name
+  lies, and the below-limit reference nodes are deliberately not part of it.
 - **BMS as a full `Ordinal`, and a proof of its strength.** The BMS layer expands a matrix, but it is not
   an `Ordinal`: it has no addition, no multiplication by a finite coefficient and no `ω^`, and it is not
   plugged into `OrdinalNotation`. The expansion's consistency (`S > S[n]`, strictly increasing sequences)
@@ -311,10 +363,14 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveBms.java      the non-recursive variant: first column of ones, (1) successor, expansion
     bms/NonRecursiveExpansion.java  the infinite-column description of the non-recursive expansion
     bms/package-info.java         BMS package documentation
+    abstractordinal/AbstractOrdinal.java      the register of names above the BMS limit, with declared ranks
+    abstractordinal/package-info.java         abstract-ordinal package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
 help/bms.md                       the Chinese guide to the BMS layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 351 check self check program
+help/abstract-ordinals.md         the Chinese guide to the register above BMS
+src/selfcheck/java/.../check/GoogologyCheck.java    the 378 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
+src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 ```
 
 ## Related
@@ -323,6 +379,8 @@ src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16
   hyperoperation, in Chinese.
 - [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion
   rules and the non-recursive variant, in Chinese.
+- [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the
+  BMS limit, the declared-unknown pair and the "above BMS" axiom, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

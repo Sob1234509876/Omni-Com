@@ -176,8 +176,9 @@ titan.health().isDead();                               // true
   [ok] the slot count itself is out of exact range, so it reports BEYOND instead of pretending
 ```
 
-库自身还有 351 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
-超运算求值、排序、格式化与解析往返、序数、超限超运算、塔的比较，以及 BMS 标准式、字典序、展开与非递归 BMS，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
+库自身还有 378 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
+超运算求值、排序、格式化与解析往返、序数、超限超运算、塔的比较，BMS 标准式、字典序、展开与非递归 BMS，
+以及 BMS 极限之上的抽象序数名册，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
 `Natural` 的加减乘、`min`/`max`、比较与解析往返必须与 `BigInteger` 完全一致（阈值下方不允许有任何精度差异）。
 
 ## 十、超限序数级别（库的序数层）
@@ -200,7 +201,10 @@ titan.health().isDead();                               // true
 （每一步展开都是恒等式，不是近似）；超限后继规则另有 `DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8`。
 
 引擎的模拟代码不使用序数，这一层只影响 `Natural` 的结构形、排序与打印。完整说明见库文档
-[`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md)。
+[`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md)；BMS 与 BMS 极限之上的
+抽象序数名册分别见 [`../../oc-googology/help/bms.md`](../../oc-googology/help/bms.md) 和
+[`../../oc-googology/help/abstract-ordinals.md`](../../oc-googology/help/abstract-ordinals.md)
+（后者只是名字，不是记法，不能作为这里的 level 使用）。
 
 ## 相关文档
 
@@ -210,6 +214,7 @@ titan.health().isDead();                               // true
 - [11-limits-and-faq.md](11-limits-and-faq.md) —— 大数区间的取舍与排查
 - [appendix-api-map.md](appendix-api-map.md) —— 全量类型与常量清单
 - [`../../oc-googology/help/ordinals.md`](../../oc-googology/help/ordinals.md) —— 库的序数层：`Ordinal`、`OrdinalNotation`、康托尔标准式与超限超运算
+- [`../../oc-googology/help/abstract-ordinals.md`](../../oc-googology/help/abstract-ordinals.md) —— BMS 极限之上的具名阶段名册（名字，不是值）
 
 ## 相关源码
 

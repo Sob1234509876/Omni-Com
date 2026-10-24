@@ -13,9 +13,10 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（351 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（378 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
+| 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
 
 ## 它提供什么
 
@@ -179,6 +180,48 @@ LNZ 找不到父项时，按文章的非递归展开：去掉 LNZ、剩下的行
 这一层**还不是** `Ordinal`：它有后继、前驱和基本列，但没有加法、有限系数乘法或 `ω^`，所以没有接上模块的
 `Ordinal` 接口。规则、例子与注意事项见中文的 [`help/bms.md`](help/bms.md)。
 
+## 抽象序数（BMS 之上）
+
+越过 BMS 的极限 `SHO` 之后，库没有记法——它也不发明记法。`AbstractOrdinal` 是**一张带声明顺序的名字
+名册**，登记社区在极限之上命名的阶段：
+
+| 秩 | 常量 | 名字 | 通常写法 |
+| --- | --- | --- | --- |
+| 0 | `SHO` | Small Hydra Ordinal / BMO | `Y(1,3) = lim(BMS) = ψ(ψ_H(ε_{H+1}))` |
+| 1 | `OMEGA_SSO` | Ω Sequence System Ordinal / WSSO | `Y(1,3,4,2,5,8,10) = lim(TBMS)` |
+| 2 | `GHO` | No-Go Hydra Ordinal | `Y(1,3,4,3)` |
+| 3 | `SYO` | Small Yukito Ordinal | `lim(1-Y) = ω-Y(1,4)` |
+| 4 | `MHO` | Medium Hydra Ordinal / ω-Y sequence Ordinal | `lim(ω-Y)` |
+
+```java
+import io.github.sob1234509876.oc.googology.ComparisonResult;
+import io.github.sob1234509876.oc.googology.abstractordinal.AbstractOrdinal;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+
+AbstractOrdinal.SHO.rank();                                  // 0
+AbstractOrdinal.SHO.compareTo(AbstractOrdinal.OMEGA_SSO);    // < 0，按声明秩
+AbstractOrdinal.SHO.compareMagnitude(AbstractOrdinal.MHO);   // ComparisonResult.UNKNOWN
+AbstractOrdinal.declaredUnknownPairs();                      // 只有一对：SHO 与 MHO
+
+BmsOrdinal tsso = BmsOrdinal.of(new int[][]{{0, 0, 0, 0}, {1, 1, 1, 1}});
+AbstractOrdinal.SHO.compareWithBms(tsso);                    // ComparisonResult.GREATER，公理
+```
+
+这些是**名字，不是记法**：这里没有任何东西能展开成基本列、做加法或乘法、和 `Natural`/`Ordinal` 比较，
+或者当值用。`rank()` 是枚举位置，`compareTo` 比较的正是它（继承来的 `Enum.compareTo` 是 `final`，
+静态初始化器保证声明秩与位置一致），`compareMagnitude` 也按同一个秩回答——除了唯一一对
+**声明但未确立**的 `(SHO, MHO)`：两个方向都给 `UNKNOWN`。`MHO` 这个名字过去指 BMS 极限（即这里的
+`SHO`），现在指 ω-Y 的极限（更晚的阶段）；名册按现行用法定秩，但拒绝声称两个名字之间已经有序。
+
+`compareWithBms(BmsOrdinal)` 永远回 `GREATER`，`isAboveBms()` 永远为 `true`。这是**占位层的公理，
+不是计算**：枚举里没有可以拿去比较的序数，它也拒绝返回一个会把"在 BMS 之上"这个唯一事实悄悄丢掉的比较。
+同样因为这条公理，BMS 参考文件里低于极限的节点（`ψ(Ω^Ω) = FSO`、`ψ(M_ω) = SMO`、
+`ψ(ω-Projection) = TSSO`、QSSO）**不是**名册里的常量：它们都是 BMS 可表示的矩阵，公理在它们身上会变成
+假话。它们作为极限之前的梯级列在 [`help/abstract-ordinals.md`](help/abstract-ordinals.md) 里。
+
+中文指南有完整的表、来源（中文 Googology Wiki 的序数表与 `SHO`、`ΩSSO`、`GHO` 页面）、声明未知对、
+API 和常见坑。
+
 
 ## 它有意不做的事
 
@@ -186,6 +229,7 @@ LNZ 找不到父项时，按文章的非递归展开：去掉 LNZ、剩下的行
 - **除法、根或对数作为值。** 只有 `log10Approx()` 和 `toDoubleApprox()`，用于显示以及生命条之类的比例；`Natural.fractionOf(whole)` 以 float 返回该比例。
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
+- **BMS 之上的记法。** `AbstractOrdinal` 只**命名** BMS 极限及其之上的阶段，并给它们一个声明顺序；它不是记法，没有基本列、算术或值，它的"高于一切 BMS 值"比较是一条显式公理。它不说明一个名字比 BMS 高多少，低于极限的参考节点也被有意排除在名册之外。
 - **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
@@ -222,14 +266,19 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveBms.java     非递归变体：首列全 1、末列 (1) 后继、展开
     bms/NonRecursiveExpansion.java  非递归展开的无限列描述
     bms/package-info.java        BMS 包文档
+    abstractordinal/AbstractOrdinal.java   BMS 极限之上的名册，带声明秩
+    abstractordinal/package-info.java      抽象序数包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    351 项检查的自检程序
+help/abstract-ordinals.md        BMS 之上名册的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    378 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
+src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 ```
 
 ## 相关
 
 - [`help/ordinals.md`](help/ordinals.md) —— 序数、基本列和超限超运算，中文。
 - [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体，中文。
+- [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上名册、声明未知对与"高于 BMS"公理，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。

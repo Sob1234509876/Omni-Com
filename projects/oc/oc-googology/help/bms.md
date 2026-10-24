@@ -142,6 +142,12 @@ compare(A, B):
 | `(0,0,0)(1,1,1)` | `ψ(Ω_ω)` | |
 | `(0,0,0,0)(1,1,1,1)` | TSSO | 四行序列系统序数 |
 
+参考文件在这张表之后还写了 `Limit = ψ(ψ_H(ε_{H+1}))`，也就是 BMS 的极限；中文社区把它叫作 SHO
+（小水螅序数），国际上也有 MHO 的旧称。`(0,0,0,0,0)(1,1,1,1,1)` 是 QSSO，同样仍在极限之下。
+**极限本身及其之上的阶段不在 BMS 一侧**，而是名册
+[`abstract-ordinals.md`](abstract-ordinals.md) 的内容；TSSO 和 QSSO 都是可表示的矩阵，所以它们留在
+本表，不进入那张"高于一切 BMS 值"的名册。
+
 这些等号是**参考文件的结论**，不是本库算出来的：`BmsOrdinal` 不把矩阵映射成 `Ordinal`，它只保存矩阵、
 比较顺序并展开基本列。
 自校验做的是"顺序一致性"：把 `(0)=1`、`(0)(0)=2`、`(0)(1)=ω`、`(0)(1)(1)=ω²`、`(0)(1)(2)=ω^ω`、
@@ -351,8 +357,9 @@ BMS 从 0 起、NRBMS 从 1 起，NRBMS 表示的又是非递归序数。所以�
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **351 项**，其中第 16–18 节是 BMS
-（`BmsCheck`，136 项）：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **378 项**，其中第 16–18 节是 BMS
+（`BmsCheck`，136 项），第 19–20 节是 BMS 极限之上的名册（`AbstractOrdinalCheck`，27 项，见
+[`abstract-ordinals.md`](abstract-ordinals.md)）：
 
 - **第 16 节（标准式与比较，52 项）**：规范形、形状校验、任务里的三个比较例子、参考节点上的严格递增/反对称/传递、
   与康托尔标准式的 36 对比较、渲染往返。
@@ -378,6 +385,8 @@ BMS 从 0 起、NRBMS 从 1 起，NRBMS 表示的又是非递归序数。所以�
 
 - [`../README.md`](../README.md) —— 库总览，BMS 在其中的位置
 - [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
+- [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限（SHO）及其之上的具名阶段名册；
+  本表的 TSSO/QSSO 为什么不进那张名册
 - [`../../../../documents/AI/bms/bms-zh.raw.wiki`](../../../../documents/AI/bms/bms-zh.raw.wiki) —— 数学背景：
   中文 Googology Wiki 的 BMS 条目，矩阵写法、标准式、父项/坏根/阶差向量与展开规则都在这里；
   引用与许可状态见同目录 [`NOTICE.md`](../../../../documents/AI/bms/NOTICE.md)
