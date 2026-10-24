@@ -24,6 +24,10 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
+import io.github.sob1234509876.oc.rts.production.ProductionJob;
+import io.github.sob1234509876.oc.rts.production.ProductionQueue;
+import io.github.sob1234509876.oc.rts.production.ProductionState;
+import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -1406,7 +1410,8 @@ public final class WorldHost {
      * <pre>{@code
      * {"tick":42,"originX":-32,"originY":-32,"width":64,"height":64,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
-     *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0}, ...],
+     *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0,
+     *               "w":1,"h":1,"progress":1.00,"queue":0}, ...],
      *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0},
      *             {"id":3,"name":"alice","gold":300,"wood":60}]}
      * }</pre>
@@ -1418,6 +1423,23 @@ public final class WorldHost {
      * window: the array is the whole living entity list, each with absolute world coordinates, so the client
      * can map an entity into the window when it is visible and still track it when it is not. Entities,
      * players and the document itself are deterministic for an unchanged tick.
+     *
+     * <p><strong>Footprint, progress and queue of an entity row.</strong> {@code w} and {@code h} are the
+     * footprint in tiles: a building reports the footprint of its content definition ({@code sizeX()} /
+     * {@code sizeY()}), while a unit reports {@code 1} and {@code 1}, because the engine gives a unit one
+     * ground tile no matter how large its sprite is. {@code progress} is the completion fraction in
+     * {@code [0,1]}, formatted with two decimals. For a building it is
+     * {@link Building#constructionFraction()} while the site is unfinished and exactly {@code 1.00} once it
+     * is constructed; an unfinished site is clamped to {@code [0.01, 0.99]} on the wire, because two
+     * decimals would otherwise round a 99.6% site up to a finished {@code 1.00}. A unit has no construction
+     * counter in the engine - it enters the world only after its production has already finished - so its
+     * row reports its own health fraction, the only per-unit completeness the engine exposes; a full
+     * health unit therefore reads {@code 1.00}, and a damaged one reports the damage. {@code queue} is the
+     * number of jobs in the building's {@link ProductionSystem} queue ({@code 0} for a unit or for a
+     * building that has no queue). {@code queueTicks} appears only while that queue's current job is
+     * {@link ProductionState#PRODUCING} and carries {@link ProductionJob#remainingTicks()}; in the other
+     * job states the engine's remaining-tick counter is only the recipe duration and says nothing about
+     * progress, so the field is omitted rather than fabricated.
      *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
@@ -1554,7 +1576,11 @@ public final class WorldHost {
         entities.removeIf(entity -> !entity.isAlive());
         entities.sort(Comparator.comparing(Entity::id));
 
-        int capacity = 96 + size * size * 8 + entities.size() * 96;
+        // The engine always installs a production system on the host's builder, so reading it once per
+        // snapshot is both safe and cheaper than looking it up for every entity row.
+        ProductionSystem production = engine.world().production();
+
+        int capacity = 96 + size * size * 8 + entities.size() * 128;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
                 .append(",\"originX\":").append(originX)
@@ -1589,8 +1615,9 @@ public final class WorldHost {
             json.append(",\"x\":").append(oneDecimal(entity.position().x()))
                     .append(",\"y\":").append(oneDecimal(entity.position().y()))
                     .append(",\"player\":").append(entity.owner().id().value())
-                    .append(",\"health\":").append(twoDecimals(entity.health().fraction()))
-                    .append('}');
+                    .append(",\"health\":").append(twoDecimals(entity.health().fraction()));
+            appendFootprintProgressAndQueue(json, entity, production);
+            json.append('}');
         }
         json.append("],\"players\":[");
         ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
@@ -1615,6 +1642,54 @@ public final class WorldHost {
         }
         json.append("]}");
         return json.toString();
+    }
+
+    /**
+     * Appends the footprint, completion and production queue fields of one entity row.
+     *
+     * <p>The rules are documented on {@link #snapshotJson()}; this method only implements them. It never
+     * invents a value: a unit reports one tile and its health as its progress, a building reports its
+     * content footprint and its real construction fraction, and {@code queueTicks} is written only when
+     * the engine's current job is actually in {@link ProductionState#PRODUCING}.
+     */
+    private static void appendFootprintProgressAndQueue(StringBuilder json, Entity entity,
+            ProductionSystem production) {
+        int width = 1;
+        int height = 1;
+        float progress = 1f;
+        int queued = 0;
+        Integer queueTicks = null;
+        if (entity instanceof Building building) {
+            width = building.sizeX();
+            height = building.sizeY();
+            if (building.isConstructed()) {
+                progress = 1f;
+            } else {
+                // An unfinished site has to stay strictly below 1 on the wire, because two decimals would
+                // otherwise paint a 99.6% building as complete; 0.01 is the matching floor so a site that
+                // has just started is not mistaken for one that has not started.
+                progress = Math.min(0.99f, Math.max(0.01f, building.constructionFraction()));
+            }
+            ProductionQueue queue = production.queue(building).orElse(null);
+            if (queue != null) {
+                queued = queue.size();
+                ProductionJob current = queue.current();
+                if (current != null && current.state() == ProductionState.PRODUCING) {
+                    queueTicks = current.remainingTicks();
+                }
+            }
+        } else if (entity instanceof Unit unit) {
+            // A unit only exists after its production finished, so the engine exposes no construction
+            // counter for it; its own health fraction is the only completion-like value there is.
+            progress = unit.health().fraction();
+        }
+        json.append(",\"w\":").append(width)
+                .append(",\"h\":").append(height)
+                .append(",\"progress\":").append(twoDecimals(progress))
+                .append(",\"queue\":").append(queued);
+        if (queueTicks != null) {
+            json.append(",\"queueTicks\":").append(queueTicks);
+        }
     }
 
     /**

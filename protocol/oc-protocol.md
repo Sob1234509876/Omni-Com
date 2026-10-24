@@ -346,8 +346,14 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
   "tilePixels": 16,
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
-    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00},
-    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00}
+    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0},
+    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
+     "w": 1, "h": 1, "progress": 1.00, "queue": 0},
+    {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87},
+    {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
+     "w": 4, "h": 3, "progress": 0.42, "queue": 0}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
@@ -360,11 +366,15 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
 - `originX` / `originY` are the window's top left **world** tile; `width` / `height` are the **window** size (`2 * r`). The document carries **no** `mapWidth` / `mapHeight` / `mapSize`: there is no map size, and a client must treat the world as unbounded. `--chunks` caps the chunks kept in memory, not the coordinates that exist.
 - `tiles` is row major for the window and has exactly `width * height` entries; every entry is a terrain content path (`water`, `sand`, `grass`, `forest`, `hill`, `rock`, depending on the served catalogue). Terrain comes from a deterministic seeded noise field: the same seed and content reproduce the same tile at any coordinate, and a window at `100000,-50000` matches the generator there tile for tile.
 - `entities` is sorted by id and is **not clipped to the window**: it is still the whole living entity list, and `x` / `y` are absolute world coordinates (entity centre in tiles, rounded to one decimal), which may be negative. The client maps an entity into the window with `originX` / `originY`; an entity outside the window stays in the array. `kind` is the engine's content path (`worker`, `soldier`, `medic`, `warehouse`, ...), with the same shape for units and buildings.
+- `w` / `h` are the entity's footprint in tiles: a building reports the footprint of its content definition (`3x3` for the warehouse, `4x3` for the workshop), and a unit reports `1` / `1`, because the engine gives every unit one ground tile regardless of sprite size.
+- `progress` is the completion fraction in `[0,1]` with two decimals. A building reports its `constructionFraction()` while the site is unfinished and exactly `1.00` once constructed; an unfinished site is clamped to `[0.01, 0.99]` on the wire, because two decimals would otherwise round a 99.6% site up to a finished `1.00`. A unit has no construction counter - it only enters the world after its production has finished - so its row reports its own health fraction, the only per-unit completeness the engine exposes; a full-health unit therefore also reads `1.00`.
+- `queue` is the number of unfinished jobs in the building's production queue (`0` for a unit or a building with no queue). `queueTicks` appears only while the queue's current job is actually `PRODUCING` and carries that job's remaining ticks (`ProductionJob.remainingTicks()`); in the other job states the engine's remaining-tick counter is only the recipe duration and says nothing about progress, so the field is omitted rather than invented.
+- These five fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker). The browser client reads them into `footprint`, `progress`, `queue` and `queueTicks` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
 - `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name and the two starting resources as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. The field is additive: an older server may omit it, and a client must keep working without it. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold and wood in the HUD; before that row exists it shows dashes.
 - A default 64 x 64 window is about 32 KB of JSON; the maximum 128 x 128 window is about 130 KB. Reading a window also moves the engine focus to its centre, so the chunk streamer keeps the camera area loaded.
 - When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
 - `--world` defaults to `on`, `--seed` defaults to `1`, `--chunks` defaults to `4096`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
-- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. Mapping the window to the camera is a client change on top of this contract; a client that sends no parameters still works against the spawn-anchor window. The bundled `web-client/` still validates against a 256-tile fallback map size in this stage, so a client that wants to render negative origins or coordinates outside `[0, 256)` must treat the world as unbounded.
+- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. The bundled `web-client/` treats the world as unbounded and uses `w` / `h` / `progress` / `queue` / `queueTicks` for the size HUD, the construction bars and the `生产中 ×N` production marker; a client that never reads the new fields still works against the same document.
 
 ## Version compatibility
 

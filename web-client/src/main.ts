@@ -42,7 +42,13 @@ import {
   type SelectionMode,
 } from "./render/input";
 import { alphaFor, interpolate, type Frame } from "./render/interpolate";
-import { toggleSelection } from "./render/marquee";import { WorldRenderer } from "./render/renderer";
+import { toggleSelection } from "./render/marquee";
+import { WorldRenderer } from "./render/renderer";
+import {
+  formatProgressPercent,
+  progressBarRatio,
+  sizeLabel,
+} from "./render/status";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
@@ -59,6 +65,7 @@ import {
   marqueeSelection,
   ownershipOf,
   ownershipTag,
+  underConstruction,
   type EntityView,
   type PlayerView,
   type ServerWorldView,
@@ -106,7 +113,10 @@ const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
 const hudSelected = required<HTMLSpanElement>("#hud-selected");
-const hudBuilding = required<HTMLSpanElement>("#hud-building");
+const hudBuildingText = required<HTMLSpanElement>("#hud-building-text");
+const hudBuildingProgress = required<HTMLSpanElement>("#hud-building-progress");
+const hudBuildingFill = required<HTMLSpanElement>("#hud-building-fill");
+const hudBuildingPercent = required<HTMLSpanElement>("#hud-building-percent");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const orderStopButton = required<HTMLButtonElement>("#order-stop");
 const gameplayNote = required<HTMLSpanElement>("#gameplay-note");
@@ -955,10 +965,26 @@ function updateHud(force = false, now = performance.now()): void {
         : `选中：e${only.id} ${contentLabel(only.kind)} ` +
           `[${ownershipTag(ownershipOf(only.playerId, myPlayerId))}] ` +
           `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})`;
-  hudBuilding.textContent =
-    only !== undefined && isMine(only) && isBuildingEntity(only)
+  hudBuildingText.textContent =
+    only !== undefined && isBuildingEntity(only)
       ? `建筑：${contentLabel(only.kind)} #${only.id}`
       : "建筑：—";
+  const selectedBuilding = only !== undefined && isBuildingEntity(only) ? only : undefined;
+  if (selectedBuilding !== undefined) {
+    const footprint = sizeLabel(selectedBuilding);
+    if (footprint !== null) {
+      hudBuildingText.textContent += ` · ${footprint}`;
+    }
+  }
+  // The inline construction bar is part of the selection HUD: a finished building (or a unit) keeps it
+  // hidden, and a snapshot without `progress` (an older server) never shows it.
+  const showConstruction = selectedBuilding !== undefined && underConstruction(selectedBuilding);
+  hudBuildingProgress.hidden = !showConstruction;
+  if (showConstruction && selectedBuilding !== undefined) {
+    const progress = selectedBuilding.progress ?? 0;
+    hudBuildingPercent.textContent = formatProgressPercent(progress);
+    hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

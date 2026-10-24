@@ -26,11 +26,11 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 | --- | --- | --- | --- |
 | googology | `:projects:oc:oc-googology:selfcheck` | 267 | [README](projects/oc/oc-googology/README.md) 的自检行；`GoogologyCheck` 末尾打印 `googology self check: all 267 checks passed.` |
 | engine | `:projects:oc:oc-rts-engine:scenario` | 336 | [README](projects/oc/oc-rts-engine/README.md)；[help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) 与 [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) 引用同一总数 |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 813 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 187、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 903 | [README](projects/oc/oc-game-server/README.md)；十一个检查类之和：`AuthCheck` 65、`NetworkCheck` 57、`PluginCheck` 76、`RequestCheck` 43、`WebSocketCheck` 88、`HttpCheck` 47、`PluginAssetsCheck` 80、`WorldHostCheck` 277、`WorldTickHookCheck` 23、`PlayerCommandCheck` 87、`JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md)；四节：信封 15、密钥与报告 37、请求注册表 14、真实 socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md)；五节，含贴图断言 |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 349 | [README](projects/oc/oc-game-server-classic/README.md)；十三节，从内容目录（82）到插件加载器（12） |
-| client render math | `node scripts/check-render-math.ts` | 165 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
+| client render math | `node scripts/check-render-math.ts` | 187 | 由 [check-render-math.ts](web-client/scripts/check-render-math.ts) 里的 `check(...)` 调用逐条数出；脚本最后打印通过总数 |
 
 **任何提交都不得让这些检查变红；也不得为了让新功能通过而删除或削弱任何现有检查。** 如果总数变了，grep 旧数字，更新每一份引用它的文档。
 

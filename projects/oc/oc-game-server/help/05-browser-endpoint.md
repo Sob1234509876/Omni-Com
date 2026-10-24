@@ -272,8 +272,14 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
   "tilePixels": 16,
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
-    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00},
-    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00}
+    {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0},
+    {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
+     "w": 1, "h": 1, "progress": 1.00, "queue": 0},
+    {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87},
+    {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
+     "w": 4, "h": 3, "progress": 0.42, "queue": 0}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
@@ -294,6 +300,15 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
   **绝对坐标**（保留一位小数），可以为负。客户端用 `originX` / `originY` 把实体换算到窗口内；窗口外的
   实体照样出现在数组里，方便客户端追踪“在屏幕外但还活着”的单位。`kind` 是引擎的内容路径（`worker`、
   `soldier`、`medic`、`warehouse`、`barracks`、`workshop`、`ore_silo`），建筑与单位形状相同。
+- `w` / `h` 是实体的占地尺寸（单位 tile）：建筑取内容定义里的 footprint（例如仓库 `3×3`、车间 `4×3`），
+  单位固定为 `1` / `1`，因为引擎给每个单位一个地面格子。
+- `progress` 是 `[0,1]` 的完成比例，固定两位小数。建筑在建时是 `constructionFraction()`，完工后恰好
+  `1.00`；未完工的工地会被夹到 `[0.01, 0.99]`，否则两位小数会把 99.6% 的工地四舍五入成已完工的 `1.00`。
+  单位没有建造计数器——它只会在生产完成后才出现在世界里——所以单位行报告自己的**血量比例**，这是引擎
+  唯一提供的“单位完成度”；满血单位因此也是 `1.00`。
+- `queue` 是建筑生产队列里尚未完成的任务数（单位或没有队列的建筑是 `0`）。`queueTicks` 只在队列当前任务
+  真的处于 `PRODUCING` 时出现，值是该任务的剩余 tick（`ProductionJob.remainingTicks()`）；其它状态下引擎的
+  剩余 tick 只是配方时长，不代表进度，所以字段直接省略，不编造数字。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
   `name`，以及扁平的金币/木材数量 `gold` / `wood`。这两个键就是经典内容目录注册的物品路径；快照不重复
   它们的显示名，其它物品类型暂时不进快照。金额来自玩家仓库的可用数量（引擎的投放点规则，与建造/训练
@@ -316,17 +331,16 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
 ### 浏览器侧
 
 `web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
-（地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`），
-结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 可以缺失：旧服务器
-没有这个字段时客户端照常工作，只是 HUD 的资源行显示破折号。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次
+（地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`，
+`w` / `h` -> `footprint`，`progress` / `queue` / `queueTicks` -> 同名可选属性），
+结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 与
+`w` / `h` / `progress` / `queue` / `queueTicks` 都可以缺失：旧服务器没有这些字段时客户端照常工作，HUD 的
+资源行显示破折号、建筑芯片不显示尺寸与进度、画面也不画进度条。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次
 请求未完成就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家
-的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。Vite dev proxy 把 `/world` 转发到
+的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。选中一个建筑时，HUD 显示
+`尺寸：W×H`，在建时再显示一条内联百分比进度条；画面里未完工的建筑上方画灰阶进度条，生产队列非空时画
+`生产中 ×N`。这些灰阶条与标记只存在于 Canvas 绘制和 HUD 中，不改变这份文档的形状。Vite dev proxy 把 `/world` 转发到
 同一个 Java 服务器。
-
-本阶段只改服务端：协议已经把世界定义成无界的，`originX` / `originY` 可以为负，快照不再带地图宽高。
-仓库里当前的 `web-client/` 仍以 256 格的兜底地图大小校验快照（并拒绝负的实体坐标），所以在更新客户端之前，
-出生锚点附近的负坐标窗口可能被客户端判为非法而退回占位地图；把客户端改成无界世界是单独的客户端阶段，
-本阶段按任务要求不修改 `web-client/`。
 
 ## 帧规则
 

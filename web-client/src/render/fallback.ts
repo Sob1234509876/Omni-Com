@@ -600,3 +600,76 @@ export function drawHealthBar(
   context.strokeRect(left, topY, width, height);
   context.restore();
 }
+
+/** Light grey track of the construction bar under a building; the chrome is deliberately greyscale. */
+export const PROGRESS_TRACK_COLOR = "#9a9a9a";
+
+/** White fill of the construction bar. */
+export const PROGRESS_FILL_COLOR = "#ffffff";
+
+/** One pixel border around the construction bar, so a white fill cannot bleed into bright terrain. */
+export const PROGRESS_BORDER_COLOR = "#111111";
+
+/**
+ * Thin construction progress bar drawn above a building that is still being built.
+ *
+ * The track is light grey, the fill is white and the outline is exactly one pixel, matching the rest of
+ * the page chrome: no hue, no glow. It sits above the roof (the caller chooses `topY`) and therefore
+ * never covers the sprite.
+ */
+export function drawBuildingProgressBar(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  topY: number,
+  width: number,
+  ratio: number,
+  tilePixels: number,
+): void {
+  const safeRatio = clamp(ratio, 0, 1);
+  const height = Math.max(3, tilePixels * 0.08);
+  const left = screenX - width / 2;
+  context.save();
+  context.fillStyle = PROGRESS_TRACK_COLOR;
+  context.fillRect(left, topY, width, height);
+  context.fillStyle = PROGRESS_FILL_COLOR;
+  context.fillRect(left, topY, width * safeRatio, height);
+  context.strokeStyle = PROGRESS_BORDER_COLOR;
+  context.lineWidth = 1;
+  context.strokeRect(left + 0.5, topY + 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
+  context.restore();
+}
+
+/**
+ * Small `生产中 ×N` marker drawn above a building whose production queue is not empty.
+ *
+ * The box is translucent black with a one pixel grey border and white text, so it reads over any
+ * terrain without tinting the scene or covering the sprite. `bottomY` is the box's bottom edge, which
+ * lets the caller anchor it just above the roof regardless of the font size at the current zoom.
+ */
+export function drawQueueMarker(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  bottomY: number,
+  text: string,
+  tilePixels: number,
+): void {
+  const fontSize = Math.max(9, Math.round(tilePixels * 0.34));
+  context.save();
+  context.font = `600 ${fontSize}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const paddingX = Math.max(4, Math.round(fontSize * 0.35));
+  const paddingY = Math.max(2, Math.round(fontSize * 0.18));
+  const boxWidth = Math.ceil(context.measureText(text).width) + paddingX * 2;
+  const boxHeight = fontSize + paddingY * 2;
+  const left = screenX - boxWidth / 2;
+  const topY = bottomY - boxHeight;
+  context.fillStyle = "rgba(0, 0, 0, 0.72)";
+  context.fillRect(left, topY, boxWidth, boxHeight);
+  context.strokeStyle = "#8a8a8a";
+  context.lineWidth = 1;
+  context.strokeRect(left + 0.5, topY + 0.5, boxWidth - 1, boxHeight - 1);
+  context.fillStyle = "#ffffff";
+  context.fillText(text, screenX, topY + boxHeight / 2 + 0.5);
+  context.restore();
+}

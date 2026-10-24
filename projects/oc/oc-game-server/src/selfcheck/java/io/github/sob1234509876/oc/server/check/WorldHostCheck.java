@@ -8,6 +8,8 @@ import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.Recipe;
+import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
@@ -77,6 +79,8 @@ public final class WorldHostCheck {
         terrainAndAnchor(check);
         snapshotWindows(check);
         snapshotPlayers(check);
+        snapshotEntityDetails(check);
+        snapshotQueueTicks(check);
         determinism(check);
         try {
             route(check);
@@ -408,6 +412,150 @@ public final class WorldHostCheck {
         }
     }
 
+    /**
+     * The per-entity detail fields of one snapshot row: footprint, construction progress and queue size.
+     *
+     * <p>Four rules are asserted against the engine's own objects, not against literals alone: a finished
+     * building reports its content footprint and {@code progress} exactly {@code 1.00}; a unit reports
+     * {@code w = h = 1} and its own health fraction as progress; an unfinished site reports a progress
+     * strictly between {@code 0} and {@code 1}; and a building with queued jobs reports a queue count
+     * greater than zero. Every snapshot built here also goes through {@link #validateSnapshot} so the
+     * addition cannot break the hand written JSON reader.
+     */
+    private static void snapshotEntityDetails(Check check) {
+        check.section("快照：建筑尺寸、进度与生产队列");
+        WorldHost host = new WorldHost(1L);
+        try {
+            Map<String, Object> document = MiniJson.parseObject(host.snapshotJson());
+
+            Building warehouse = buildingOf(host, ScenarioContent.WAREHOUSE);
+            check.that(warehouse != null, "样例场景里有仓库建筑");
+            if (warehouse != null) {
+                Map<?, ?> row = entityRow(document, warehouse.id().value());
+                check.that(row != null, "完工仓库在 entities 里有自己的行");
+                check.equal((long) warehouse.type().sizeX(), longField(row, "w"),
+                        "完工仓库报告的 w 是内容定义的真实宽度（3）");
+                check.equal((long) warehouse.type().sizeY(), longField(row, "h"),
+                        "完工仓库报告的 h 是内容定义的真实高度（3）");
+                check.that(row != null && Math.abs(doubleField(row, "progress") - 1.0) < 1e-9,
+                        "完工仓库的 progress 恰好是 1.00");
+                check.equal(0L, longField(row, "queue"), "没有生产队列的仓库报告 queue 0");
+            }
+
+            List<Unit> units = new ArrayList<>(host.engine().world().units());
+            check.that(!units.isEmpty(), "样例场景里有单位");
+            if (!units.isEmpty()) {
+                Unit unit = units.get(0);
+                Map<?, ?> row = entityRow(document, unit.id().value());
+                check.equal(1L, longField(row, "w"), "单位报告 w=1");
+                check.equal(1L, longField(row, "h"), "单位报告 h=1");
+                check.that(row != null
+                                && Math.abs(doubleField(row, "progress") - unit.health().fraction()) <= 0.005,
+                        "单位的 progress 就是自己的血量比例（引擎没有单位级建造进度）");
+            }
+
+            Building site = buildingOf(host, ScenarioContent.ORE_SILO);
+            check.that(site != null, "样例场景里有矿石仓，可以当作在建工地");
+            if (site != null) {
+                site.restartConstruction();
+                site.advanceConstruction(Math.max(1, site.type().buildTimeTicks() / 2));
+                Map<String, Object> construction = MiniJson.parseObject(host.snapshotJson());
+                validateSnapshot(check, host.snapshotJson(), "在建工地快照");
+                Map<?, ?> row = entityRow(construction, site.id().value());
+                double progress = doubleField(row, "progress");
+                check.that(progress > 0.0 && progress < 1.0,
+                        "在建工地的 progress 严格在 0 与 1 之间（" + progress + "）");
+                check.equal((long) site.type().sizeX(), longField(row, "w"),
+                        "在建工地同样报告内容定义的真实宽度（2）");
+            }
+
+            Building factory = buildingOf(host, ScenarioContent.BARRACKS);
+            check.that(factory != null, "样例场景里有军营，可以接收生产任务");
+            if (factory != null) {
+                List<Recipe> recipes = host.content().recipesFor(factory.type());
+                check.that(!recipes.isEmpty(), "军营有可生产的配方");
+                if (!recipes.isEmpty()) {
+                    host.engine().world().production().enqueue(factory, recipes.get(0), 2);
+                    Map<String, Object> queued = MiniJson.parseObject(host.snapshotJson());
+                    Map<?, ?> row = entityRow(queued, factory.id().value());
+                    check.that(longField(row, "queue") > 0,
+                            "有生产队列的建筑报告 queue > 0（" + longField(row, "queue") + "）");
+                    validateSnapshot(check, host.snapshotJson(), "带生产队列的快照");
+                }
+            }
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * The {@code queueTicks} half of the queue field: absent before a job starts, then the engine's real
+     * remaining tick count once the job is {@code PRODUCING}.
+     *
+     * <p>The fixture registers a producer building and a recipe with no inputs and no logistics, so the
+     * first engine tick moves the first job straight into production. A second job stays behind it in the
+     * queue, which is what makes the count and the remaining ticks independent values.
+     */
+    private static void snapshotQueueTicks(Check check) {
+        check.section("快照：生产中的剩余 tick");
+        WorldHost host = new WorldHost(1L, new ProducerContent());
+        try {
+            Building smithy = buildingOf(host, "building.smithy");
+            check.that(smithy != null, "生产内容里有铁匠铺");
+            if (smithy == null) {
+                return;
+            }
+            List<Recipe> recipes = host.content().recipesFor(smithy.type());
+            check.that(!recipes.isEmpty(), "铁匠铺有可生产的配方");
+            if (recipes.isEmpty()) {
+                return;
+            }
+            Recipe recipe = recipes.get(0);
+            host.engine().world().production().enqueue(smithy, recipe, 2);
+            Map<?, ?> waiting = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
+            check.equal(2L, longField(waiting, "queue"), "入队两个任务后 queue 是 2");
+            check.that(waiting != null && !waiting.containsKey("queueTicks"),
+                    "任务尚未开工时省略 queueTicks，而不是发明一个剩余时间");
+
+            host.step();
+            Map<?, ?> running = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
+            check.equal((long) recipe.durationTicks(), longField(running, "queueTicks"),
+                    "开工后 queueTicks 是配方的真实剩余 tick（60）");
+            validateSnapshot(check, host.snapshotJson(), "生产中的快照");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** The first building of the loaded world with the given content path, or {@code null}. */
+    private static Building buildingOf(WorldHost host, String path) {
+        for (Building building : host.engine().world().buildings()) {
+            if (building.type().key().path().equals(path)) {
+                return building;
+            }
+        }
+        return null;
+    }
+
+    /** One entity row of a parsed snapshot by entity id, or {@code null} when the array has no such row. */
+    private static Map<?, ?> entityRow(Map<String, Object> document, long id) {
+        Object rawEntities = document.get("entities");
+        if (rawEntities instanceof List<?> entities) {
+            for (Object raw : entities) {
+                if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number number
+                        && number.longValue() == id) {
+                    return row;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Reads a decimal field of a parsed row; a missing or non-numeric field reports {@code NaN}. */
+    private static double doubleField(Map<?, ?> row, String key) {
+        return row != null && row.get(key) instanceof Number number ? number.doubleValue() : Double.NaN;
+    }
+
     /** Joins one account on the world thread and returns its answer line. */
     private static String join(WorldHost host, String name) {
         WorldHost.CommandHandle handle = host.submitCommand(world -> world.joinPlayer(name)
@@ -447,7 +595,7 @@ public final class WorldHostCheck {
 
     /** Reads an integer field of a parsed row; a missing or non-numeric field reports {@code -1}. */
     private static long longField(Map<?, ?> row, String key) {
-        return row.get(key) instanceof Number number ? number.longValue() : -1L;
+        return row != null && row.get(key) instanceof Number number ? number.longValue() : -1L;
     }
 
     /** The same seed must reproduce the same tiles and document; another seed must not. */
@@ -975,6 +1123,47 @@ public final class WorldHostCheck {
                 registry.building(WAREHOUSE).name("Warehouse").size(3, 3).health(500).cost(WOOD, 60)
                         .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE);
             }
+        }
+    }
+
+    /**
+     * A minimal producer catalogue for the {@code queueTicks} check: one buildable terrain, one item, one
+     * producer building and one recipe with no inputs, so the first engine tick starts production.
+     */
+    private static final class ProducerContent implements WorldContent {
+
+        private static final String SMITHY = "building.smithy";
+
+        @Override
+        public String id() {
+            return "oc-world-host-check-producer";
+        }
+
+        @Override
+        public String description() {
+            return "World host check content: a smithy and an input-free recipe, for queueTicks";
+        }
+
+        @Override
+        public String namespace() {
+            return "worldhostcheckproducer";
+        }
+
+        @Override
+        public StartingResources startingResources() {
+            return StartingResources.EMPTY;
+        }
+
+        @Override
+        public void populate(ContentRegistry.Builder registry) {
+            Objects.requireNonNull(registry, "registry");
+            registry.terrain("grass").name("Grass").buildable().moveCost(1f)
+                    .sprite("terrain/grass").mapColor(0x5FA84F)
+                    .item("gold").name("Gold").maxStack(10_000)
+                    .building(SMITHY).name("Smithy").size(2, 1).health(300)
+                    .buildTime(40).storage(4).producer("smithy").spriteSet(SMITHY)
+                    .recipe("recipe.smelt").name("Smelt").producer("smithy")
+                    .itemOutput("gold", 1).duration(60);
         }
     }
 

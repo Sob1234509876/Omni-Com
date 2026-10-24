@@ -54,6 +54,30 @@ export interface EntityView {
   readonly selected?: boolean;
   /** Remaining health in [0, 1]; a bar is drawn when it is below 1. */
   readonly healthRatio?: number;
+  /**
+   * Footprint in tiles from the snapshot's optional `w` / `h`, when the server reports one.
+   *
+   * A building carries its content footprint (`3×3` for a warehouse); a unit carries `1×1`. The demo
+   * world and an older server omit both, so the HUD must treat a missing footprint as "unknown size".
+   */
+  readonly footprint?: { readonly width: number; readonly height: number };
+  /**
+   * Completion fraction in [0, 1] from the snapshot's optional `progress`.
+   *
+   * For a building this is its construction progress (`1` when finished); for a unit the server reports
+   * its health fraction, because the engine has no per-unit construction counter. A missing value means
+   * an older snapshot and is treated as finished.
+   */
+  readonly progress?: number;
+  /**
+   * Number of queued production jobs from the snapshot's optional `queue`, if the server reported one.
+   *
+   * Units and buildings without a queue report `0` (or omit the field), and the renderer then draws no
+   * production marker.
+   */
+  readonly queue?: number;
+  /** Remaining ticks of the job the building is producing, when the server reports it. */
+  readonly queueTicks?: number;
 }
 
 export interface WorldView {
@@ -179,6 +203,17 @@ export function isBuildingKind(kind: string): boolean {
  */
 export function isBuildingEntityKind(kind: string): boolean {
   return kindName(kind).startsWith("building.") || isBuildingKind(kind);
+}
+
+/**
+ * Whether the entity is a building the server reports as still under construction.
+ *
+ * Only buildings qualify: a unit's optional `progress` is its health fraction (the engine has no
+ * unit-level construction counter), so a damaged unit must never draw a construction bar. A missing
+ * `progress` is treated as finished, which is what an older snapshot means by not reporting one.
+ */
+export function underConstruction(entity: EntityView): boolean {
+  return isBuildingEntityKind(entity.kind) && entity.progress !== undefined && entity.progress < 1;
 }
 
 /** One integer position inside a window's `tiles` array. */
@@ -340,6 +375,14 @@ function terrainIdFromSnapshot(value: string): TerrainId {
  * `PlayerView`; a snapshot without it (an older server, or the demo path) stays valid and simply has no
  * player rows.
  *
+ * The optional entity detail fields are additive for the same reason: `w` / `h` become `footprint`,
+ * `progress` becomes a clamped `progress`, and `queue` / `queueTicks` become `queue` / `queueTicks`.
+ * A snapshot without any of them (an older server, the demo world, every check fixture written before
+ * these fields existed) converts exactly as it did before, with all of those properties `undefined`. A
+ * malformed optional field is ignored rather than rejecting the whole world, because these fields are
+ * presentation detail: a bad `progress` must not blank the map. A footprint is kept only when both `w`
+ * and `h` are positive integers, because half a footprint says nothing useful.
+ *
  * The world is unbounded, so a snapshot carries `originX` / `originY` (the window's absolute top-left
  * tile) and a `width` / `height` that describe only that window. There is no `mapWidth` / `mapHeight`
  * to read or infer: both are gone from the document, and this function does not add them back. An
@@ -436,6 +479,20 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     // map to validate against.
     const player = finiteNumber(rawEntity["player"]);
     const health = finiteNumber(rawEntity["health"]);
+    const rawWidth = finiteNumber(rawEntity["w"]);
+    const rawHeight = finiteNumber(rawEntity["h"]);
+    const footprint =
+      rawWidth !== null &&
+      rawHeight !== null &&
+      Number.isInteger(rawWidth) &&
+      Number.isInteger(rawHeight) &&
+      rawWidth > 0 &&
+      rawHeight > 0
+        ? { width: rawWidth, height: rawHeight }
+        : undefined;
+    const progress = finiteNumber(rawEntity["progress"]);
+    const queue = finiteNumber(rawEntity["queue"]);
+    const queueTicks = finiteNumber(rawEntity["queueTicks"]);
     entities.push({
       id,
       kind: kindName(kind.trim()),
@@ -444,6 +501,12 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       selected: false,
       ...(player === null ? {} : { playerId: Math.trunc(player) }),
       ...(health === null ? {} : { healthRatio: Math.min(1, Math.max(0, health)) }),
+      ...(footprint === undefined ? {} : { footprint }),
+      ...(progress === null ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
+      ...(queue === null || !Number.isInteger(queue) || queue < 0 ? {} : { queue }),
+      ...(queueTicks === null || !Number.isInteger(queueTicks) || queueTicks < 0
+        ? {}
+        : { queueTicks }),
     });
   }
 

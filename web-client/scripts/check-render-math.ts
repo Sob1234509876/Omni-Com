@@ -2,7 +2,7 @@
  * Offline checks for the pure render math.
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
- * the check exercises the same `camera.ts`, `view.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
+ * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts` and `interpolate.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json`
  * is only used for type checking.
  *
@@ -41,10 +41,19 @@ import {
   type AtlasSource,
 } from "../src/render/atlas.ts";
 import {
+  PROGRESS_BORDER_COLOR,
+  PROGRESS_FILL_COLOR,
+  PROGRESS_TRACK_COLOR,
   SELECTION_COLOR,
   TERRAIN_COLORS,
   terrainColor,
 } from "../src/render/fallback.ts";
+import {
+  formatProgressPercent,
+  progressBarRatio,
+  queueMarkerText,
+  sizeLabel,
+} from "../src/render/status.ts";
 import {
   marqueeTileRange,
   screenRectBetween,
@@ -79,6 +88,7 @@ import {
   TERRAIN_VOID,
   terrainAt,
   tileInWindow,
+  underConstruction,
   windowTileIndex,
   worldViewFromSnapshot,
   type EntityView,
@@ -486,6 +496,155 @@ if (serverSnapshot !== null) {
   );
   check("快照实体数量正确", serverSnapshot.entities.length === 2);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Entity status chrome: footprint, construction progress, production queue marker
+// ---------------------------------------------------------------------------------------------
+
+/** Whether a `#rrggbb` colour has equal red, green and blue channels (page chrome must be greyscale). */
+function isGreyscaleHex(value: string): boolean {
+  const match = /^#([0-9a-f]{6})$/u.exec(value.toLowerCase());
+  if (match === null) {
+    return false;
+  }
+  const hex = match[1] ?? "";
+  return hex.slice(0, 2) === hex.slice(2, 4) && hex.slice(2, 4) === hex.slice(4, 6);
+}
+
+const detailedSnapshot = worldViewFromSnapshot({
+  tick: 18,
+  width: 2,
+  height: 2,
+  tiles: [
+    ["grass", "grass"],
+    ["grass", "grass"],
+  ],
+  entities: [
+    {
+      id: 1,
+      kind: "building.warehouse",
+      x: 1,
+      y: 1,
+      player: 1,
+      w: 3,
+      h: 3,
+      progress: 1,
+      queue: 0,
+    },
+    {
+      id: 2,
+      kind: "building.barracks",
+      x: 2,
+      y: 2,
+      player: 1,
+      w: 3,
+      h: 3,
+      progress: 0.42,
+      queue: 2,
+      queueTicks: 60,
+    },
+    { id: 3, kind: "worker", x: 0, y: 0, player: 1, w: 1, h: 1, progress: 0.8 },
+  ],
+});
+const detailedWarehouse = detailedSnapshot?.entities.find((entity) => entity.id === 1);
+const detailedBarracks = detailedSnapshot?.entities.find((entity) => entity.id === 2);
+const detailedWorker = detailedSnapshot?.entities.find((entity) => entity.id === 3);
+check(
+  "快照的 w/h 被解析成 footprint（建筑 3×3）",
+  detailedWarehouse?.footprint?.width === 3 && detailedWarehouse?.footprint?.height === 3,
+  JSON.stringify(detailedWarehouse?.footprint),
+);
+check(
+  "快照的 progress / queue / queueTicks 被保留",
+  detailedBarracks?.progress === 0.42 &&
+    detailedBarracks?.queue === 2 &&
+    detailedBarracks?.queueTicks === 60,
+  JSON.stringify(detailedBarracks),
+);
+check(
+  "单位也带 1×1 的 footprint 与自己的 progress",
+  detailedWorker?.footprint?.width === 1 &&
+    detailedWorker?.footprint?.height === 1 &&
+    detailedWorker?.progress === 0.8,
+  JSON.stringify(detailedWorker),
+);
+const legacySnapshot = worldViewFromSnapshot({
+  tick: 1,
+  width: 2,
+  height: 2,
+  tiles: [
+    ["grass", "grass"],
+    ["grass", "grass"],
+  ],
+  entities: [{ id: 7, kind: "warehouse", x: 1, y: 1, player: 1, health: 1 }],
+});
+const legacyEntity = legacySnapshot?.entities[0];
+check(
+  "没有新字段的旧快照仍然转换（新字段全部可选）",
+  legacySnapshot !== null &&
+    legacyEntity !== undefined &&
+    legacyEntity.footprint === undefined &&
+    legacyEntity.progress === undefined &&
+    legacyEntity.queue === undefined &&
+    legacyEntity.queueTicks === undefined,
+  JSON.stringify(legacyEntity),
+);
+
+check(
+  "进度格式化为整数百分比，并夹在 0%..100%",
+  formatProgressPercent(0) === "0%" &&
+    formatProgressPercent(0.5) === "50%" &&
+    formatProgressPercent(1) === "100%" &&
+    formatProgressPercent(0.645) === "65%" &&
+    formatProgressPercent(-1) === "0%" &&
+    formatProgressPercent(2) === "100%" &&
+    formatProgressPercent(Number.NaN) === "0%",
+  formatProgressPercent(0.645),
+);
+check(
+  "进度条比例夹在 [0,1]，非有限值为 0",
+  progressBarRatio(-2) === 0 &&
+    progressBarRatio(0) === 0 &&
+    progressBarRatio(0.25) === 0.25 &&
+    progressBarRatio(2) === 1 &&
+    progressBarRatio(Number.NaN) === 0,
+);
+check(
+  "队列标记只在有排队任务时出现（生产中 ×N）",
+  queueMarkerText(undefined) === "" &&
+    queueMarkerText(0) === "" &&
+    queueMarkerText(-3) === "" &&
+    queueMarkerText(1) === "生产中 ×1" &&
+    queueMarkerText(2) === "生产中 ×2",
+  queueMarkerText(2),
+);
+check(
+  "尺寸标签输出 尺寸：W×H，缺 footprint 时为 null",
+  detailedWarehouse !== undefined &&
+    sizeLabel(detailedWarehouse) === "尺寸：3×3" &&
+    detailedWorker !== undefined &&
+    sizeLabel(detailedWorker) === "尺寸：1×1" &&
+    sizeLabel({ id: 9, kind: "warehouse", x: 0, y: 0 }) === null,
+  detailedWarehouse === undefined ? "missing" : String(sizeLabel(detailedWarehouse)),
+);
+check(
+  "在建判定只对未完工的建筑成立（单位血量不算在建）",
+  detailedBarracks !== undefined &&
+    underConstruction(detailedBarracks) === true &&
+    detailedWarehouse !== undefined &&
+    underConstruction(detailedWarehouse) === false &&
+    detailedWorker !== undefined &&
+    underConstruction(detailedWorker) === false &&
+    underConstruction({ id: 9, kind: "building.warehouse", x: 0, y: 0 }) === false,
+);
+check(
+  "建造进度条是灰阶：浅灰轨道、白色填充、灰阶描边",
+  isGreyscaleHex(PROGRESS_TRACK_COLOR) &&
+    isGreyscaleHex(PROGRESS_FILL_COLOR) &&
+    isGreyscaleHex(PROGRESS_BORDER_COLOR) &&
+    PROGRESS_FILL_COLOR === "#ffffff",
+  `${PROGRESS_TRACK_COLOR} / ${PROGRESS_FILL_COLOR} / ${PROGRESS_BORDER_COLOR}`,
+);
 
 const validSnapshot = {
   tick: 1,

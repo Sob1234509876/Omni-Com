@@ -26,6 +26,7 @@
     "../src/render/stream.ts",
     "../src/render/atlas.ts",
     "../src/render/fallback.ts",
+    "../src/render/status.ts",
     "../src/render/interpolate.ts",
     "../src/render/marquee.ts"
   ]

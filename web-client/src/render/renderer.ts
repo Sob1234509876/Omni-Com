@@ -7,8 +7,10 @@
  *
  * Draw order is terrain, tile grid (fallback only), the hover/placement tile, ground shadows, ownership
  * rings, one gold selection ring per selected entity, then entities sorted by y so lower entities
- * overlap higher ones, then health bars, and finally the marquee rectangle. Ownership rings are thinner
- * than selection rings and are drawn first, so every gold selection ring always stays on top.
+ * overlap higher ones, then health bars, then the greyscale construction bar and `生产中 ×N` marker
+ * above buildings, and finally the marquee rectangle. Ownership rings are thinner than selection rings
+ * and are drawn first, so every gold selection ring always stays on top. The construction chrome sits
+ * above the roof, never over the sprite.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -19,16 +21,19 @@ import type { Atlas, AtlasEntity, AtlasSource, AtlasTile, EntitySprite, SpriteRe
 import type { Camera, TileCoord } from "./camera";
 import type { ScreenRect } from "./marquee";
 import {
+  drawBuildingProgressBar,
   drawBuildingShape,
   drawGroundShadow,
   drawHealthBar,
   drawOwnershipRing,
+  drawQueueMarker,
   drawSelectionRing,
   drawTerrainTile,
   drawTileGrid,
   drawUnitShape,
   playerColor,
 } from "./fallback";
+import { queueMarkerText } from "./status";
 import {
   entityInWindow,
   isBuildingEntityKind,
@@ -36,6 +41,7 @@ import {
   ownershipColor,
   terrainAt,
   tileInWindow,
+  underConstruction,
   type EntityView,
   type WorldView,
 } from "./view";
@@ -338,6 +344,31 @@ export class WorldRenderer {
           const barWidth = tileOnScreen * (building ? 1.5 : 0.9);
           const top = item.screenY - tileOnScreen * (building ? 1.55 : 0.98);
           drawHealthBar(context, item.screenX, top, barWidth, ratio, tileOnScreen);
+        }
+      }
+
+      if (building) {
+        // Status chrome sits above the roof, never over the sprite. The construction bar is only drawn
+        // while the server reports the site as unfinished; the queue marker only while jobs remain.
+        if (underConstruction(entity)) {
+          drawBuildingProgressBar(
+            context,
+            item.screenX,
+            item.screenY - tileOnScreen * 1.75,
+            tileOnScreen * 1.5,
+            entity.progress ?? 0,
+            tileOnScreen,
+          );
+        }
+        const marker = queueMarkerText(entity.queue);
+        if (marker !== "") {
+          drawQueueMarker(
+            context,
+            item.screenX,
+            item.screenY - tileOnScreen * 1.9,
+            marker,
+            tileOnScreen,
+          );
         }
       }
     }
