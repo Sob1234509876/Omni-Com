@@ -433,7 +433,7 @@ switch (lean) {
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **215 项**，其中第 11–15 节是序数层：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **267 项**，其中第 11–15 节是序数层，第 16 节是 BMS 标准式与字典序：
 
 - **11) 序数**：`0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀` 严格递增；`1 + ω = ω`、`ω + ω = ω·2`、
   `ω + ω^2 = ω^2`、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、`ε₀[1] = ω^ω`、`ε₀[2] = ω^ω^ω`；
@@ -466,9 +466,14 @@ switch (lean) {
 
 引擎侧的 336 项自校验与本篇无关，但已经确认**没有被这次扩展影响**。
 
+第 16 节（BMS）不在本篇范围内，单列在 [`bms.md`](bms.md)：它覆盖规范形（`(0)(1)(2)` 的三种写法相等、
+`isStandard`）、三个顺序例子（`A > B`、`B > C`）、`0 < 1 < 2 < ω < … < ζ₀` 的严格递增、121 对反对称、
+165 组传递、固定种子的 12 个矩阵、参考节点与康托尔标准式的 36 对同序，以及 8 个矩阵的渲染往返。
+
 ## 相关文档
 
 - [`../README.md`](../README.md) —— 库总览与 `Natural` 的精确/结构形语义
+- [`bms.md`](bms.md) —— Bashicu 矩阵标准式与字典序（第 16 节）
 - [`../../oc-rts-engine/help/12-numbers-and-googology.md`](../../oc-rts-engine/help/12-numbers-and-googology.md) —— 引擎里数量类型的用法（中文）
 - [`../../oc-rts-engine/help/appendix-api-map.md`](../../oc-rts-engine/help/appendix-api-map.md) —— 全量类型与常量清单
 

@@ -13,8 +13,9 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（215 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（267 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
+| BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式与它们的字典序 |
 
 ## 它提供什么
 
@@ -115,12 +116,45 @@ ComparisonResult result = a.compareMagnitude(b);   // LESS、EQUAL、GREATER 或
 
 这个库遵循的规则是“小自然数精确，大自然数快速”，而不是“大自然数精确”。因此，一个必须保持结构化且是幂的值会被改写为以十为底：`powerInBaseTen` 把 `b^h` 变成 `10^round(h · log10 b)`，结果与真值相差不到十倍 —— 与 `approximate(BigInteger)` 已有的容差相同。`2^4096` 变成 `10↑1233`（提升路径给出 `10↑1234`；真值是 `10^1233.02`，所以两者都在一个数量级之内），`2^100000` 变成 `10↑30103`，任意底数的幂现在都在同一底数上比较。该改写要求两个操作数都精确，且指数能放进 `long`：对于天文数字般的指数，常数因子不能丢弃，因为正是它把 `2^x` 和 `3^x` 区分开。幂以上的任何东西都保留自己的底数 —— 四级运算没有换底的封闭形式，只有带分数高度的渐近式 —— 比较时的以十为底对数则覆盖这些情形。
 
+## BMS（Bashicu 矩阵）
+
+`BmsMatrix` 是不可变的 Bashicu 矩阵（规范短形式），`BmsOrdinal` 把它读成序数，并按记号的字典序比较：
+从左到右比列，列内从上到下比行，一列是另一列的前缀时更长者更大，公共列全相等时列数多的矩阵更大。
+
+```java
+import io.github.sob1234509876.oc.googology.bms.BmsMatrix;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+
+BmsOrdinal a = BmsOrdinal.of(new int[][]{{0}, {1, 1}});        // BMS(0)(1,1)，ε₀
+BmsOrdinal b = BmsOrdinal.of(new int[][]{{0}, {1}, {2}});      // BMS(0)(1)(2)，ω^ω
+BmsOrdinal c = BmsOrdinal.of(new int[][]{{0}, {1, 0}});        // BMS(0)(1,0) = BMS(0)(1)，ω
+
+a.compareTo(b) > 0;                    // true
+b.compareTo(c) > 0;                    // true，尽管原始列 (1,0) > (1)
+b.compareMagnitude(a);                 // ComparisonResult.LESS（永远是证明）
+
+BmsMatrix.of(new int[][]{{0}, {1}, {2}}).equals(
+        BmsMatrix.canonical(new int[][]{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}));   // true
+BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).isStandard();                  // false，输入补过零
+BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).toString();                    // "(0)(1)"
+```
+
+列末的 0 是写法约定，不是可以删掉的列：`(0)(0)` 是 `2` 而不是 `1`，所以只删零**行**。`of` 要求输入已经规范，
+`canonical`、`parse` 和 `BmsOrdinal.of(int[][])` 负责规范化。对标准式，这个字典序被断言与它们表示的序数顺序一致
+——参考文件的 `(0)(1) = ω`、`(0)(1)(2) = ω^ω`、`(0,0)(1,1) = ε₀` 节点会与康托尔标准式交叉检查——
+对非标准矩阵则不然，所以构造会规范化列末的 0，并拒绝首列不全零的矩阵。更深的标准式条件（参考文件的列形状与行首
+跳变规则）在展开规则落地前仍由调用方负责。
+
+这一层**还不是** `Ordinal`：没有后继、加法或基本列，展开是后续 TODO。它是 BMS 的"顺序"那一半。
+规则、三个例子与注意事项见中文的 [`help/bms.md`](help/bms.md)。
+
 ## 它有意不做的事
 
 - **阈值以上的精确算术。** 在那里，加上或减去一个可忽略的量不会改变塔，两个塔相乘返回较大的那个 —— 与浮点数在数轴另一端所做的是同一种近似。顺序仍是全序，`equals`/`hashCode` 仍是结构化的，因此排序可用；对于精确值以及比较预算能够归约的任何东西，排序本身是精确的，超出之后则是有文档说明的启发式。
 - **除法、根或对数作为值。** 只有 `log10Approx()` 和 `toDoubleApprox()`，用于显示以及生命条之类的比例；`Natural.fractionOf(whole)` 以 float 返回该比例。
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
+- **BMS 展开，或把 BMS 当作完整的序数记号。** BMS 层只提供标准式与它们的字典序：它不把矩阵展开成基本列，`BmsOrdinal` 也不是 `Ordinal`。那是后续 TODO。
 
 ## 一张表概括语义
 
@@ -149,11 +183,17 @@ src/main/java/io/github/sob1234509876/oc/googology/
     EpsilonZero.java             上限 ε₀，其基本列是 ω 的塔
     TransfiniteHyperoperation.java  序数层级的 n {α} m，包括 n {λ} m = n {λ[m]} m
     package-info.java            包文档
+    bms/BmsMatrix.java           不可变矩阵、规范短形式与解析器
+    bms/BmsOrdinal.java          标准式读成的序数，按字典序比较
+    bms/package-info.java        BMS 包文档
 help/ordinals.md                 序数层的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    215 项检查的自检程序
+help/bms.md                      BMS 层的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    267 项检查的自检程序
+src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 一节
 ```
 
 ## 相关
 
 - [`help/ordinals.md`](help/ordinals.md) —— 序数、基本列和超限超运算，中文。
+- [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式与它们的字典序，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。

@@ -16,8 +16,9 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (215 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (267 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
+| BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms and their lexicographic order |
 
 ## What it gives you
 
@@ -176,6 +177,44 @@ with an astronomical exponent the constant factor cannot be dropped, because it 
 apart. Anything above a power keeps its own base - there is no closed form for changing base at tetration, only
 asymptotics with fractional heights - and the comparison's base ten logarithms cover those instead.
 
+## Bashicu matrices (BMS)
+
+`BmsMatrix` is an immutable Bashicu matrix in the canonical short form, and `BmsOrdinal` reads one as an
+ordinal and compares it by the notation's lexicographic rule: columns from the left, each column row by
+row from the top, the longer column larger when it is a prefix, and the longer matrix larger when every
+common column is equal.
+
+```java
+import io.github.sob1234509876.oc.googology.bms.BmsMatrix;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+
+BmsOrdinal a = BmsOrdinal.of(new int[][]{{0}, {1, 1}});        // BMS(0)(1,1), ε₀
+BmsOrdinal b = BmsOrdinal.of(new int[][]{{0}, {1}, {2}});      // BMS(0)(1)(2), ω^ω
+BmsOrdinal c = BmsOrdinal.of(new int[][]{{0}, {1, 0}});        // BMS(0)(1,0) = BMS(0)(1), ω
+
+a.compareTo(b) > 0;                    // true
+b.compareTo(c) > 0;                    // true, even though the raw column (1,0) > (1)
+b.compareMagnitude(a);                 // ComparisonResult.LESS (always a proof)
+
+BmsMatrix.of(new int[][]{{0}, {1}, {2}}).equals(
+        BmsMatrix.canonical(new int[][]{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}));   // true
+BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).isStandard();                  // false, the input was padded
+BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).toString();                    // "(0)(1)"
+```
+
+The trailing zero is a writing convention, not a column to drop: `(0)(0)` is `2`, not `1`, so only the
+zero *rows* are removed. `of` demands an already-canonical matrix, while `canonical`, `parse` and
+`BmsOrdinal.of(int[][])` normalise. For standard forms the lexicographic order is claimed to coincide with
+the order of the ordinals the matrices denote — the reference's `(0)(1) = ω`, `(0)(1)(2) = ω^ω` and
+`(0,0)(1,1) = ε₀` nodes are cross checked against Cantor normal form — and for non-standard matrices it is
+not, which is why construction normalises the trailing zeros and rejects a first column that is not all
+zeros. Deeper standardness (the reference's column-shape and row-increment conditions) stays the caller's
+responsibility until the expansion rules land.
+
+This layer is **not** an `Ordinal` yet: it has no successor, addition or fundamental sequence, because
+expansion is a later TODO. It is the ordering half of BMS. See [`help/bms.md`](help/bms.md) for the rule,
+the three worked examples and the caveats, in Chinese.
+
 ## What it deliberately does not do
 
 - **Exact arithmetic above the threshold.** There, addition and subtraction of a negligible amount leave
@@ -191,6 +230,9 @@ asymptotics with fractional heights - and the comparison's base ten logarithms c
   hyperoperation *levels* up to the notation's limit (`ε₀` for the default notation), and a custom
   notation can name its own; what the library still does not offer is the fast growing hierarchy, ordinal
   collapsing functions, or ordinals past `ε₀`.
+- **BMS expansion, and BMS as a full ordinal notation.** The BMS layer offers standard forms and their
+  lexicographic order only: it does not expand a matrix into a fundamental sequence, and `BmsOrdinal` is
+  not an `Ordinal`. That is the next TODO.
 
 ## Semantics in one table
 
@@ -221,14 +263,20 @@ src/main/java/io/github/sob1234509876/oc/googology/
     EpsilonZero.java              the ceiling ε₀, whose fundamental sequence is the ω tower
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
+    bms/BmsMatrix.java            the immutable matrix, its canonical short form and its parser
+    bms/BmsOrdinal.java           a standard form read as an ordinal, ordered lexicographically
+    bms/package-info.java         BMS package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 215 check self check program
+help/bms.md                       the Chinese guide to the BMS layer
+src/selfcheck/java/.../check/GoogologyCheck.java    the 267 check self check program
+src/selfcheck/java/.../check/BmsCheck.java          its BMS section
 ```
 
 ## Related
 
 - [`help/ordinals.md`](help/ordinals.md) — the ordinals, fundamental sequences and the transfinite
   hyperoperation, in Chinese.
+- [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms and their lexicographic order, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

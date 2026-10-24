@@ -19,7 +19,8 @@ import java.util.Random;
 /**
  * Self check of the googology library: the exact range, the switch to structural values, ordering,
  * arithmetic closure, the hyperoperation levels, formatting, parsing, the semantics the engine relies on,
- * and the ordinal layer that extends the hyperoperation to transfinite levels. Run with
+ * the ordinal layer that extends the hyperoperation to transfinite levels, and the Bashicu matrix
+ * standard forms with their lexicographic order. Run with
  * {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
  */
 public final class GoogologyCheck {
@@ -215,6 +216,9 @@ public final class GoogologyCheck {
         customOrdinalNotation();
         comparison();
         magnitudeComparison();
+        BmsCheck.Result bms = BmsCheck.run();
+        passed += bms.passed();
+        FAILURES.addAll(bms.failures());
 
         summary();
     }
