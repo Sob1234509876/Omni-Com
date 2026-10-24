@@ -66,7 +66,12 @@ import java.util.Objects;
  * a warehouse" - there is no special drop off type. {@code building.warehouse} therefore replicates the
  * engine's own warehouse: 3 x 3, 24 storage slots, {@code warehouse()}. Without one, starting resources would
  * have nowhere to live and production could not be supplied, so it is part of the catalogue rather than an
- * invention of this module.
+ * invention of this module. It is buildable by the engineer at <strong>100 gold and 40 wood</strong>:
+ * the same gold as the basic armory, with twice its wood because a store is a timber structure, and a
+ * total (140 units) just above the armory's 120. The documented opening leaves 80 gold and 40 wood, so
+ * a second warehouse needs one mine minute (30 gold at the t1 rate) after the opening - an expansion the
+ * player invests in rather than something the first minute hands out. The two numbers are the
+ * content's, not an engine rule.
  *
  * <p><strong>Starting resources.</strong> A new player receives <strong>300 gold and 60 wood</strong>, which
  * is what {@link #STARTING_RESOURCES} declares. The documented opening - one armory t1, one mine t1 and two
@@ -220,8 +225,11 @@ public final class ClassicContent implements WorldContent {
     private static final long ARMORY_T2_GOLD = 240;
     private static final long ARMORY_T2_WOOD = 60;
 
-    /** Cost of the drop off warehouse, in wood only. */
-    private static final long WAREHOUSE_WOOD = 60;
+    /** Gold half of the drop off warehouse's price. */
+    private static final long WAREHOUSE_GOLD = 100;
+
+    /** Wood half of the drop off warehouse's price. */
+    private static final long WAREHOUSE_WOOD = 40;
 
     /** Cost of the engineer, in gold. */
     private static final long ENGINEER_GOLD = 10;
@@ -376,6 +384,7 @@ public final class ClassicContent implements WorldContent {
                 .name("仓库")
                 .size(3, 3)
                 .health(500)
+                .cost(GOLD, WAREHOUSE_GOLD)
                 .cost(WOOD, WAREHOUSE_WOOD)
                 .buildTime(120)
                 .storage(24)

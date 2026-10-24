@@ -384,8 +384,10 @@ public final class CommandDispatcher {
      * {@code BUILD <engineerId> <buildingPath> <x> <y>}: place a site, pay for it and start building.
      *
      * <p>The cost is charged by {@link UnitDirector#tryBuild} on the world thread, so the answer either
-     * carries the new building id or the director's exact refusal (unaffordable, occupied, not
-     * commandable). No path is fabricated here: an unknown or malformed content path is
+     * carries the new building id or the director's exact refusal (unaffordable, out of reach, occupied,
+     * not commandable). The refusal text is forwarded verbatim, so a client that paints {@code ERR ...}
+     * lines red shows the engine's own reason. No path is fabricated here: an unknown or malformed content
+     * path is
      * {@link #ERR_UNKNOWN_BUILDING} before the director is asked.
      */
     private PendingAnswer build(String rest, Session session) {

@@ -125,6 +125,7 @@ public final class ClassicCheck {
         mines(check, registry);
         lumberCamps(check, registry);
         economy(check, classic, registry);
+        warehouseBuild(check, registry);
         startingResources(check, classic, registry);
         Map<String, Object> manifest = assets(check, registry);
         worldHost(check, classic, registry, manifest);
@@ -195,9 +196,12 @@ public final class ClassicCheck {
                 "强化兵营造价 240 金币（与文档表一致）");
         check.equal(60L, asLong(armoryT2.cost().amount(registry.item(ClassicContent.WOOD))),
                 "强化兵营造价 60 木材（与文档表一致）");
-        check.equal(60L, asLong(registry.building(ClassicContent.WAREHOUSE).cost()
-                        .amount(registry.item(ClassicContent.WOOD))),
-                "仓库造价 60 木材（与文档表一致）");
+        BuildingType warehouseType = registry.building(ClassicContent.WAREHOUSE);
+        check.equal(100L, asLong(warehouseType.cost().amount(registry.item(ClassicContent.GOLD))),
+                "仓库造价 100 金币（与文档表一致）");
+        check.equal(40L, asLong(warehouseType.cost().amount(registry.item(ClassicContent.WOOD))),
+                "仓库造价 40 木材（与文档表一致）");
+        check.equal(140L, asLong(warehouseType.cost().totalUnits()), "仓库总造价 140 单位");
         check.that(armoryT2.cost().totalUnits().compareTo(armoryT1.cost().totalUnits()) > 0,
                 "强化兵营比普通兵营更贵");
         BuildingType warehouse = registry.building(ClassicContent.WAREHOUSE);
@@ -512,6 +516,44 @@ public final class ClassicCheck {
         check.that(warehouse.isWarehouse(), "收益真正落进的是仓库（物流网络的投放点）");
     }
 
+    // ------------------------------------------------------------------ 4c) the buildable warehouse
+
+    /**
+     * The warehouse is not only the drop off: an engineer can raise another one for the documented
+     * 100 gold and 40 wood, and the site starts unfinished like any other build.
+     */
+    private static void warehouseBuild(Check check, ContentRegistry registry) {
+        check.section("仓库可由工程师建造");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
+        Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
+        OcRtsEngine engine = flatEngine(registry, player);
+        World world = engine.world();
+        Building existing = warehouse(world, registry, player, new GridPos(10, 10));
+        Unit engineer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player, new GridPos(14, 14));
+        ItemBundle cost = ItemBundle.builder().add(gold, 100).add(wood, 40).build();
+        check.equal(cost, registry.building(ClassicContent.WAREHOUSE).cost(),
+                "仓库的建造花费就是 100 金币 + 40 木材");
+        ItemBundle leftover = player.logistics().deposit(cost, existing.position());
+        check.that(leftover.isEmpty(), "测试仓库收下了恰好一份仓库造价");
+
+        var result = engine.commands().tryBuild(engineer, registry.building(ClassicContent.WAREHOUSE),
+                new GridPos(18, 14));
+        check.that(result.placed(), "工程师在附近放下一个仓库工地: " + result.refusal());
+        Building site = result.site();
+        check.that(site != null && ClassicContent.WAREHOUSE.equals(site.type().key().path()),
+                "工地类型是 building.warehouse");
+        check.that(site != null && site.type().isWarehouse(), "工地的建筑类型仍然参与物流网络");
+        check.that(site != null && !site.isConstructed(), "新工地尚未完工");
+        check.equal(0L, asLong(player.logistics().amount(gold)), "建造仓库扣光了 100 金币");
+        check.equal(0L, asLong(player.logistics().amount(wood)), "建造仓库扣光了 40 木材");
+        check.equal(2, world.buildingsOf(player).size(), "世界里有开局仓库和新建工地两座建筑");
+        check.equal(1, countUnits(world, player, ClassicContent.ENGINEER), "工程师接到了建造命令");
+        check.that(engineer.orders().size() == 1
+                        && "build".equals(engineer.orders().pending().get(0).name()),
+                "工程师的待执行订单是 build");
+    }
+
     // ------------------------------------------------------------------ 5) the opening stock
 
     private static void startingResources(Check check, ClassicContent classic, ContentRegistry registry) {
@@ -751,6 +793,35 @@ public final class ClassicCheck {
             check.that(contentKinds.containsAll(kinds), "快照里的 kind 全部来自本内容的目录: " + kinds);
             check.that(manifestEntities.keySet().containsAll(kinds),
                     "快照里的 kind 全部出现在 manifest.entities 里: " + kinds);
+
+            // The snapshot's compact warehouse contents: one field, only on warehouse rows, only items
+            // with a non-zero amount. The scene player's opening stock is 300 gold and 60 wood, and the
+            // host deposited it into that player's only warehouse.
+            Map<?, ?> sceneWarehouse = null;
+            boolean nonWarehouseHasContents = false;
+            for (Object raw : entities) {
+                if (!(raw instanceof Map<?, ?> entity)) {
+                    continue;
+                }
+                boolean reportContents = entity.containsKey("contents");
+                if (ClassicContent.WAREHOUSE.equals(entity.get("kind"))) {
+                    if (entity.get("player") instanceof Number owner
+                            && owner.longValue() == host.player().id().value()) {
+                        sceneWarehouse = entity;
+                    }
+                } else if (reportContents) {
+                    nonWarehouseHasContents = true;
+                }
+            }
+            check.that(sceneWarehouse != null, "快照里有玩家 1 的仓库行");
+            Object rawContents = sceneWarehouse == null ? null : sceneWarehouse.get("contents");
+            check.that(rawContents instanceof Map<?, ?>, "仓库行带 contents 库存对象");
+            if (rawContents instanceof Map<?, ?> contents) {
+                check.equal(2, contents.size(), "库存只列出非零的金币与木材两种物品");
+                check.equal(300L, longOf(contents.get("gold")), "仓库库存报告 300 金币");
+                check.equal(60L, longOf(contents.get("wood")), "仓库库存报告 60 木材");
+            }
+            check.that(!nonWarehouseHasContents, "非仓库建筑没有 contents 字段");
 
             List<Object> tileRows;
             try {

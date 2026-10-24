@@ -93,9 +93,13 @@ public interface UnitDirector {
      * owner cannot cover the cost, or the cost cannot be reserved, nothing is placed and nothing is
      * charged; the reservation is released if the placement itself fails.
      *
-     * <p>Nothing is placed when the unit cannot be commanded or the type does not fit at the origin (the
-     * same check {@link io.github.sob1234509876.oc.rts.World#canPlace(DimensionId, BuildingType, GridPos)}
-     * performs), so a caller can try candidate tiles in a fixed order and take the first site it gets.
+     * <p>Nothing is placed when the unit cannot be commanded, the site is out of the builder's reach, or
+     * the type does not fit at the origin (the same check
+     * {@link io.github.sob1234509876.oc.rts.World#canPlace(DimensionId, BuildingType, GridPos)} performs),
+     * so a caller can try candidate tiles in a fixed order and take the first site it gets. Reach means
+     * that the site's footprint is adjacent to a tile the builder can walk to and that a deterministic
+     * path from the builder's tile to that approach ring is at most
+     * {@link CommandService#MAX_BUILD_PATH_TILES} tiles long; the refusal names {@code out of reach}.
      *
      * @param unit   the builder, normally a unit with the content's builder role
      * @param type   the building to raise

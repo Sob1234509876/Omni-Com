@@ -78,6 +78,38 @@ export interface EntityView {
   readonly queue?: number;
   /** Remaining ticks of the job the building is producing, when the server reports it. */
   readonly queueTicks?: number;
+  /**
+   * Unfinished production jobs in queue order, from the snapshot's optional `queueItems`.
+   *
+   * A unit row and a building that never had a queue omit the array; `queue` is its length when it is
+   * present. A legacy snapshot has `queue` but no `queueItems`, so the HUD must keep the plain
+   * `生产中 ×N` marker and draw no per-item list. A malformed entry is dropped rather than rejecting the
+   * whole world.
+   */
+  readonly queueItems?: readonly QueueItemView[];
+  /**
+   * Stored items of a warehouse, keyed by item content path (`gold`, `wood`), from the snapshot's
+   * optional `contents` object.
+   *
+   * Only a warehouse row carries it, only items with a positive amount are kept, and an older server
+   * omits it entirely. The HUD therefore has to treat a missing object as "no stock to show" rather
+   * than as an empty warehouse.
+   */
+  readonly contents?: Readonly<Record<string, number>>;
+}
+
+/**
+ * One unfinished production job of a building, as reported by the snapshot's `queueItems`.
+ *
+ * `kind` is the content path of the produced unit (or the recipe path for an item-only recipe), `total`
+ * is the recipe duration and `ticks` is what the engine reports as remaining for the job that is
+ * currently producing. A job that has not started reports `ticks === total`, which is the server's
+ * documented way of saying "no progress yet".
+ */
+export interface QueueItemView {
+  readonly kind: string;
+  readonly ticks: number;
+  readonly total: number;
 }
 
 export interface WorldView {
@@ -115,6 +147,16 @@ export interface PlayerView {
   readonly gold: number;
   /** Wood in the player's warehouses, as a non-negative integer. */
   readonly wood: number;
+  /**
+   * Gold income in gold per minute, summed from the player's alive, constructed buildings' content
+   * tags, when the server reports it.
+   *
+   * A snapshot from before the field existed omits it, so the HUD adds no rate rather than inventing
+   * `+0/分`. The demo world has no player rows at all.
+   */
+  readonly goldPerMinute?: number;
+  /** Wood income in wood per minute; see {@link goldPerMinute}. */
+  readonly woodPerMinute?: number;
 }
 
 /** How one entity stands relative to the local player. */
@@ -367,6 +409,81 @@ function terrainIdFromSnapshot(value: string): TerrainId {
 }
 
 /**
+ * Reads the optional `contents` object of a warehouse row.
+ *
+ * Missing, non-object, empty and all-zero objects all become `undefined`: the HUD shows nothing rather
+ * than `库存：` with no items. A malformed entry is dropped instead of rejecting the whole world, and a
+ * negative or fractional amount is never displayed as stock.
+ */
+function snapshotContents(value: unknown): Readonly<Record<string, number>> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const parsed: Record<string, number> = {};
+  let any = false;
+  for (const [path, amount] of Object.entries(value)) {
+    if (
+      path.trim() === "" ||
+      typeof amount !== "number" ||
+      !Number.isSafeInteger(amount) ||
+      amount <= 0
+    ) {
+      continue;
+    }
+    parsed[path] = amount;
+    any = true;
+  }
+  return any ? parsed : undefined;
+}
+
+/**
+ * Reads the optional `queueItems` array of a building row.
+ *
+ * `undefined` means the snapshot predates the field (or the row has no queue), which is the legacy path
+ * the HUD must keep supporting. An array is always returned when the field is an array, even if every
+ * individual entry was malformed: the HUD then draws no per-item rows, and the canvas marker still comes
+ * from `queue`. An item is kept only when it has a non-empty `kind` and integer `0 <= ticks <= total`,
+ * where `total` is positive; a half-parsed job is dropped, not fatal.
+ */
+function snapshotQueueItems(value: unknown): QueueItemView[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items: QueueItemView[] = [];
+  for (const rawItem of value) {
+    if (!isRecord(rawItem)) {
+      continue;
+    }
+    const kind = rawItem["kind"];
+    const ticks = finiteNumber(rawItem["ticks"]);
+    const total = finiteNumber(rawItem["total"]);
+    if (typeof kind !== "string" || kind.trim() === "" || ticks === null || total === null) {
+      continue;
+    }
+    if (
+      !Number.isInteger(ticks) ||
+      !Number.isInteger(total) ||
+      ticks < 0 ||
+      total <= 0 ||
+      ticks > total
+    ) {
+      continue;
+    }
+    items.push({ kind: kindName(kind.trim()), ticks, total });
+  }
+  return items;
+}
+
+/** An optional non-negative integer field; absent or malformed values are ignored, not fatal. */
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : undefined;
+}
+
+/**
  * Converts `/world/snapshot` JSON into the model the renderer already consumes.
  *
  * The server sends terrain content paths (`grass`, `oc:grass`, ...): they are normalized to the
@@ -376,12 +493,15 @@ function terrainIdFromSnapshot(value: string): TerrainId {
  * player rows.
  *
  * The optional entity detail fields are additive for the same reason: `w` / `h` become `footprint`,
- * `progress` becomes a clamped `progress`, and `queue` / `queueTicks` become `queue` / `queueTicks`.
- * A snapshot without any of them (an older server, the demo world, every check fixture written before
- * these fields existed) converts exactly as it did before, with all of those properties `undefined`. A
- * malformed optional field is ignored rather than rejecting the whole world, because these fields are
- * presentation detail: a bad `progress` must not blank the map. A footprint is kept only when both `w`
- * and `h` are positive integers, because half a footprint says nothing useful.
+ * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
+ * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, and `contents` becomes a
+ * validated object of positive integer amounts. A snapshot without any of them (an older server, the
+ * demo world, every check fixture written before these fields existed) converts exactly as it did
+ * before, with all of those properties `undefined`; a player row similarly keeps the optional
+ * `goldPerMinute` / `woodPerMinute` or leaves them `undefined`. A malformed optional field is ignored
+ * rather than rejecting the whole world, because these fields are presentation detail: a bad `progress`
+ * must not blank the map. A footprint is kept only when both `w` and `h` are positive integers, because
+ * half a footprint says nothing useful.
  *
  * The world is unbounded, so a snapshot carries `originX` / `originY` (the window's absolute top-left
  * tile) and a `width` / `height` that describe only that window. There is no `mapWidth` / `mapHeight`
@@ -493,6 +613,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const progress = finiteNumber(rawEntity["progress"]);
     const queue = finiteNumber(rawEntity["queue"]);
     const queueTicks = finiteNumber(rawEntity["queueTicks"]);
+    const queueItems = snapshotQueueItems(rawEntity["queueItems"]);
+    const contents = snapshotContents(rawEntity["contents"]);
     entities.push({
       id,
       kind: kindName(kind.trim()),
@@ -507,6 +629,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(queueTicks === null || !Number.isInteger(queueTicks) || queueTicks < 0
         ? {}
         : { queueTicks }),
+      ...(queueItems === undefined ? {} : { queueItems }),
+      ...(contents === undefined ? {} : { contents }),
     });
   }
 
@@ -524,6 +648,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       const name = rawPlayer["name"];
       const gold = finiteNumber(rawPlayer["gold"]);
       const wood = finiteNumber(rawPlayer["wood"]);
+      const goldPerMinute = optionalNonNegativeInteger(rawPlayer["goldPerMinute"]);
+      const woodPerMinute = optionalNonNegativeInteger(rawPlayer["woodPerMinute"]);
       if (
         id === null ||
         gold === null ||
@@ -545,7 +671,14 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ) {
         return null;
       }
-      players.push({ id, name, gold, wood });
+      players.push({
+        id,
+        name,
+        gold,
+        wood,
+        ...(goldPerMinute === undefined ? {} : { goldPerMinute }),
+        ...(woodPerMinute === undefined ? {} : { woodPerMinute }),
+      });
     }
   }
 

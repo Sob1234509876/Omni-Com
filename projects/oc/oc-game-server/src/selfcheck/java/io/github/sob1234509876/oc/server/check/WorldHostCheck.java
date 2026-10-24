@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.server.ws.HttpWebServer;
 import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
+import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
@@ -79,6 +80,7 @@ public final class WorldHostCheck {
         terrainAndAnchor(check);
         snapshotWindows(check);
         snapshotPlayers(check);
+        snapshotIncomeRates(check);
         snapshotEntityDetails(check);
         snapshotQueueTicks(check);
         determinism(check);
@@ -413,6 +415,85 @@ public final class WorldHostCheck {
     }
 
     /**
+     * The per-player {@code goldPerMinute} / {@code woodPerMinute} fields: summed from the served
+     * content's income tags over alive, constructed buildings only.
+     *
+     * <p>The fixture uses the classic convention but is local to this module: a tier one mine publishes
+     * {@code income_30}, a tier two mine {@code income_60}, a lumber camp {@code wood_income_20}, and a
+     * tower publishes no tag at all. The scene starts with one of each, so the method clears the scene
+     * buildings before each stage and spawns exactly the buildings the assertion is about. A destroyed
+     * building is marked dead by {@link World#destroy(Entity)} and must stop contributing immediately,
+     * without waiting for the engine's flush.
+     */
+    private static void snapshotIncomeRates(Check check) {
+        check.section("快照：收入速率");
+        WorldHost host = new WorldHost(1L, new EconomyContent());
+        try {
+            World world = host.engine().world();
+            destroyAllBuildings(world);
+
+            world.spawnBuilding(host.content().building(EconomyContent.MINE_T1), host.player(),
+                    host.spawnAnchor().plus(4, 8));
+            Map<?, ?> oneMine = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(30L, longField(oneMine, "goldPerMinute"),
+                    "一座一级矿场报告 goldPerMinute 30");
+            check.equal(0L, longField(oneMine, "woodPerMinute"),
+                    "只有金矿时 woodPerMinute 是 0");
+
+            destroyAllBuildings(world);
+            for (int index = 0; index < 3; index++) {
+                world.spawnBuilding(host.content().building(EconomyContent.MINE_T2), host.player(),
+                        host.spawnAnchor().plus(4 + index * 2, 8));
+            }
+            Map<?, ?> threeMines = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(180L, longField(threeMines, "goldPerMinute"),
+                    "三座二级矿场（每座 60）合计 goldPerMinute 180");
+
+            destroyAllBuildings(world);
+            world.spawnBuilding(host.content().building(EconomyContent.TOWER), host.player(),
+                    host.spawnAnchor().plus(4, 8));
+            Map<?, ?> towerOnly = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(0L, longField(towerOnly, "goldPerMinute"),
+                    "没有收入标签的塔报告 goldPerMinute 0");
+            check.equal(0L, longField(towerOnly, "woodPerMinute"),
+                    "没有收入标签的塔报告 woodPerMinute 0");
+
+            destroyAllBuildings(world);
+            Building site = world.placeBuilding(host.content().building(EconomyContent.MINE_T1),
+                    host.player(), host.spawnAnchor().plus(4, 8));
+            Map<?, ?> unfinished = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(0L, longField(unfinished, "goldPerMinute"),
+                    "在建矿场不计入 goldPerMinute");
+            site.completeConstruction();
+            Map<?, ?> finished = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(30L, longField(finished, "goldPerMinute"),
+                    "完工后的矿场开始计入 goldPerMinute 30");
+            world.destroy(site);
+            Map<?, ?> destroyed = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(0L, longField(destroyed, "goldPerMinute"),
+                    "被摧毁的矿场立刻不再计入 goldPerMinute");
+
+            destroyAllBuildings(world);
+            world.spawnBuilding(host.content().building(EconomyContent.LUMBERCAMP), host.player(),
+                    host.spawnAnchor().plus(4, 8));
+            Map<?, ?> lumber = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
+            check.equal(0L, longField(lumber, "goldPerMinute"),
+                    "只有伐木场时 goldPerMinute 是 0");
+            check.equal(20L, longField(lumber, "woodPerMinute"),
+                    "一座一级伐木场报告 woodPerMinute 20");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** Marks every building of the world dead, so each income stage starts from an empty base. */
+    private static void destroyAllBuildings(World world) {
+        for (Building building : new ArrayList<>(world.buildings())) {
+            world.destroy(building);
+        }
+    }
+
+    /**
      * The per-entity detail fields of one snapshot row: footprint, construction progress and queue size.
      *
      * <p>Four rules are asserted against the engine's own objects, not against literals alone: a finished
@@ -440,6 +521,8 @@ public final class WorldHostCheck {
                 check.that(row != null && Math.abs(doubleField(row, "progress") - 1.0) < 1e-9,
                         "完工仓库的 progress 恰好是 1.00");
                 check.equal(0L, longField(row, "queue"), "没有生产队列的仓库报告 queue 0");
+                check.that(row != null && !row.containsKey("queueItems"),
+                        "没有生产队列的建筑省略 queueItems 数组");
             }
 
             List<Unit> units = new ArrayList<>(host.engine().world().units());
@@ -452,6 +535,8 @@ public final class WorldHostCheck {
                 check.that(row != null
                                 && Math.abs(doubleField(row, "progress") - unit.health().fraction()) <= 0.005,
                         "单位的 progress 就是自己的血量比例（引擎没有单位级建造进度）");
+                check.that(row != null && !row.containsKey("queueItems"),
+                        "单位行没有 queueItems 数组");
             }
 
             Building site = buildingOf(host, ScenarioContent.ORE_SILO);
@@ -480,6 +565,8 @@ public final class WorldHostCheck {
                     Map<?, ?> row = entityRow(queued, factory.id().value());
                     check.that(longField(row, "queue") > 0,
                             "有生产队列的建筑报告 queue > 0（" + longField(row, "queue") + "）");
+                    check.equal(longField(row, "queue"), (long) queueItems(row).size(),
+                            "queueItems 的长度等于 queue");
                     validateSnapshot(check, host.snapshotJson(), "带生产队列的快照");
                 }
             }
@@ -511,16 +598,44 @@ public final class WorldHostCheck {
                 return;
             }
             Recipe recipe = recipes.get(0);
+            String outputKind = recipe.unitOutput().orElseThrow().key().path();
             host.engine().world().production().enqueue(smithy, recipe, 2);
             Map<?, ?> waiting = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
             check.equal(2L, longField(waiting, "queue"), "入队两个任务后 queue 是 2");
             check.that(waiting != null && !waiting.containsKey("queueTicks"),
                     "任务尚未开工时省略 queueTicks，而不是发明一个剩余时间");
 
+            List<?> waitingItems = queueItems(waiting);
+            check.equal(2L, (long) waitingItems.size(), "queueItems 长度等于 queue（2）");
+            check.equal(outputKind, itemKind(waitingItems, 0),
+                    "queueItems 的 kind 是配方产出的单位路径（unit.recruit）");
+            check.equal((long) recipe.durationTicks(), itemTicks(waitingItems, 0),
+                    "尚未开工的任务在 queueItems 里 ticks 与 total 都是配方时长（60）");
+            check.equal((long) recipe.durationTicks(), itemTotal(waitingItems, 0),
+                    "尚未开工的任务在 queueItems 里 total 是配方时长（60）");
+            check.equal((long) recipe.durationTicks(), itemTicks(waitingItems, 1),
+                    "排在后面的任务同样报告 ticks = total = 60");
+
             host.step();
             Map<?, ?> running = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
             check.equal((long) recipe.durationTicks(), longField(running, "queueTicks"),
                     "开工后 queueTicks 是配方的真实剩余 tick（60）");
+            List<?> runningItems = queueItems(running);
+            check.equal(2L, (long) runningItems.size(), "开工后 queueItems 仍有 2 项");
+            check.equal(60L, itemTicks(runningItems, 0),
+                    "生产中的第一项 ticks 是引擎剩余 tick（60）");
+            check.equal(60L, itemTicks(runningItems, 1),
+                    "未开始生产的第一项之后的第二项 ticks 仍是 total（60）");
+
+            for (int index = 0; index < 5; index++) {
+                host.step();
+            }
+            Map<?, ?> advanced = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
+            List<?> advancedItems = queueItems(advanced);
+            check.equal(55L, itemTicks(advancedItems, 0),
+                    "生产 5 tick 后 queueItems 第一项 ticks 是 55");
+            check.equal(60L, itemTicks(advancedItems, 1),
+                    "第二项仍未开工，ticks 保持 total 60");
             validateSnapshot(check, host.snapshotJson(), "生产中的快照");
         } finally {
             host.stop();
@@ -549,6 +664,38 @@ public final class WorldHostCheck {
             }
         }
         return null;
+    }
+
+    /** The {@code queueItems} array of a parsed entity row, or an empty list when it is absent. */
+    private static List<?> queueItems(Map<?, ?> row) {
+        Object raw = row == null ? null : row.get("queueItems");
+        return raw instanceof List<?> items ? items : List.of();
+    }
+
+    /** One field of one parsed queue item, or {@code null} when the item is malformed. */
+    private static Object queueItemField(List<?> items, int index, String key) {
+        if (index < 0 || index >= items.size() || !(items.get(index) instanceof Map<?, ?> item)) {
+            return null;
+        }
+        return item.get(key);
+    }
+
+    /** The {@code kind} string of one queue item, or the empty string when it is missing. */
+    private static String itemKind(List<?> items, int index) {
+        Object value = queueItemField(items, index, "kind");
+        return value instanceof String text ? text : "";
+    }
+
+    /** The {@code ticks} number of one queue item, or {@code -1} when it is missing. */
+    private static long itemTicks(List<?> items, int index) {
+        Object value = queueItemField(items, index, "ticks");
+        return value instanceof Number number ? number.longValue() : -1L;
+    }
+
+    /** The {@code total} number of one queue item, or {@code -1} when it is missing. */
+    private static long itemTotal(List<?> items, int index) {
+        Object value = queueItemField(items, index, "total");
+        return value instanceof Number number ? number.longValue() : -1L;
     }
 
     /** Reads a decimal field of a parsed row; a missing or non-numeric field reports {@code NaN}. */
@@ -818,12 +965,14 @@ public final class WorldHostCheck {
         Object entitiesValue = document.get("entities");
         boolean entitiesShaped = entitiesValue instanceof List<?>;
         boolean everyEntityValid = entitiesShaped;
+        boolean queueItemsValid = entitiesShaped;
         int entityCount = 0;
         if (entitiesValue instanceof List<?> entities) {
             entityCount = entities.size();
             for (Object raw : entities) {
                 if (!(raw instanceof Map<?, ?> entity)) {
                     everyEntityValid = false;
+                    queueItemsValid = false;
                     break;
                 }
                 Object id = entity.get("id");
@@ -833,6 +982,7 @@ public final class WorldHostCheck {
                 if (!(id instanceof Number) || !(kind instanceof String kindText) || kindText.isEmpty()
                         || !(x instanceof Number xNumber) || !(y instanceof Number yNumber)) {
                     everyEntityValid = false;
+                    queueItemsValid = false;
                     break;
                 }
                 double xValue = xNumber.doubleValue();
@@ -842,13 +992,46 @@ public final class WorldHostCheck {
                 // negative or huge.
                 if (!Double.isFinite(xValue) || !Double.isFinite(yValue)) {
                     everyEntityValid = false;
+                    queueItemsValid = false;
                     break;
+                }
+                Object queueValue = entity.get("queue");
+                Object queueItemsValue = entity.get("queueItems");
+                if (queueItemsValue != null) {
+                    if (!(queueValue instanceof Number queueNumber)
+                            || !(queueItemsValue instanceof List<?> items)
+                            || queueNumber.longValue() != items.size()) {
+                        queueItemsValid = false;
+                        break;
+                    }
+                    for (Object rawItem : items) {
+                        if (!(rawItem instanceof Map<?, ?> item)
+                                || !(item.get("kind") instanceof String itemKind) || itemKind.isEmpty()
+                                || !(item.get("ticks") instanceof Number ticksNumber)
+                                || !(item.get("total") instanceof Number totalNumber)) {
+                            queueItemsValid = false;
+                            break;
+                        }
+                        long ticks = ticksNumber.longValue();
+                        long total = totalNumber.longValue();
+                        if (!Double.isFinite(ticksNumber.doubleValue())
+                                || !Double.isFinite(totalNumber.doubleValue())
+                                || ticks < 0 || total <= 0 || ticks > total) {
+                            queueItemsValid = false;
+                            break;
+                        }
+                    }
+                    if (!queueItemsValid) {
+                        break;
+                    }
                 }
             }
         }
         check.that(entitiesShaped, label + "：entities 是数组");
         check.that(entityCount > 0, label + "：样例场景至少有一个实体");
         check.that(everyEntityValid, label + "：每个实体都有 id/kind/x/y，坐标是有限的绝对世界坐标");
+        check.that(queueItemsValid,
+                label + "：queueItems 每项都有 kind/ticks/total，长度等于 queue 且 0 <= ticks <= total");
 
         Object playersValue = document.get("players");
         boolean playersShaped = playersValue instanceof List<?> players && !players.isEmpty();
@@ -864,16 +1047,23 @@ public final class WorldHostCheck {
                 Object name = row.get("name");
                 Object gold = row.get("gold");
                 Object wood = row.get("wood");
+                Object goldPerMinute = row.get("goldPerMinute");
+                Object woodPerMinute = row.get("woodPerMinute");
                 if (!(id instanceof Number idNumber) || !(name instanceof String nameText)
                         || nameText.isEmpty() || !(gold instanceof Number goldNumber)
-                        || !(wood instanceof Number woodNumber)) {
+                        || !(wood instanceof Number woodNumber)
+                        || !(goldPerMinute instanceof Number goldRateNumber)
+                        || !(woodPerMinute instanceof Number woodRateNumber)) {
                     playersShaped = false;
                     break;
                 }
                 double goldValue = goldNumber.doubleValue();
                 double woodValue = woodNumber.doubleValue();
+                double goldRate = goldRateNumber.doubleValue();
+                double woodRate = woodRateNumber.doubleValue();
                 if (!Double.isFinite(goldValue) || !Double.isFinite(woodValue)
-                        || goldValue < 0 || woodValue < 0) {
+                        || !Double.isFinite(goldRate) || !Double.isFinite(woodRate)
+                        || goldValue < 0 || woodValue < 0 || goldRate < 0 || woodRate < 0) {
                     playersShaped = false;
                     break;
                 }
@@ -884,7 +1074,8 @@ public final class WorldHostCheck {
                 previousPlayerId = idValue;
             }
         }
-        check.that(playersShaped, label + "：players 每行都有 id/name/gold/wood 且金额非负");
+        check.that(playersShaped,
+                label + "：players 每行都有 id/name/gold/wood/goldPerMinute/woodPerMinute 且数值非负");
         check.that(playersOrdered, label + "：players 按 id 升序排列");
     }
 
@@ -1127,6 +1318,57 @@ public final class WorldHostCheck {
     }
 
     /**
+     * The income-rate fixture: the classic tag convention without depending on the classic plugin.
+     *
+     * <p>A tier one mine publishes {@code income_30}, a tier two mine {@code income_60}, a lumber camp
+     * {@code wood_income_20}, and the tower publishes no income tag at all. The world host gives the scene
+     * one of every building, which the check clears before each stage so the rate is exactly what it
+     * spawned. The catalogue registers no items and no starting stock: income is a property of the
+     * buildings, not of the warehouse.
+     */
+    private static final class EconomyContent implements WorldContent {
+
+        private static final String MINE_T1 = "building.mine.t1";
+        private static final String MINE_T2 = "building.mine.t2";
+        private static final String LUMBERCAMP = "building.lumbercamp.t1";
+        private static final String TOWER = "building.tower";
+
+        @Override
+        public String id() {
+            return "oc-world-host-check-income";
+        }
+
+        @Override
+        public String description() {
+            return "World host check content: two mine tiers, a lumber camp and a tower without income tags";
+        }
+
+        @Override
+        public String namespace() {
+            return "worldhostcheckincome";
+        }
+
+        @Override
+        public StartingResources startingResources() {
+            return StartingResources.EMPTY;
+        }
+
+        @Override
+        public void populate(ContentRegistry.Builder registry) {
+            Objects.requireNonNull(registry, "registry");
+            registry.terrain("grass").name("Grass").buildable().moveCost(1f)
+                    .sprite("terrain/grass").mapColor(0x5FA84F)
+                    .building(MINE_T1).name("Mine I").size(1, 1).health(100)
+                    .buildTime(20).tag("mine").tag("income_30")
+                    .building(MINE_T2).name("Mine II").size(1, 1).health(100)
+                    .buildTime(20).tag("mine").tag("income_60")
+                    .building(LUMBERCAMP).name("Lumber Camp").size(1, 1).health(100)
+                    .buildTime(20).tag("lumbercamp").tag("wood_income_20")
+                    .building(TOWER).name("Tower").size(1, 1).health(100).buildTime(20);
+        }
+    }
+
+    /**
      * A minimal producer catalogue for the {@code queueTicks} check: one buildable terrain, one item, one
      * producer building and one recipe with no inputs, so the first engine tick starts production.
      */
@@ -1160,10 +1402,12 @@ public final class WorldHostCheck {
             registry.terrain("grass").name("Grass").buildable().moveCost(1f)
                     .sprite("terrain/grass").mapColor(0x5FA84F)
                     .item("gold").name("Gold").maxStack(10_000)
+                    .unit("unit.recruit").name("Recruit").role(UnitRole.COMBAT).health(50)
+                    .speed(2f).radius(0.3f).buildTime(60).spriteSet("unit.recruit")
                     .building(SMITHY).name("Smithy").size(2, 1).health(300)
                     .buildTime(40).storage(4).producer("smithy").spriteSet(SMITHY)
                     .recipe("recipe.smelt").name("Smelt").producer("smithy")
-                    .itemOutput("gold", 1).duration(60);
+                    .unitOutput("unit.recruit").duration(60);
         }
     }
 

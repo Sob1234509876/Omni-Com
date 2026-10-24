@@ -18,7 +18,7 @@ the engine's sample catalogue; remove it and the server falls back.
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (349 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (368 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x96 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -108,10 +108,15 @@ the same tick number cannot pay twice — not gold and not wood.
 
 `building.warehouse` is the engine's drop-off. The engine defines its logistics network as every finished
 building whose type is a warehouse, so there is no special drop-off type: the catalogue simply ships a 3x3
-warehouse like the engine's sample — 500 HP, 24 storage slots, 60 wood and 120 ticks.
+warehouse like the engine's sample — 500 HP, 24 storage slots, **100 gold + 40 wood** and 120 ticks.
 
 It is part of the catalogue rather than an invention of this module because without one, starting resources
-would have nowhere to live, production could not be supplied and neither income could be paid.
+would have nowhere to live, production could not be supplied and neither income could be paid. It is also
+**buildable by the engineer**: the same gold price as the basic armory and twice its wood, because a store is
+a timber structure; the 140-unit total is just above the armory's 120. The documented opening leaves 80 gold
+and 40 wood, so a second warehouse needs one t1 mine payout (30 gold per minute) after the opening. The engine
+checks that the site is within the engineer's reach (a path of at most 16 tiles to the footprint's one-tile
+approach ring) before it charges anything.
 
 ## Starting resources and the opening
 
@@ -189,14 +194,14 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 349 checks passed.
+classic plugin self check: all 368 checks passed.
 ```
 
-349 is the sum of thirteen sections: the catalogue 82, the five-tier stat ladder 40, the armory level gate 14,
-the mine income ladder 20, the lumber camp ladder 35, the economy payout 33 (18 gold + 15 wood), the starting
-stock 10, the manifest and atlas 17, the host and snapshot 29, the enemy AI 31 (including the lumber camp
-upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the plugin seam 17 and the
-plugin loader 12. The gate section is the
+368 is the sum of fourteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
+the mine income ladder 20, the lumber camp ladder 35, the economy payout 33 (18 gold + 15 wood), the buildable
+warehouse 11, the starting stock 10, the manifest and atlas 17, the host and snapshot 35 (including the compact
+warehouse `contents` row), the enemy AI 31 (including the lumber camp upkeep), determinism 9 (including the
+AI's 64-tile entity bound over a 600-tick run), the plugin seam 17 and the plugin loader 12. The gate section is the
 strict part: it proves against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just
 that the catalogue says so.
 
@@ -211,7 +216,7 @@ that the catalogue says so.
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 349 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 368 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

@@ -13,9 +13,11 @@ import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
+import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.dimension.Gateway;
@@ -35,6 +37,7 @@ import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
+import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
@@ -92,6 +95,7 @@ public final class RtsScenario {
         checkCombat(check, content);
         checkBuildingCombat(check, content);
         checkBuildingCosts(check, content);
+        checkBuildReach(check, content);
 
         check.summary("RTS engine scenario");
     }
@@ -1524,6 +1528,101 @@ public final class RtsScenario {
                 "the unaffordable build charged no plank");
         check.equal(1, poor.world().buildingsOf(poorPlayer).size(),
                 "the unaffordable build placed nothing (the warehouse is still the only building)");
+    }
+
+    /**
+     * The reach rule of the build path: a site must stand next to a tile the builder can walk to, within
+     * {@link CommandService#MAX_BUILD_PATH_TILES} tiles of path. The assertions cover the three cases the
+     * rule exists for - a site beside the builder, a site twenty tiles away and a site walled off by
+     * water - and prove that both refusals place nothing, charge nothing and leave no reservation.
+     */
+    private static void checkBuildReach(Check check, ContentRegistry content) {
+        check.section("14) a builder may only place sites within reach");
+        BuildingType barracks = content.building(ScenarioContent.BARRACKS);
+        BuildingType warehouse = content.building(ScenarioContent.WAREHOUSE);
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        ItemType plank = content.item(ScenarioContent.PLANK);
+        ItemBundle stock = ItemBundle.of(iron, 150, plank, 60);
+        UnitType worker = content.unit(ScenarioContent.WORKER);
+
+        // --- a site next to the builder succeeds and is charged normally
+        OcRtsEngine near = costEngine(content);
+        Player nearPlayer = near.players().get(0);
+        World nearWorld = near.world();
+        Building nearWarehouse = nearWorld.spawnBuilding(warehouse, nearPlayer, new GridPos(10, 10));
+        Unit nearBuilder = nearWorld.spawnUnit(worker, nearPlayer, new GridPos(14, 14));
+        depositStock(check, nearPlayer, nearWarehouse, stock,
+                "the reach check starts with 150 iron ingot and 60 plank");
+        Natural nearIron = nearPlayer.logistics().amount(iron);
+        Natural nearPlank = nearPlayer.logistics().amount(plank);
+        var nearResult = near.commands().tryBuild(nearBuilder, barracks, new GridPos(18, 14));
+        check.that(nearResult.placed(), "a site beside the builder is placed: " + nearResult.refusal());
+        check.that(nearResult.site() != null && nearResult.site().type().equals(barracks),
+                "the accepted site has the requested building type");
+        check.equal(Natural.of(100), nearIron.subtractClamped(nearPlayer.logistics().amount(iron)),
+                "the reachable site charged its 100 iron ingot cost");
+        check.equal(Natural.of(50), nearPlank.subtractClamped(nearPlayer.logistics().amount(plank)),
+                "the reachable site charged its 50 plank cost");
+
+        // --- a site twenty tiles away is refused before anything is claimed
+        OcRtsEngine far = costEngine(content);
+        Player farPlayer = far.players().get(0);
+        World farWorld = far.world();
+        Building farWarehouse = farWorld.spawnBuilding(warehouse, farPlayer, new GridPos(10, 10));
+        Unit farBuilder = farWorld.spawnUnit(worker, farPlayer, new GridPos(14, 14));
+        depositStock(check, farPlayer, farWarehouse, stock,
+                "the far reach check starts with 150 iron ingot and 60 plank");
+        Natural farIron = farPlayer.logistics().amount(iron);
+        Natural farPlank = farPlayer.logistics().amount(plank);
+        int farBuildings = farWorld.buildingsOf(farPlayer).size();
+        var farResult = far.commands().tryBuild(farBuilder, barracks, new GridPos(34, 14));
+        check.that(!farResult.placed(), "a site 20 tiles away is refused");
+        check.that(farResult.refusal() != null
+                        && farResult.refusal().contains(CommandService.OUT_OF_REACH),
+                "the far refusal says it is out of reach: " + farResult.refusal());
+        check.equal(farBuildings, farWorld.buildingsOf(farPlayer).size(),
+                "the refused far site placed nothing");
+        check.equal(farIron, farPlayer.logistics().amount(iron),
+                "the refused far site charged no iron");
+        check.equal(farPlank, farPlayer.logistics().amount(plank),
+                "the refused far site charged no plank");
+        check.equal(farPlayer.logistics().stored(), farPlayer.logistics().available(),
+                "the refused far site left no reservation in the warehouse network");
+
+        // --- a site walled off by water is refused even though it is close in a straight line
+        OcRtsEngine wet = costEngine(content);
+        Player wetPlayer = wet.players().get(0);
+        World wetWorld = wet.world();
+        Building wetWarehouse = wetWorld.spawnBuilding(warehouse, wetPlayer, new GridPos(10, 10));
+        Unit wetBuilder = wetWorld.spawnUnit(worker, wetPlayer, new GridPos(14, 14));
+        depositStock(check, wetPlayer, wetWarehouse, stock,
+                "the water reach check starts with 150 iron ingot and 60 plank");
+        TerrainType water = content.terrain("water");
+        TileRect footprint = barracks.footprint(20, 14);
+        TileRect approach = footprint.expanded(1);
+        for (int y = approach.minY(); y <= approach.maxY(); y++) {
+            for (int x = approach.minX(); x <= approach.maxX(); x++) {
+                if (!footprint.contains(x, y)) {
+                    wetWorld.map().setTerrain(new GridPos(x, y), water);
+                }
+            }
+        }
+        Natural wetIron = wetPlayer.logistics().amount(iron);
+        Natural wetPlank = wetPlayer.logistics().amount(plank);
+        int wetBuildings = wetWorld.buildingsOf(wetPlayer).size();
+        var wetResult = wet.commands().tryBuild(wetBuilder, barracks, new GridPos(20, 14));
+        check.that(!wetResult.placed(), "a site on dry ground behind a water ring is refused");
+        check.that(wetResult.refusal() != null
+                        && wetResult.refusal().contains(CommandService.OUT_OF_REACH),
+                "the water refusal says it is out of reach: " + wetResult.refusal());
+        check.equal(wetBuildings, wetWorld.buildingsOf(wetPlayer).size(),
+                "the refused site behind water placed nothing");
+        check.equal(wetIron, wetPlayer.logistics().amount(iron),
+                "the refused site behind water charged no iron");
+        check.equal(wetPlank, wetPlayer.logistics().amount(plank),
+                "the refused site behind water charged no plank");
+        check.equal(wetPlayer.logistics().stored(), wetPlayer.logistics().available(),
+                "the refused site behind water left no reservation in the warehouse network");
     }
 
     /** A flat grass engine with direct delivery, used only by the building-cost assertions. */

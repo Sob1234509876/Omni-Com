@@ -50,10 +50,24 @@ import {
 } from "../src/render/fallback.ts";
 import {
   formatProgressPercent,
+  incomeSuffix,
   progressBarRatio,
+  queueItemNumber,
   queueMarkerText,
+  queueProgressRatio,
   sizeLabel,
+  warehouseContentsLabel,
 } from "../src/render/status.ts";
+import {
+  CONTROL_GROUP_MAX,
+  EMPTY_CONTROL_GROUPS,
+  add as addControlGroup,
+  assign as assignControlGroup,
+  describe as describeControlGroup,
+  prune as pruneControlGroups,
+  recall as recallControlGroup,
+  type ControlGroups,
+} from "../src/controlGroups.ts";
 import {
   marqueeTileRange,
   screenRectBetween,
@@ -530,6 +544,7 @@ const detailedSnapshot = worldViewFromSnapshot({
       h: 3,
       progress: 1,
       queue: 0,
+      contents: { gold: 120, wood: 40, ore: 0 },
     },
     {
       id: 2,
@@ -542,6 +557,12 @@ const detailedSnapshot = worldViewFromSnapshot({
       progress: 0.42,
       queue: 2,
       queueTicks: 60,
+      queueItems: [
+        { kind: "unit.melee.t1", ticks: 87, total: 120 },
+        { kind: "oc:unit.engineer", ticks: 45, total: 45 },
+        { kind: "unit.broken", ticks: 20, total: 0 },
+        { kind: "", ticks: 1, total: 1 },
+      ],
     },
     { id: 3, kind: "worker", x: 0, y: 0, player: 1, w: 1, h: 1, progress: 0.8 },
   ],
@@ -560,6 +581,17 @@ check(
     detailedBarracks?.queue === 2 &&
     detailedBarracks?.queueTicks === 60,
   JSON.stringify(detailedBarracks),
+);
+check(
+  "queueItems 按顺序保留 kind/ticks/total，去掉越界、total=0 与空 kind 的坏项",
+  detailedBarracks?.queueItems?.length === 2 &&
+    detailedBarracks.queueItems[0]?.kind === "unit.melee.t1" &&
+    detailedBarracks.queueItems[0]?.ticks === 87 &&
+    detailedBarracks.queueItems[0]?.total === 120 &&
+    detailedBarracks.queueItems[1]?.kind === "unit.engineer" &&
+    detailedBarracks.queueItems[1]?.ticks === 45 &&
+    detailedBarracks.queueItems[1]?.total === 45,
+  JSON.stringify(detailedBarracks?.queueItems),
 );
 check(
   "单位也带 1×1 的 footprint 与自己的 progress",
@@ -586,7 +618,8 @@ check(
     legacyEntity.footprint === undefined &&
     legacyEntity.progress === undefined &&
     legacyEntity.queue === undefined &&
-    legacyEntity.queueTicks === undefined,
+    legacyEntity.queueTicks === undefined &&
+    legacyEntity.queueItems === undefined,
   JSON.stringify(legacyEntity),
 );
 
@@ -619,6 +652,33 @@ check(
   queueMarkerText(2),
 );
 check(
+  "收入后缀只在字段存在时出现：+30/分，0 也显示，缺失或负数不显示",
+  incomeSuffix(undefined) === "" &&
+    incomeSuffix(-1) === "" &&
+    incomeSuffix(Number.NaN) === "" &&
+    incomeSuffix(0) === " (+0/分)" &&
+    incomeSuffix(30) === " (+30/分)" &&
+    incomeSuffix(20.9) === " (+20/分)",
+  incomeSuffix(30),
+);
+check(
+  "队列项进度用 ticks/total，开始前 ticks=total 时条为空，并夹在 [0,1]",
+  queueProgressRatio({ kind: "unit.melee.t1", ticks: 87, total: 120 }) === 87 / 120 &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 120, total: 120 }) === 1 &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 0, total: 120 }) === 0 &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 200, total: 120 }) === 1 &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 1, total: 0 }) === 0,
+  String(queueProgressRatio({ kind: "unit.melee.t1", ticks: 87, total: 120 })),
+);
+check(
+  "队列项编号从 1 开始：1/2、2/2，空队列为 0/0",
+  queueItemNumber(0, 2) === "1/2" &&
+    queueItemNumber(1, 2) === "2/2" &&
+    queueItemNumber(5, 2) === "2/2" &&
+    queueItemNumber(0, 0) === "0/0",
+  queueItemNumber(0, 2),
+);
+check(
   "尺寸标签输出 尺寸：W×H，缺 footprint 时为 null",
   detailedWarehouse !== undefined &&
     sizeLabel(detailedWarehouse) === "尺寸：3×3" &&
@@ -626,6 +686,22 @@ check(
     sizeLabel(detailedWorker) === "尺寸：1×1" &&
     sizeLabel({ id: 9, kind: "warehouse", x: 0, y: 0 }) === null,
   detailedWarehouse === undefined ? "missing" : String(sizeLabel(detailedWarehouse)),
+);
+check(
+  "仓库的 contents 被解析成非负整数库存，零值条目被丢弃",
+  detailedWarehouse?.contents?.gold === 120 &&
+    detailedWarehouse?.contents?.wood === 40 &&
+    !("ore" in (detailedWarehouse?.contents ?? {})) &&
+    legacyEntity?.contents === undefined,
+  JSON.stringify(detailedWarehouse?.contents),
+);
+check(
+  "库存标签按固定顺序输出 库存：金 120 · 木 40，无库存时为 null",
+  detailedWarehouse !== undefined &&
+    warehouseContentsLabel(detailedWarehouse) === "库存：金 120 · 木 40" &&
+    warehouseContentsLabel({ id: 9, kind: "building.warehouse", x: 0, y: 0 }) === null &&
+    warehouseContentsLabel({ ...detailedWarehouse, contents: { ore: 7 } }) === "库存：ore 7",
+  detailedWarehouse === undefined ? "missing" : String(warehouseContentsLabel(detailedWarehouse)),
 );
 check(
   "在建判定只对未完工的建筑成立（单位血量不算在建）",
@@ -750,7 +826,7 @@ const playersSnapshot = worldViewFromSnapshot({
   ...validSnapshot,
   players: [
     { id: 1, name: "Player 1", gold: 0, wood: 0 },
-    { id: 3, name: "alice", gold: 300, wood: 60 },
+    { id: 3, name: "alice", gold: 300, wood: 60, goldPerMinute: 30, woodPerMinute: 20 },
   ],
 });
 check(
@@ -766,6 +842,27 @@ check(
     aliceRow.gold === 300 &&
     aliceRow.wood === 60,
   JSON.stringify(aliceRow),
+);
+check(
+  "players 行保留可选的 goldPerMinute / woodPerMinute，缺失时是 undefined",
+  aliceRow?.goldPerMinute === 30 &&
+    aliceRow.woodPerMinute === 20 &&
+    playersSnapshot?.players?.[0]?.goldPerMinute === undefined &&
+    playersSnapshot?.players?.[0]?.woodPerMinute === undefined,
+  JSON.stringify(aliceRow),
+);
+const malformedRateSnapshot = worldViewFromSnapshot({
+  ...validSnapshot,
+  players: [
+    { id: 3, name: "alice", gold: 300, wood: 60, goldPerMinute: -1, woodPerMinute: "20" },
+  ],
+});
+check(
+  "格式错误的收入速率被忽略而不是拒绝整个世界（旧客户端兼容）",
+  malformedRateSnapshot !== null &&
+    malformedRateSnapshot.players?.[0]?.goldPerMinute === undefined &&
+    malformedRateSnapshot.players?.[0]?.woodPerMinute === undefined,
+  JSON.stringify(malformedRateSnapshot?.players),
 );
 check(
   "没有 players 的旧快照仍然有效，players 是 undefined",
@@ -1610,13 +1707,24 @@ check(
 check(
   "建筑目录与面板一致",
   JSON.stringify(BUILDING_PATHS) ===
-    JSON.stringify(["building.armory.t1", "building.mine.t1", "building.lumbercamp.t1"]),
+    JSON.stringify([
+      "building.armory.t1",
+      "building.mine.t1",
+      "building.lumbercamp.t1",
+      "building.warehouse",
+    ]),
   BUILDING_PATHS.join(", "),
 );
 check(
-  "建筑目录包含新的木材营地 building.lumbercamp.t1",
+  "建筑目录包含木材营地 building.lumbercamp.t1",
   BUILDING_PATHS.includes("building.lumbercamp.t1") &&
     build(1, "building.lumbercamp.t1", 5, 6) === "BUILD 1 building.lumbercamp.t1 5 6",
+  BUILDING_PATHS.join(", "),
+);
+check(
+  "建筑目录包含工程师可建的仓库 building.warehouse",
+  BUILDING_PATHS.includes("building.warehouse") &&
+    build(1, "building.warehouse", 7, 8) === "BUILD 1 building.warehouse 7 8",
   BUILDING_PATHS.join(", "),
 );
 check(
@@ -1648,6 +1756,76 @@ check(
   shouldHeartbeat({ connected: false, pingInFlight: false }) === false &&
     shouldHeartbeat({ connected: true, pingInFlight: false }) === true &&
     shouldHeartbeat({ connected: true, pingInFlight: true }) === false,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Control groups
+// ---------------------------------------------------------------------------------------------
+
+/** Whether an action rejects with the documented RangeError for a group outside 1..9. */
+function rejectsBadGroup(action: () => void): boolean {
+  try {
+    action();
+    return false;
+  } catch (error: unknown) {
+    return error instanceof RangeError;
+  }
+}
+
+let groups: ControlGroups = EMPTY_CONTROL_GROUPS;
+check(
+  "初始编队为空，1..9 都是合法编号，超出范围会拒绝",
+  CONTROL_GROUP_MAX === 9 &&
+    recallControlGroup(groups, 1).length === 0 &&
+    describeControlGroup(groups, 9) === "编队 9 为空" &&
+    [0, 10, 1.5, Number.NaN].every((group) =>
+      rejectsBadGroup(() => recallControlGroup(groups, group)),
+    ),
+);
+groups = assignControlGroup(groups, 1, [3, 5, 3, 0, -1, 3.5]);
+check(
+  "assign 替换编队、只保留正整数 id 并去重，原值没有被修改",
+  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5]) &&
+    recallControlGroup(EMPTY_CONTROL_GROUPS, 1).length === 0 &&
+    describeControlGroup(groups, 1) === "编队 1：2 个实体",
+  JSON.stringify(recallControlGroup(groups, 1)),
+);
+groups = addControlGroup(groups, 1, [5, 7, 7]);
+check(
+  "add 保留已有 id 与顺序，只追加新 id",
+  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5, 7]) &&
+    describeControlGroup(groups, 1) === "编队 1：3 个实体",
+  JSON.stringify(recallControlGroup(groups, 1)),
+);
+groups = assignControlGroup(groups, 2, []);
+check(
+  "空选择也能绑定一个空编队，describe 明确报告为空",
+  recallControlGroup(groups, 2).length === 0 && describeControlGroup(groups, 2) === "编队 2 为空",
+  describeControlGroup(groups, 2),
+);
+groups = pruneControlGroups(groups, [3, 7]);
+check(
+  "prune 删除已不存在的 id，保留顺序与空编队，未变化时返回原对象",
+  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7]) &&
+    describeControlGroup(groups, 1) === "编队 1：2 个实体" &&
+    describeControlGroup(groups, 2) === "编队 2 为空" &&
+    pruneControlGroups(groups, [3, 7]) === groups,
+  JSON.stringify(recallControlGroup(groups, 1)),
+);
+check(
+  "recall 返回副本，调用方改动不会污染编队",
+  (() => {
+    const recalled = recallControlGroup(groups, 1) as number[];
+    recalled.push(99);
+    return JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7]);
+  })(),
+);
+check(
+  "非法编号赋给 assign/add 会抛 RangeError，而不是静默写坏映射",
+  [0, 10, 2.5].every((group) =>
+    rejectsBadGroup(() => assignControlGroup(groups, group, [1])) &&
+    rejectsBadGroup(() => addControlGroup(groups, group, [1])),
+  ),
 );
 
 // ---------------------------------------------------------------------------------------------

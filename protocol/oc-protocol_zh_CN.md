@@ -164,6 +164,7 @@ TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (需要
 | 实体或建筑属于另一个玩家 | `ERR not yours` |
 | 参数个数不对，或 id/坐标不是十进制数字 | `ERR bad arguments` |
 | `BUILD` 的建筑路径不在服务器提供的内容里 | `ERR unknown building` |
+| `BUILD` 的工地超出建造者射程（从建造者到工地占地外一圈的路径不存在或超过 16 tile） | `ERR ... out of reach ...` |
 | `TRAIN` 的单位路径不在服务器提供的内容里 | `ERR unknown unit` |
 | `TRAIN` 指向一个尚未完工的工地 | `ERR building not finished` |
 | `TRAIN` 指向一个没有生产标签的建筑 | `ERR building cannot produce` |
@@ -335,17 +336,19 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
     {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 0},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0, "contents": {"gold": 120, "wood": 40}},
     {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
      "w": 1, "h": 1, "progress": 1.00, "queue": 0},
     {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87,
+     "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
+                    {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
      "w": 4, "h": 3, "progress": 0.42, "queue": 0}
   ],
   "players": [
-    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
-    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60, "goldPerMinute": 0, "woodPerMinute": 0}
   ]
 }
 ```
@@ -357,12 +360,14 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 - `w` / `h` 是实体的占地尺寸（单位 tile）：建筑取内容定义里的 footprint（仓库 `3×3`、车间 `4×3`），单位固定为 `1` / `1`，因为引擎给每个单位一个地面格子，与贴图大小无关。
 - `progress` 是 `[0,1]` 的完成比例，保留两位小数。建筑在建时是 `constructionFraction()`，完工后恰好 `1.00`；未完工的工地会在线上夹到 `[0.01, 0.99]`，否则两位小数会把 99.6% 的工地四舍五入成已完工的 `1.00`。单位没有建造计数器——它只在生产完成后才进入世界——所以单位行报告自己的血量比例，这是引擎唯一提供的单位完成度；满血单位因此也是 `1.00`。
 - `queue` 是建筑生产队列里尚未完成的任务数（单位或没有队列的建筑是 `0`）。`queueTicks` 只在队列当前任务真的处于 `PRODUCING` 时出现，值是 `ProductionJob.remainingTicks()`；其它状态下引擎的剩余 tick 只是配方时长，不代表进度，所以字段直接省略，不编造数字。
-- 这五个字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue` 与 `queueTicks`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
-- `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名和两种开局资源，金额都是非负整数。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。这个字段是增量字段：旧服务器可以不带它，客户端必须在没有它时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币与木材；还没有这一行时显示破折号。
+- `queueItems` 出现在有生产队列的建筑行上，单位或从未有过队列的建筑省略该数组；`queue` 就是它的长度。它按队列顺序列出未完成任务，每项是 `{"kind": ..., "ticks": ..., "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前正在 `PRODUCING` 的任务的引擎剩余 tick（`ProductionJob.remainingTicks()`）。尚未开工的任务——等待材料、运输中、排在当前任务之后——报告 `ticks === total`；`WAITING_OUTPUT` 任务虽然仍未完成但已经不再生产，也按同样方式报告。`kind` 是配方产出的单位内容路径（`unit.melee.t1`）；只产出物品的配方回落到配方自己的路径。客户端用清单把 `kind` 解析成显示名；旧客户端可以完全忽略这个数组，继续用 `queue` 画 `生产中 ×N` 标记。
+- `contents` 只出现在内容类型被标记为仓库的建筑行上，并且只列出数量非零的物品；空仓库省略该对象。键是物品内容路径（`gold`、`wood`），值是非负整数，和 `players` 的金额一样会饱和。它是仓库自己的库存，与玩家行求和的是同一个来源，因此客户端可以在选中 HUD 里显示 `库存：金 120 · 木 40`。非仓库建筑永远不带它：生产建筑的私有缓冲不属于物流网络。
+- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示库存行）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems` 与 `contents`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
+- `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名、两种开局资源与两种收入速率，全部是非负整数。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。`goldPerMinute` / `woodPerMinute` 是该玩家**存活且已完工**的建筑上内容标签 `income_<n>` / `wood_income_<n>` 之和，与 `ClassicEconomy` 发放时用的是同一套约定：在建工地、被摧毁的建筑和没有匹配标签的类型都不计入，所以不发布任何标签的内容两项都报 `0`。每座建筑第一枚匹配标签生效，与发放钩子一致。这两个字段也是增量的：旧服务器可以不带，客户端必须在没有它们时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币、木材与收入速率；还没有这一行时显示破折号。
 - 默认 64×64 窗口的 JSON 约 32 KB，最大 128×128 窗口约 130 KB。读取窗口也会把引擎焦点移到窗口中心（同一把锁内），让区块流式加载只保留相机附近的区块。
 - 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
 - `--world` 默认 `on`，`--seed` 默认 `1`，`--chunks` 默认 `4096`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
-- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` 显示尺寸 HUD、建造进度条与 `生产中 ×N` 生产标记；完全不读这些新字段的旧客户端仍然能处理同一份文档。
+- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 ×N` 标记和选中面板里的逐项队列，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀；完全不读这些新字段的旧客户端仍然能处理同一份文档。
 
 ## 版本兼容
 

@@ -11,12 +11,14 @@
  *
  * The server owns the truth: this is only the catalogue the browser panel offers. A path the served
  * world does not know is answered with `ERR unknown building`, so keep this list in step with the
- * classic content when it grows (for example the tier-one lumber camp).
+ * classic content when it grows. The warehouse is the content's drop-off building and is buildable by
+ * the engineer; its cost (100 gold + 40 wood) is charged by the engine, not by this panel.
  */
 export const BUILDING_PATHS = [
   "building.armory.t1",
   "building.mine.t1",
   "building.lumbercamp.t1",
+  "building.warehouse",
 ] as const;
 
 /**

@@ -53,7 +53,7 @@ that take damage and die, a charged building site, and an ASCII picture of the w
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 336 checks passed.
+RTS engine scenario: all 355 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own

@@ -277,13 +277,15 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
     {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
      "w": 1, "h": 1, "progress": 1.00, "queue": 0},
     {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87,
+     "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
+                    {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
      "w": 4, "h": 3, "progress": 0.42, "queue": 0}
   ],
   "players": [
-    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
-    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60, "goldPerMinute": 0, "woodPerMinute": 0}
   ]
 }
 ```
@@ -309,10 +311,16 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
 - `queue` 是建筑生产队列里尚未完成的任务数（单位或没有队列的建筑是 `0`）。`queueTicks` 只在队列当前任务
   真的处于 `PRODUCING` 时出现，值是该任务的剩余 tick（`ProductionJob.remainingTicks()`）；其它状态下引擎的
   剩余 tick 只是配方时长，不代表进度，所以字段直接省略，不编造数字。
+- `queueItems` 只出现在有生产队列的建筑行上；`queue` 等于它的长度。每项是 `{"kind": ..., "ticks": ...,
+  "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前 `PRODUCING` 任务的引擎剩余
+  tick；尚未开工的任务报告 `ticks === total`。`kind` 是产出的单位内容路径（只产物品的配方回落到配方路径）。
+  旧客户端可以完全忽略它，继续用 `queue` 画 `生产中 ×N`。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
-  `name`，以及扁平的金币/木材数量 `gold` / `wood`。这两个键就是经典内容目录注册的物品路径；快照不重复
-  它们的显示名，其它物品类型暂时不进快照。金额来自玩家仓库的可用数量（引擎的投放点规则，与建造/训练
-  成本检查同源），所以没有仓库的玩家两项都是 `0`。旧服务器可以不带这个字段，客户端必须容错。
+  `name`、扁平的金币/木材数量 `gold` / `wood`，以及收入速率 `goldPerMinute` / `woodPerMinute`。金币/木材
+  这两个键就是经典内容目录注册的物品路径；快照不重复它们的显示名，其它物品类型暂时不进快照。金额来自
+  玩家仓库的可用数量（引擎的投放点规则，与建造/训练成本检查同源），所以没有仓库的玩家两项都是 `0`。收入
+  速率是该玩家**存活且已完工**的建筑上内容标签 `income_<n>` / `wood_income_<n>` 之和（与 `ClassicEconomy`
+  的发放约定一致）；在建、被摧毁、没有标签的建筑都不计入。旧服务器可以不带这些字段，客户端必须容错。
 - `tilePixels` 固定 `16`，只是给渲染器的建议值；浏览器仍按自己的相机缩放。
 - 默认窗口 64×64 的 JSON 约 32 KB，最大窗口 128×128 约 130 KB；服务器每次请求重建，不缓存。
 - 一次窗口请求也会把引擎焦点移到该窗口中心（同一个锁内），让 `ChunkStreamer` 只保留相机附近的区块。
@@ -332,15 +340,17 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
 
 `web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
 （地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`，
-`w` / `h` -> `footprint`，`progress` / `queue` / `queueTicks` -> 同名可选属性），
+`w` / `h` -> `footprint`，`progress` / `queue` / `queueTicks` / `queueItems` -> 同名可选属性，
+`goldPerMinute` / `woodPerMinute` -> 同名的可选玩家字段），
 结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 与
-`w` / `h` / `progress` / `queue` / `queueTicks` 都可以缺失：旧服务器没有这些字段时客户端照常工作，HUD 的
-资源行显示破折号、建筑芯片不显示尺寸与进度、画面也不画进度条。`main.ts` 在画面可见时每 500ms 拉一次快照（上一次
-请求未完成就跳过），HUD 显示 `世界：server · tick N` 或 `世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家
-的名字与 `金 300 · 木 60`，每次快照和成功的 `BUILD` / `TRAIN` 之后都会刷新。选中一个建筑时，HUD 显示
-`尺寸：W×H`，在建时再显示一条内联百分比进度条；画面里未完工的建筑上方画灰阶进度条，生产队列非空时画
-`生产中 ×N`。这些灰阶条与标记只存在于 Canvas 绘制和 HUD 中，不改变这份文档的形状。Vite dev proxy 把 `/world` 转发到
-同一个 Java 服务器。
+`w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 都可以缺失：旧服务器没有这些字段时客户端
+照常工作，HUD 的资源行显示破折号或省略速率后缀、建筑芯片不显示尺寸与进度、画面也不画进度条或逐项队列。
+`main.ts` 在画面可见时每 500ms 拉一次快照（上一次请求未完成就跳过），HUD 显示 `世界：server · tick N` 或
+`世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家的名字与 `金 300 (+30/分) · 木 60 (+20/分)`，每次快照
+和成功的 `BUILD` / `TRAIN` 之后都会刷新。选中一个建筑时，HUD 显示 `尺寸：W×H`，在建时再显示一条内联百分比
+进度条；有 `queueItems` 时还逐项显示清单显示名、`ticks / total` 细进度条与 `i/n`。画面里未完工的建筑上方
+画灰阶进度条，生产队列非空时画 `生产中 ×N`。这些灰阶条与标记只存在于 Canvas 绘制和 HUD 中，不改变这份文档
+的形状。Vite dev proxy 把 `/world` 转发到同一个 Java 服务器。
 
 ## 帧规则
 

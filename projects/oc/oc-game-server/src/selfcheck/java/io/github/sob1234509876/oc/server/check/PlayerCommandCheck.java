@@ -151,7 +151,11 @@ public final class PlayerCommandCheck {
                 new GridPos(4, 4));
         Building armory = world.spawnBuilding(host.content().building(ARMORY_T1), human,
                 new GridPos(10, 4));
-        Unit builder = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(4, 10));
+        // The BUILD check places the armory at 20,40; the builder stands beside it, and the tile between
+        // them is flattened so the engine's reach rule can find a one-tile path on the noise terrain.
+        world.map().setTerrain(new GridPos(18, 40), host.content().terrain("grass"));
+        world.map().setTerrain(new GridPos(19, 40), host.content().terrain("grass"));
+        Unit builder = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(18, 40));
         ItemType gold = host.content().item(GOLD);
         ItemType wood = host.content().item(WOOD);
         deposit(check, human, warehouse, ItemBundle.builder().add(gold, 500).add(wood, 100).build());
@@ -202,6 +206,25 @@ public final class PlayerCommandCheck {
                 "BUILD 恰好扣掉 100 金币");
         check.equal(Natural.of(20), woodBefore.subtractClamped(human.logistics().amount(wood)),
                 "BUILD 恰好扣掉 20 木材");
+
+        check.section("玩家命令：BUILD 的射程由引擎判定");
+        Natural goldAfterReach = human.logistics().amount(gold);
+        Natural woodAfterReach = human.logistics().amount(wood);
+        int humanBuildings = world.buildingsOf(human).size();
+        String farAnswer = run(dispatcher, host, first,
+                "BUILD " + builder.id().value() + " " + ARMORY_T1 + " 40 20");
+        check.that(farAnswer.startsWith("ERR "), "超出射程的 BUILD 回答 ERR: " + farAnswer);
+        check.that(farAnswer.contains("out of reach"),
+                "调度器把引擎的 out of reach 拒绝原文转给客户端: " + farAnswer);
+        check.equal(goldAfterReach, human.logistics().amount(gold),
+                "超射程的 BUILD 没有扣金币");
+        check.equal(woodAfterReach, human.logistics().amount(wood),
+                "超射程的 BUILD 没有扣木材");
+        check.equal(humanBuildings, world.buildingsOf(human).size(),
+                "超射程的 BUILD 没有放下任何建筑");
+        check.equal(human.logistics().stored(), human.logistics().available(),
+                "超射程的 BUILD 没有留下预留");
+
         Building enemyBuilding = world.buildingsOf(host.player()).get(0);
         check.equal("ERR not yours", run(dispatcher, host, first,
                         "TRAIN " + enemyBuilding.id().value() + " " + MELEE_T1),
@@ -218,7 +241,9 @@ public final class PlayerCommandCheck {
         Player poor = host.findPlayer(second.playerId()).orElseThrow();
         Building poorWarehouse = world.spawnBuilding(host.content().building(WAREHOUSE), poor,
                 new GridPos(40, 50));
-        Unit poorBuilder = world.spawnUnit(host.content().unit(WORKER), poor, new GridPos(44, 50));
+        world.map().setTerrain(new GridPos(48, 50), host.content().terrain("grass"));
+        world.map().setTerrain(new GridPos(49, 50), host.content().terrain("grass"));
+        Unit poorBuilder = world.spawnUnit(host.content().unit(WORKER), poor, new GridPos(48, 50));
         deposit(check, poor, poorWarehouse, ItemBundle.of(gold, 10));
         int poorBuildings = world.buildingsOf(poor).size();
         String poorAnswer = run(dispatcher, host, second,

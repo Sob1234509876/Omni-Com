@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
+import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
@@ -15,6 +16,8 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
 import io.github.sob1234509876.oc.rts.formation.FormationPlanner;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
+import io.github.sob1234509876.oc.rts.map.Path;
+import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.Motion;
 
 import java.util.ArrayList;
@@ -47,6 +50,22 @@ public final class CommandService implements UnitDirector {
 
     /** Simulation rate assumed when a command is issued without one; the engine default. */
     public static final int DEFAULT_TICKS_PER_SECOND = 20;
+
+    /**
+     * Longest route, in tiles, a builder may have to a building site.
+     *
+     * <p>The reach rule is a path rule, not a straight-line distance: the site's footprint has to be
+     * adjacent to a tile the builder can actually walk to. The builder may reach any tile of the
+     * footprint's one-tile approach ring, and the engine's own path length (the sum of the waypoint
+     * distances) may not exceed this limit. Sixteen tiles is roughly five three-by-three footprints -
+     * close enough that a player cannot order a site on the other side of the map - while leaving room
+     * for a detour around a small pond. The value is a constant rather than a content field because it
+     * is a property of the builder's reach, not of one building type.
+     */
+    public static final float MAX_BUILD_PATH_TILES = 16f;
+
+    /** Fragment every out-of-reach build refusal contains, so a caller can recognise that case. */
+    public static final String OUT_OF_REACH = "out of reach";
 
     private final World world;
     private final FormationPlanner planner;
@@ -148,6 +167,12 @@ public final class CommandService implements UnitDirector {
      * caller scanning candidate tiles never leaves a half placed building behind when a tile is
      * occupied.
      *
+     * <p><strong>Reach.</strong> A site is allowed only when the builder can walk to it: its footprint
+     * must be adjacent to a tile the builder can stand on, and a deterministic path from the builder's
+     * tile to one tile of that one-tile approach ring must be at most {@link #MAX_BUILD_PATH_TILES}
+     * tiles long. The test runs before the cost is reserved, so an out-of-reach request places nothing,
+     * charges nothing and leaves no reservation behind; the refusal says {@code out of reach}.
+     *
      * <p><strong>The charge.</strong> The type's {@link BuildingType#cost() cost} is reserved through
      * the owner's {@link Logistics} network - exactly the reservation production uses for its inputs -
      * and committed immediately after the site exists. Reserving first and committing after placement is
@@ -167,6 +192,12 @@ public final class CommandService implements UnitDirector {
             return BuildResult.refused("the builder cannot be commanded");
         }
         DimensionId dimension = unit.dimensionId();
+        if (!isWithinBuildReach(world, unit, type, origin)) {
+            return BuildResult.refused("cannot build " + type.key().path() + " at "
+                    + origin.x() + "," + origin.y() + ": " + OUT_OF_REACH
+                    + " (no path of at most " + (int) MAX_BUILD_PATH_TILES
+                    + " tiles from the builder to the site)");
+        }
         if (!world.canPlace(dimension, type, origin)) {
             return BuildResult.refused("cannot place " + type.key().path() + " at "
                     + origin.x() + "," + origin.y());
@@ -200,6 +231,47 @@ public final class CommandService implements UnitDirector {
         }
         unit.orders().replace(context(unit), new BuildOrder(site));
         return BuildResult.placed(site);
+    }
+
+    /**
+     * Whether the builder can walk to the site's approach ring within {@link #MAX_BUILD_PATH_TILES}.
+     *
+     * <p>The ring is the building footprint grown by one tile. Every ring tile is considered in
+     * row-major order, so the answer never depends on iteration order or a random tie break. A ring
+     * tile that is not walkable is skipped rather than passed to the path finder: the finder redirects
+     * an impassable goal to its best neighbour, and that neighbour might stand on the builder's side
+     * of a lake, which would wrongly make a site behind water reachable.
+     *
+     * <p>The cheap check first compares the builder's tile with the footprint by Chebyshev distance.
+     * Any route is at least that long, so a distance above the limit can be refused without a search;
+     * it is only a lower bound, never an acceptance test.
+     */
+    private static boolean isWithinBuildReach(World world, Unit unit, BuildingType type, GridPos origin) {
+        TileRect footprint = type.footprint(origin.x(), origin.y());
+        GridPos from = unit.position().tile();
+        int gapX = Math.max(0, Math.max(footprint.minX() - from.x(), from.x() - footprint.maxX()));
+        int gapY = Math.max(0, Math.max(footprint.minY() - from.y(), from.y() - footprint.maxY()));
+        if (Math.max(gapX, gapY) > MAX_BUILD_PATH_TILES) {
+            return false;
+        }
+        TerrainMap map = world.map(unit.dimensionId());
+        TileRect approach = footprint.expanded(1);
+        for (int y = approach.minY(); y <= approach.maxY(); y++) {
+            for (int x = approach.minX(); x <= approach.maxX(); x++) {
+                if (footprint.contains(x, y)) {
+                    continue;
+                }
+                GridPos target = new GridPos(x, y);
+                if (!map.isPassable(target)) {
+                    continue;
+                }
+                Optional<Path> path = world.pathFinder(unit.dimensionId()).findPath(from, target);
+                if (path.isPresent() && path.get().length() <= MAX_BUILD_PATH_TILES) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Renders a cost bundle the way a player reads it: {@code 100 gold, 20 wood}. */

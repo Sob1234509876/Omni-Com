@@ -18,6 +18,15 @@ import {
 } from "./protocol";
 import { connect, type CommandSocket } from "./socket";
 import {
+  EMPTY_CONTROL_GROUPS,
+  add as addToControlGroup,
+  assign as assignControlGroup,
+  describe as describeControlGroup,
+  prune as pruneControlGroups,
+  recall as recallControlGroup,
+  type ControlGroups,
+} from "./controlGroups";
+import {
   BUILDING_PATHS,
   UNIT_PATHS,
   build,
@@ -38,6 +47,7 @@ import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord, type TileRange } from "./render/camera";
 import {
   InputController,
+  type ControlGroupMode,
   type InputHooks,
   type SelectionMode,
 } from "./render/input";
@@ -46,8 +56,12 @@ import { toggleSelection } from "./render/marquee";
 import { WorldRenderer } from "./render/renderer";
 import {
   formatProgressPercent,
+  incomeSuffix,
   progressBarRatio,
+  queueItemNumber,
+  queueProgressRatio,
   sizeLabel,
+  warehouseContentsLabel,
 } from "./render/status";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
@@ -117,6 +131,7 @@ const hudBuildingText = required<HTMLSpanElement>("#hud-building-text");
 const hudBuildingProgress = required<HTMLSpanElement>("#hud-building-progress");
 const hudBuildingFill = required<HTMLSpanElement>("#hud-building-fill");
 const hudBuildingPercent = required<HTMLSpanElement>("#hud-building-percent");
+const hudQueue = required<HTMLDivElement>("#hud-queue");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const orderStopButton = required<HTMLButtonElement>("#order-stop");
 const gameplayNote = required<HTMLSpanElement>("#gameplay-note");
@@ -259,6 +274,10 @@ function isErrorAnswer(answer: string): boolean {
 function clearGameplayIdentity(): void {
   myPlayerId = null;
   placementPath = null;
+  // Group ids belong to one world's entity id space; a disconnect must not leave a binding that a
+  // later world could resolve to a different entity.
+  controlGroups = EMPTY_CONTROL_GROUPS;
+  selectedGroup = null;
   updateHud(true);
   updateGameplayPanel();
 }
@@ -821,6 +840,10 @@ const renderer = new WorldRenderer(gameCanvas);
 let atlas: Atlas | null = null;
 /** Every selected entity id, in selection order. A plain click replaces it; Shift+click toggles. */
 let selectedIds: number[] = [];
+/** Control groups 1..9; the pure model lives in `controlGroups.ts`. */
+let controlGroups: ControlGroups = EMPTY_CONTROL_GROUPS;
+/** The group the current selection was recalled from, or null after a click/marquee/order. */
+let selectedGroup: number | null = null;
 let hoverTile: TileCoord | null = null;
 let viewHidden = false;
 let worldSource: WorldSource = "demo";
@@ -890,9 +913,19 @@ function selectedOwnUnits(): EntityView[] {
 
 /** Drops ids whose entity no longer exists after a snapshot replaced the world. */
 function pruneSelection(): void {
-  const living = selectedIds.filter((id) => entityById(world, id) !== undefined);
+  const livingIds = new Set<number>();
+  for (const entity of world.entities) {
+    livingIds.add(entity.id);
+  }
+  // Groups are pruned on the same snapshot as the selection, so a recalled group can never select an
+  // id the server no longer reports.
+  controlGroups = pruneControlGroups(controlGroups, livingIds);
+  const living = selectedIds.filter((id) => livingIds.has(id));
   if (living.length !== selectedIds.length) {
     selectedIds = living;
+  }
+  if (selectedIds.length === 0) {
+    selectedGroup = null;
   }
   if (placementPath !== null) {
     const single = singleSelectedEntity();
@@ -950,21 +983,24 @@ function updateHud(force = false, now = performance.now()): void {
   hudResources.textContent =
     resources === undefined
       ? "资源：金 — · 木 —"
-      : `资源：${resources.name} · 金 ${resources.gold} · 木 ${resources.wood}`;
+      : `资源：${resources.name} · 金 ${resources.gold}${incomeSuffix(resources.goldPerMinute)}` +
+        ` · 木 ${resources.wood}${incomeSuffix(resources.woodPerMinute)}`;
   hudResources.classList.toggle("unavailable", resources === undefined);
   hudTile.textContent = hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`;
   hudZoom.textContent = `缩放：${camera.zoom.toFixed(2)}×`;
   hudFps.textContent = fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—";
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
+  const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
   hudSelected.textContent =
-    selection.length === 0
+    groupPrefix +
+    (selection.length === 0
       ? "选中：无"
       : only === undefined
         ? `已选：${selection.length} 个单位`
         : `选中：e${only.id} ${contentLabel(only.kind)} ` +
           `[${ownershipTag(ownershipOf(only.playerId, myPlayerId))}] ` +
-          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})`;
+          `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})`);
   hudBuildingText.textContent =
     only !== undefined && isBuildingEntity(only)
       ? `建筑：${contentLabel(only.kind)} #${only.id}`
@@ -974,6 +1010,12 @@ function updateHud(force = false, now = performance.now()): void {
     const footprint = sizeLabel(selectedBuilding);
     if (footprint !== null) {
       hudBuildingText.textContent += ` · ${footprint}`;
+    }
+    // A warehouse reports its stored items on the same row as its size; other buildings have no
+    // `contents`, so the label is simply absent.
+    const stock = warehouseContentsLabel(selectedBuilding);
+    if (stock !== null) {
+      hudBuildingText.textContent += ` · ${stock}`;
     }
   }
   // The inline construction bar is part of the selection HUD: a finished building (or a unit) keeps it
@@ -985,6 +1027,51 @@ function updateHud(force = false, now = performance.now()): void {
     hudBuildingPercent.textContent = formatProgressPercent(progress);
     hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
   }
+  renderQueueList(selectedBuilding);
+}
+
+/**
+ * Draws the selected building's queue as one small row per job.
+ *
+ * This is the selection panel entry required by the per-item progress feature: the unit's manifest
+ * display name, a thin bar from `ticks / total`, and `i/n`. A legacy snapshot carries only `queue` and
+ * no `queueItems`, so the list stays hidden and the canvas keeps the existing `生产中 ×N` marker. The
+ * list is rebuilt from the current snapshot; it is at most a handful of rows and never reuses stale DOM.
+ */
+function renderQueueList(building: EntityView | undefined): void {
+  const items = building?.queueItems;
+  if (building === undefined || items === undefined || items.length === 0) {
+    hudQueue.hidden = true;
+    hudQueue.replaceChildren();
+    return;
+  }
+  const rows: HTMLDivElement[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item === undefined) {
+      continue;
+    }
+    const row = document.createElement("div");
+    row.className = "hud-queue-item";
+    row.title = `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick`;
+    const name = document.createElement("span");
+    name.className = "hud-queue-name";
+    name.textContent = contentLabel(item.kind);
+    const bar = document.createElement("span");
+    bar.className = "hud-queue-bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.className = "hud-queue-fill";
+    fill.style.width = `${queueProgressRatio(item) * 100}%`;
+    bar.append(fill);
+    const number = document.createElement("span");
+    number.className = "hud-queue-index";
+    number.textContent = queueItemNumber(index, items.length);
+    row.append(name, bar, number);
+    rows.push(row);
+  }
+  hudQueue.replaceChildren(...rows);
+  hudQueue.hidden = rows.length === 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1278,6 +1365,8 @@ function doCancel(): boolean {
 
 /** Applies one click: replace the whole selection, or toggle one unit for Shift+left click. */
 function applySelection(id: number | null, mode: SelectionMode): void {
+  // A click is a fresh selection, not a recall: the HUD stops claiming it came from group N.
+  selectedGroup = null;
   if (mode === "replace") {
     selectedIds = id === null ? [] : [id];
   } else if (id !== null) {
@@ -1300,9 +1389,68 @@ function applySelection(id: number | null, mode: SelectionMode): void {
 
 /** Replaces the selection with every own unit drawn inside the finished marquee. */
 function applyMarquee(range: TileRange): void {
+  selectedGroup = null;
   selectedIds = marqueeSelection(world, range, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
+  }
+  updateHud(true);
+  updateGameplayPanel();
+}
+
+/**
+ * Applies one number-key action to a control group.
+ *
+ * Recall first prunes ids the current world no longer reports, so a group can never select a dead
+ * entity. An empty group (never assigned, or every member gone) is reported on the status line instead
+ * of clearing the selection silently. Assignment binds the current selection - including a building,
+ * because a group may hold any selection the operator made - and a later recall simply applies it.
+ */
+function doControlGroup(group: number, mode: ControlGroupMode): void {
+  if (mode === "recall") {
+    const livingIds = new Set<number>();
+    for (const entity of world.entities) {
+      livingIds.add(entity.id);
+    }
+    controlGroups = pruneControlGroups(controlGroups, livingIds);
+    const ids = recallControlGroup(controlGroups, group);
+    const message = describeControlGroup(controlGroups, group);
+    if (ids.length === 0) {
+      selectedGroup = null;
+      setStatus(message, "idle");
+      log("info", message);
+      return;
+    }
+    selectedIds = [...ids];
+    selectedGroup = group;
+    pruneSelection();
+    updateHud(true);
+    updateGameplayPanel();
+    setStatus(message, "ok");
+    log("info", message);
+    return;
+  }
+
+  const ids = selectedEntities().map((entity) => entity.id);
+  if (mode === "assign") {
+    controlGroups = assignControlGroup(controlGroups, group, ids);
+    selectedGroup = ids.length === 0 ? null : group;
+    const message =
+      ids.length === 0
+        ? `${describeControlGroup(controlGroups, group)}（已清空）`
+        : `已把 ${ids.length} 个选中编入 ${describeControlGroup(controlGroups, group)}`;
+    setStatus(message, "ok");
+    log("info", message);
+  } else {
+    controlGroups = addToControlGroup(controlGroups, group, ids);
+    // A group plus an extra click is no longer exactly the recalled group.
+    selectedGroup = null;
+    const message =
+      ids.length === 0
+        ? `当前没有选中，${describeControlGroup(controlGroups, group)} 不变`
+        : `已把 ${ids.length} 个选中加入 ${describeControlGroup(controlGroups, group)}`;
+    setStatus(message, "ok");
+    log("info", message);
   }
   updateHud(true);
   updateGameplayPanel();
@@ -1330,6 +1478,7 @@ const inputHooks: InputHooks = {
   },
   onLeftClick: (tile) => doLeftClick(tile),
   onCancel: () => doCancel(),
+  onControlGroup: (group, mode) => doControlGroup(group, mode),
 };
 
 const input = new InputController(gameCanvas, camera, inputHooks);
@@ -1347,9 +1496,12 @@ function useWorld(next: WorldView, fromDemo = false): void {
   world = next;
   if (fromDemo) {
     // The demo and server id spaces are unrelated; never let a demo selection silently become a
-    // different server entity (or keep an armed BUILD aimed at a demo engineer).
+    // different server entity (or keep an armed BUILD aimed at a demo engineer). Control groups are
+    // part of that selection state, so they reset with it.
     selectedIds = [];
     placementPath = null;
+    controlGroups = EMPTY_CONTROL_GROUPS;
+    selectedGroup = null;
   }
   pruneSelection();
   updateHud(true);

@@ -169,6 +169,7 @@ Each command is validated when the world applies it, and a rejection names the r
 | The entity or building belongs to another player | `ERR not yours` |
 | Wrong argument count, or an id/coordinate that is not a decimal number | `ERR bad arguments` |
 | `BUILD` names a building path that is not in the served content | `ERR unknown building` |
+| `BUILD` site is out of the builder's reach (no path of at most 16 tiles from the builder to the footprint's one-tile approach ring) | `ERR ... out of reach ...` |
 | `TRAIN` names a unit path that is not in the served content | `ERR unknown unit` |
 | `TRAIN` targets a building site (not finished) | `ERR building not finished` |
 | `TRAIN` targets a building that has no producer tags | `ERR building cannot produce` |
@@ -347,17 +348,19 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
     {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 0},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0, "contents": {"gold": 120, "wood": 40}},
     {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
      "w": 1, "h": 1, "progress": 1.00, "queue": 0},
     {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87,
+     "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
+                    {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
      "w": 4, "h": 3, "progress": 0.42, "queue": 0}
   ],
   "players": [
-    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0},
-    {"id": 3, "name": "alice", "gold": 300, "wood": 60}
+    {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140},
+    {"id": 3, "name": "alice", "gold": 300, "wood": 60, "goldPerMinute": 0, "woodPerMinute": 0}
   ]
 }
 ```
@@ -369,12 +372,14 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
 - `w` / `h` are the entity's footprint in tiles: a building reports the footprint of its content definition (`3x3` for the warehouse, `4x3` for the workshop), and a unit reports `1` / `1`, because the engine gives every unit one ground tile regardless of sprite size.
 - `progress` is the completion fraction in `[0,1]` with two decimals. A building reports its `constructionFraction()` while the site is unfinished and exactly `1.00` once constructed; an unfinished site is clamped to `[0.01, 0.99]` on the wire, because two decimals would otherwise round a 99.6% site up to a finished `1.00`. A unit has no construction counter - it only enters the world after its production has finished - so its row reports its own health fraction, the only per-unit completeness the engine exposes; a full-health unit therefore also reads `1.00`.
 - `queue` is the number of unfinished jobs in the building's production queue (`0` for a unit or a building with no queue). `queueTicks` appears only while the queue's current job is actually `PRODUCING` and carries that job's remaining ticks (`ProductionJob.remainingTicks()`); in the other job states the engine's remaining-tick counter is only the recipe duration and says nothing about progress, so the field is omitted rather than invented.
-- These five fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker). The browser client reads them into `footprint`, `progress`, `queue` and `queueTicks` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
-- `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name and the two starting resources as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. The field is additive: an older server may omit it, and a client must keep working without it. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold and wood in the HUD; before that row exists it shows dashes.
+- `queueItems` appears on a building that has a production queue and is absent on a unit or a building that never had one; `queue` is its length. It lists the unfinished jobs in queue order as `{"kind": ..., "ticks": ..., "total": ...}`: `total` is the recipe duration (`Recipe.durationTicks()`), and `ticks` is the engine's remaining ticks for the job that is currently `PRODUCING` (`ProductionJob.remainingTicks()`). A job that has not started yet - waiting for materials, being delivered, standing behind the current job - reports `ticks === total`; a job in `WAITING_OUTPUT` is still unfinished but no longer producing, so it reports the same. `kind` is the content path of the produced unit (`unit.melee.t1`) or, for an item-only recipe, the recipe's own path. The client resolves `kind` through its manifest for the display name; a legacy client can ignore the array and keep the `生产中 ×N` marker from `queue`.
+- `contents` appears only on a building whose content type is a warehouse, and only for the item kinds with a non-zero amount; an empty warehouse omits the object. Its keys are item content paths (`gold`, `wood`) and its values are non-negative integers, saturated like the `players` amounts. It is the warehouse's own inventory, the same source the player row sums, so it lets the client show `库存：金 120 · 木 40` in the selection HUD. Non-warehouse buildings never carry it: a producer's private buffer is not part of the logistics network.
+- These fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker, no per-item queue list, no stock line). The browser client reads them into `footprint`, `progress`, `queue`, `queueTicks`, `queueItems` and `contents` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
+- `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name, the two starting resources and the two income rates, all as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. `goldPerMinute` / `woodPerMinute` are the sum over that player's alive, constructed buildings of the content's `income_<n>` / `wood_income_<n>` tags, the same convention `ClassicEconomy` pays: an unfinished site, a destroyed building and a type without the matching tag contribute nothing, so a content that publishes no tags reports `0` for both. Per building the first matching tag wins, exactly like the payout hook. These fields are additive too: an older server may omit them and a client must keep working without them. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold, wood and rates in the HUD; before that row exists it shows dashes.
 - A default 64 x 64 window is about 32 KB of JSON; the maximum 128 x 128 window is about 130 KB. Reading a window also moves the engine focus to its centre, so the chunk streamer keeps the camera area loaded.
 - When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
 - `--world` defaults to `on`, `--seed` defaults to `1`, `--chunks` defaults to `4096`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
-- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. The bundled `web-client/` treats the world as unbounded and uses `w` / `h` / `progress` / `queue` / `queueTicks` for the size HUD, the construction bars and the `生产中 ×N` production marker; a client that never reads the new fields still works against the same document.
+- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. The bundled `web-client/` treats the world as unbounded and uses `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` for the size HUD, the construction bars, the `生产中 ×N` marker and the per-item selection-panel list, and `players.goldPerMinute` / `players.woodPerMinute` for the `(+30/分)` HUD suffix; a client that never reads the new fields still works against the same document.
 
 ## Version compatibility
 

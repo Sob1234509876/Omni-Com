@@ -47,7 +47,7 @@
 成功运行以以下内容结束：
 
 ```text
-RTS engine scenario: all 336 checks passed.
+RTS engine scenario: all 355 checks passed.
 ```
 
 自检是一个程序，而不是基于框架的测试套件，因此它位于自己的 `selfCheck` 源集（`src/selfcheck/java`）中；`src/test/java` 保持为空，留给以后真正的单元测试。

@@ -11,7 +11,9 @@
  * - a left drag that starts on empty ground draws a marquee and selects the own units inside it;
  * - a left drag that starts on an entity still selects that entity;
  * - the middle button, or Space held with the left button, pans the camera. A left drag on empty
- *   ground is deliberately no longer a camera pan, because that gesture is the marquee.
+ *   ground is deliberately no longer a camera pan, because that gesture is the marquee;
+ * - Ctrl+1..9 assigns the selection, Shift+1..9 adds to it, and 1..9 recalls it. The pure model is
+ *   `src/controlGroups.ts`; this controller only maps the key and reports the mode.
  */
 
 import type { Camera, TileCoord, TileRange } from "./camera";
@@ -36,6 +38,21 @@ const PAN_KEYS: ReadonlySet<string> = new Set<string>([
 
 /** How one click changes the selection: replace it, or add/remove the clicked unit. */
 export type SelectionMode = "replace" | "toggle";
+
+/** How a number key acts on a control group: replace it, add to it, or select it. */
+export type ControlGroupMode = "assign" | "add" | "recall";
+
+/** The group number of a number key, or `null` for every other key. */
+function controlGroupOf(event: KeyboardEvent): number | null {
+  const code = /^(?:Digit|Numpad)([1-9])$/u.exec(event.code);
+  if (code !== null) {
+    return Number(code[1]);
+  }
+  // `event.code` is the stable half (Shift+1 becomes "!" in `key`); this fallback keeps browsers that
+  // do not report a code usable.
+  const key = /^[1-9]$/u.exec(event.key);
+  return key === null ? null : Number(event.key);
+}
 
 export interface InputHooks {
   /** The world currently rendered; read lazily so the demo map could be replaced later. */
@@ -63,6 +80,12 @@ export interface InputHooks {
    * armed build placement is cancelled without also deselecting the engineer.
    */
   readonly onCancel?: () => boolean;
+  /**
+   * A number key 1..9: Ctrl (or Cmd) assigns the current selection, Shift adds it, and a plain number
+   * recalls the group. Alt+number is left to the browser. The page decides what "empty" means, because
+   * it owns the status line.
+   */
+  readonly onControlGroup?: (group: number, mode: ControlGroupMode) => void;
 }
 
 interface ScreenPoint {
@@ -507,6 +530,16 @@ export class InputController {
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    const group = controlGroupOf(event);
+    if (group !== null && !event.altKey) {
+      const mode: ControlGroupMode =
+        event.ctrlKey || event.metaKey ? "assign" : event.shiftKey ? "add" : "recall";
+      event.preventDefault();
+      if (!event.repeat) {
+        this.hooks.onControlGroup?.(group, mode);
+      }
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return;
     }

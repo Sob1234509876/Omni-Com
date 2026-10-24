@@ -19,6 +19,7 @@
     "node-shims.d.ts",
     "check-render-math.ts",
     "../src/commands.ts",
+    "../src/controlGroups.ts",
     "../src/heartbeat.ts",
     "../src/toast.ts",
     "../src/render/camera.ts",

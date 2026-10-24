@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
+import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
 import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
@@ -207,6 +208,27 @@ public final class WorldHost {
      * <p>See {@link #GOLD_ITEM_PATH}; this is the classic catalogue's {@code ClassicContent.WOOD}.
      */
     private static final String WOOD_ITEM_PATH = "wood";
+
+    /**
+     * Prefix of the content tag that publishes a building's gold income, in gold per minute.
+     *
+     * <p>The convention belongs to the content, not to this class: a building type carries a tag
+     * {@code income_<n>} where {@code n} is a non-negative decimal integer and means gold per minute. The
+     * classic catalogue publishes {@code income_30}, {@code income_60} and {@code income_120} for its
+     * three mine tiers, and its {@code ClassicEconomy} pays exactly those rates. This host cannot import
+     * that plugin, so it reads the same published tags through the served {@link ContentRegistry}; see
+     * {@link #incomePerMinute(Player, String)} and {@link #snapshotJson()}.
+     */
+    private static final String INCOME_TAG_PREFIX = "income_";
+
+    /**
+     * Prefix of the content tag that publishes a building's wood income, in wood per minute.
+     *
+     * <p>It is deliberately longer than {@link #INCOME_TAG_PREFIX} so a lumber camp can never be
+     * mistaken for a gold mine: {@code wood_income_20} is a wood rate, while {@code income_30} is a gold
+     * rate. See {@link #INCOME_TAG_PREFIX}.
+     */
+    private static final String WOOD_INCOME_TAG_PREFIX = "wood_income_";
 
     /** Number of human slots a starting base anchor exists for: ids 3 through 8. */
     private static final int BASE_SLOT_COUNT = MAX_PLAYERS - FIRST_HUMAN_PLAYER_ID + 1;
@@ -1411,9 +1433,13 @@ public final class WorldHost {
      * {"tick":42,"originX":-32,"originY":-32,"width":64,"height":64,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
      *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0,
-     *               "w":1,"h":1,"progress":1.00,"queue":0}, ...],
-     *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0},
-     *             {"id":3,"name":"alice","gold":300,"wood":60}]}
+     *               "w":1,"h":1,"progress":1.00,"queue":0},
+     *              {"id":9,"kind":"building.armory.t1","x":6.5,"y":-4.5,"player":3,"health":1.0,
+     *               "w":3,"h":3,"progress":1.00,"queue":2,
+     *               "queueItems":[{"kind":"unit.melee.t1","ticks":87,"total":120},
+     *                             {"kind":"unit.melee.t1","ticks":120,"total":120}]}, ...],
+     *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0,"goldPerMinute":210,"woodPerMinute":140},
+     *             {"id":3,"name":"alice","gold":300,"wood":60,"goldPerMinute":0,"woodPerMinute":0}]}
      * }</pre>
      *
      * <p>{@code width} and {@code height} are the <em>window</em> size; the document deliberately carries no
@@ -1435,11 +1461,36 @@ public final class WorldHost {
      * counter in the engine - it enters the world only after its production has already finished - so its
      * row reports its own health fraction, the only per-unit completeness the engine exposes; a full
      * health unit therefore reads {@code 1.00}, and a damaged one reports the damage. {@code queue} is the
-     * number of jobs in the building's {@link ProductionSystem} queue ({@code 0} for a unit or for a
-     * building that has no queue). {@code queueTicks} appears only while that queue's current job is
+     * number of unfinished jobs in the building's {@link ProductionSystem} queue ({@code 0} for a unit or
+     * for a building that has no queue). {@code queueTicks} appears only while that queue's current job is
      * {@link ProductionState#PRODUCING} and carries {@link ProductionJob#remainingTicks()}; in the other
      * job states the engine's remaining-tick counter is only the recipe duration and says nothing about
      * progress, so the field is omitted rather than fabricated.
+     *
+     * <p><strong>{@code queueItems} lists the unfinished jobs in queue order.</strong> A building row whose
+     * building has a production queue carries {@code queueItems}, an array of
+     * {@code {"kind":...,"ticks":...,"total":...}} objects; a unit row and a building that never had a queue
+     * omit the array entirely. {@code queue} stays the array's length. {@code total} is the job's recipe
+     * duration in ticks ({@link Recipe#durationTicks()}). {@code ticks} is what the engine reports as
+     * remaining for the job that is currently {@link ProductionState#PRODUCING}
+     * ({@link ProductionJob#remainingTicks()}). A job that has not started yet - it is waiting for
+     * materials, being delivered to, or standing behind the current job - has no engine progress of its
+     * own, so it reports its recipe duration in both fields rather than a fabricated countdown; a job in
+     * {@link ProductionState#WAITING_OUTPUT} has already finished counting down and is reported the same
+     * way, because it is still unfinished but no longer producing. {@code kind} is the content path of the
+     * unit the recipe makes, when it makes one ({@code unit.melee.t1}); an item-only recipe falls back to
+     * the recipe's own content path, which is the only stable name it has. The client resolves
+     * {@code kind} through the plugin manifest for the display name; a legacy client can ignore the whole
+     * array and keep drawing the existing {@code 生产中 ×N} marker from {@code queue}.
+     *
+     * <p><strong>Warehouse contents.</strong> A row describing a building whose content type is flagged
+     * as a warehouse also carries {@code contents}, a compact object of {@code path: amount} pairs for
+     * the items currently stored there, for example {@code "contents":{"gold":120,"wood":40}}. Only
+     * non-zero amounts are written and an empty warehouse omits the field; other buildings never carry
+     * it, because a producer's private buffer is not part of the logistics network. The field is
+     * additive: an older client ignores it, and a client that reads it can show the warehouse's stock
+     * in the selection HUD. It is read from {@link Building#inventory()}, the same source the player row
+     * sums, so the two cannot disagree about a stored item.
      *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
@@ -1453,6 +1504,20 @@ public final class WorldHost {
      * {@code 0}. Any other item kind a
      * future catalogue registers stays out of this snapshot for now: the document does not enumerate the
      * inventory, and adding an item to the wire means extending this shape and its documents.
+     *
+     * <p><strong>Each player row also carries the income rate.</strong> {@code goldPerMinute} and
+     * {@code woodPerMinute} are non-negative integers, the sum over that player's alive and
+     * {@linkplain Building#isConstructed() constructed} buildings of the content's income tags:
+     * {@code income_<n>} for gold and {@code wood_income_<n>} for wood, where {@code n} is the amount per
+     * minute. The tags are read from the {@link BuildingType} the served {@link ContentRegistry} resolved,
+     * through the same prefix convention {@code ClassicEconomy} pays - an unfinished site, a destroyed
+     * building and a building type without a matching tag contribute nothing, so a content which publishes
+     * no tags gets zeros for both fields. Per building the first matching tag wins, exactly like the
+     * classic payout hook, and a malformed or negative tag is treated as no income instead of failing the
+     * snapshot; a sum beyond {@link Long#MAX_VALUE} saturates. The field is the rate the content publishes,
+     * not a measured remainder: it is the same number the classic hook adds to the warehouse every 60
+     * ticks. The two fields are additive: an older server may omit them and a client must keep working
+     * without them.
      *
      * <p>Amounts are emitted as JSON integers saturated to {@link Long#MAX_VALUE}; the browser could not
      * use more precision than a number anyway, and a stock that large is already far past playable.
@@ -1617,6 +1682,7 @@ public final class WorldHost {
                     .append(",\"player\":").append(entity.owner().id().value())
                     .append(",\"health\":").append(twoDecimals(entity.health().fraction()));
             appendFootprintProgressAndQueue(json, entity, production);
+            appendWarehouseContents(json, entity);
             json.append('}');
         }
         json.append("],\"players\":[");
@@ -1633,11 +1699,15 @@ public final class WorldHost {
             ItemBundle available = worldPlayer.hasLogistics()
                     ? worldPlayer.logistics().available()
                     : ItemBundle.EMPTY;
+            long goldPerMinute = incomePerMinute(worldPlayer, INCOME_TAG_PREFIX);
+            long woodPerMinute = incomePerMinute(worldPlayer, WOOD_INCOME_TAG_PREFIX);
             json.append("{\"id\":").append(worldPlayer.id().value())
                     .append(",\"name\":");
             appendJsonString(json, worldPlayer.name());
             json.append(",\"gold\":").append(availableAmount(available, goldItem))
                     .append(",\"wood\":").append(availableAmount(available, woodItem))
+                    .append(",\"goldPerMinute\":").append(goldPerMinute)
+                    .append(",\"woodPerMinute\":").append(woodPerMinute)
                     .append('}');
         }
         json.append("]}");
@@ -1649,15 +1719,17 @@ public final class WorldHost {
      *
      * <p>The rules are documented on {@link #snapshotJson()}; this method only implements them. It never
      * invents a value: a unit reports one tile and its health as its progress, a building reports its
-     * content footprint and its real construction fraction, and {@code queueTicks} is written only when
-     * the engine's current job is actually in {@link ProductionState#PRODUCING}.
+     * content footprint and its real construction fraction, {@code queueTicks} is written only when the
+     * engine's current job is actually in {@link ProductionState#PRODUCING}, and {@code queueItems} is
+     * written only for a building that has a queue.
      */
     private static void appendFootprintProgressAndQueue(StringBuilder json, Entity entity,
             ProductionSystem production) {
         int width = 1;
         int height = 1;
         float progress = 1f;
-        int queued = 0;
+        ProductionQueue queue = null;
+        List<ProductionJob> jobs = List.of();
         Integer queueTicks = null;
         if (entity instanceof Building building) {
             width = building.sizeX();
@@ -1670,9 +1742,15 @@ public final class WorldHost {
                 // has just started is not mistaken for one that has not started.
                 progress = Math.min(0.99f, Math.max(0.01f, building.constructionFraction()));
             }
-            ProductionQueue queue = production.queue(building).orElse(null);
+            queue = production.queue(building).orElse(null);
             if (queue != null) {
-                queued = queue.size();
+                List<ProductionJob> unfinished = new ArrayList<>();
+                for (ProductionJob job : queue.jobs()) {
+                    if (!job.isFinished()) {
+                        unfinished.add(job);
+                    }
+                }
+                jobs = unfinished;
                 ProductionJob current = queue.current();
                 if (current != null && current.state() == ProductionState.PRODUCING) {
                     queueTicks = current.remainingTicks();
@@ -1686,10 +1764,129 @@ public final class WorldHost {
         json.append(",\"w\":").append(width)
                 .append(",\"h\":").append(height)
                 .append(",\"progress\":").append(twoDecimals(progress))
-                .append(",\"queue\":").append(queued);
+                .append(",\"queue\":").append(jobs.size());
         if (queueTicks != null) {
             json.append(",\"queueTicks\":").append(queueTicks);
         }
+        if (queue != null) {
+            appendQueueItems(json, jobs);
+        }
+    }
+
+    /**
+     * Appends the per-job list of a building that has a queue.
+     *
+     * <p>Only the job currently in {@link ProductionState#PRODUCING} has an engine countdown worth
+     * showing; every other unfinished job reports its recipe duration in both fields, because the
+     * engine's remaining-tick counter still holds the full duration before the job starts. A unit recipe
+     * is named by the unit it produces, which is the content path the client resolves against its
+     * manifest; an item recipe has no unit, so its own path is the only stable name.
+     */
+    private static void appendQueueItems(StringBuilder json, List<ProductionJob> jobs) {
+        json.append(",\"queueItems\":[");
+        for (int index = 0; index < jobs.size(); index++) {
+            if (index > 0) {
+                json.append(',');
+            }
+            ProductionJob job = jobs.get(index);
+            Recipe recipe = job.recipe();
+            int total = recipe.durationTicks();
+            int ticks = job.state() == ProductionState.PRODUCING ? job.remainingTicks() : total;
+            String kind = recipe.unitOutput()
+                    .map(unit -> unit.key().path())
+                    .orElseGet(() -> recipe.key().path());
+            json.append("{\"kind\":");
+            appendJsonString(json, kind);
+            json.append(",\"ticks\":").append(ticks)
+                    .append(",\"total\":").append(total)
+                    .append('}');
+        }
+        json.append(']');
+    }
+
+    /**
+     * Appends the compact inventory of a warehouse row: {@code ,"contents":{"gold":120,"wood":40}}.
+     *
+     * <p>Only a building whose type is flagged as a warehouse has an inventory that belongs to the
+     * player's logistics network, so only such a row carries the field. A producer's private input or
+     * output buffer is deliberately not reported: those goods are not spendable or stored in the same
+     * sense, and mixing them into a "stored" summary would invent a logistics view the engine does not
+     * have. Within the object only components with a non-zero amount are written, in the inventory's
+     * own insertion order (deterministic for a given command stream), and the field is omitted entirely
+     * for an empty warehouse. Amounts saturate exactly like the player row's.
+     */
+    private static void appendWarehouseContents(StringBuilder json, Entity entity) {
+        if (!(entity instanceof Building building) || !building.type().isWarehouse()) {
+            return;
+        }
+        boolean first = true;
+        for (ItemBundle.Amount component : building.inventory().contents().components()) {
+            if (component.amount().isZero()) {
+                continue;
+            }
+            if (first) {
+                json.append(",\"contents\":{");
+                first = false;
+            } else {
+                json.append(',');
+            }
+            appendJsonString(json, component.item().key().path());
+            json.append(':').append(component.amount().toLongSaturated());
+        }
+        if (!first) {
+            json.append('}');
+        }
+    }
+
+    /**
+     * One player's income rate for one resource, in units per minute.
+     *
+     * <p>The sum runs over the player's buildings that are alive and constructed - the same two
+     * conditions the classic payout hook applies - and takes each type's first matching
+     * {@code prefix<number>} tag. The type is resolved through the served {@link ContentRegistry} rather
+     * than trusting a foreign type instance, so the number on the wire is the number the catalogue
+     * actually published. A type that is no longer in the registry, a non-matching tag and a malformed or
+     * negative number all contribute zero; the sum saturates instead of overflowing.
+     *
+     * @param player the player whose buildings are summed
+     * @param prefix either {@link #INCOME_TAG_PREFIX} or {@link #WOOD_INCOME_TAG_PREFIX}
+     * @return a non-negative rate in units per minute, or {@code 0} when nothing publishes one
+     */
+    private long incomePerMinute(Player player, String prefix) {
+        long total = 0L;
+        for (Building building : engine.world().buildingsOf(player)) {
+            if (!building.isAlive() || !building.isConstructed()) {
+                continue;
+            }
+            BuildingType type = content.buildingOrNull(building.type().key());
+            if (type != null) {
+                total = saturatedAdd(total, taggedRate(type, prefix));
+            }
+        }
+        return total;
+    }
+
+    /** The first {@code prefix<number>} tag of a type as a non-negative rate, or {@code 0}. */
+    private static long taggedRate(BuildingType type, String prefix) {
+        for (String tag : type.tags()) {
+            if (tag.startsWith(prefix)) {
+                String amount = tag.substring(prefix.length());
+                try {
+                    return Math.max(0L, Long.parseLong(amount));
+                } catch (NumberFormatException malformed) {
+                    return 0L;
+                }
+            }
+        }
+        return 0L;
+    }
+
+    /** Adds two non-negative rates, pinning at {@link Long#MAX_VALUE} instead of wrapping. */
+    private static long saturatedAdd(long left, long right) {
+        if (right <= 0L) {
+            return left;
+        }
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
     /**
