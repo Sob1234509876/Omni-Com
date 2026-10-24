@@ -55,14 +55,27 @@ import java.util.Objects;
  *       raises buildings.</li>
  * </ol>
  *
- * <p>Whatever the state, the standing economy rules run on every decision except during a defence: keep at
- * least {@value #ENGINEER_TARGET} engineers alive (train them in an armory), keep at least
- * {@value #ARMORY_TARGET} armories, {@value #MINE_TARGET} mines and {@value #LUMBER_TARGET} lumber camp
- * standing (place a site with the engine's {@link UnitDirector#build} and let an idle builder raise it),
- * and train the army while it is below {@value #ARMY_TARGET}. At most one production job and one building
- * site are started per decision, so the AI cannot drain its stock or its builders in a single tick. The
- * lumber camp matters because every armory costs wood and the opening stock is finite; the AI raises a
+ * <p>Whatever the state, the standing economy rules run on every decision except during a defence: first
+ * upgrade the base (an idle, finished armory below the top tier when the warehouses can pay the step),
+ * then keep at least {@value #ENGINEER_TARGET} engineers alive (train them in an armory) and
+ * {@value #MINE_TARGET} mines plus {@value #LUMBER_TARGET} lumber camp standing (place a site with the
+ * engine's {@link UnitDirector#build} and let an idle builder raise it), and train the army while it is
+ * below {@value #ARMY_TARGET}. At most one production job, building site or upgrade is started per
+ * decision, so the AI cannot drain its stock or its builders in a single tick. The lumber camp matters
+ * because every armory upgrade costs wood and the opening stock is finite; the AI raises a
  * {@code building.lumbercamp.t1} with the same bounded site search it uses for every other building.
+ *
+ * <h2>The armory upgrade</h2>
+ *
+ * <p>The AI's opening armory is a {@code building.armory.t1}. Once it is finished, is not the top tier and
+ * the owner can afford its {@code upgradeTo}/{@code upgradeCost} step, the AI calls
+ * {@link UnitDirector#upgradeBuilding(Building)} instead of placing a second armory: the same footprint
+ * becomes a t2 armory, which unlocks the t4 and t5 recipes. Two rules stop the upgrade from fighting the
+ * rest of the upkeep. It runs before engineer/army training in the same decision, so the newly trained
+ * job lands in the upgraded building rather than being cancelled by it, and it only upgrades an
+ * <em>idle</em> armory, so no queued job is thrown away by an upgrade. The step costs 140 gold and 40 wood,
+ * which the 300 gold / 60 wood opening covers immediately; the t1 bootstraps therefore reach t2 on the
+ * second decision at the latest, which {@code ClassicCheck} pins on a fixed seed.
  *
  * <h2>What "strongest tier" means</h2>
  *
@@ -90,7 +103,7 @@ import java.util.Objects;
  * <p>{@link WorldHost} creates one player; a world tick hook runs after that world exists, so the AI
  * creates player {@value #PLAYER_ID} itself on its first tick: it adds the player, attaches the engine's
  * warehouse logistics to it, joins that network to the hauling system the other players already use, places
- * a warehouse, a tier two armory and a tier one mine as its opening base, spawns one engineer, and deposits
+ * a warehouse, a tier one armory and a tier one mine as its opening base, spawns one engineer, and deposits
  * the content's {@link ClassicContent#STARTING_RESOURCES starting stock} (300 gold, 60 wood) into its
  * warehouse. That stock is the same content data the host gives player 1 - the engine itself applies
  * starting resources to no player, and {@link WorldHost} applies them to its single player - so the AI
@@ -142,8 +155,15 @@ public final class ClassicAi implements WorldTickHook {
     /** Engineers the AI tries to keep alive. */
     public static final int ENGINEER_TARGET = 3;
 
-    /** Armories the AI tries to keep standing. */
-    public static final int ARMORY_TARGET = 2;
+    /**
+     * Armories the AI tries to keep standing.
+     *
+     * <p>One, because the armory is upgraded instead of duplicated: a finished t1 armory the AI can afford
+     * to upgrade is turned into a t2 armory before the upkeep ever considers a second site. A second t1
+     * would only cost more wood for less production tier, so the one-armory target and the upgrade rule are
+     * the two halves of the same decision.
+     */
+    public static final int ARMORY_TARGET = 1;
 
     /** Mines the AI tries to keep standing. */
     public static final int MINE_TARGET = 3;
@@ -244,8 +264,10 @@ public final class ClassicAi implements WorldTickHook {
             defend(world, units, intruders);
             return;
         }
-        upkeepEngineers(world, ai, units, buildings);
+        // Buildings first: an upgrade replaces the armory, so training in the same decision has to see the
+        // new tier rather than a queue that the upgrade would cancel.
         upkeepBuildings(world, ai, units, buildings);
+        upkeepEngineers(world, ai, units, buildings);
         if (countArmy(units) < ARMY_TARGET) {
             trainArmy(world, ai, buildings);
         }
@@ -278,8 +300,57 @@ public final class ClassicAi implements WorldTickHook {
         train(world, ai, buildings, recipe(world, ClassicContent.TRAIN_ENGINEER));
     }
 
+    /**
+     * Upgrades the AI's finished, idle armory when the next tier exists and the warehouses can pay for it.
+     *
+     * <p>The search walks the AI's buildings in entity id order, so the choice is deterministic. It stops
+     * at the first eligible armory and returns after one attempt: at most one upgrade is started per
+     * decision, exactly like one site or one production job. An armory with a queued job is skipped rather
+     * than upgraded, because replacing it would cancel the AI's own training; the next decision retries
+     * once the queue is empty. If the upgrade attempt is refused by the engine (for example an unexpected
+     * obstruction), it still counts as this decision's project, so the AI does not immediately spend the
+     * same goods on a different building.
+     *
+     * @return whether an affordable, idle armory upgrade was attempted
+     */
+    private static boolean upgradeArmory(World world, Player ai, List<Building> buildings) {
+        if (!ai.hasLogistics()) {
+            return false;
+        }
+        for (Building building : buildings) {
+            if (!building.isAlive() || !building.isConstructed() || !building.owner().equals(ai)) {
+                continue;
+            }
+            if (!building.type().producerTags().contains(ClassicContent.ARMORY_TAG)) {
+                continue;
+            }
+            var upgradeKey = building.type().upgradeTo();
+            if (upgradeKey.isEmpty()
+                    || world.content().buildingOrNull(upgradeKey.get()) == null) {
+                continue;
+            }
+            if (!ai.logistics().hasAvailable(building.type().upgradeCost())) {
+                continue;
+            }
+            boolean idle = world.production().queue(building)
+                    .map(ProductionQueue::isEmpty)
+                    .orElse(true);
+            if (!idle) {
+                continue;
+            }
+            director(world).upgradeBuilding(building);
+            return true;
+        }
+        return false;
+    }
+
     /** Places one missing armory, mine or lumber camp with an idle builder, if there is one. */
     private static void upkeepBuildings(World world, Player ai, List<Unit> units, List<Building> buildings) {
+        // An upgrade replaces a building rather than adding one, so it is considered before the count
+        // based site search: with the one-armory target, a t1 armory is upgraded instead of a second t1.
+        if (upgradeArmory(world, ai, buildings)) {
+            return;
+        }
         BuildingType type = null;
         if (countTag(buildings, ClassicContent.ARMORY_TAG) < ARMORY_TARGET) {
             type = buildingType(world, ClassicContent.ARMORY_T1);
@@ -494,7 +565,9 @@ public final class ClassicAi implements WorldTickHook {
         bootstrapped = true;
         ContentRegistry content = world.content();
         BuildingType warehouse = buildingType(world, ClassicContent.WAREHOUSE);
-        BuildingType armory = buildingType(world, ClassicContent.ARMORY_T2);
+        // The opening armory is the basic tier: the AI upgrades it through the engine mechanic once the
+        // bootstrap has deposited the starting stock, which is what exercises the ladder in a real match.
+        BuildingType armory = buildingType(world, ClassicContent.ARMORY_T1);
         BuildingType mine = buildingType(world, ClassicContent.MINE_T1);
         UnitType engineer = content.unitOrNull(content.key(ClassicContent.ENGINEER));
         if (warehouse == null || armory == null || mine == null || engineer == null) {

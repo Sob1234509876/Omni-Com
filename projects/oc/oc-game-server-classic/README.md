@@ -56,22 +56,31 @@ it attacks with the same rules as everything else.
 Both armories carry the producer tag `armory`, so the recipes are selected by tag and then gated by the level the
 engine reads from `BuildingType.level()`.
 
-| Path | Name | Level | Footprint | HP | Cost | Build ticks | Storage | Trains |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `building.armory.t1` | 兵营·普通 | 1 | 3x3 | 600 | 100 gold + 20 wood | 150 | 6 | `t1`..`t3`, engineer |
-| `building.armory.t2` | 兵营·强化 | 2 | 3x3 | 900 | 240 gold + 60 wood | 240 | 8 | all five tiers, engineer |
+| Path | Name | Level | Footprint | HP | Cost | Build ticks | Storage | Trains | Upgrades to |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `building.armory.t1` | 兵营·普通 | 1 | 3x3 | 600 | 100 gold + 20 wood | 150 | 6 | `t1`..`t3`, engineer | `building.armory.t2` for **140 gold + 40 wood** |
+| `building.armory.t2` | 兵营·强化 | 2 | 3x3 | 900 | 240 gold + 60 wood | 240 | 8 | all five tiers, engineer | - (top of the ladder) |
 
 The rule is **t1 produces t1..t3, t2 produces all five**. It is not a plugin convention: the lower three tiers
 and the engineer ask for building level 1, the two top tiers ask for level 2, and
 `ProductionSystem.enqueue` refuses a recipe the building's level does not reach.
 
+The step is executed by the engine's `CommandService.upgradeBuilding`: the t1 building is replaced at the same
+3x3 origin, with the same owner and the same health fraction, and the old production queue is cancelled. The
+upgrade cost is exactly the difference between the two catalogue prices (100/20 + 140/40 = 240/60), so upgrading
+buys the same tier for the same total material as a fresh t2. A t2 armory is the top of its ladder and offers no
+further upgrade.
+
 ## The three mine levels
 
-| Path | Name | Level | Income (gold per minute) | Cost (gold) | Build ticks |
-| --- | --- | --- | --- | --- | --- |
-| `building.mine.t1` | 普通 | 1 | 30 | 80 | 120 |
-| `building.mine.t2` | 强化 | 2 | 60 | 160 | 180 |
-| `building.mine.t3` | 精英 | 3 | 120 | 320 | 240 |
+| Path | Name | Level | Income (gold per minute) | Cost (gold) | Build ticks | Upgrade (gold) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `building.mine.t1` | 普通 | 1 | 30 | 80 | 120 | 80 → `building.mine.t2` |
+| `building.mine.t2` | 强化 | 2 | 60 | 160 | 180 | 160 → `building.mine.t3` |
+| `building.mine.t3` | 精英 | 3 | 120 | 320 | 240 | - (top of the ladder) |
+
+Each step costs the source tier's price, so t1 + both upgrades = 320 = a fresh t3. Upgrading changes no
+income rate by hand: the new type's `income_<n>` tag simply takes over from the next payout.
 
 Every mine is 3x3 with 500 HP and six storage slots. Income is content data, not an engine mechanic: the engine
 has no passive income tick, so each mine publishes its rate as the `income_<n>` tag and the plugin's
@@ -79,11 +88,14 @@ has no passive income tick, so each mine publishes its rate as the `income_<n>` 
 
 ## The three lumber camp levels
 
-| Path | Name | Level | Income (wood per minute) | Cost (gold) | Build ticks |
-| --- | --- | --- | --- | --- | --- |
-| `building.lumbercamp.t1` | 普通 | 1 | 20 | 80 | 120 |
-| `building.lumbercamp.t2` | 强化 | 2 | 40 | 160 | 180 |
-| `building.lumbercamp.t3` | 精英 | 3 | 80 | 320 | 240 |
+| Path | Name | Level | Income (wood per minute) | Cost (gold) | Build ticks | Upgrade (gold) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `building.lumbercamp.t1` | 普通 | 1 | 20 | 80 | 120 | 80 → `building.lumbercamp.t2` |
+| `building.lumbercamp.t2` | 强化 | 2 | 40 | 160 | 180 | 160 → `building.lumbercamp.t3` |
+| `building.lumbercamp.t3` | 精英 | 3 | 80 | 320 | 240 | - (top of the ladder) |
+
+The upgrade ladder mirrors the mines: each step costs the source tier's price, and the top tier has no
+successor. Upgrades never cost wood either, for the same deadlock reason.
 
 Every lumber camp is 3x3 with 500 HP and six storage slots, and it costs **gold only** — a wood building that
 cost wood could never break the opening deadlock. It publishes its rate as the `wood_income_<n>` tag, which is
@@ -146,10 +158,14 @@ second — and falls into one mode, chosen in this fixed precedence:
 | `ARMY` | the base is staffed, the army is below 8 | train troops |
 | `ECON` | the base is not staffed yet | train engineers and raise buildings |
 
-Whatever the mode, except during a defence, the standing economy rules run: keep at least **three engineers**
-alive, at least **two armories**, **three mines** and **one lumber camp** standing, and grow the army to eight.
-At most one production job and one building site are started per decision, so the AI cannot drain its stock or
-its builders in a single tick. The lumber camp is what gives the AI renewable wood for its armories; it is
+Whatever the mode, except during a defence, the standing economy rules run: first **upgrade** the base, then
+keep at least **three engineers** alive, **three mines** and **one lumber camp** standing, and grow the army to
+eight. The AI keeps **one** armory, and it upgrades that armory instead of building a second one: when the t1 is
+finished, is not the top tier and the warehouses can pay its 140 gold + 40 wood, `ClassicAi` calls the engine's
+`upgradeBuilding` before it considers any site or training job. The upgrade runs before engineer/army training
+in the same decision and only on an **idle** armory, so it cannot cancel the AI's own queued job. At most one
+production job, building site or upgrade is started per decision, so the AI cannot drain its stock or its
+builders in a single tick. The lumber camp is what gives the AI renewable wood for its armory upgrades; it is
 placed with the same bounded site search as every other building.
 
 Army training looks at the **best idle armory** — highest level, ties by entity id — and walks the five tiers
@@ -158,8 +174,8 @@ armory therefore trains `unit.melee.t5` whenever the gold is there. It attack-mo
 never reissues an order and never replaces a march that is still running.
 
 On its first tick the AI creates player 2 itself, attaches the engine's warehouse logistics, places a warehouse,
-a tier 2 armory and a tier 1 mine as its opening base, spawns one engineer and deposits the same 300 gold and
-60 wood. Its first lumber camp is an upkeep placement, not part of the opening. It defends within eight tiles of
+a tier 1 armory and a tier 1 mine as its opening base, spawns one engineer and deposits the same 300 gold and
+60 wood. Its armory reaches tier 2 on the next decision (tick 20) and the check pins that on a fixed seed. Its first lumber camp is an upkeep placement, not part of the opening. It defends within eight tiles of
 its own buildings. There is no randomness anywhere: units, buildings
 and intruders are sorted by entity id and every distance tie is broken by id, so the same world state and tick
 always produce the same orders.
@@ -194,16 +210,18 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 368 checks passed.
+classic plugin self check: all 403 checks passed.
 ```
 
-368 is the sum of fourteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
-the mine income ladder 20, the lumber camp ladder 35, the economy payout 33 (18 gold + 15 wood), the buildable
-warehouse 11, the starting stock 10, the manifest and atlas 17, the host and snapshot 35 (including the compact
-warehouse `contents` row), the enemy AI 31 (including the lumber camp upkeep), determinism 9 (including the
-AI's 64-tile entity bound over a 600-tick run), the plugin seam 17 and the plugin loader 12. The gate section is the
-strict part: it proves against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just
-that the catalogue says so.
+403 is the sum of fifteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
+the mine income ladder 20, the lumber camp ladder 35, the three upgrade ladders 30, the economy payout 33
+(18 gold + 15 wood), the buildable warehouse 11, the starting stock 10, the manifest and atlas 17, the host and
+snapshot 35 (including the compact warehouse `contents` row), the enemy AI 36 (including the armory upgrade and
+the lumber camp upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the plugin
+seam 17 and the plugin loader 12. The gate section is the strict part: it proves against a real
+`ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue says so; the
+upgrade section proves the same ladders are executable in a real engine, and the AI section proves the enemy
+really reaches tier 2 through the command.
 
 ## Module layout
 
@@ -216,7 +234,7 @@ that the catalogue says so.
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 368 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 403 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

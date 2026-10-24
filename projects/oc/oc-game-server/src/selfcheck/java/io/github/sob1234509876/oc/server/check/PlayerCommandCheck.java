@@ -12,6 +12,7 @@ import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.entity.Building;
+import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.server.auth.AuthService;
@@ -83,6 +84,12 @@ public final class PlayerCommandCheck {
 
     private static final String TRAIN_T1 = "recipe.train.melee.t1";
     private static final String TRAIN_T4 = "recipe.train.melee.t4";
+
+    /** Gold cost of the command-content armory's upgrade; deliberately not the classic 140. */
+    private static final long ARMORY_UPGRADE_GOLD = 40;
+
+    /** Wood cost of the command-content armory's upgrade. */
+    private static final long ARMORY_UPGRADE_WOOD = 10;
 
     private PlayerCommandCheck() {
     }
@@ -268,6 +275,91 @@ public final class PlayerCommandCheck {
         check.equal(1, host.engine().production().queue(armory).orElseThrow().size(),
                 "成功的 TRAIN 在兵营队列里留下一个任务");
 
+        check.section("玩家命令：UPGRADE 的所有权、成本与快照入口");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "UPGRADE " + enemyBuilding.id().value()),
+                "UPGRADE 别人的建筑回答 ERR not yours");
+        check.equal("ERR unknown entity", run(dispatcher, host, first, "UPGRADE 999999"),
+                "UPGRADE 不存在的实体回答 ERR unknown entity");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADE nope"),
+                "UPGRADE 非数字 id 回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADE 1 2"),
+                "UPGRADE 多余参数回答 ERR bad arguments");
+
+        // The snapshot has to advertise the option or the client cannot render it. Exactly one row carries
+        // it: the finished t1 armory. The BUILD site from the previous section is also a t1 armory but is
+        // unfinished, so it must not offer an upgrade.
+        String offer = host.snapshotJson();
+        String expectedOffer = "\"upgrade\":{\"to\":\"" + ARMORY_T2 + "\",\"gold\":"
+                + ARMORY_UPGRADE_GOLD + ",\"wood\":" + ARMORY_UPGRADE_WOOD + "}";
+        String armoryRow = entityRow(offer, armory.id().value());
+        check.that(armoryRow.contains(expectedOffer),
+                "快照里的完工 t1 兵营带 upgrade 对象: " + expectedOffer);
+        check.that(site != null && !entityRow(offer, site.id().value()).contains("\"upgrade\""),
+                "未完工的工地没有 upgrade 对象（引擎只升级完工建筑）");
+
+        // An unaffordable owned armory: refused, nothing charged, nothing replaced.
+        Building poorArmory = world.spawnBuilding(host.content().building(ARMORY_T1), poor,
+                new GridPos(46, 50));
+        long poorArmoryId = poorArmory.id().value();
+        String poorUpgrade = run(dispatcher, host, second, "UPGRADE " + poorArmoryId);
+        check.that(poorUpgrade.startsWith("ERR ") && poorUpgrade.contains("cannot afford"),
+                "买不起的 UPGRADE 回答 ERR 并说明买不起: " + poorUpgrade);
+        check.equal(Natural.of(10), poor.logistics().amount(gold),
+                "失败的 UPGRADE 一分钱也没扣");
+        check.that(world.findEntity(EntityId.of(poorArmoryId)).orElseThrow() == poorArmory
+                        && poorArmory.type().key().path().equals(ARMORY_T1),
+                "失败的 UPGRADE 留下原来的 t1 兵营");
+        world.destroy(poorArmory);
+        world.flush();
+
+        // The real thing: a finished, damaged t1 armory with a queued job is upgraded to t2.
+        Natural upgradeGoldBefore = human.logistics().amount(gold);
+        Natural upgradeWoodBefore = human.logistics().amount(wood);
+        long oldArmoryId = armory.id().value();
+        GridPos oldArmoryOrigin = armory.origin();
+        armory.health().damage(300);
+        check.that(Math.abs(armory.health().fraction() - 0.5f) < 1e-6f,
+                "UPGRADE 前兵营是半血（600 血中的 300）");
+        String upgraded = run(dispatcher, host, first, "UPGRADE " + oldArmoryId);
+        boolean upgradeOk = upgraded.startsWith("OK ");
+        check.that(upgradeOk, "买得起的 UPGRADE 成功并返回新建筑 id: " + upgraded);
+        long newArmoryId = upgradeOk ? Long.parseLong(upgraded.substring("OK ".length())) : -1L;
+        Entity replacementEntity = newArmoryId > 0L
+                ? world.findEntity(EntityId.of(newArmoryId)).orElse(null)
+                : null;
+        Building newArmory = replacementEntity instanceof Building building ? building : null;
+        check.that(newArmory != null && newArmory.type().key().path().equals(ARMORY_T2),
+                "UPGRADE 返回的是 building.armory.t2");
+        check.that(newArmory != null && newArmory.isConstructed(),
+                "UPGRADE 的结果是已完工建筑，不是新工地");
+        check.that(newArmory != null && newArmory.origin().equals(oldArmoryOrigin),
+                "UPGRADE 保持原来的占地位置");
+        check.that(newArmory != null && newArmory.owner().equals(human),
+                "UPGRADE 保持原来的所有者");
+        if (newArmory != null) {
+            check.that(Math.abs(newArmory.health().fraction() - 0.5f) < 1e-6f,
+                    "UPGRADE 保持血量比例：t2 的 900 血中保留一半");
+            check.equal(Natural.of(450), newArmory.health().current(),
+                    "UPGRADE 后的当前血量是 450，而不是旧建筑的 300");
+        }
+        check.equal(upgradeGoldBefore.subtractClamped(Natural.of(ARMORY_UPGRADE_GOLD)),
+                human.logistics().amount(gold), "UPGRADE 恰好扣掉 40 金币一次");
+        check.equal(upgradeWoodBefore.subtractClamped(Natural.of(ARMORY_UPGRADE_WOOD)),
+                human.logistics().amount(wood), "UPGRADE 恰好扣掉 10 木材一次");
+        check.that(!armory.isAlive(), "旧的 t1 兵营被销毁");
+        check.that(host.engine().production().queue(armory).isEmpty(),
+                "旧兵营的排队任务随旧建筑一起取消");
+        check.that(newArmory != null && host.engine().production().queue(newArmory).isEmpty(),
+                "新兵营没有继承旧建筑的生产队列");
+        check.that(world.spatial().inRect(host.content().building(ARMORY_T2)
+                        .footprint(oldArmoryOrigin.x(), oldArmoryOrigin.y())).stream()
+                        .noneMatch(entity -> entity.id().value() == oldArmoryId),
+                "空间索引不再认识旧兵营 id");
+        check.that(newArmoryId > 0L
+                        && !entityRow(host.snapshotJson(), newArmoryId).contains("\"upgrade\""),
+                "升级后的顶层 t2 兵营不再提供 upgrade 入口");
+
         check.section("玩家命令：命令只在世界步的起点被应用");
         AtomicInteger applied = new AtomicInteger();
         WorldHost.CommandHandle direct = host.submitCommand(commandHost -> {
@@ -419,6 +511,49 @@ public final class PlayerCommandCheck {
         return answer.await(0);
     }
 
+    /**
+     * One entity row of the snapshot JSON, brace matched from {@code {"id":<id>,}.
+     *
+     * <p>The server self check has no JSON parser and adding one for a single field would be a dependency
+     * this module does not need. The row is found by its unique id marker and cut at the matching closing
+     * brace, so nested objects such as {@code upgrade} or arrays of {@code queueItems} cannot truncate it.
+     * Returns the empty string when the id is not in the document.
+     */
+    private static String entityRow(String json, long id) {
+        String marker = "{\"id\":" + id + ",";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            return "";
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int index = start; index < json.length(); index++) {
+            char current = json.charAt(index);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (current == '\\') {
+                    escaped = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+            } else if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return json.substring(start, index + 1);
+                }
+            }
+        }
+        return "";
+    }
+
     /** Deposits a stock into one warehouse and asserts that all of it fits. */
     private static void deposit(Check check, Player player, Building warehouse, ItemBundle bundle) {
         ItemBundle leftover = player.logistics().deposit(bundle, warehouse.position());
@@ -478,6 +613,8 @@ public final class PlayerCommandCheck {
                     .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE)
                     .building(ARMORY_T1).name("Armory T1").size(3, 3).health(600).level(1)
                     .cost(GOLD, 100).cost(WOOD, 20).buildTime(150).storage(6).producer("armory")
+                    .upgradeTo(ARMORY_T2).upgradeCost(GOLD, ARMORY_UPGRADE_GOLD)
+                    .upgradeCost(WOOD, ARMORY_UPGRADE_WOOD)
                     .spriteSet(ARMORY_T1)
                     .building(ARMORY_T2).name("Armory T2").size(3, 3).health(900).level(2)
                     .cost(GOLD, 240).cost(WOOD, 60).buildTime(240).storage(8).producer("armory")

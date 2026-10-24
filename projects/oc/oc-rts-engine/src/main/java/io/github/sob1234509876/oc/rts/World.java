@@ -396,14 +396,30 @@ public final class World {
 
     /** Drops an entity from the combat target of every unit, including its own; see {@link #transfer}. */
     private void clearCombatTargets(Entity moved) {
-        EntityId movedId = moved.id();
         if (moved instanceof Unit unit) {
             unit.clearTarget();
+        }
+        clearTargets(moved.id());
+    }
+
+    /**
+     * Clears one entity id from the combat target of every unit in every dimension.
+     *
+     * <p>The target field is simulation state, not a hint: an entity that is removed and replaced under a
+     * new id (an in-place upgrade) must not leave the old id behind in any unit. The combat system drops an
+     * id on a kill for the same reason; this method exposes the same operation to the upgrade command, which
+     * removes a living entity that no hit killed.
+     *
+     * @param target the id that must no longer be aimed at; {@code null} is ignored
+     */
+    public void clearTargets(EntityId target) {
+        if (target == null) {
+            return;
         }
         for (Dimension dimension : dimensions.values()) {
             List<Unit> units = dimension.units();
             for (int i = 0; i < units.size(); i++) {
-                if (movedId.equals(units.get(i).targetId())) {
+                if (target.equals(units.get(i).targetId())) {
                     units.get(i).clearTarget();
                 }
             }
@@ -566,6 +582,16 @@ public final class World {
 
     public boolean canPlace(DimensionId id, BuildingType type, GridPos origin) {
         return dimension(id).canPlace(type, origin);
+    }
+
+    /**
+     * Whether a building fits when one entity is about to be replaced at the same footprint.
+     *
+     * <p>Used by in-place upgrades: the old building is ignored, every other living building still blocks
+     * the site. See {@link Dimension#canPlace(BuildingType, GridPos, Entity)}.
+     */
+    public boolean canPlace(DimensionId id, BuildingType type, GridPos origin, Entity replaced) {
+        return dimension(id).canPlace(type, origin, replaced);
     }
 
     /** Marks an entity dead; it is removed from its dimension during the next {@link #flush()}. */

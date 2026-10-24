@@ -32,6 +32,20 @@ export const TERRAIN_IDS: readonly TerrainId[] = [
   "void",
 ];
 
+/**
+ * The optional upgrade offer of a finished building, from the snapshot's `upgrade` object.
+ *
+ * `to` is the successor's content path (for example `building.armory.t2`) and `gold` / `wood` are the two
+ * resources the `UPGRADE <id>` command charges. The server sends the object only when the building can be
+ * upgraded (finished, a successor exists); affordability is not encoded, because the client compares the
+ * cost with its own player row and shows the entry disabled instead of hiding it.
+ */
+export interface UpgradeView {
+  readonly to: string;
+  readonly gold: number;
+  readonly wood: number;
+}
+
 export interface EntityView {
   /** Stable entity id; the demo uses small numbers, the server will use its own ids. */
   readonly id: number;
@@ -96,6 +110,14 @@ export interface EntityView {
    * than as an empty warehouse.
    */
   readonly contents?: Readonly<Record<string, number>>;
+  /**
+   * Optional in-place upgrade offer from the snapshot's `upgrade` object.
+   *
+   * Present only for a finished own-or-enemy building whose content type names a successor the served
+   * catalogue knows. The HUD turns it into the 升级 entry for a selected own building; an older snapshot
+   * and a top-tier building omit it.
+   */
+  readonly upgrade?: UpgradeView;
 }
 
 /**
@@ -437,6 +459,34 @@ function snapshotContents(value: unknown): Readonly<Record<string, number>> | un
 }
 
 /**
+ * Reads the optional `upgrade` object of a building row.
+ *
+ * `to` must be a non-empty content path and both amounts non-negative safe integers; otherwise the whole
+ * object is dropped rather than half-read. Missing means the snapshot predates the field (or the building
+ * is top tier / unfinished), which is exactly the legacy path the HUD must keep supporting.
+ */
+function snapshotUpgrade(value: unknown): UpgradeView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const to = value["to"];
+  const gold = finiteNumber(value["gold"]);
+  const wood = finiteNumber(value["wood"]);
+  if (typeof to !== "string" || to.trim() === "" || gold === null || wood === null) {
+    return undefined;
+  }
+  if (
+    !Number.isSafeInteger(gold) ||
+    gold < 0 ||
+    !Number.isSafeInteger(wood) ||
+    wood < 0
+  ) {
+    return undefined;
+  }
+  return { to: kindName(to.trim()), gold, wood };
+}
+
+/**
  * Reads the optional `queueItems` array of a building row.
  *
  * `undefined` means the snapshot predates the field (or the row has no queue), which is the legacy path
@@ -494,8 +544,9 @@ function optionalNonNegativeInteger(value: unknown): number | undefined {
  *
  * The optional entity detail fields are additive for the same reason: `w` / `h` become `footprint`,
  * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
- * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, and `contents` becomes a
- * validated object of positive integer amounts. A snapshot without any of them (an older server, the
+ * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, `contents` becomes a
+ * validated object of positive integer amounts, and `upgrade` becomes a validated `{to, gold, wood}`
+ * offer. A snapshot without any of them (an older server, the
  * demo world, every check fixture written before these fields existed) converts exactly as it did
  * before, with all of those properties `undefined`; a player row similarly keeps the optional
  * `goldPerMinute` / `woodPerMinute` or leaves them `undefined`. A malformed optional field is ignored
@@ -615,6 +666,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const queueTicks = finiteNumber(rawEntity["queueTicks"]);
     const queueItems = snapshotQueueItems(rawEntity["queueItems"]);
     const contents = snapshotContents(rawEntity["contents"]);
+    const upgrade = snapshotUpgrade(rawEntity["upgrade"]);
     entities.push({
       id,
       kind: kindName(kind.trim()),
@@ -631,6 +683,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
         : { queueTicks }),
       ...(queueItems === undefined ? {} : { queueItems }),
       ...(contents === undefined ? {} : { contents }),
+      ...(upgrade === undefined ? {} : { upgrade }),
     });
   }
 

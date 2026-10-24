@@ -25,6 +25,7 @@ import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.AttackOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
+import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.server.OcGameServer;
@@ -124,6 +125,7 @@ public final class ClassicCheck {
         tierGate(check, registry);
         mines(check, registry);
         lumberCamps(check, registry);
+        upgradeLadders(check, registry);
         economy(check, classic, registry);
         warehouseBuild(check, registry);
         startingResources(check, classic, registry);
@@ -390,6 +392,98 @@ public final class ClassicCheck {
                 "t2 伐木场的内容路径是 building.lumbercamp.t2");
         check.equal(ClassicContent.LUMBERCAMP_T3, camps.get(2).buildingPath(),
                 "t3 伐木场的内容路径是 building.lumbercamp.t3");
+    }
+
+    // ------------------------------------------------------------------ 4b) the upgrade ladders
+
+    /**
+     * The three content ladders: every non-top tier names its successor, the cost is the documented step,
+     * and the top tier declares no successor. The totals are asserted too, because the design rule is that
+     * building a tier and upgrading it cost the same material as building the target directly.
+     */
+    private static void upgradeLadders(Check check, ContentRegistry registry) {
+        check.section("升级阶梯");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
+
+        BuildingType armoryT1 = registry.building(ClassicContent.ARMORY_T1);
+        BuildingType armoryT2 = registry.building(ClassicContent.ARMORY_T2);
+        check.equal(ClassicContent.ARMORY_T2, armoryT1.upgradeTo().orElseThrow().path(),
+                "兵营 t1 升级到 building.armory.t2");
+        check.equal(140L, asLong(armoryT1.upgradeCost().amount(gold)),
+                "兵营升级花费 140 金币（与文档表一致）");
+        check.equal(40L, asLong(armoryT1.upgradeCost().amount(wood)),
+                "兵营升级花费 40 木材（与文档表一致）");
+        check.equal(180L, asLong(armoryT1.upgradeCost().totalUnits()),
+                "兵营升级总材料 180 单位");
+        check.equal(300L, asLong(armoryT1.cost().totalUnits().add(armoryT1.upgradeCost().totalUnits())),
+                "兵营 t1 造价 + 升级 = t2 直接造价 300 单位");
+        check.that(armoryT2.upgradeTo().isEmpty() && armoryT2.upgradeCost().isEmpty(),
+                "兵营 t2 是阶梯顶端，没有升级");
+
+        for (ClassicContent.MineTier mine : ClassicContent.mineTiers()) {
+            BuildingType building = registry.building(mine.buildingPath());
+            if (mine.upgradeTo() == null) {
+                check.that(building.upgradeTo().isEmpty() && building.upgradeCost().isEmpty(),
+                        "矿场 t" + mine.tier() + " 是阶梯顶端，没有升级");
+                continue;
+            }
+            check.equal(mine.upgradeTo(), building.upgradeTo().orElseThrow().path(),
+                    "矿场 t" + mine.tier() + " 升级到 " + mine.upgradeTo());
+            check.equal(mine.upgradeGold(), asLong(building.upgradeCost().amount(gold)),
+                    "矿场 t" + mine.tier() + " 升级金币与表一致");
+            check.equal(0L, asLong(building.upgradeCost().amount(wood)),
+                    "矿场升级不花木材");
+        }
+        check.equal(160L, asLong(registry.building(ClassicContent.MINE_T1).cost().totalUnits()
+                        .add(registry.building(ClassicContent.MINE_T1).upgradeCost().totalUnits())),
+                "矿场 t1 造价 + 升级 = t2 直接造价 160 金币");
+        check.equal(320L, asLong(registry.building(ClassicContent.MINE_T2).cost().totalUnits()
+                        .add(registry.building(ClassicContent.MINE_T2).upgradeCost().totalUnits())),
+                "矿场 t2 造价 + 升级 = t3 直接造价 320 金币");
+
+        for (ClassicContent.LumberCampTier camp : ClassicContent.lumberCampTiers()) {
+            BuildingType building = registry.building(camp.buildingPath());
+            if (camp.upgradeTo() == null) {
+                check.that(building.upgradeTo().isEmpty() && building.upgradeCost().isEmpty(),
+                        "伐木场 t" + camp.tier() + " 是阶梯顶端，没有升级");
+                continue;
+            }
+            check.equal(camp.upgradeTo(), building.upgradeTo().orElseThrow().path(),
+                    "伐木场 t" + camp.tier() + " 升级到 " + camp.upgradeTo());
+            check.equal(camp.upgradeGold(), asLong(building.upgradeCost().amount(gold)),
+                    "伐木场 t" + camp.tier() + " 升级金币与表一致");
+            check.equal(0L, asLong(building.upgradeCost().amount(wood)),
+                    "伐木场升级不花木材");
+        }
+        check.equal(160L, asLong(registry.building(ClassicContent.LUMBERCAMP_T1).cost().totalUnits()
+                        .add(registry.building(ClassicContent.LUMBERCAMP_T1).upgradeCost().totalUnits())),
+                "伐木场 t1 造价 + 升级 = t2 直接造价 160 金币");
+        check.equal(320L, asLong(registry.building(ClassicContent.LUMBERCAMP_T2).cost().totalUnits()
+                        .add(registry.building(ClassicContent.LUMBERCAMP_T2).upgradeCost().totalUnits())),
+                "伐木场 t2 造价 + 升级 = t3 直接造价 320 金币");
+
+        // A real engine: the catalogue's ladder is executable, not only declarative.
+        OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7),
+                Player.of(2, "Enemy", 0xFFEF5350));
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        Building warehouse = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(20, 10));
+        check.equal(0L, asLong(player.logistics().deposit(ItemBundle.of(gold, 140, wood, 40),
+                warehouse.position()).totalUnits()),
+                "升级检查的仓库收下了 140 金币与 40 木材");
+        var upgraded = engine.commands().upgradeBuilding(armory);
+        check.that(upgraded.upgraded(), "真实世界里的兵营升级成功: " + upgraded.refusal());
+        check.equal(ClassicContent.ARMORY_T2, upgraded.replacement().type().key().path(),
+                "升级后的兵营是 building.armory.t2");
+        check.equal(0L, player.logistics().amount(gold).toLongSaturated(),
+                "兵营升级恰好扣光 140 金币");
+        check.equal(0L, player.logistics().amount(wood).toLongSaturated(),
+                "兵营升级恰好扣光 40 木材");
+        check.that(!armory.isAlive(), "旧兵营被替换");
     }
 
     // ------------------------------------------------------------------ 4b) mine income
@@ -870,6 +964,7 @@ public final class ClassicCheck {
         check.section("敌人 AI");
         trainsEngineersFirst(check, registry);
         buildsMissingStructures(check, registry);
+        upgradesArmory(check);
         keepsLumberCamp(check, registry);
         attacksAtSix(check, registry);
         defendsItsBase(check, registry);
@@ -881,7 +976,9 @@ public final class ClassicCheck {
         World world = engine.world();
         Player enemy = engine.players().get(1);
         Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
-        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), enemy,
+        // A top-tier armory on purpose: the engineer-training rule must be observable on its own, so this
+        // fixture must not give the AI an affordable armory upgrade it would take first.
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy,
                 new GridPos(24, 20));
         stock(check, registry, enemy, warehouse);
         ClassicAi ai = new ClassicAi();
@@ -925,8 +1022,11 @@ public final class ClassicCheck {
         World secondWorld = second.world();
         Player secondEnemy = second.players().get(1);
         Building secondWarehouse = warehouse(secondWorld, registry, secondEnemy, new GridPos(20, 20));
-        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), secondEnemy, new GridPos(24, 20));
-        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), secondEnemy, new GridPos(28, 20));
+        // Both at the top tier: an upgradeable t1 would be upgraded before the missing mine is placed.
+        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), secondEnemy,
+                new GridPos(24, 20));
+        secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), secondEnemy,
+                new GridPos(28, 20));
         secondWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), secondEnemy, new GridPos(22, 22));
         stock(check, registry, secondEnemy, secondWarehouse);
         ClassicAi secondAi = new ClassicAi();
@@ -939,6 +1039,77 @@ public final class ClassicCheck {
     }
 
     /**
+     * The upgrade rule end to end: a real {@link WorldHost} with the classic economy and AI on a fixed seed
+     * reaches a tier two armory within a bounded number of ticks, and it really started at tier one, so the
+     * result came from {@link UnitDirector#upgradeBuilding} rather than from a bootstrap that spawned the
+     * upgraded type.
+     *
+     * <p>The bound is deliberately generous compared with the observed behaviour (the bootstrap deposits
+     * the starting stock on tick 1 and the next decision runs on tick 20): 400 ticks is twenty simulated
+     * seconds and still far below one income minute, so passing cannot depend on the economy having paid
+     * out. The seed is fixed, which makes the tick it happens on deterministic.
+     */
+    private static void upgradesArmory(Check check) {
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), new ClassicAi()));
+        try {
+            boolean sawTierOne = false;
+            int reachedTick = -1;
+            for (int tick = 1; tick <= 400; tick++) {
+                host.step();
+                Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+                if (enemy == null) {
+                    continue;
+                }
+                World world = host.engine().world();
+                boolean tierOne = false;
+                boolean tierTwo = false;
+                for (Building building : world.buildingsOf(enemy)) {
+                    if (!building.isAlive() || !building.isConstructed()) {
+                        continue;
+                    }
+                    String path = building.type().key().path();
+                    tierOne |= ClassicContent.ARMORY_T1.equals(path);
+                    tierTwo |= ClassicContent.ARMORY_T2.equals(path);
+                }
+                sawTierOne |= tierOne;
+                if (tierTwo) {
+                    reachedTick = tick;
+                    break;
+                }
+            }
+            check.that(sawTierOne, "AI 开局确实先建了一座 t1 兵营（升级前状态可观察）");
+            check.that(reachedTick > 0,
+                    "AI 的兵营在 400 tick 内升到 t2（实际 tick " + reachedTick + "）");
+            Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+            if (enemy == null) {
+                check.that(false, "AI 没有建立玩家 2，无法检查升级后的兵营");
+                return;
+            }
+            int tierOneLeft = 0;
+            int tierTwoCount = 0;
+            for (Building building : host.engine().world().buildingsOf(enemy)) {
+                if (!building.isAlive() || !building.isConstructed()) {
+                    continue;
+                }
+                String path = building.type().key().path();
+                if (ClassicContent.ARMORY_T1.equals(path)) {
+                    tierOneLeft++;
+                } else if (ClassicContent.ARMORY_T2.equals(path)) {
+                    tierTwoCount++;
+                }
+            }
+            check.equal(0, tierOneLeft, "升级后 AI 不再保留 t1 兵营");
+            check.equal(ClassicAi.ARMORY_TARGET, tierTwoCount,
+                    "AI 维持一座 t2 兵营，而不是再建第二座 t1");
+            check.equal(1, countTag(host.engine().world(), enemy, ClassicContent.ARMORY_TAG),
+                    "AI 的兵营总数仍然是维持目标 1 座");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
      * The AI's wood need: with the other economy targets met it places a lumber camp, and with one
      * standing it does not place a second.
      */
@@ -947,7 +1118,9 @@ public final class ClassicCheck {
         World world = engine.world();
         Player enemy = engine.players().get(1);
         Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
-        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), enemy, new GridPos(24, 20));
+        // Top-tier armories: this fixture is about the lumber camp, so no affordable upgrade may win the
+        // decision before the missing camp is considered.
+        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy, new GridPos(24, 20));
         world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy, new GridPos(28, 20));
         for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
             world.spawnBuilding(registry.building(ClassicContent.MINE_T1), enemy,
@@ -973,7 +1146,7 @@ public final class ClassicCheck {
         World satisfiedWorld = satisfied.world();
         Player satisfiedEnemy = satisfied.players().get(1);
         Building satisfiedWarehouse = warehouse(satisfiedWorld, registry, satisfiedEnemy, new GridPos(20, 20));
-        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), satisfiedEnemy,
+        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), satisfiedEnemy,
                 new GridPos(24, 20));
         satisfiedWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), satisfiedEnemy,
                 new GridPos(28, 20));

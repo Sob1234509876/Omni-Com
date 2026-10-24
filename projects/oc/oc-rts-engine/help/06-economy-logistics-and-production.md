@@ -447,6 +447,19 @@ queueOf(building).enqueue(recipe, count);   // count <= 0 时由 ProductionQueue
 
 两者都通过 `World.register` 发布 `Events.EntitySpawned`，所以 `WarehouseLogistics` 两条路径都能索引到。想同时验证"建造完成事件"这条路径，必须用 `placeBuilding` 或 `restartConstruction()`（`RtsScenario` 用的是 `spawnBuilding`，因此它验证的是 `EntitySpawned` 分支）。
 
+### 原地升级：`UnitDirector.upgradeBuilding`
+
+`CommandService.upgradeBuilding(Building)` 是建造之外唯一的"改变建筑类型"入口，规则与成本在这里收口：
+
+1. **只升级已完工建筑**（`isConstructed()`）；血量不要求满，因为引擎没有修理机制，而升级会保留血量比例。
+2. 源类型的 `upgradeTo()` 必须指向目录里存在的类型；悬空、自指、目标占地不同都直接拒绝。
+3. 新建筑必须能放在旧原点：`World.canPlace(dimension, target, origin, replaced)` 忽略正在被替换的那一座，其它建筑仍然阻挡。
+4. 费用是 `source.upgradeCost()`，走 `Logistics.reserve(...)`；预留成功才生成替换建筑，生成后 `commit()` 一次。任何拒绝都不扣费、不留预留。
+5. 替换建筑用 `spawnBuilding`（直接完工），`health().setCurrent(old.health().currentFor(newMax))` 保留比例；旧建筑库存先 `extractAll()` 搬进新库存，剩下的存回玩家的仓库网络。
+6. `world.destroy(old)` 触发 `ProductionSystem` 丢弃旧队列（**排队任务被取消，不继承**）和 `HaulingSystem` 失败指向旧建筑的送货任务；`world.clearTargets(oldId)` 把旧 id 从所有单位的战斗目标里清掉；旧 id 也随 `spatial.remove` 立刻离开空间索引。回答里的新 id 与旧 id 不同。
+
+`UnitDirector.UpgradeResult` 与 `BuildResult` 同构：`upgraded()`、`upgraded(Building)`、`refused(reason)`、`replacement()`、`refusal()`，拒绝文案直接给玩家看。
+
 ## 端到端示例
 
 ### 示例一：建仓库 → 塞材料 → 建兵营 → 排产 → 拿单位
@@ -563,7 +576,7 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `economy.LogisticsReservation` | `remaining()`、`allocationCount()`、`describe()`（构造器包内可见） | 内部机制 |
 | `economy.ReservationPool` | `allocate(...)`、`bundleOf(plan)`、`primaryOf(plan, order)`、`Allocation`（包内可见） | 纯计算，不移动物品 |
 | `logistics.DeliveryJob` | `State.{WAITING_HAULER,IN_TRANSIT,COMPLETED,FAILED}`、`state()`、`isPending()`、`isFinished()`、`pendingTicks()`、`delivered()`、`missing()`、`hauler()`、`target()`、`bundle()`、`reservation()`、`registeredTick()`、`assignedTick()`、`finishedTick()` | 一次运输的状态机 |
-| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；`tickHaulers` 只挑**与目标同维度**的搬运工，跨图的 job 先走 `tickShipped`（等待 `directDeliveryTicks × 跳数`，跳数由 `World.route(...)` 给出，无路线则等到超时失败）；订阅 `Events.EntityDestroyed` 以回收死亡搬运工的货 | 相位 700 |
+| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；`tickHaulers` 只挑**与目标同维度**的搬运工，跨图的 job 先走 `tickShipped`（等待 `directDeliveryTicks × 跳数`，跳数由 `World.route(...)` 给出，无路线则等到超时失败）；订阅 `Events.EntityDestroyed`：死亡搬运工的货回库，作为目标的建筑被销毁时指向它的 job 立刻失败并释放预留 | 相位 700 |
 | `logistics.HaulOrder` | `TIMEOUT_TICKS = 3000`、私有 `UNLOAD_WAIT_TICKS = 200`、`job()`、`name() == "haul"`、`Phase.{TO_PICKUP,TO_TARGET}` | 订单自己 `motion().setGoal()` |
 | `production.ProductionState` | 六个常量 + `isFinished()` | 只有 `COMPLETED`/`CANCELLED` 是终态 |
 | `production.ProductionJob` | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`pendingOutput()`、`enteredStateTick()`、`stateTicks()`、`isFinished()`、`describe()`（修改方法包内可见） | 可变小记录 |

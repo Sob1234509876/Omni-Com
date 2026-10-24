@@ -44,6 +44,7 @@ import java.util.function.Supplier;
  * ORDER STOP &lt;entityId&gt;              -&gt; OK | ERR &lt;reason&gt;
  * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
  * TRAIN &lt;buildingId&gt; &lt;unitPath&gt;      -&gt; OK | ERR &lt;reason&gt;
+ * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
  * </pre>
@@ -125,7 +126,7 @@ public final class CommandDispatcher {
 
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
-            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN");
+            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -252,6 +253,7 @@ public final class CommandDispatcher {
             case "ORDER" -> order(rest, session);
             case "BUILD" -> build(rest, session);
             case "TRAIN" -> train(rest, session);
+            case "UPGRADE" -> upgrade(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
     }
@@ -461,6 +463,39 @@ public final class CommandDispatcher {
                 return "ERR " + refused.getMessage();
             }
             return "OK";
+        });
+    }
+
+    /**
+     * {@code UPGRADE <buildingId>}: replace an owned, finished building with its catalogue successor.
+     *
+     * <p>Existence and ownership are the same rules as every other gameplay command; the actual transaction
+     * is {@link UnitDirector#upgradeBuilding(Building)}, so the tier link, the cost, the footprint, the
+     * health fraction and the cleanup of the old id all run on the world thread and inside the engine. The
+     * answer is {@code OK <newBuildingId>} on success - the replacement has a new id - or
+     * {@code ERR <reason>} with the engine's own refusal (top of the ladder, unknown target, unaffordable,
+     * unfinished, footprint mismatch, site not clear). A failure charges nothing, which the engine
+     * guarantees; this method only forwards the result.
+     */
+    private PendingAnswer upgrade(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length != 1) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong buildingId = parseId(tokens[0]);
+        if (buildingId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        return worldGameplay(session, (host, player) -> {
+            BuildingRef ref = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
+            if (ref.error() != null) {
+                return ref.error();
+            }
+            UnitDirector.UpgradeResult result =
+                    host.engine().commands().upgradeBuilding(ref.building());
+            return result.upgraded()
+                    ? "OK " + result.replacement().id().value()
+                    : "ERR " + result.refusal();
         });
     }
 

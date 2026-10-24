@@ -9,7 +9,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
-- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD` and `TRAIN`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN` and `UPGRADE`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
 - World snapshot: ordinary HTTP content at `/world/snapshot`, likewise outside the command protocol.
@@ -83,6 +83,7 @@ After a successful handshake, one line per command, one line of answer per comma
 | `ORDER ...` | `OK` or `ERR <reason>` | Movement and combat orders; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `BUILD ...` | `OK <buildingId>` or `ERR <reason>` | Places a paid building site; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `TRAIN ...` | `OK` or `ERR <reason>` | Queues one unit in an owned producer; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `UPGRADE ...` | `OK <newBuildingId>` or `ERR <reason>` | Replaces an owned, finished building with its next tier; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `QUIT` | `OK bye` | The server sends this line first, then closes the connection |
 
 `REGISTER` and `LOGIN` answer with a human-readable `<message>`; the client may rely only on the leading `OK` / `ERR` to judge success or failure, and must not parse or compare the whole sentence.
@@ -103,7 +104,7 @@ all lowercase, and `ENGINE-INFO` is not folded into it. The failure answers are 
 On success the answer is `OK <base64-payload>`. The server only base64-decodes the request payload into **opaque bytes** for the handler,
 then base64-encodes the bytes the handler returns and sends them back; it does not parse the payload, does not record the payload content, and does not understand the `oc-debug` envelope.
 
-`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
+`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
 
 `hello` is the sample request provided by the `oc-hello` plugin: the payload is an ordinary UTF-8 name (not an envelope like `oc-debug`'s), and the answer is ordinary UTF-8 text as well.
 
@@ -124,9 +125,11 @@ ORDER ATTACKMOVE <entityId> <x> <y>         -> OK                        (needs 
 ORDER STOP <entityId>                       -> OK                        (needs LOGIN, entity must belong to the player)
 BUILD <engineerId> <buildingPath> <x> <y>   -> OK <buildingId> | ERR ...  (needs LOGIN, engineer must belong to the player)
 TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (needs LOGIN, building must belong to the player)
+UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (needs LOGIN, building must belong to the player)
 ```
 
-- `<entityId>`, `<targetId>` and `<buildingId>` are decimal entity ids from `/world/snapshot`.
+- `<entityId>`, `<targetId>` and `<buildingId>` are decimal entity ids from `/world/snapshot`. The id in
+  an `UPGRADE` success answer is a **new** entity - the replacement has a new id and the old one is gone.
 - `<x>` and `<y>` are decimal tile coordinates.
 - `<buildingPath>` and `<unitPath>` are content paths without the namespace, for example
   `building.armory.t1` or `unit.melee.t4`.
@@ -175,6 +178,10 @@ Each command is validated when the world applies it, and a rejection names the r
 | `TRAIN` targets a building that has no producer tags | `ERR building cannot produce` |
 | `TRAIN` names a unit no recipe produces in that building | `ERR no recipe for <unit> in <building>` |
 | `BUILD` cannot be paid from the player's warehouses | `ERR cannot afford <building> (needs <cost>)` |
+| `UPGRADE` targets a building site (not finished) | `ERR ... still under construction` |
+| `UPGRADE` targets a building that is the top of its ladder, has no upgrade link, or names no target in the served catalogue | `ERR ... no upgrade / top of its ladder / does not exist in the content registry` |
+| `UPGRADE` cannot be paid from the player's warehouses | `ERR cannot afford the upgrade of <building> to <target> (needs <cost>)` |
+| `UPGRADE` would put the target on a different footprint or an unclear site | `ERR ... footprint / site ... is not clear` |
 
 ### Cost, production and the world step
 
@@ -185,6 +192,16 @@ Each command is validated when the world applies it, and a rejection names the r
 - `TRAIN` queues one unit in an owned, finished producer. Whether the building's tier is high enough is
   decided by the engine's production system, not by the command parser: a tier four recipe in a tier one
   armory therefore answers `ERR ...` with the production system's reason and leaves the queue unchanged.
+- `UPGRADE` replaces a **finished, owned** building with the building type its content names. The cost is
+  the source type's `upgradeCost()`, reserved through the same warehouse network and charged **once**, only
+  after the replacement exists; a refusal (not finished, no target, unknown target, footprint mismatch,
+  unclear site, unaffordable) charges nothing and leaves the old building standing. On success the old
+  building is destroyed and a finished building of the new type stands at the **same origin**, with the
+  **same owner** and the **same health fraction**. Its id is new, and the answer carries it. A queued
+  production job on the old building is **cancelled** (the destroy event abandons its queue), deliveries
+  targeting it are failed, and the old id is cleared from every unit's combat target and leaves the
+  spatial index. The health does not have to be full: there is no repair mechanic, and preserving the
+  fraction means a damaged building neither gets a free repair nor becomes unupgradable.
 - **The step boundary.** Client commands arrive on socket threads, but the world ticks on its own
   thread. Every gameplay command is put on a queue and applied at the **start of the next fixed step**,
   before the engine advances the simulation. The queue is FIFO: commands are applied in submission
@@ -356,7 +373,10 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
      "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
                     {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
-     "w": 4, "h": 3, "progress": 0.42, "queue": 0}
+     "w": 4, "h": 3, "progress": 0.42, "queue": 0},
+    {"id": 12, "kind": "building.armory.t1", "x": 18.5, "y": 4.5, "player": 3, "health": 0.50,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0,
+     "upgrade": {"to": "building.armory.t2", "gold": 140, "wood": 40}}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140},
@@ -374,12 +394,13 @@ The window is a square of `2 * r` tiles, so the default is 64 x 64 and the maxim
 - `queue` is the number of unfinished jobs in the building's production queue (`0` for a unit or a building with no queue). `queueTicks` appears only while the queue's current job is actually `PRODUCING` and carries that job's remaining ticks (`ProductionJob.remainingTicks()`); in the other job states the engine's remaining-tick counter is only the recipe duration and says nothing about progress, so the field is omitted rather than invented.
 - `queueItems` appears on a building that has a production queue and is absent on a unit or a building that never had one; `queue` is its length. It lists the unfinished jobs in queue order as `{"kind": ..., "ticks": ..., "total": ...}`: `total` is the recipe duration (`Recipe.durationTicks()`), and `ticks` is the engine's remaining ticks for the job that is currently `PRODUCING` (`ProductionJob.remainingTicks()`). A job that has not started yet - waiting for materials, being delivered, standing behind the current job - reports `ticks === total`; a job in `WAITING_OUTPUT` is still unfinished but no longer producing, so it reports the same. `kind` is the content path of the produced unit (`unit.melee.t1`) or, for an item-only recipe, the recipe's own path. The client resolves `kind` through its manifest for the display name; a legacy client can ignore the array and keep the `生产中 ×N` marker from `queue`.
 - `contents` appears only on a building whose content type is a warehouse, and only for the item kinds with a non-zero amount; an empty warehouse omits the object. Its keys are item content paths (`gold`, `wood`) and its values are non-negative integers, saturated like the `players` amounts. It is the warehouse's own inventory, the same source the player row sums, so it lets the client show `库存：金 120 · 木 40` in the selection HUD. Non-warehouse buildings never carry it: a producer's private buffer is not part of the logistics network.
-- These fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker, no per-item queue list, no stock line). The browser client reads them into `footprint`, `progress`, `queue`, `queueTicks`, `queueItems` and `contents` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
+- `upgrade` appears only on a **finished** building whose content type names a successor that exists in the served catalogue, and it means the building can be upgraded with `UPGRADE <id>`. Its shape is `{"to": "<target content path>", "gold": <integer>, "wood": <integer>}`: `to` is the successor's content path and `gold` / `wood` are the two resources the command will charge (the source type's `upgradeCost()`). Unfinished sites, top-tier buildings, types with no successor and a dangling successor reference omit it, so the client never offers an upgrade the command would refuse. Affordability is deliberately **not** encoded; the client compares the cost with its own `players` row and renders the entry disabled rather than hiding it when the stock is short. An older client ignores the field.
+- These fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker, no per-item queue list, no stock line, no upgrade entry). The browser client reads them into `footprint`, `progress`, `queue`, `queueTicks`, `queueItems`, `contents` and `upgrade` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
 - `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name, the two starting resources and the two income rates, all as non-negative integers. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. `goldPerMinute` / `woodPerMinute` are the sum over that player's alive, constructed buildings of the content's `income_<n>` / `wood_income_<n>` tags, the same convention `ClassicEconomy` pays: an unfinished site, a destroyed building and a type without the matching tag contribute nothing, so a content that publishes no tags reports `0` for both. Per building the first matching tag wins, exactly like the payout hook. These fields are additive too: an older server may omit them and a client must keep working without them. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold, wood and rates in the HUD; before that row exists it shows dashes.
 - A default 64 x 64 window is about 32 KB of JSON; the maximum 128 x 128 window is about 130 KB. Reading a window also moves the engine focus to its centre, so the chunk streamer keeps the camera area loaded.
 - When no world is running - `--world off`, or the host has not started yet - the route answers `503 Service Unavailable` with the short text `the world is not running`. It does not fall through to the static SPA fallback.
 - `--world` defaults to `on`, `--seed` defaults to `1`, `--chunks` defaults to `4096`, and `--http-port 0` disables the whole browser endpoint, so neither the snapshot nor the plugin assets exist.
-- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. The bundled `web-client/` treats the world as unbounded and uses `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` for the size HUD, the construction bars, the `生产中 ×N` marker and the per-item selection-panel list, and `players.goldPerMinute` / `players.woodPerMinute` for the `(+30/分)` HUD suffix; a client that never reads the new fields still works against the same document.
+- The snapshot changes **no command, answer, frame rule, or version number** in this document. The client polls it every 500 ms while the game view is visible, reports `server` or `demo` plus the tick in its HUD, and keeps its deterministic demo map when the request fails. The Vite dev proxy forwards `/world` to the Java server. The bundled `web-client/` treats the world as unbounded and uses `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` for the size HUD, the construction bars, the `生产中 ×N` marker and the per-item selection-panel list, `players.goldPerMinute` / `players.woodPerMinute` for the `(+30/分)` HUD suffix, and `upgrade` for the bottom-right **升级** entry (target display name, cost, disabled when the player cannot afford it); a client that never reads the new fields still works against the same document.
 
 ## Version compatibility
 

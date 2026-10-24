@@ -3,8 +3,8 @@
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
- * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `tooltip.ts`, `events.ts` and
- * `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
+ * `events.ts` and `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -21,6 +21,7 @@ import {
   orderStop,
   parseWhoAmI,
   train,
+  upgrade,
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
@@ -110,6 +111,11 @@ import {
   type TerrainId,
   type WorldView,
 } from "../src/render/view.ts";
+import {
+  UPGRADE_ACTION_LABEL,
+  upgradeCostLabel,
+  upgradeEntry,
+} from "../src/render/upgrade.ts";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
@@ -2745,6 +2751,164 @@ check(
   enemyBuildingCommand.kind === "other" &&
     enemyBuildingCommand.actions.length === 0,
   `${enemyBuildingCommand.kind} / ${enemyBuildingCommand.actions.length}`,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Upgrade entry: only own buildings with an upgrade field, target name, cost and affordability
+// ---------------------------------------------------------------------------------------------
+
+/** One finished armory fixture carrying the snapshot's optional upgrade object. */
+function upgradeBuilding(
+  id: number,
+  gold: number,
+  wood: number,
+  playerId = 1,
+): EntityView {
+  return {
+    id,
+    kind: "building.armory.t1",
+    x: id,
+    y: id,
+    playerId,
+    progress: 1,
+    upgrade: { to: "building.armory.t2", gold, wood },
+  };
+}
+
+const upgradeLabels = (path: string): string =>
+  path === "building.armory.t2" ? "兵营·强化" : path;
+const affordableUpgrade = upgradeEntry(
+  upgradeBuilding(40, 140, 40),
+  1,
+  { id: 1, name: "Player 1", gold: 300, wood: 60 },
+  upgradeLabels,
+);
+check(
+  "自己的建筑有 upgrade 字段时出现升级条目，标签带目标显示名与两项成本",
+  affordableUpgrade !== null &&
+    affordableUpgrade.target === "building.armory.t2" &&
+    affordableUpgrade.targetName === "兵营·强化" &&
+    affordableUpgrade.gold === 140 &&
+    affordableUpgrade.wood === 40 &&
+    affordableUpgrade.affordable &&
+    !affordableUpgrade.disabled &&
+    affordableUpgrade.label ===
+      `${UPGRADE_ACTION_LABEL} · 兵营·强化 · ${upgradeCostLabel(140, 40)}`,
+  affordableUpgrade?.label ?? "<null>",
+);
+check(
+  "恰好付得起（金 140、木 40）时升级条目可用",
+  upgradeEntry(
+    upgradeBuilding(41, 140, 40),
+    1,
+    { id: 1, name: "Player 1", gold: 140, wood: 40 },
+    upgradeLabels,
+  )?.affordable === true,
+);
+check(
+  "缺金币或木材时升级条目仍出现但被禁用",
+  upgradeEntry(
+    upgradeBuilding(42, 140, 40),
+    1,
+    { id: 1, name: "Player 1", gold: 139, wood: 60 },
+    upgradeLabels,
+  )?.disabled === true &&
+    upgradeEntry(
+      upgradeBuilding(43, 140, 40),
+      1,
+      { id: 1, name: "Player 1", gold: 300, wood: 39 },
+      upgradeLabels,
+    )?.disabled === true,
+);
+check(
+  "没有自己的玩家行（尚未 WHOAMI 或快照缺行）时升级条目被禁用",
+  upgradeEntry(upgradeBuilding(44, 140, 40), 1, undefined, upgradeLabels)?.disabled === true,
+);
+check(
+  "敌方建筑即使带 upgrade 字段也不出现升级条目",
+  upgradeEntry(
+    upgradeBuilding(45, 140, 40, 2),
+    1,
+    { id: 1, name: "Player 1", gold: 300, wood: 60 },
+    upgradeLabels,
+  ) === null,
+);
+const plainBuilding: EntityView = {
+  id: 46,
+  kind: "building.armory.t2",
+  x: 46,
+  y: 46,
+  playerId: 1,
+  progress: 1,
+};
+check(
+  "没有 upgrade 字段的建筑（顶层或旧快照）不出现升级条目",
+  upgradeEntry(plainBuilding, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
+    null,
+);
+const upgradeUnit: EntityView = {
+  id: 47,
+  kind: "unit.melee.t1",
+  x: 47,
+  y: 47,
+  playerId: 1,
+  upgrade: { to: "building.armory.t2", gold: 140, wood: 40 },
+};
+check(
+  "单位即使带 upgrade 字段也不出现升级条目（升级只属于建筑）",
+  upgradeEntry(upgradeUnit, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
+    null,
+);
+check(
+  "UPGRADE 命令构建器生成 UPGRADE <id> 并拒绝非法 id",
+  upgrade(12) === "UPGRADE 12" &&
+    throwsChinese(() => upgrade(0)) &&
+    throwsChinese(() => upgrade(1.5)) &&
+    throwsChinese(() => upgrade(-3)),
+);
+
+const upgradeSnapshot = worldViewFromSnapshot({
+  tick: 5,
+  width: 1,
+  height: 1,
+  tiles: [["grass"]],
+  entities: [
+    {
+      id: 7,
+      kind: "oc:building.armory.t1",
+      x: 0.5,
+      y: 0.5,
+      player: 1,
+      upgrade: { to: "oc:building.armory.t2", gold: 140, wood: 40 },
+    },
+    {
+      id: 8,
+      kind: "building.armory.t2",
+      x: 1.5,
+      y: 0.5,
+      player: 1,
+      upgrade: { to: "", gold: -1, wood: "none" },
+    },
+  ],
+});
+check(
+  "快照解析 upgrade 对象并去掉命名空间；畸形对象整体忽略",
+  upgradeSnapshot !== null &&
+    upgradeSnapshot.entities[0]?.upgrade?.to === "building.armory.t2" &&
+    upgradeSnapshot.entities[0]?.upgrade?.gold === 140 &&
+    upgradeSnapshot.entities[0]?.upgrade?.wood === 40 &&
+    upgradeSnapshot.entities[1]?.upgrade === undefined,
+  JSON.stringify(upgradeSnapshot?.entities.map((entity) => entity.upgrade)),
+);
+check(
+  "旧快照没有 upgrade 字段时实体照常解析",
+  worldViewFromSnapshot({
+    tick: 6,
+    width: 1,
+    height: 1,
+    tiles: [["grass"]],
+    entities: [{ id: 9, kind: "building.armory.t1", x: 0.5, y: 0.5, player: 1 }],
+  })?.entities[0]?.upgrade === undefined,
 );
 
 const chipName = (kind: string): string =>

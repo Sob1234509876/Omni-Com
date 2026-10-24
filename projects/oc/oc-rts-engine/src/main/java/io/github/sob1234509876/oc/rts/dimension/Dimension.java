@@ -131,6 +131,23 @@ public final class Dimension {
 
     /** Whether a tile of this dimension can carry a building of that type without overlapping. */
     public boolean canPlace(BuildingType type, GridPos origin) {
+        return canPlace(type, origin, null);
+    }
+
+    /**
+     * Whether a building fits when one entity is allowed to stand on the new footprint.
+     *
+     * <p>An in-place upgrade replaces the old building at the same origin, so the replacement would
+     * overlap the entity it replaces. Passing that building as {@code replaced} ignores exactly it and no
+     * other: the terrain must still be buildable and every other living building still blocks the site, so
+     * an upgrade cannot be used to squeeze a building onto a neighbour.
+     *
+     * @param type     the new building type
+     * @param origin   minimum corner of the new footprint
+     * @param replaced the building the caller is about to remove, or {@code null} to block on every entity
+     * @return whether the replacement is allowed at that origin
+     */
+    public boolean canPlace(BuildingType type, GridPos origin, Entity replaced) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(origin, "origin");
         TileRect footprint = type.footprint(origin.x(), origin.y());
@@ -140,7 +157,7 @@ public final class Dimension {
             }
         }
         for (Entity entity : spatial.inRect(footprint)) {
-            if (entity.isAlive() && entity instanceof Building) {
+            if (entity != replaced && entity.isAlive() && entity instanceof Building) {
                 return false;
             }
         }

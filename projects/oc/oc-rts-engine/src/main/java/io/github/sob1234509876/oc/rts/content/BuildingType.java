@@ -3,10 +3,12 @@ package io.github.sob1234509876.oc.rts.content;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
+import io.github.sob1234509876.oc.rts.entity.Building;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -17,11 +19,12 @@ import java.util.Set;
  * such buildings take part in a player's logistics network, which is what makes stored goods the only
  * usable goods.
  *
- * <p>{@link #level()} is the upgrade step of the building. It gates recipes through
+ * <p>{@link #level()} is the tier of the building. It gates recipes through
  * {@link Recipe#requiredBuildingLevel()}: a building only runs recipes whose required level it reaches, so
  * a tier one workshop cannot train the units a tier two one unlocks while both may still share a producer
- * tag. It is a plain integer with no upgrade mechanic attached - content spells out one building type per
- * level.
+ * tag. Content still spells out one building type per level; {@link #upgradeTo()} is the optional link
+ * between those types, and {@link #upgradeCost()} is what the owner pays to replace this building with the
+ * linked one.
  */
 public final class BuildingType implements Comparable<BuildingType> {
 
@@ -34,6 +37,8 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int buildTimeTicks;
     private final int level;
     private final ItemBundle cost;
+    private final ResourceKey upgradeTo;
+    private final ItemBundle upgradeCost;
     private final Natural storageSlots;
     private final Set<String> storageTags;
     private final boolean warehouse;
@@ -51,6 +56,8 @@ public final class BuildingType implements Comparable<BuildingType> {
             int buildTimeTicks,
             int level,
             ItemBundle cost,
+            ResourceKey upgradeTo,
+            ItemBundle upgradeCost,
             Natural storageSlots,
             Set<String> storageTags,
             boolean warehouse,
@@ -69,6 +76,8 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.buildTimeTicks = buildTimeTicks;
         this.level = level;
         this.cost = cost;
+        this.upgradeTo = upgradeTo;
+        this.upgradeCost = upgradeCost == null ? ItemBundle.EMPTY : upgradeCost;
         this.storageSlots = storageSlots;
         this.storageTags = Collections.unmodifiableSet(new LinkedHashSet<>(storageTags));
         this.warehouse = warehouse;
@@ -127,8 +136,9 @@ public final class BuildingType implements Comparable<BuildingType> {
      * Upgrade step this building represents; {@code 1} unless the content says otherwise.
      *
      * <p>It is matched against {@link Recipe#requiredBuildingLevel()}, so it is what decides whether a
-     * building may run an advanced recipe at all. The engine never upgrades a building in place: content
-     * declares one building type per level.
+     * building may run an advanced recipe at all. Every level is a separate building type; an upgrade
+     * replaces the old entity with the type {@link #upgradeTo()} names, so the new level's recipes become
+     * available without the engine mutating one type into another.
      */
     public int level() {
         return level;
@@ -143,6 +153,41 @@ public final class BuildingType implements Comparable<BuildingType> {
      */
     public ItemBundle cost() {
         return cost;
+    }
+
+    /**
+     * The building type this one can be upgraded into, or empty when it is the top of its ladder.
+     *
+     * <p>The reference is resolved against the catalogue namespace like a recipe's unit output, so content
+     * writes {@code .upgradeTo("building.mine.t2")}. It is deliberately not validated when the catalogue is
+     * built: a target that does not exist is a data error that
+     * {@link io.github.sob1234509876.oc.rts.order.UnitDirector#upgradeBuilding(Building)} refuses at command
+     * time with a readable message, and a scenario can assert exactly that failure.
+     *
+     * <p>An upgrade link does not make a tier reachable by itself; the command still checks the owner's
+     * warehouses, the site and the target, and the old building is replaced by the new type, not modified
+     * in place.
+     */
+    public Optional<ResourceKey> upgradeTo() {
+        return Optional.ofNullable(upgradeTo);
+    }
+
+    /**
+     * Items the owner's warehouses have to provide to upgrade <em>this</em> type into
+     * {@link #upgradeTo()}.
+     *
+     * <p>The cost belongs to the source type, so the ladder reads as a sequence of steps:
+     * {@code t1.upgradeCost()} is charged for {@code t1 -> t2}, {@code t2.upgradeCost()} for
+     * {@code t2 -> t3}. It is empty for a type that cannot be upgraded, and is reserved and committed by
+     * the same logistics path a building placement uses, exactly once per successful upgrade.
+     */
+    public ItemBundle upgradeCost() {
+        return upgradeCost;
+    }
+
+    /** Whether this type names a successor; the target still has to exist in the catalogue. */
+    public boolean canUpgrade() {
+        return upgradeTo != null;
     }
 
     /** Number of item slots of the storage this building provides; {@code 0} means it stores nothing. */

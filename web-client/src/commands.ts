@@ -113,6 +113,17 @@ export function train(buildingId: number, unitPath: string): string {
   return `TRAIN ${id} ${path}`;
 }
 
+/**
+ * `UPGRADE <buildingId>`; the answer is `OK <newBuildingId>` or `ERR <reason>`.
+ *
+ * The replacement has a new entity id, so the caller must not keep using the old one after a successful
+ * answer: the next snapshot contains only the replacement.
+ */
+export function upgrade(buildingId: number): string {
+  const id = requirePositiveInteger(buildingId, "建筑 id");
+  return `UPGRADE ${id}`;
+}
+
 /** The exact `WHOAMI` success answer; `playerId` is the engine player id of this connection. */
 const WHOAMI_ANSWER = /^OK player ([1-9][0-9]*)$/u;
 

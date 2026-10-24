@@ -126,6 +126,79 @@ public interface UnitDirector {
     BuildResult tryBuild(Unit unit, BuildingType type, GridPos origin);
 
     /**
+     * Upgrades one finished building into the type its content names, paying the source type's
+     * {@link BuildingType#upgradeCost() upgrade cost}.
+     *
+     * <p>This is the building counterpart of {@link #tryBuild(Unit, BuildingType, GridPos)}: it needs no
+     * unit, because the owner's warehouses and the building itself are the whole transaction. The rules are
+     * deliberately strict and every refusal is a readable sentence:
+     *
+     * <ul>
+     *   <li><strong>Finished only.</strong> The building has to be
+     *       {@link Building#isConstructed() constructed}; its health does not have to be full. There is no
+     *       repair mechanic in the engine, and an upgrade preserves the health fraction, so demanding full
+     *       health would add a hidden repair requirement and let a damaged building become neither repaired
+     *       nor upgraded. A half-health building stays half-health, which is also the property the scenario
+     *       asserts.</li>
+     *   <li><strong>Real target.</strong> {@link BuildingType#upgradeTo()} has to name a building type that
+     *       exists in the same {@link io.github.sob1234509876.oc.rts.content.ContentRegistry}. A missing
+     *       target, a self reference and a target with a different footprint are refused before anything is
+     *       charged.</li>
+     *   <li><strong>Clear site.</strong> The replacement has to fit at the old origin with the old
+     *       footprint: the terrain stays buildable and no <em>other</em> building may overlap. The old
+     *       building itself is ignored for this check because it is the thing being replaced.</li>
+     *   <li><strong>Paid once.</strong> The cost is reserved through the owner's
+     *       {@link io.github.sob1234509876.oc.rts.economy.Logistics} network, the same path a placement
+     *       uses, and committed only after the replacement exists. A refusal charges nothing and leaves no
+     *       reservation.</li>
+     *   <li><strong>Replaced, not mutated.</strong> The old building is destroyed and a finished building of
+     *       the new type is placed at the same origin, owned by the same player and carrying the same
+     *       health fraction. Its id is new, so anything that named the old id is cleaned up: production
+     *       jobs on the old building are cancelled (the destroy event abandons its queue), delivery jobs
+     *       targeting it fail, and the id is cleared from every unit's combat target. The old id leaves the
+     *       spatial index with the destroyed building.</li>
+     * </ul>
+     *
+     * @param building the finished building to replace; may be {@code null}
+     * @return the replacement, or the refusal reason; never {@code null}
+     */
+    UpgradeResult upgradeBuilding(Building building);
+
+    /**
+     * Outcome of one upgrade request: either the replacement building or a refusal reason.
+     *
+     * <p>At most one field is set. The replacement is a new entity with a new id; the old building is
+     * already dead when this is returned. The refusal is written for a player and names the reason the
+     * upgrade did not happen, including the exact cost when the warehouses cannot cover it.
+     *
+     * @param replacement the finished building of the new type, or {@code null} when nothing changed
+     * @param refusal     why nothing changed, or {@code null} when the upgrade succeeded
+     */
+    record UpgradeResult(Building replacement, String refusal) {
+
+        public UpgradeResult {
+            if ((replacement == null) == (refusal == null)) {
+                throw new IllegalArgumentException("an upgrade result is either a replacement or a refusal");
+            }
+        }
+
+        /** A successful upgrade: the old building is gone and the replacement stands in its place. */
+        public static UpgradeResult upgraded(Building replacement) {
+            return new UpgradeResult(Objects.requireNonNull(replacement, "replacement"), null);
+        }
+
+        /** Nothing changed, for the given reason. */
+        public static UpgradeResult refused(String reason) {
+            return new UpgradeResult(null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether the building was replaced. */
+        public boolean upgraded() {
+            return replacement != null;
+        }
+    }
+
+    /**
      * Outcome of one build request: either a placed site or a refusal reason.
      *
      * <p>At most one of the two fields is set. The reason is written for a player - it names the

@@ -488,11 +488,11 @@ public final class ContentRegistry {
         }
 
         /**
-         * Upgrade step of the current building; {@code 1} when not set.
+         * Tier of the current building; {@code 1} when not set.
          *
          * <p>It is matched against {@link Recipe#requiredBuildingLevel()}: a building only runs recipes
-         * whose required level it reaches. Content declares one building type per level rather than an
-         * upgrade mechanic.
+         * whose required level it reaches. Content declares one building type per tier; use
+         * {@link #upgradeTo(String)} to link one tier to its successor.
          *
          * @throws IllegalArgumentException when the level is not positive
          */
@@ -502,6 +502,40 @@ public final class ContentRegistry {
             }
             draft(BuildingDraft.class, "building").level = level;
             return this;
+        }
+
+        /**
+         * Declares the building type this one upgrades into; no upgrade when never called.
+         *
+         * <p>The path is resolved in the catalogue namespace when the registry is built, exactly like a
+         * recipe's {@code unitOutput}; a path of the form {@code namespace:path} may name content of
+         * another namespace. The target is not required to exist at build time: a missing target is a
+         * command-time refusal with a readable message, which is also what the engine scenario asserts.
+         *
+         * @param buildingPath content path of the successor type, for example {@code building.mine.t2}
+         * @throws IllegalArgumentException when the path is blank
+         */
+        public Builder upgradeTo(String buildingPath) {
+            if (buildingPath == null || buildingPath.isBlank()) {
+                throw new IllegalArgumentException("an upgrade target must be a non-blank content path");
+            }
+            draft(BuildingDraft.class, "building").upgradeTo = buildingPath;
+            return this;
+        }
+
+        /**
+         * Adds one item to the cost of upgrading the current building into its {@link #upgradeTo(String)}
+         * target. The cost belongs to the source type: the step {@code t1 -> t2} is paid with
+         * {@code t1}'s bundle.
+         */
+        public Builder upgradeCost(String itemPath, Natural amount) {
+            draft(BuildingDraft.class, "building").upgradeCost.add(new ItemRef(itemPath, amount));
+            return this;
+        }
+
+        /** Convenience for {@link #upgradeCost(String, Natural)} with a small literal. */
+        public Builder upgradeCost(String itemPath, long amount) {
+            return upgradeCost(itemPath, Natural.of(amount));
         }
 
         /**
@@ -636,6 +670,10 @@ public final class ContentRegistry {
                         throw new IllegalStateException("building " + building.key
                                 + " is a warehouse and therefore needs storage slots");
                     }
+                    if (building.upgradeTo == null && !building.upgradeCost.isEmpty()) {
+                        throw new IllegalStateException("building " + building.key
+                                + " declares an upgrade cost without an upgradeTo target");
+                    }
                     BuildingType type = new BuildingType(
                             building.key,
                             building.name,
@@ -646,6 +684,9 @@ public final class ContentRegistry {
                             building.buildTimeTicks,
                             building.level,
                             resolveItems(items, building.cost, "building " + building.key),
+                            building.upgradeTo == null ? null : resolveKey(building.upgradeTo),
+                            resolveItems(items, building.upgradeCost,
+                                    "upgrade of building " + building.key),
                             building.storageSlots,
                             building.storageTags,
                             building.warehouse,
@@ -827,12 +868,14 @@ public final class ContentRegistry {
         int armour;
         int buildTimeTicks = 200;
         int level = 1;
+        String upgradeTo;
         Natural storageSlots = Natural.ZERO;
         boolean warehouse;
         String spriteSet = "building/unknown";
         final Set<String> storageTags = new LinkedHashSet<>();
         final Set<String> producerTags = new LinkedHashSet<>();
         final List<ItemRef> cost = new ArrayList<>();
+        final List<ItemRef> upgradeCost = new ArrayList<>();
 
         BuildingDraft(ResourceKey key) {
             super(key);

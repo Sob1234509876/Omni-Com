@@ -36,6 +36,7 @@ import {
   orderStop,
   parseWhoAmI,
   train,
+  upgrade,
   whoAmI,
 } from "./commands";
 import {
@@ -88,6 +89,7 @@ import {
   windowCentre,
 } from "./render/stream";
 import { clampTooltipPosition, tooltipContent } from "./render/tooltip";
+import { upgradeEntry } from "./render/upgrade";
 import {
   demoWorld,
   entityById,
@@ -170,6 +172,9 @@ const trainButtonHost = required<HTMLDivElement>("#train-buttons");
 const buildSection = required<HTMLDivElement>("#build-section");
 const buildTarget = required<HTMLSpanElement>("#build-target");
 const buildButtonHost = required<HTMLDivElement>("#build-buttons");
+const upgradeSection = required<HTMLDivElement>("#upgrade-section");
+const upgradeTarget = required<HTMLSpanElement>("#upgrade-target");
+const upgradeButton = required<HTMLButtonElement>("#upgrade-button");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -1385,7 +1390,8 @@ let commandBarSignature = "";
  * grey box.
  */
 function updateCommandContextVisibility(): void {
-  const visible = !trainSection.hidden || !buildSection.hidden || !hudQueue.hidden;
+  const visible =
+    !trainSection.hidden || !buildSection.hidden || !upgradeSection.hidden || !hudQueue.hidden;
   commandContext.classList.toggle("has-context", visible);
 }
 
@@ -1537,6 +1543,23 @@ function updateGameplayPanel(): void {
     button.setAttribute("aria-pressed", armed ? "true" : "false");
   }
 
+  // The upgrade entry is the visible fix for the reported bug: a selected own building with an
+  // `upgrade` field always shows it, and it is only disabled when the local player cannot pay or is not
+  // connected. The pure rule (ownership, field presence, affordability, label) lives in upgrade.ts.
+  const upgradeOffer = upgradeEntry(single, myPlayerId, myPlayerRow(), contentLabel);
+  upgradeSection.hidden = upgradeOffer === null;
+  if (upgradeOffer === null) {
+    upgradeButton.disabled = true;
+    upgradeTarget.textContent = "";
+  } else {
+    upgradeTarget.textContent = `· e${upgradeOffer.buildingId} ${upgradeOffer.targetName}`;
+    upgradeButton.textContent = upgradeOffer.label;
+    upgradeButton.title = upgradeOffer.affordable
+      ? `UPGRADE ${upgradeOffer.buildingId}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
+      : `UPGRADE ${upgradeOffer.buildingId}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
+    upgradeButton.disabled = !(gameplayReady && upgradeOffer.affordable);
+  }
+
   renderSelectionChips(resolved);
   gameplayNote.textContent = commandBarNote(model);
   updateCommandContextVisibility();
@@ -1633,6 +1656,36 @@ function doTrain(unitPath: string): void {
     "TRAIN",
     train(selected.id, unitPath),
     `已下训练 ${labelledContent(unitPath)}`,
+  );
+}
+
+/**
+ * Sends `UPGRADE <id>` for the selected own building and reports the answer.
+ *
+ * The entry is only enabled when the pure rule says the player can afford it, but the click re-checks the
+ * current selection and stock: a snapshot may have arrived between the render and the click. The answer
+ * (`OK <newBuildingId>` or `ERR <reason>`) goes through the ordinary batch path, so it appears in the log
+ * and on the status line; the next snapshot replaces the old row with the new building.
+ */
+function doUpgrade(): void {
+  const selected = singleSelectedEntity();
+  if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
+    refuse("先选中自己的建筑，再升级");
+    return;
+  }
+  const offer = upgradeEntry(selected, myPlayerId, myPlayerRow(), contentLabel);
+  if (offer === null) {
+    refuse("选中的建筑没有可用的升级");
+    return;
+  }
+  if (!offer.affordable) {
+    refuse(`资源不足：升级需要金 ${offer.gold}、木 ${offer.wood}`);
+    return;
+  }
+  void sendGameplayCommand(
+    "UPGRADE",
+    upgrade(offer.buildingId),
+    `已升级 e${offer.buildingId} ${contentLabel(selected.kind)} → ${offer.targetName}`,
   );
 }
 
@@ -2425,6 +2478,7 @@ attackMoveButton.addEventListener("click", () => {
     armAttackMove();
   }
 });
+upgradeButton.addEventListener("click", doUpgrade);
 selectEngineersButton.addEventListener("click", selectEngineers);
 
 // The canvas owns Escape for its own focus; this fallback keeps "cancel placement / attack move"

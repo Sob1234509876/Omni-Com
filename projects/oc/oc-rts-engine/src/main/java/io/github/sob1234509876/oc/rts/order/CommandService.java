@@ -1,15 +1,19 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
+import io.github.sob1234509876.oc.rts.content.ItemType;
+import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
@@ -272,6 +276,139 @@ public final class CommandService implements UnitDirector {
             }
         }
         return false;
+    }
+
+    /**
+     * Upgrades one finished building in place, paying the source type's upgrade cost once.
+     *
+     * <p>The implementation is the transaction documented on
+     * {@link UnitDirector#upgradeBuilding(Building)}. Two ordering details matter for safety:
+     *
+     * <ol>
+     *   <li>The replacement is spawned <em>before</em> the old building is destroyed, so a failure while
+     *       creating it releases the reservation and leaves the old building standing. No system tick runs
+     *       inside this call, so the momentary overlap of the two buildings is never observed by the
+     *       simulation.</li>
+     *   <li>The reservation is committed before the old warehouse is destroyed. Otherwise an upgrade paid
+     *       for out of the building's own stock could lose the charge when the destroy event drops the
+     *       reservation's warehouse.</li>
+     * </ol>
+     *
+     * <p>The replacement keeps the health fraction, not the absolute hit points: a 900 hit point tier two
+     * armory upgraded from a half-health 600 hit point one starts at 450. Inventory contents are carried
+     * over into the replacement's buffer, and anything the replacement cannot hold is deposited into the
+     * owner's warehouse network so an upgraded warehouse does not destroy its stock. The old id is cleared
+     * from every unit's combat target; the production queue and delivery jobs die with the old entity
+     * through the destroy event.
+     */
+    @Override
+    public UpgradeResult upgradeBuilding(Building building) {
+        if (building == null) {
+            return UpgradeResult.refused("no building to upgrade");
+        }
+        if (!building.isAlive()) {
+            return UpgradeResult.refused("cannot upgrade building " + building.id().value() + ": it is gone");
+        }
+        BuildingType current = building.type();
+        if (!building.isConstructed()) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                    + ": the building is still under construction");
+        }
+        Optional<ResourceKey> upgradeKey = current.upgradeTo();
+        if (upgradeKey.isEmpty()) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                    + ": it is the top of its ladder");
+        }
+        BuildingType target = world.content().buildingOrNull(upgradeKey.get());
+        if (target == null) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + ": target '"
+                    + upgradeKey.get() + "' does not exist in the content registry");
+        }
+        if (target.key().equals(current.key())) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                    + ": it names itself as its own target");
+        }
+        if (target.sizeX() != current.sizeX() || target.sizeY() != current.sizeY()) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + " to "
+                    + target.key().path() + ": the target footprint is " + target.sizeX() + "x"
+                    + target.sizeY() + " but the replaced building is " + current.sizeX() + "x"
+                    + current.sizeY());
+        }
+        DimensionId dimension = building.dimensionId();
+        GridPos origin = building.origin();
+        if (!world.canPlace(dimension, target, origin, building)) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + " to "
+                    + target.key().path() + ": the replacement site at " + origin.x() + "," + origin.y()
+                    + " is not clear");
+        }
+
+        ItemBundle cost = current.upgradeCost();
+        Logistics.Reservation charge = null;
+        if (!cost.isEmpty()) {
+            Player owner = building.owner();
+            if (!owner.hasLogistics()) {
+                return UpgradeResult.refused("cannot pay for the upgrade of " + current.key().path()
+                        + " (needs " + describe(cost) + "): the player has no warehouse network");
+            }
+            Optional<Logistics.Reservation> reserved = owner.logistics().reserve(cost);
+            if (reserved.isEmpty()) {
+                return UpgradeResult.refused("cannot afford the upgrade of " + current.key().path()
+                        + " to " + target.key().path() + " (needs " + describe(cost) + ")");
+            }
+            charge = reserved.get();
+        }
+
+        Building replacement;
+        try {
+            replacement = world.spawnBuilding(dimension, target, building.owner(), origin);
+        } catch (RuntimeException failure) {
+            if (charge != null && charge.active()) {
+                charge.release();
+            }
+            return UpgradeResult.refused("upgrading " + current.key().path() + " to "
+                    + target.key().path() + " failed: " + failure.getMessage());
+        }
+        if (charge != null) {
+            charge.commit();
+        }
+        // Scale the old building's remaining share onto the new maximum: a full one stays full and a
+        // damaged one keeps exactly the share of hit points it had.
+        replacement.health().setCurrent(building.health().currentFor(target.maxHealth()));
+
+        // Carry the old buffer over before the entity that owns it disappears. A warehouse upgrade must
+        // not destroy its stock, and a producer's private buffer is just as real.
+        ItemBundle contents = building.inventory().extractAll();
+        ItemBundle leftover = ItemBundle.EMPTY;
+        if (!contents.isEmpty()) {
+            leftover = insertInto(replacement.inventory(), contents);
+        }
+
+        EntityId oldId = building.id();
+        world.destroy(building);
+        world.clearTargets(oldId);
+
+        // The old warehouse has now left the logistics network, so the remainder can only reach the
+        // replacement or another warehouse instead of being deposited back into the entity being removed.
+        if (!leftover.isEmpty() && replacement.owner().hasLogistics()) {
+            leftover = replacement.owner().logistics().deposit(leftover, replacement.position());
+        }
+        if (!leftover.isEmpty()) {
+            insertInto(replacement.inventory(), leftover);
+        }
+        return UpgradeResult.upgraded(replacement);
+    }
+
+    /** Inserts as much of the bundle as the inventory accepts and returns the remainder. */
+    private static ItemBundle insertInto(Inventory inventory, ItemBundle bundle) {
+        Map<ItemType, Natural> left = new LinkedHashMap<>();
+        for (ItemBundle.Amount component : bundle.components()) {
+            Natural accepted = inventory.insert(component.item(), component.amount());
+            Natural rest = component.amount().subtractClamped(accepted);
+            if (!rest.isZero()) {
+                left.put(component.item(), rest);
+            }
+        }
+        return ItemBundle.of(left);
     }
 
     /** Renders a cost bundle the way a player reads it: {@code 100 gold, 20 wood}. */

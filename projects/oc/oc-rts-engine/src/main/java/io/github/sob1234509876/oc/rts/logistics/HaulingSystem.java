@@ -67,8 +67,16 @@ public final class HaulingSystem implements SimulationSystem {
         this.directDeliveryTicks = Math.max(0, directDeliveryTicks);
         attachToPlayers();
         // A hauler that dies mid delivery still carries goods that already left their warehouse, so the
-        // destruction has to be observed or those items would disappear from the economy for good.
-        world.events().subscribe(Events.EntityDestroyed.class, event -> recoverFromLostHauler(event.entity()));
+        // destruction has to be observed or those items would disappear from the economy for good. A
+        // destroyed building is the other half of the same rule: a delivery job that still names it would
+        // keep a reservation on goods nobody can receive, so the job is closed here, synchronously with
+        // the destruction, instead of dangling until the next tick's viability check.
+        world.events().subscribe(Events.EntityDestroyed.class, event -> {
+            recoverFromLostHauler(event.entity());
+            if (event.entity() instanceof Building building) {
+                failDeliveriesTo(building);
+            }
+        });
     }
 
     /** Creates a hauling system that uses worker units, which is the default of the engine. */
@@ -135,6 +143,23 @@ public final class HaulingSystem implements SimulationSystem {
                 job.fail(world.tickNumber());
             } else {
                 job.unassign();
+            }
+        }
+    }
+
+    /**
+     * Closes every pending delivery whose target is the given building.
+     *
+     * <p>The job is failed rather than retargeted: a replacement building is a different entity with its
+     * own buffer, and silently redirecting a shipment would put goods somewhere the producing job never
+     * asked for. Failing releases the reservation, so the stock stays in the warehouses where the new
+     * building's production can claim it again. Any hauler already carrying part of the bundle sees a
+     * non-pending job on its next order tick and returns its cargo to storage.
+     */
+    private void failDeliveriesTo(Building target) {
+        for (DeliveryJob job : jobs) {
+            if (job.isPending() && job.target() == target) {
+                job.fail(world.tickNumber());
             }
         }
     }

@@ -10,6 +10,7 @@ import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
+import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
 import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
@@ -1492,6 +1493,16 @@ public final class WorldHost {
      * in the selection HUD. It is read from {@link Building#inventory()}, the same source the player row
      * sums, so the two cannot disagree about a stored item.
      *
+     * <p><strong>Upgrade offers.</strong> A finished building whose content type names a successor also
+     * carries {@code upgrade}, for example
+     * {@code "upgrade":{"to":"building.armory.t2","gold":140,"wood":40}}. {@code to} is the successor's
+     * content path and {@code gold} / {@code wood} are the two resources the command will charge. An
+     * unfinished site, a top-tier building, a type with no successor and a dangling successor reference all
+     * omit the field, so the client never offers an upgrade the command would refuse; the
+     * {@link #GOLD_ITEM_PATH gold and wood} item paths are the same ones the player rows use. The field is
+     * additive: an older client ignores it, and a client that reads it paints the 升级 entry and disables it
+     * from its own player row when the stock is short, which is why affordability is not encoded here.
+     *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
      * display name and the amounts of the two classic resources: the flat keys are {@code gold} and
@@ -1645,6 +1656,9 @@ public final class WorldHost {
         // snapshot is both safe and cheaper than looking it up for every entity row.
         ProductionSystem production = engine.world().production();
 
+        ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
+        ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
+
         int capacity = 96 + size * size * 8 + entities.size() * 128;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
@@ -1683,11 +1697,10 @@ public final class WorldHost {
                     .append(",\"health\":").append(twoDecimals(entity.health().fraction()));
             appendFootprintProgressAndQueue(json, entity, production);
             appendWarehouseContents(json, entity);
+            appendUpgradeOffer(json, entity, goldItem, woodItem);
             json.append('}');
         }
         json.append("],\"players\":[");
-        ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
-        ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
         List<Player> players = new ArrayList<>(engine.world().players());
         players.sort(Comparator.comparingInt((Player worldPlayer) -> worldPlayer.id().value()));
         boolean firstPlayer = true;
@@ -1836,6 +1849,50 @@ public final class WorldHost {
         if (!first) {
             json.append('}');
         }
+    }
+
+    /**
+     * Appends the optional {@code upgrade} offer of a finished building.
+     *
+     * <p>The object is written only when the building's content type names a successor
+     * ({@link BuildingType#upgradeTo()}), that successor exists in the served catalogue and it has the same
+     * footprint, so the client never paints an 升级 entry the command would refuse as a missing target or a
+     * footprint mismatch. An unfinished site also
+     * omits it, because the engine only upgrades constructed buildings. The shape is
+     * {@code ,"upgrade":{"to":"building.armory.t2","gold":140,"wood":40}}: {@code to} is the target's
+     * content path, and {@code gold} / {@code wood} are the two resources this protocol already carries in
+     * its player rows. Costs of other item kinds are real engine data but have no wire field yet, so they
+     * are not invented here; classic upgrades are gold and wood only.
+     *
+     * <p>The cost belongs to the source type ({@link BuildingType#upgradeCost()}), not to the target: it is
+     * exactly what {@code UPGRADE <id>} will charge. Affordability is deliberately not encoded: the row says
+     * what the step costs, and the client compares it with the player's own row so the entry can be shown
+     * disabled instead of disappearing when the stock is short.
+     */
+    private void appendUpgradeOffer(StringBuilder json, Entity entity, ItemType goldItem, ItemType woodItem) {
+        if (!(entity instanceof Building building) || !building.isConstructed()) {
+            return;
+        }
+        Optional<ResourceKey> targetKey = building.type().upgradeTo();
+        if (targetKey.isEmpty()) {
+            return;
+        }
+        BuildingType target = content.buildingOrNull(targetKey.get());
+        if (target == null
+                || target.key().equals(building.type().key())
+                || target.sizeX() != building.type().sizeX()
+                || target.sizeY() != building.type().sizeY()) {
+            // A target with another footprint is refused by the command, so it is not advertised either.
+            return;
+        }
+        ItemBundle cost = building.type().upgradeCost();
+        long gold = goldItem == null ? 0L : cost.amount(goldItem).toLongSaturated();
+        long wood = woodItem == null ? 0L : cost.amount(woodItem).toLongSaturated();
+        json.append(",\"upgrade\":{\"to\":");
+        appendJsonString(json, target.key().path());
+        json.append(",\"gold\":").append(gold)
+                .append(",\"wood\":").append(wood)
+                .append('}');
     }
 
     /**

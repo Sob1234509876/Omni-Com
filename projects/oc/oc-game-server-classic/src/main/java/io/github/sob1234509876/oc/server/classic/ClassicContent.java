@@ -47,6 +47,36 @@ import java.util.Objects;
  * ({@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}), not a plugin convention:
  * {@code ProductionSystem.enqueue} refuses a recipe the building's level does not reach.
  *
+ * <p><strong>The upgrade ladders.</strong> Every armory, mine and lumber camp tier above the first is also
+ * reachable by upgrading the previous tier, which is the engine mechanic
+ * {@link io.github.sob1234509876.oc.rts.content.BuildingType#upgradeTo()} /
+ * {@link io.github.sob1234509876.oc.rts.content.BuildingType#upgradeCost()} executed by
+ * {@code CommandService.upgradeBuilding}: the old building is replaced at the same footprint, with the same
+ * owner and the same health fraction, and the source tier's upgrade cost is charged once. The ladders are
+ * chosen so the total material of a fully upgraded tier equals a freshly built one, which keeps the two
+ * routes balanced:
+ *
+ * <table border="1">
+ *   <caption>Upgrade ladders</caption>
+ *   <tr><th>From</th><th>To</th><th>Upgrade cost</th><th>Source + upgrade = target's build cost</th></tr>
+ *   <tr><td>{@code building.armory.t1}</td><td>{@code building.armory.t2}</td><td>140 gold + 40 wood</td>
+ *       <td>100/20 + 140/40 = 240/60</td></tr>
+ *   <tr><td>{@code building.mine.t1}</td><td>{@code building.mine.t2}</td><td>80 gold</td>
+ *       <td>80 + 80 = 160</td></tr>
+ *   <tr><td>{@code building.mine.t2}</td><td>{@code building.mine.t3}</td><td>160 gold</td>
+ *       <td>160 + 160 = 320</td></tr>
+ *   <tr><td>{@code building.lumbercamp.t1}</td><td>{@code building.lumbercamp.t2}</td><td>80 gold</td>
+ *       <td>80 + 80 = 160</td></tr>
+ *   <tr><td>{@code building.lumbercamp.t2}</td><td>{@code building.lumbercamp.t3}</td><td>160 gold</td>
+ *       <td>160 + 160 = 320</td></tr>
+ * </table>
+ *
+ * <p>The top of each ladder - {@code building.armory.t2}, {@code building.mine.t3} and
+ * {@code building.lumbercamp.t3} - declares no successor, so the client shows no 升级 entry for it and the
+ * command answers that the building is the top of its ladder. {@link ClassicAi} upgrades an idle, finished
+ * armory when it can afford the step instead of building a second t1 armory, so the enemy reaches the t4/t5
+ * recipes through the mechanic rather than through a content handout.
+ *
  * <p>The mines are {@code building.mine.t1}/{@code .t2}/{@code .t3}, named 普通/强化/精英, with ascending
  * income rate and cost. <strong>Income is content data, not an engine mechanic</strong>: the engine has no
  * passive income tick, so each mine publishes its rate as the {@code income_<gold per minute>} tag (and as
@@ -176,9 +206,11 @@ public final class ClassicContent implements WorldContent {
      * @param goldPerMinute the documented income rate, paid by {@link ClassicEconomy} on every full minute
      * @param costGold cost in gold
      * @param buildTimeTicks construction time in ticks
+     * @param upgradeTo content path of the next tier, or {@code null} at the top of the ladder
+     * @param upgradeGold gold paid to upgrade this tier into {@code upgradeTo}; {@code 0} at the top
      */
     public record MineTier(int tier, String buildingPath, String displayName, int level, long goldPerMinute,
-            long costGold, int buildTimeTicks) {
+            long costGold, int buildTimeTicks, String upgradeTo, long upgradeGold) {
     }
 
     /**
@@ -192,9 +224,11 @@ public final class ClassicContent implements WorldContent {
      *     minute
      * @param costGold cost in gold; lumber camps never cost wood
      * @param buildTimeTicks construction time in ticks
+     * @param upgradeTo content path of the next tier, or {@code null} at the top of the ladder
+     * @param upgradeGold gold paid to upgrade this tier into {@code upgradeTo}; {@code 0} at the top
      */
     public record LumberCampTier(int tier, String buildingPath, String displayName, int level,
-            long woodPerMinute, long costGold, int buildTimeTicks) {
+            long woodPerMinute, long costGold, int buildTimeTicks, String upgradeTo, long upgradeGold) {
     }
 
     /** The five melee tiers, cheapest first. */
@@ -205,17 +239,30 @@ public final class ClassicContent implements WorldContent {
             new MeleeTier(4, MELEE_T4, "将领", 320, 48, 4, 160, 180),
             new MeleeTier(5, MELEE_T5, "战王", 460, 75, 5, 320, 240));
 
-    /** The three mine tiers, cheapest first. */
+    /**
+     * The three mine tiers, cheapest first.
+     *
+     * <p>Each upgrade costs exactly the source tier's price: {@code t1 -> t2} is 80 gold and
+     * {@code t2 -> t3} is 160 gold, so buying a t1 and both upgrades costs the same 320 gold as a fresh
+     * t3. The top tier has no successor, and its zero upgrade cost documents that it is the end of the
+     * ladder rather than a free step.
+     */
     private static final List<MineTier> MINE_TIERS = List.of(
-            new MineTier(1, MINE_T1, "普通", 1, 30, 80, 120),
-            new MineTier(2, MINE_T2, "强化", 2, 60, 160, 180),
-            new MineTier(3, MINE_T3, "精英", 3, 120, 320, 240));
+            new MineTier(1, MINE_T1, "普通", 1, 30, 80, 120, MINE_T2, 80),
+            new MineTier(2, MINE_T2, "强化", 2, 60, 160, 180, MINE_T3, 160),
+            new MineTier(3, MINE_T3, "精英", 3, 120, 320, 240, null, 0));
 
-    /** The three lumber camp tiers, cheapest first, all paid for in gold only. */
+    /**
+     * The three lumber camp tiers, cheapest first, all paid for in gold only.
+     *
+     * <p>The upgrade ladder follows the mines: {@code t1 -> t2} costs 80 gold and {@code t2 -> t3} costs
+     * 160 gold, so the source tier's price is the step's price and the total matches a fresh t3. Lumber
+     * camps never cost wood, so neither do their upgrades; the top tier has no successor.
+     */
     private static final List<LumberCampTier> LUMBER_CAMP_TIERS = List.of(
-            new LumberCampTier(1, LUMBERCAMP_T1, "普通", 1, 20, 80, 120),
-            new LumberCampTier(2, LUMBERCAMP_T2, "强化", 2, 40, 160, 180),
-            new LumberCampTier(3, LUMBERCAMP_T3, "精英", 3, 80, 320, 240));
+            new LumberCampTier(1, LUMBERCAMP_T1, "普通", 1, 20, 80, 120, LUMBERCAMP_T2, 80),
+            new LumberCampTier(2, LUMBERCAMP_T2, "强化", 2, 40, 160, 180, LUMBERCAMP_T3, 160),
+            new LumberCampTier(3, LUMBERCAMP_T3, "精英", 3, 80, 320, 240, null, 0));
 
     /** Cost of the basic armory: gold and wood. */
     private static final long ARMORY_T1_GOLD = 100;
@@ -224,6 +271,19 @@ public final class ClassicContent implements WorldContent {
     /** Cost of the upgraded armory: gold and wood. */
     private static final long ARMORY_T2_GOLD = 240;
     private static final long ARMORY_T2_WOOD = 60;
+
+    /**
+     * Gold paid to upgrade a t1 armory into a t2 one.
+     *
+     * <p>Deliberately equal to the difference in the two catalogue prices: a t1 costs 100/20 and the step
+     * costs 140/40, so the total is exactly the 240/60 of a fresh t2. Upgrading therefore buys the same
+     * production tier for the same total material as building one directly; it saves the footprint and the
+     * construction time, not the resources.
+     */
+    private static final long ARMORY_UPGRADE_GOLD = 140;
+
+    /** Wood paid to upgrade a t1 armory into a t2 one; see {@link #ARMORY_UPGRADE_GOLD}. */
+    private static final long ARMORY_UPGRADE_WOOD = 40;
 
     /** Gold half of the drop off warehouse's price. */
     private static final long WAREHOUSE_GOLD = 100;
@@ -337,6 +397,9 @@ public final class ClassicContent implements WorldContent {
                     .spriteSet(mine.buildingPath())
                     .tag(MINE_TAG)
                     .tag(INCOME_TAG_PREFIX + mine.goldPerMinute());
+            if (mine.upgradeTo() != null) {
+                registry.upgradeTo(mine.upgradeTo()).upgradeCost(GOLD, mine.upgradeGold());
+            }
         }
 
         // ------------------------------------------------------------------ lumber camps
@@ -353,6 +416,9 @@ public final class ClassicContent implements WorldContent {
                     .spriteSet(camp.buildingPath())
                     .tag(LUMBER_TAG)
                     .tag(WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute());
+            if (camp.upgradeTo() != null) {
+                registry.upgradeTo(camp.upgradeTo()).upgradeCost(GOLD, camp.upgradeGold());
+            }
         }
 
         // ------------------------------------------------------------------ armories and the drop off
@@ -368,6 +434,9 @@ public final class ClassicContent implements WorldContent {
                 .producer(ARMORY_TAG)
                 .spriteSet(ARMORY_T1)
                 .tag("armory")
+                .upgradeTo(ARMORY_T2)
+                .upgradeCost(GOLD, ARMORY_UPGRADE_GOLD)
+                .upgradeCost(WOOD, ARMORY_UPGRADE_WOOD)
                 .building(ARMORY_T2)
                 .name("兵营·强化")
                 .size(3, 3)

@@ -96,6 +96,7 @@ public final class RtsScenario {
         checkBuildingCombat(check, content);
         checkBuildingCosts(check, content);
         checkBuildReach(check, content);
+        checkBuildingUpgrades(check);
 
         check.summary("RTS engine scenario");
     }
@@ -1623,6 +1624,172 @@ public final class RtsScenario {
                 "the refused site behind water charged no plank");
         check.equal(wetPlayer.logistics().stored(), wetPlayer.logistics().available(),
                 "the refused site behind water left no reservation in the warehouse network");
+    }
+
+    // ------------------------------------------------------------------ 15) building upgrades
+
+    /**
+     * In-place building upgrades: the content link, the cost, the replacement rules and the cleanup of
+     * every reference to the old id.
+     *
+     * <p>The catalogue is local to this check so the assertions can pin exact numbers (100/200 hit points,
+     * a 50 gold step) and can include two deliberately broken links - a nonexistent target and a target
+     * with a different footprint - without making the sample content invalid. Every refusal is checked for
+     * its player-readable reason, and every refusal also proves that it charged nothing and left the old
+     * building standing.
+     */
+    private static void checkBuildingUpgrades(Check check) {
+        check.section("15) an in-place upgrade replaces the type, keeps the footprint and is charged once");
+        ContentRegistry content = ContentRegistry.builder("upgrade")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .item("gold").name("Gold").maxStack(10_000)
+                .item("wood").name("Wood").maxStack(1_000)
+                .unit("worker").name("Worker").role(UnitRole.WORKER).health(80).speed(2f).radius(0.3f)
+                .cost("gold", 10).buildTime(10).cargo(50).spriteSet("worker").tag("builder")
+                .building("depot").name("Depot").size(2, 2).health(500).cost("wood", 10)
+                .storage(24).warehouse().spriteSet("depot")
+                .building("fort.t1").name("Fort T1").size(2, 2).health(100).level(1)
+                .cost("gold", 20).buildTime(10).storage(4).producer("fort")
+                .upgradeTo("fort.t2").upgradeCost("gold", 50).spriteSet("fort.t1")
+                .building("fort.t2").name("Fort T2").size(2, 2).health(200).level(2)
+                .cost("gold", 40).buildTime(10).storage(6).producer("fort").spriteSet("fort.t2")
+                .building("broken").name("Broken").size(2, 2).health(100)
+                .upgradeTo("fort.missing").upgradeCost("gold", 10).spriteSet("broken")
+                .building("wide").name("Wide").size(3, 3).health(100)
+                .upgradeTo("fort.t2").upgradeCost("gold", 10).spriteSet("wide")
+                .recipe("train.worker").name("Train Worker").producer("fort").requiredBuildingLevel(1)
+                .input("gold", 5).unitOutput("worker").duration(10)
+                .build();
+
+        BuildingType top = content.building("fort.t2");
+        check.that(top.upgradeTo().isEmpty() && top.upgradeCost().isEmpty(),
+                "the top of the ladder has no upgrade target and no upgrade cost");
+        check.that(content.building("fort.t1").upgradeTo().orElseThrow()
+                        .equals(content.key("fort.t2")),
+                "fort.t1 names fort.t2 as its successor in the catalogue namespace");
+        check.equal(ItemBundle.of(content.item("gold"), 50), content.building("fort.t1").upgradeCost(),
+                "the fort.t1 -> fort.t2 step costs exactly 50 gold");
+
+        // --- an affordable upgrade: type, position, owner, health fraction and a single charge
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 31L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(content.building("depot"), player, new GridPos(10, 10));
+        depositStock(check, player, warehouse, ItemBundle.of(content.item("gold"), 200),
+                "the upgrade check starts with 200 gold in the warehouse");
+        Building fort = world.spawnBuilding(content.building("fort.t1"), player, new GridPos(20, 10));
+        fort.health().damage(25);
+        check.close(0.75f, fort.health().fraction(), 1e-6f,
+                "the fort stands at three quarters of its 100 hit points before the upgrade");
+        TileRect footprint = fort.occupiedTiles();
+        EntityId oldId = fort.id();
+        GridPos origin = fort.origin();
+        Unit watcher = world.spawnUnit(content.unit("worker"), player, new GridPos(16, 12).center());
+        watcher.setTargetId(oldId);
+        engine.production().enqueue(fort, content.recipe("train.worker"), 1);
+        check.equal(1, engine.production().queue(fort).orElseThrow().size(),
+                "the old building has one queued production job before the upgrade");
+        Natural goldBefore = player.logistics().amount(content.item("gold"));
+
+        var upgraded = engine.commands().upgradeBuilding(fort);
+        check.that(upgraded.upgraded(), "an affordable upgrade succeeds: " + upgraded.refusal());
+        Building replacement = upgraded.replacement();
+        check.equal(content.building("fort.t2"), replacement.type(),
+                "the replacement has the type its predecessor named");
+        check.equal(origin, replacement.origin(), "the replacement stands on the same origin tile");
+        check.equal(player, replacement.owner(), "the replacement keeps the same owner");
+        check.that(replacement.isConstructed(), "the replacement is finished, not a new construction site");
+        check.close(0.75f, replacement.health().fraction(), 1e-6f,
+                "the replacement keeps the old health fraction (not the absolute hit points)");
+        check.equal(150L, replacement.health().current(),
+                "three quarters of the new 200 hit points is 150");
+        check.equal(goldBefore.subtractClamped(Natural.of(50)), player.logistics().amount(
+                        content.item("gold")),
+                "exactly the 50 gold upgrade cost was charged, once");
+        check.that(!fort.isAlive(), "the old building was destroyed");
+        check.that(engine.production().queue(fort).isEmpty()
+                        && engine.production().queue(replacement).isEmpty()
+                        && engine.production().totalJobs() == 0,
+                "a queued production job is cancelled with the old building, not carried over");
+        check.that(watcher.targetId() == null,
+                "the old id is cleared from a unit's combat target");
+        check.that(world.spatial().inRect(footprint).stream()
+                        .noneMatch(entity -> entity.id().equals(oldId)),
+                "the spatial index no longer knows the old id");
+        check.that(world.spatial().inRect(footprint).stream()
+                        .anyMatch(entity -> entity.id().equals(replacement.id())),
+                "the spatial index knows the replacement at the same footprint");
+        world.flush();
+        check.that(world.findEntity(oldId).isEmpty(),
+                "after the flush the old id is gone from the world entirely");
+        check.equal(1L, world.buildingsOf(player).stream()
+                        .filter(building -> building.type().equals(content.building("fort.t2")))
+                        .count(),
+                "the player ends up with one tier two fort and no tier one fort");
+
+        // --- unaffordable: nothing is charged and the old building stays
+        OcRtsEngine poor = flatEngine(content, VisualLibrary.empty(), 32L);
+        Player poorPlayer = poor.players().get(0);
+        World poorWorld = poor.world();
+        Building poorWarehouse = poorWorld.spawnBuilding(content.building("depot"), poorPlayer,
+                new GridPos(10, 10));
+        depositStock(check, poorPlayer, poorWarehouse,
+                ItemBundle.of(content.item("gold"), 10), "the unaffordable check starts with 10 gold");
+        Building poorFort = poorWorld.spawnBuilding(content.building("fort.t1"), poorPlayer,
+                new GridPos(20, 10));
+        EntityId poorId = poorFort.id();
+        var refused = poor.commands().upgradeBuilding(poorFort);
+        check.that(!refused.upgraded(), "an unaffordable upgrade is refused");
+        check.that(refused.refusal() != null && refused.refusal().contains("cannot afford"),
+                "the unaffordable refusal says it cannot afford the cost: " + refused.refusal());
+        check.that(poorFort.isAlive() && poorFort.type().equals(content.building("fort.t1")),
+                "the refused upgrade leaves the old building standing");
+        check.equal(10L, poorPlayer.logistics().amount(content.item("gold")),
+                "the refused upgrade charges nothing");
+        check.that(poorWorld.findEntity(poorId).orElseThrow() == poorFort,
+                "the refused upgrade creates no replacement");
+        check.equal(poorPlayer.logistics().stored(), poorPlayer.logistics().available(),
+                "the refused upgrade leaves no reservation behind");
+
+        // --- a target that does not exist: a readable refusal, no charge
+        OcRtsEngine broken = flatEngine(content, VisualLibrary.empty(), 33L);
+        Player brokenPlayer = broken.players().get(0);
+        World brokenWorld = broken.world();
+        Building brokenWarehouse = brokenWorld.spawnBuilding(content.building("depot"), brokenPlayer,
+                new GridPos(10, 10));
+        depositStock(check, brokenPlayer, brokenWarehouse,
+                ItemBundle.of(content.item("gold"), 20), "the missing-target check starts with 20 gold");
+        Building brokenBuilding = brokenWorld.spawnBuilding(content.building("broken"), brokenPlayer,
+                new GridPos(20, 10));
+        var missing = broken.commands().upgradeBuilding(brokenBuilding);
+        check.that(!missing.upgraded(), "an upgrade whose target does not exist is refused");
+        check.that(missing.refusal() != null && missing.refusal().contains("does not exist"),
+                "the missing-target refusal names the problem: " + missing.refusal());
+        check.that(brokenBuilding.isAlive() && brokenBuilding.type().equals(content.building("broken")),
+                "the missing-target refusal leaves the old building standing");
+        check.equal(20L, brokenPlayer.logistics().amount(content.item("gold")),
+                "the missing-target refusal charges nothing");
+
+        // --- a target with another footprint is refused before anything is charged
+        OcRtsEngine wide = flatEngine(content, VisualLibrary.empty(), 34L);
+        Player widePlayer = wide.players().get(0);
+        Building wideBuilding = wide.world().spawnBuilding(content.building("wide"), widePlayer,
+                new GridPos(20, 10));
+        var mismatched = wide.commands().upgradeBuilding(wideBuilding);
+        check.that(!mismatched.upgraded(), "a target with a different footprint is refused");
+        check.that(mismatched.refusal() != null && mismatched.refusal().contains("footprint"),
+                "the footprint refusal explains the mismatch: " + mismatched.refusal());
+        check.that(wideBuilding.isAlive(), "the footprint refusal leaves the old building standing");
+
+        // --- defaults: a type without an upgrade link has neither a target nor a cost
+        ContentRegistry plain = ContentRegistry.builder("plain")
+                .terrain("grass").buildable()
+                .building("hut").size(1, 1).health(100)
+                .build();
+        check.that(plain.building("hut").upgradeTo().isEmpty()
+                        && plain.building("hut").upgradeCost().isEmpty()
+                        && !plain.building("hut").canUpgrade(),
+                "a building without upgradeTo() is not upgradable and has an empty upgrade cost");
     }
 
     /** A flat grass engine with direct delivery, used only by the building-cost assertions. */

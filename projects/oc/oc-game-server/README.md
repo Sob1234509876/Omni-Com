@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (938 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (962 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,10 +33,10 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 938 checks passed.
+game server self check: all 962 checks passed.
 ```
 
-938 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+962 is the sum of eleven check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
@@ -47,9 +47,9 @@ the unbounded `InfiniteTerrainMap` and its 4096-chunk budget, the world starting
 buildable spawn anchor found from `(0,0)` inside a 64-tile bound, the windowed snapshot and its `cx` / `cy` /
 `r` parameters including negative and huge origins, seed determinism, the `/world/snapshot` 200/503/405
 answers, and the income rates and per-job `queueItems` of a snapshot row), `WorldTickHookCheck` 23 (the
-plugin tick hook contract and its ordering), `PlayerCommandCheck` 93 (`WHOAMI`, account identity, the
-world-thread command queue, movement orders, ownership, building cost, the production tier gate and the
-builder's reach rule) and
+plugin tick hook contract and its ordering), `PlayerCommandCheck` 117 (`WHOAMI`, account identity, the
+world-thread command queue, movement orders, ownership, building cost, the production tier gate, the
+builder's reach rule, the `UPGRADE` ownership/cost rules and the snapshot's `upgrade` object) and
 `JoinBaseCheck` 60 (the warehouse, engineer and starting resources a player receives when joining a world,
 and their survival across a rejoin). The check is a program in its own `selfCheck` source set
 (`src/selfcheck/java`), so the standard `test` task stays source free.
@@ -92,7 +92,7 @@ derive a 32 byte session key from the shared secret, then AES-256-GCM frames. Th
 the server hello 69; each direction gets its own 4 byte nonce prefix and a 64 bit counter, a frame is a 4 byte
 big endian length followed by the ciphertext and its 128 bit tag, and the counter makes a replayed frame fail
 its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `COUNT`, `REQ`, `WHOAMI`,
-`ORDER`, `BUILD`, `TRAIN`, `QUIT`.
+`ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `QUIT`.
 
 **The browser endpoint.** `GET` and `HEAD` are served from `--static-root`, the built web client; `/ws` is
 upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answered with `OK OC/1`;
@@ -123,15 +123,19 @@ same connection: without it the answer is `ERR login first`, before the handler 
 name, an over long name or a payload that is not base64 is `ERR unknown request`, and a throwing handler is
 `ERR request failed`.
 
-**Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD` and `TRAIN` are parsed by the same `CommandDispatcher` the
+**Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD`, `TRAIN` and `UPGRADE` are parsed by the same `CommandDispatcher` the
 browser endpoint uses, but they are applied by `WorldHost` on the world thread at the start of the next fixed
 step. The authenticated account name is the identity: the first gameplay command creates the player for that
 account (the first human is player 3; player 1 is the sample scene and player 2 is the classic AI), and every
 later command - including one after a disconnect and reconnect - reuses the same player, base, entities and
 resources. A new account name takes the next unused id from 3 through 8, and a seventh name answers
 `ERR world full`; an idle account is not reclaimed. `ORDER` validates ownership and existence, `BUILD`
-charges the building type's cost from the player's warehouses exactly once at placement, and `TRAIN` lets the
-engine's `ProductionSystem` decide the tier gate. See `protocol/oc-protocol.md` for the wire grammar.
+charges the building type's cost from the player's warehouses exactly once at placement, `TRAIN` lets the
+engine's `ProductionSystem` decide the tier gate, and `UPGRADE` runs the engine's in-place replacement
+(same footprint, owner and health fraction; new id in the answer) and answers `ERR` with the engine's reason
+when the step is impossible. Snapshot building rows carry an optional `upgrade` object for finished buildings
+that can be upgraded, which is what the client's 升级 entry is drawn from. See `protocol/oc-protocol.md` for
+the wire grammar.
 
 **Autosave and shutdown.** A daemon timer named `oc-autosave` flushes the user records every `--save-seconds`
 seconds (60 by default), which is a no-op when nothing changed. `stop()` then runs in a fixed order: stop the
@@ -158,7 +162,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 938 check self check program
+src/selfcheck/java/.../server/check/    the 962 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

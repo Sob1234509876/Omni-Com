@@ -49,11 +49,12 @@ The scenario is a headless self check (no test framework, no network) that print
 terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbounded map with an LRU
 chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
 soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, buildings
-that take damage and die, a charged building site, and an ASCII picture of the world.
+that take damage and die, a charged building site, an in-place building upgrade that keeps its footprint,
+owner and health fraction, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 355 checks passed.
+RTS engine scenario: all 392 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -78,6 +79,8 @@ What the scenario actually proves, section by section:
 | 12 combat | a duelist and an unarmed dummy: exactly one kill on tick 21, three `DamageDealt` events of 10; a 10 damage hit on 5 hit points reports the 5 actually subtracted; armour 5 halves each hit; a 3 HP slab still dies to the floor of one; a range-zero unit never attacks; the nearest enemy wins with ties broken by id; `AttackOrder` chases, `AttackMoveOrder` engages and resumes; the kill clears the dead id from every unit's target |
 | 12b building targets | a 3x3 building takes hits and dies on tick 21 (armour 5 makes it tick 51), its kill publishes the ordinary `EntityKilled` and removes it from the world, the spatial index and the attacker's target; a mixed unit/building tie is still broken by id; `AttackOrder` and `AttackMoveOrder` both accept a building id, reach its footprint edge and kill it |
 | 13 building cost | placing a building site charges exactly the catalogue cost once; an unaffordable second build and an occupied-tile placement are both refused, and neither charges anything |
+| 14 build reach | a site beside the builder is accepted and charged, a site twenty tiles away and a site walled off by water are refused as `out of reach`, and both refusals place nothing and leave no reservation |
+| 15 building upgrades | an affordable upgrade replaces the type at the same origin with the same owner and health fraction, charges the cost once, cancels the old production queue, clears the old id from a unit's combat target and from the spatial index, and leaves the replacement finished; unaffordable, missing-target and footprint-mismatch upgrades are refused with a readable reason, charge nothing and leave the old building standing; a type without `upgradeTo()` is not upgradable |
 
 A real preview of the generated world, terrain only, one character per tile
 (`~` water, `:` sand, `.` grass, `f` forest, `^` hill, `#` rock; units are drawn as `C`, `W`, `S`):

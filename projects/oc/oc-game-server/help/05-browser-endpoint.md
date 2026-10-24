@@ -100,7 +100,7 @@ TCP 命令循环完全相同。因此这条端点上的命令、参数规则、�
 | `LOGIN <名字> <密码>` | `OK <文案>` / `ERR <文案>` | 成功后把**这条连接**标成已认证 |
 | `COUNT` | `OK <账号数>` | 跨连接共享 |
 | `REQ <名字> <base64 载荷>` | `OK <base64 载荷>` / `ERR <文案>` | 需要同一条连接上成功 `LOGIN` |
-| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用；账号名就是身份，同名重连复用同一个玩家与基地 |
+| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` / `UPGRADE` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用；账号名就是身份，同名重连复用同一个玩家与基地 |
 | `QUIT` | 先 `OK bye`，再关闭连接 | 关闭码是 `1000` |
 | 其它任何东西 | `ERR unknown command` | 空行也是这一条 |
 
@@ -281,7 +281,10 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
      "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
                     {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
-     "w": 4, "h": 3, "progress": 0.42, "queue": 0}
+     "w": 4, "h": 3, "progress": 0.42, "queue": 0},
+    {"id": 12, "kind": "building.armory.t1", "x": 18.5, "y": 4.5, "player": 3, "health": 0.50,
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0,
+     "upgrade": {"to": "building.armory.t2", "gold": 140, "wood": 40}}
   ],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140},
@@ -315,6 +318,10 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
   "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前 `PRODUCING` 任务的引擎剩余
   tick；尚未开工的任务报告 `ticks === total`。`kind` 是产出的单位内容路径（只产物品的配方回落到配方路径）。
   旧客户端可以完全忽略它，继续用 `queue` 画 `生产中 ×N`。
+- `upgrade` 只出现在**已完工**、且内容类型指定了存在于服务目录里的后继类型的建筑行上，形状是
+  `{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}`；`gold` / `wood` 就是 `UPGRADE <id>` 会扣的成本。
+  未完工工地、阶梯顶端与悬空目标都不带它。可负担性不编码：客户端拿自己的 `players` 行比较，付不起时把入口
+  显示为禁用。旧客户端忽略该字段。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），字段是 `id`、显示名
   `name`、扁平的金币/木材数量 `gold` / `wood`，以及收入速率 `goldPerMinute` / `woodPerMinute`。金币/木材
   这两个键就是经典内容目录注册的物品路径；快照不重复它们的显示名，其它物品类型暂时不进快照。金额来自
@@ -341,13 +348,15 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
 `web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
 （地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`，
 `w` / `h` -> `footprint`，`progress` / `queue` / `queueTicks` / `queueItems` -> 同名可选属性，
-`goldPerMinute` / `woodPerMinute` -> 同名的可选玩家字段），
+`upgrade` -> `{to, gold, wood}` 可选升级入口，`goldPerMinute` / `woodPerMinute` -> 同名的可选玩家字段），
 结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 与
 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 都可以缺失：旧服务器没有这些字段时客户端
 照常工作，HUD 的资源行显示破折号或省略速率后缀、建筑芯片不显示尺寸与进度、画面也不画进度条或逐项队列。
 `main.ts` 在画面可见时每 500ms 拉一次快照（上一次请求未完成就跳过），HUD 显示 `世界：server · tick N` 或
 `世界：demo`；`WHOAMI` 回答玩家 id 后，资源行显示该玩家的名字与 `金 300 (+30/分) · 木 60 (+20/分)`，每次快照
-和成功的 `BUILD` / `TRAIN` 之后都会刷新。选中一个建筑时，HUD 显示 `尺寸：W×H`，在建时再显示一条内联百分比
+和成功的 `BUILD` / `TRAIN` / `UPGRADE` 之后都会刷新。选中自己的建筑且有 `upgrade` 字段时，右下角显示
+**升级**入口（目标显示名、金币与木材成本，资源不足时禁用）；点击发送 `UPGRADE <id>`，回答 `OK <新 id>`
+或 `ERR` 写进日志与状态行。选中一个建筑时，HUD 显示 `尺寸：W×H`，在建时再显示一条内联百分比
 进度条；有 `queueItems` 时还逐项显示清单显示名、`ticks / total` 细进度条与 `i/n`。画面里未完工的建筑上方
 画灰阶进度条，生产队列非空时画 `生产中 ×N`。这些灰阶条与标记只存在于 Canvas 绘制和 HUD 中，不改变这份文档
 的形状。Vite dev proxy 把 `/world` 转发到同一个 Java 服务器。

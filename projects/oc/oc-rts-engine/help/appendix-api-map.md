@@ -19,6 +19,7 @@
 | 给引擎加一种新物品/资源 | [02](02-content-and-items.md) | `ContentRegistry.Builder#item`、`ItemType` |
 | 给引擎加一种新兵种 | [02](02-content-and-items.md) | `ContentRegistry.Builder#unit`、`UnitType`、`UnitRole` |
 | 给引擎加一种新建筑 | [02](02-content-and-items.md) | `ContentRegistry.Builder#building`、`BuildingType` |
+| 让一种建筑能原地升级成下一级 | [02](02-content-and-items.md) / [06](06-economy-logistics-and-production.md) | `ContentRegistry.Builder#upgradeTo` / `#upgradeCost`、`BuildingType#upgradeTo` / `#upgradeCost`、`UnitDirector#upgradeBuilding`、`UnitDirector.UpgradeResult` |
 | 加一条新配方 | [02](02-content-and-items.md) / [06](06-economy-logistics-and-production.md) | `ContentRegistry.Builder#recipe`、`Recipe` |
 | 让配方产出单位而不是物品 | [06](06-economy-logistics-and-production.md) | `Recipe#isUnitRecipe`、`ContentRegistry.Builder#unitOutput` |
 | 让一辆车依次做多件事（走队列） | [04](04-units-orders-and-movement.md) | `OrderQueue#push`、`Order#tick` |
@@ -106,7 +107,7 @@
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
 | `ContentRegistry` | 一份游戏的全部定义目录，按 `ResourceKey` 寻址 | `namespace()`、`terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`recipesFor()`、`builder()` | [02](02-content-and-items.md) |
-| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`cost(...)`、`storage()`、`warehouse()`、`producer()`、`armour(int)`（单位或建筑）、`level(int)`、`requiredBuildingLevel(int)`、`build()` | [02](02-content-and-items.md) |
+| `ContentRegistry.Builder` | 流式目录构建器，当前定义是每个属性调用的目标 | `terrain()`、`item()`、`unit()`、`building()`、`recipe()`、`cost(...)`、`storage()`、`warehouse()`、`producer()`、`armour(int)`（单位或建筑）、`level(int)`、`upgradeTo(String)`、`upgradeCost(String,Natural,long)`、`requiredBuildingLevel(int)`、`build()` | [02](02-content-and-items.md) |
 | `WorldContent` | 一份完整游戏目录的接缝：身份、说明、命名空间与填充目录的方法 | `id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)`、`startingResources()` | [02](02-content-and-items.md) |
 | `ScenarioWorldContent` | 把示例目录 `ScenarioContent` 包装成 `WorldContent`，作为引擎默认内容 | `ID`、`id()`、`description()`、`namespace()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
 | `ScenarioContent` | 示例场景的内容目录：地形、物品、兵种、建筑与配方 | `NAMESPACE`、`omniCom()`、`populate(ContentRegistry.Builder)` | [02](02-content-and-items.md) |
@@ -117,7 +118,7 @@
 | `ItemBundle.Builder` | 累加式构建 `ItemBundle`；拒绝负数与 `BEYOND` | `add()`、`addAll()`、`build()` | [02](02-content-and-items.md) |
 | `UnitType` | 一种兵种的定义 | `role()`、`maxHealth()`（`Natural`）、`speed()`、`radius()`、`cost()`、`cargoCapacity()`（`Natural`）、`canHaul()`、`attackDamage()`（`Natural`）、`attackRange()`、`attackCooldownTicks()`、`armour()`、`canAttack()` | [02](02-content-and-items.md) |
 | `UnitRole` | 兵种大类，供生产和后勤判断用途 | `COMBAT`/`WORKER`/`SUPPORT`、`id()` | [02](02-content-and-items.md) |
-| `BuildingType` | 一种建筑的定义：占地、成本、血、护甲、仓储、生产标签 | `sizeX()`/`sizeY()`、`radius()`、`footprint()`、`maxHealth()`（`Natural`）、`armour()`、`level()`、`cost()`、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
+| `BuildingType` | 一种建筑的定义：占地、成本、血、护甲、仓储、生产标签与升级链接 | `sizeX()`/`sizeY()`、`radius()`、`footprint()`、`maxHealth()`（`Natural`）、`armour()`、`level()`、`cost()`、`upgradeTo()`（`Optional<ResourceKey>`）、`upgradeCost()`（`ItemBundle`）、`canUpgrade()`、`storageSlots()`（`Natural`）、`isWarehouse()`、`producerTags()`、`buildTimeTicks()` | [02](02-content-and-items.md) |
 | `Recipe` | 一条生产配方：消耗什么、产出什么、要多久 | `inputs()`、`itemOutputs()`、`unitOutput()`、`isUnitRecipe()`、`durationTicks()`、`requiredBuildingLevel()`、`isUnlockedAt(int)`、`producerTags()` | [06](06-economy-logistics-and-production.md) |
 | `StartingResources` | 新玩家的开局物品：按物品路径索引的 `Natural` 数量，不可变且保持插入顺序 | `EMPTY`、`of(Map)`、`builder()`、`isEmpty()`、`size()`、`amounts()`、`amount(path)` | [02](02-content-and-items.md) |
 | `StartingResources.Builder` | 累加式构建开局物品；拒绝空路径、负数与 `BEYOND` | `add(path, amount)`、`isEmpty()`、`build()` | [02](02-content-and-items.md) |
@@ -237,9 +238,10 @@
 | `OrderState` | 订单生命周期 | `RUNNING`/`COMPLETED`/`FAILED`/`CANCELLED`、`isFinished()` | [04](04-units-orders-and-movement.md) |
 | `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()` | [04](04-units-orders-and-movement.md) |
 | `OrderSystem` | 推进每个单位的订单队列 | `order()`（返回 200） | [04](04-units-orders-and-movement.md) |
-| `UnitDirector` | 给单位派活的唯一入口 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2/EntityId)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
+| `UnitDirector` | 给单位派活的唯一入口；建筑建造与原地升级也在这里 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2/EntityId)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
 | `UnitDirector.BuildResult` | 一次建造请求的结果：已放置的工地或拒绝原因，两者恰有其一 | `placed()`、`refused()`、`site()`、`refusal()` | [06](06-economy-logistics-and-production.md) |
-| `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder` | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
+| `UnitDirector.UpgradeResult` | 一次升级请求的结果：替换建筑或拒绝原因，两者恰有其一 | `upgraded()`、`upgraded(Building)`、`refused(String)`、`replacement()`、`refusal()` | [02](02-content-and-items.md) / [06](06-economy-logistics-and-production.md) |
+| `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder`；建造与升级也在同一个世界线程事务里完成 | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`tryBuild()`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
 | `MoveOrder` | 把单个单位走到某个位置 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`destination()` | [04](04-units-orders-and-movement.md) |
 | `HoldOrder` | 让单位留在原地 | `name()`（返回 `"hold"`） | [04](04-units-orders-and-movement.md) |
 | `AttackOrder` | 追一个实体 id：走进射程、停下，由战斗系统开火；未知 id 或目标换图会失败 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`targetId()`、`name()`（返回 `"attack"`） | [14](14-combat.md) |
@@ -438,6 +440,8 @@
 | `spawnBuilding(BuildingType, Player, GridPos)` | 在默认维度生成"已完工"建筑 | 同上 |
 | `placeBuilding(BuildingType, Player, GridPos)` | 在默认维度放置仍需建造的工地 | 同上 |
 | `canPlace(BuildingType, GridPos)` | 默认维度的地形可建且不与已有建筑重叠 | 未设地图 → `IllegalStateException`（经 `map()`） |
+| `canPlace(DimensionId, BuildingType, GridPos, Entity replaced)` | 原地替换检查：忽略即将被替换的那一个实体，其它建筑仍然阻挡 | 未设维度 → `IllegalArgumentException` |
+| `clearTargets(EntityId)` | 把一个 id 从所有维度所有单位的战斗目标里清掉（原地升级替换 id 时用） | `null` 是安全 no-op |
 | `destroy(Entity)` | 在实体自己所属的维度标记死亡并发布 `Events.EntityDestroyed` | `null` 或无生命实体是安全 no-op |
 | `flush()` | 把**每个维度**的死亡实体真正从集合移除（引擎每 tick 调一次） | 否 |
 

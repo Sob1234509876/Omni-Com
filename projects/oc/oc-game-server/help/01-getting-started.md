@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 938 checks passed.
+game server self check: all 962 checks passed.
 debug plugin self check: all 85 checks passed.
 ```
 
-938 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 306 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 93 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛与建造可达）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
+962 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 306 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 117 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 
