@@ -4,6 +4,7 @@ import io.github.sob1234509876.oc.googology.ComparisonResult;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * A Bashicu matrix in standard form, read as an ordinal and ordered by the lexicographic rule of the
@@ -41,24 +42,37 @@ import java.util.Objects;
  * column is not all zeros has no zero base at all; and the reference excludes further shapes (a column that
  * is not non-increasing, or a row entry more than one above everything to its left). Construction therefore
  * normalises the trailing-zero representation and rejects a first column that is not all zeros. It does
- * <em>not</em> decide the deep standard-form conditions, because that needs the expansion rules (this
- * package deliberately has none yet - the reference's parent, bad-root, ascension-offset and
- * fundamental-sequence rules are left to the later TODO items, which build on this ordering). Passing a
- * matrix that is not a genuine standard form is the caller's mistake; the order is only promised for the
- * standard ones.
+ * <em>not</em> decide the deep standard-form conditions (the closure from the reference's limit sequence
+ * under predecessor and expansion), because that needs a much stronger analysis than this layer offers.
+ * Passing a matrix that is not a genuine standard form is the caller's mistake; the order is only promised
+ * for the standard ones.
+ *
+ * <p><b>Expansion.</b> {@link #fundamentalSequence(int)} implements the reference's expansion rules:
+ * the empty matrix is zero; a matrix whose last column is all zeros has no bad root and is the successor
+ * of the matrix without that column; otherwise the LNZ (lowermost non-zero) element of the last column
+ * determines the parent chain, the bad root, the good part {@code G}, the bad part {@code B}, the
+ * ascension offset vector {@code Δ} and the copies {@code B_m}, and {@code S[n] = G ~ B_0 ~ ... ~ B_{n-1}}
+ * (with {@code B_0 = B}). The copies add {@code m·Δ} only at elements whose ancestor chain passes through
+ * the bad root, which is the reference's ancestor exception. The self check asserts, for every standard
+ * matrix it expands, that {@code S > S[n]} and that {@code S[0] < S[1] < ...}: those are the properties a
+ * usable fundamental sequence needs, and the class documentation records what is argued and what is only
+ * tested.
  *
  * <p><b>Exactness.</b> The comparison is a pure lexicographic comparison of two canonical integer
  * sequences, so it is total, transitive and antisymmetric, and {@link #compareMagnitude(BmsOrdinal)}
  * always returns one of the three proofs {@link ComparisonResult#LESS}, {@link ComparisonResult#EQUAL} or
  * {@link ComparisonResult#GREATER}, never {@link ComparisonResult#UNKNOWN} and never a lean. Unlike
- * {@code Natural}, no budget is involved and no approximation is made.
+ * {@code Natural}, no budget is involved and no approximation is made. Expansion is exact as well: it is a
+ * finite rearrangement of the columns under the reference's rules, not a search or an approximation.
  *
- * <p><b>Not yet an {@code Ordinal}.</b> This type deliberately implements only
- * {@link Comparable}, not {@link io.github.sob1234509876.oc.googology.Ordinal}: it has no successor, no
- * addition and no fundamental sequence, because the expansion rules are not implemented in this task.
- * It is the ordering half of a BMS notation, not a full ordinal notation.
+ * <p><b>An ordinal notation, not an {@link io.github.sob1234509876.oc.googology.Ordinal}.</b> This type
+ * implements {@link Comparable} and now has a successor, a predecessor and fundamental sequences, but it
+ * still has no addition, no multiplication by a finite coefficient and no {@code ω^} operation, so it is
+ * not the module's {@code Ordinal} interface and it is not plugged into {@code OrdinalNotation}. It is the
+ * BMS notation by itself.
  *
  * @see BmsMatrix
+ * @see NonRecursiveBms
  * @see io.github.sob1234509876.oc.googology.ComparisonResult#of(int)
  */
 public final class BmsOrdinal implements Comparable<BmsOrdinal> {
@@ -115,6 +129,116 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
         return matrix.isEmpty();
     }
 
+    /** Whether this is the empty matrix, the ordinal zero. */
+    public boolean isZero() {
+        return matrix.isEmpty();
+    }
+
+    /**
+     * Whether the last column is all zeros, which is the reference's successor case: such a matrix is the
+     * successor of the matrix with that column removed. The empty matrix (zero) is not a successor.
+     *
+     * <p>Note that a last column of a single {@code (1)} is <em>not</em> a successor in plain BMS: it is
+     * the {@code ω} limit, handled by the bad-root expansion. The single-{@code (1)} successor rule is the
+     * non-recursive variant's; see {@link NonRecursiveBms#isSuccessor()}.
+     */
+    public boolean isSuccessor() {
+        if (matrix.isEmpty()) {
+            return false;
+        }
+        for (int value : matrix.columns().get(matrix.length() - 1)) {
+            if (value != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether this ordinal is a limit, i.e. neither zero nor a successor. */
+    public boolean isLimit() {
+        return !matrix.isEmpty() && !isSuccessor();
+    }
+
+    /**
+     * The successor {@code S ~ (0)}: appending the zero column is the reference's successor step. The
+     * result is again a zero-based canonical matrix.
+     */
+    public BmsOrdinal successor() {
+        return of(matrix.appendColumn(0));
+    }
+
+    /**
+     * The {@code β} with {@code β + 1 = this}: the matrix without its last column when the last column is
+     * all zeros. Empty for zero and for limit ordinals.
+     */
+    public Optional<BmsOrdinal> predecessor() {
+        if (!isSuccessor()) {
+            return Optional.empty();
+        }
+        return Optional.of(of(matrix.removeLastColumn()));
+    }
+
+    /**
+     * The {@code index}-th element of the fundamental sequence, or empty when this ordinal has no
+     * fundamental sequence: the empty matrix (zero) and the successor case have none. A matrix whose last
+     * column has a non-zero entry always has a fundamental sequence (its limit case).
+     *
+     * <p>The expansion is the reference's:
+     *
+     * <ol>
+     *   <li>the empty matrix is {@code 0};</li>
+     *   <li>if the last column is all zeros there is no bad root, and the matrix is the successor of the
+     *       matrix without that column (see {@link #predecessor()});</li>
+     *   <li>otherwise the LNZ (lowermost non-zero) element of the last column is found, its parent gives
+     *       the bad root, the columns before the bad root are {@code G}, the columns from the bad root to
+     *       the second-to-last are {@code B}, the ascension offset vector {@code Δ} is computed by the
+     *       reference's rule, and {@code S[index] = G ~ B_0 ~ B_1 ~ ... ~ B_{index-1}} with
+     *       {@code B_0 = B}. Each {@code B_m} adds {@code m·Δ} only where the row-wise ancestor chain of
+     *       the element passes through the bad root; elements whose ancestors avoid the bad root keep their
+     *       value (the reference's exception).</li>
+     * </ol>
+     *
+     * <p>The index counts the copies of the bad part, so {@code S[0] = G}. This is the reading of the
+     * reference's mathematical form {@code sup{G, G B^(0), G B^(0) B^(1), ...}}: the prose's
+     * {@code S[n] = G ~ B ~ B_1 ~ ... ~ B_{n-1}} is the same formula with {@code B = B_0}, where the
+     * displayed list has {@code n} entries.
+     *
+     * @throws IllegalArgumentException if {@code index} is negative, or if a last column with a non-zero
+     *         entry has no LNZ parent (which means the matrix is not a standard form)
+     */
+    public Optional<BmsOrdinal> fundamentalSequence(int index) {
+        if (index < 0) {
+            throw new IllegalArgumentException("the fundamental sequence index must not be negative, but it is "
+                    + index);
+        }
+        if (matrix.isEmpty()) {
+            return Optional.empty();
+        }
+        BmsAnalysis analysis = BmsAnalysis.of(matrix);
+        if (!analysis.hasLowermostNonZero()) {
+            return Optional.empty();
+        }
+        if (!analysis.hasBadRoot()) {
+            throw new IllegalArgumentException("the lowermost non-zero element of " + matrix
+                    + " has no parent, so the matrix has no bad root and is not a standard form");
+        }
+        return Optional.of(of(analysis.expand(index)));
+    }
+
+    /**
+     * The {@code index}-th fundamental sequence element for a limit ordinal, with the same rules as
+     * {@link #fundamentalSequence(int)}.
+     *
+     * @throws IllegalStateException if this ordinal is zero or a successor, so it has no fundamental
+     *         sequence
+     * @throws IllegalArgumentException if {@code index} is negative, or if the matrix is not a standard
+     *         form
+     */
+    public BmsOrdinal expand(int index) {
+        return fundamentalSequence(index).orElseThrow(() -> new IllegalStateException(
+                this + " has no fundamental sequence: it is zero or a successor"));
+    }
+
     /**
      * The lexicographic order: columns from the left, each column row by row from the top, a shorter
      * column smaller when it is a prefix, and the longer matrix larger when every common column is equal.
@@ -122,21 +246,12 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
      * <p>For standard forms this is the order of the ordinals the matrices denote (see the class
      * documentation for the claim and its source). The comparison is exact, total and transitive, and it
      * is <em>not</em> valid for non-standard matrices - construction normalises the trailing-zero writing
-     * but cannot decide deep standardness without the expansion rules.
+     * but cannot decide deep standardness.
      */
     @Override
     public int compareTo(BmsOrdinal other) {
         Objects.requireNonNull(other, "other");
-        List<List<Integer>> left = matrix.columns();
-        List<List<Integer>> right = other.matrix.columns();
-        int shared = Math.min(left.size(), right.size());
-        for (int column = 0; column < shared; column++) {
-            int comparison = compareColumns(left.get(column), right.get(column));
-            if (comparison != 0) {
-                return comparison;
-            }
-        }
-        return Integer.compare(left.size(), right.size());
+        return BmsOrder.compare(matrix, other.matrix);
     }
 
     /**
@@ -163,17 +278,6 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
     @Override
     public String toString() {
         return matrix.toString();
-    }
-
-    private static int compareColumns(List<Integer> left, List<Integer> right) {
-        int shared = Math.min(left.size(), right.size());
-        for (int row = 0; row < shared; row++) {
-            int comparison = Integer.compare(left.get(row), right.get(row));
-            if (comparison != 0) {
-                return comparison;
-            }
-        }
-        return Integer.compare(left.size(), right.size());
     }
 
     private static void requireZeroBase(BmsMatrix matrix) {

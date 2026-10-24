@@ -176,8 +176,8 @@ titan.health().isDead();                               // true
   [ok] the slot count itself is out of exact range, so it reports BEYOND instead of pretending
 ```
 
-库自身还有 267 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
-超运算求值、排序、格式化与解析往返、序数、超限超运算、塔的比较，以及 BMS 标准式与字典序，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
+库自身还有 351 项自校验（`./gradlew :projects:oc:oc-googology:selfcheck`），覆盖阈值边界、提升规则、
+超运算求值、排序、格式化与解析往返、序数、超限超运算、塔的比较，以及 BMS 标准式、字典序、展开与非递归 BMS，最后还有一节**与 `BigInteger` 的随机对照**：2000 轮随机大数上，
 `Natural` 的加减乘、`min`/`max`、比较与解析往返必须与 `BigInteger` 完全一致（阈值下方不允许有任何精度差异）。
 
 ## 十、超限序数级别（库的序数层）

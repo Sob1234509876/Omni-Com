@@ -16,9 +16,9 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (267 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (351 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
-| BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms and their lexicographic order |
+| BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 
 ## What it gives you
 
@@ -179,14 +179,15 @@ asymptotics with fractional heights - and the comparison's base ten logarithms c
 
 ## Bashicu matrices (BMS)
 
-`BmsMatrix` is an immutable Bashicu matrix in the canonical short form, and `BmsOrdinal` reads one as an
-ordinal and compares it by the notation's lexicographic rule: columns from the left, each column row by
-row from the top, the longer column larger when it is a prefix, and the longer matrix larger when every
-common column is equal.
+`BmsMatrix` is an immutable Bashicu matrix in the canonical short form. `BmsOrdinal` reads one as an
+ordinal, compares it by the notation's lexicographic rule, and expands it with the reference's
+fundamental-sequence rules: columns from the left, each column row by row from the top, the longer column
+larger when it is a prefix, and the longer matrix larger when every common column is equal.
 
 ```java
 import io.github.sob1234509876.oc.googology.bms.BmsMatrix;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
 
 BmsOrdinal a = BmsOrdinal.of(new int[][]{{0}, {1, 1}});        // BMS(0)(1,1), ε₀
 BmsOrdinal b = BmsOrdinal.of(new int[][]{{0}, {1}, {2}});      // BMS(0)(1)(2), ω^ω
@@ -195,6 +196,13 @@ BmsOrdinal c = BmsOrdinal.of(new int[][]{{0}, {1, 0}});        // BMS(0)(1,0) = 
 a.compareTo(b) > 0;                    // true
 b.compareTo(c) > 0;                    // true, even though the raw column (1,0) > (1)
 b.compareMagnitude(a);                 // ComparisonResult.LESS (always a proof)
+
+a.fundamentalSequence(0);              // Optional.of(()), 0
+a.fundamentalSequence(1);              // Optional.of((0)), 1
+a.fundamentalSequence(2);              // Optional.of((0)(1)), ω
+a.fundamentalSequence(3);              // Optional.of((0)(1)(2)), ω^ω
+a.isLimit();                           // true
+a.successor();                         // (0)(1,1)(0), ε₀ + 1
 
 BmsMatrix.of(new int[][]{{0}, {1}, {2}}).equals(
         BmsMatrix.canonical(new int[][]{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}));   // true
@@ -208,12 +216,42 @@ zero *rows* are removed. `of` demands an already-canonical matrix, while `canoni
 the order of the ordinals the matrices denote — the reference's `(0)(1) = ω`, `(0)(1)(2) = ω^ω` and
 `(0,0)(1,1) = ε₀` nodes are cross checked against Cantor normal form — and for non-standard matrices it is
 not, which is why construction normalises the trailing zeros and rejects a first column that is not all
-zeros. Deeper standardness (the reference's column-shape and row-increment conditions) stays the caller's
-responsibility until the expansion rules land.
+zeros.
 
-This layer is **not** an `Ordinal` yet: it has no successor, addition or fundamental sequence, because
-expansion is a later TODO. It is the ordering half of BMS. See [`help/bms.md`](help/bms.md) for the rule,
-the three worked examples and the caveats, in Chinese.
+**Expansion.** `BmsOrdinal.fundamentalSequence(int n)` implements the reference's rules:
+
+- the empty matrix is `0` and has no fundamental sequence;
+- a matrix whose last column is all zeros has no bad root: it is the successor of the matrix without that
+  column (`isSuccessor`, `predecessor`, and the inverse `successor`, which appends `(0)`);
+- otherwise the lowermost non-zero element (LNZ) of the last column gives the parent chain and the bad
+  root, the columns before it are the good part `G`, the columns from it to the second-to-last are the bad
+  part `B`, and the ascension offset vector `Δ` is computed by the reference's rule. The copies
+  `B_m` add `m·Δ` only where the element's row-wise ancestor chain passes through the bad root — the
+  reference's "ancestors not through the bad root do not get Δ" exception. Then
+  `S[n] = G ~ B_0 ~ B_1 ~ ... ~ B_{n-1}` with `B_0 = B`, so `S[0] = G`, `S[1] = G ~ B`, and so on.
+
+For every standard matrix the self check expands, it asserts `S[n] < S` and
+`S[0] < S[1] < S[2] < ...` with the same order: those are the properties that make the sequence usable.
+The structural reason is that `S[0]` and `S[1]` are strict prefixes and the first bad-part copy is smaller
+than the last column at the LNZ row; it is an argument, not a formal proof, and the equality of the
+lexicographic order with the ordinal order on all standard forms is not proved here either. See
+[`help/bms.md`](help/bms.md) for the rules, the three worked examples, the ancestor-exception case and an
+explicit list of what is tested, argued and unproved.
+
+**Non-recursive BMS.** `NonRecursiveBms` is the variant of the second reference article: the first column
+is a run of ones, a last column `(1)` is the successor (`(1,1,1)(2,2)(1) = (1,1,1)(2,2) + 1`), and
+otherwise the BMS bad-root expansion applies (`(1,1,1)(2,2)(3,3,1,1)` expands like `(1,1,1)(2,2)(3,3,1)`
+followed by `(4,4,2)`, `(5,5,3)`, ...). When the LNZ has no parent, the article's non-recursive expansion
+removes the LNZ, adds one to the remaining rows and appends an infinite tail of ones
+(`(1,1,1)(2,2,1)` becomes `(1,1,1)(2,2)(3,3,1,1,1,...)`); that new column is infinite, so it cannot be a
+finite `NonRecursiveBms` value and is exposed as a `NonRecursiveExpansion` description instead. The
+comparison reuses the same lexicographic rule (`BmsOrder`). There is no `fromBms`/`toBms` bridge: neither
+article gives a translation, and the syntactic +1 map is not claimed to preserve the denoted ordinals.
+
+This layer is **not** an `Ordinal`: it has a successor, a predecessor and fundamental sequences, but no
+addition, multiplication by a finite coefficient or `ω^`, so it is not the module's `Ordinal` interface.
+See [`help/bms.md`](help/bms.md) for the rules and caveats, in Chinese.
+
 
 ## What it deliberately does not do
 
@@ -230,9 +268,12 @@ the three worked examples and the caveats, in Chinese.
   hyperoperation *levels* up to the notation's limit (`ε₀` for the default notation), and a custom
   notation can name its own; what the library still does not offer is the fast growing hierarchy, ordinal
   collapsing functions, or ordinals past `ε₀`.
-- **BMS expansion, and BMS as a full ordinal notation.** The BMS layer offers standard forms and their
-  lexicographic order only: it does not expand a matrix into a fundamental sequence, and `BmsOrdinal` is
-  not an `Ordinal`. That is the next TODO.
+- **BMS as a full `Ordinal`, and a proof of its strength.** The BMS layer expands a matrix, but it is not
+  an `Ordinal`: it has no addition, no multiplication by a finite coefficient and no `ω^`, and it is not
+  plugged into `OrdinalNotation`. The expansion's consistency (`S > S[n]`, strictly increasing sequences)
+  is tested and argued, not formally proved, and the lexicographic order is only *claimed* to agree with the
+  ordinal order on standard forms. Non-recursive BMS is the same: the no-bad-root case is an infinite
+  column, exposed as a description rather than a comparable value.
 
 ## Semantics in one table
 
@@ -264,19 +305,24 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
     bms/BmsMatrix.java            the immutable matrix, its canonical short form and its parser
-    bms/BmsOrdinal.java           a standard form read as an ordinal, ordered lexicographically
+    bms/BmsOrdinal.java           a standard form read as an ordinal: order, successor, expansion
+    bms/BmsAnalysis.java          parent table, LNZ, bad root, Δ and the ascension matrix (package private)
+    bms/BmsOrder.java             the shared lexicographic comparison (package private)
+    bms/NonRecursiveBms.java      the non-recursive variant: first column of ones, (1) successor, expansion
+    bms/NonRecursiveExpansion.java  the infinite-column description of the non-recursive expansion
     bms/package-info.java         BMS package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
 help/bms.md                       the Chinese guide to the BMS layer
-src/selfcheck/java/.../check/GoogologyCheck.java    the 267 check self check program
-src/selfcheck/java/.../check/BmsCheck.java          its BMS section
+src/selfcheck/java/.../check/GoogologyCheck.java    the 351 check self check program
+src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 ```
 
 ## Related
 
 - [`help/ordinals.md`](help/ordinals.md) — the ordinals, fundamental sequences and the transfinite
   hyperoperation, in Chinese.
-- [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms and their lexicographic order, in Chinese.
+- [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion
+  rules and the non-recursive variant, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

@@ -24,9 +24,9 @@ cd web-client; .\node_modules\.bin\tsc.cmd --noEmit; node scripts/check-render-m
 
 | Check | Gradle task | Total | Where the total comes from |
 | --- | --- | --- | --- |
-| googology | `:projects:oc:oc-googology:selfcheck` | 267 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 267 checks passed.` |
-| engine | `:projects:oc:oc-rts-engine:scenario` | 355 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
-| game server | `:projects:oc:oc-game-server:selfcheck` | 938 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 306, `WorldTickHookCheck` 23, `PlayerCommandCheck` 93, `JoinBaseCheck` 60 |
+| googology | `:projects:oc:oc-googology:selfcheck` | 351 | [README](projects/oc/oc-googology/README.md) self-check row; `GoogologyCheck` ends with `googology self check: all 351 checks passed.` |
+| engine | `:projects:oc:oc-rts-engine:scenario` | 515 | [README](projects/oc/oc-rts-engine/README.md); [help/11](projects/oc/oc-rts-engine/help/11-limits-and-faq.md) and [help/13](projects/oc/oc-rts-engine/help/13-dimensions.md) quote the same total |
+| game server | `:projects:oc:oc-game-server:selfcheck` | 1014 | [README](projects/oc/oc-game-server/README.md); sum of eleven check classes: `AuthCheck` 65, `NetworkCheck` 57, `PluginCheck` 76, `RequestCheck` 43, `WebSocketCheck` 88, `HttpCheck` 47, `PluginAssetsCheck` 80, `WorldHostCheck` 306, `WorldTickHookCheck` 23, `PlayerCommandCheck` 93, `JoinBaseCheck` 60 |
 | debug | `:projects:oc:oc-game-server-debug:selfcheck` | 85 | [README](projects/oc/oc-game-server-debug/README.md); four sections: envelope 15, key/report 37, request registry 14, real socket 19 |
 | hello | `:projects:oc:oc-game-server-hello:selfcheck` | 126 | [README](projects/oc/oc-game-server-hello/README.md); five sections, including the texture assertions |
 | classic | `:projects:oc:oc-game-server-classic:selfcheck` | 368 | [README](projects/oc/oc-game-server-classic/README.md); fourteen sections from the catalogue (84) to the plugin loader (12) |
@@ -203,7 +203,7 @@ assertions (startup time and chunk budget, `(0,0)` anchor, negative and far orig
 a full HTTP far-centre window, unchanged scene/base buildability), the classic determinism section asserts
 all AI entities stay within 64 tiles of its base over 600 ticks, and the debug check asserts the unbounded
 report. Totals at that stage: game server 813 (was 789), debug 85 (was 82), classic 293 (was 291); classic is
-368 after the warehouse and build-reach stages, and the engine is 355.
+368 after the warehouse and build-reach stages, and the engine is 515.
 
 **Known limit.** `web-client/` was deliberately left untouched in this stage; it still validated against
 `DEFAULT_MAP_SIZE_TILES = 256` and rejected negative entity coordinates, so rendering the new negative-origin

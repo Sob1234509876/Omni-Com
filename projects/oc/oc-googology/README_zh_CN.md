@@ -13,9 +13,9 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（267 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（351 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
-| BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式与它们的字典序 |
+| BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 
 ## 它提供什么
 
@@ -118,12 +118,14 @@ ComparisonResult result = a.compareMagnitude(b);   // LESS、EQUAL、GREATER 或
 
 ## BMS（Bashicu 矩阵）
 
-`BmsMatrix` 是不可变的 Bashicu 矩阵（规范短形式），`BmsOrdinal` 把它读成序数，并按记号的字典序比较：
-从左到右比列，列内从上到下比行，一列是另一列的前缀时更长者更大，公共列全相等时列数多的矩阵更大。
+`BmsMatrix` 是不可变的 Bashicu 矩阵（规范短形式）。`BmsOrdinal` 把它读成序数，按记号的字典序比较，
+并按参考文件的规则展开成基本列：从左到右比列，列内从上到下比行，一列是另一列的前缀时更长者更大，
+公共列全相等时列数多的矩阵更大。
 
 ```java
 import io.github.sob1234509876.oc.googology.bms.BmsMatrix;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
+import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
 
 BmsOrdinal a = BmsOrdinal.of(new int[][]{{0}, {1, 1}});        // BMS(0)(1,1)，ε₀
 BmsOrdinal b = BmsOrdinal.of(new int[][]{{0}, {1}, {2}});      // BMS(0)(1)(2)，ω^ω
@@ -132,6 +134,13 @@ BmsOrdinal c = BmsOrdinal.of(new int[][]{{0}, {1, 0}});        // BMS(0)(1,0) = 
 a.compareTo(b) > 0;                    // true
 b.compareTo(c) > 0;                    // true，尽管原始列 (1,0) > (1)
 b.compareMagnitude(a);                 // ComparisonResult.LESS（永远是证明）
+
+a.fundamentalSequence(0);              // Optional.of(())，0
+a.fundamentalSequence(1);              // Optional.of((0))，1
+a.fundamentalSequence(2);              // Optional.of((0)(1))，ω
+a.fundamentalSequence(3);              // Optional.of((0)(1)(2))，ω^ω
+a.isLimit();                           // true
+a.successor();                         // (0)(1,1)(0)，ε₀ + 1
 
 BmsMatrix.of(new int[][]{{0}, {1}, {2}}).equals(
         BmsMatrix.canonical(new int[][]{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}));   // true
@@ -142,11 +151,34 @@ BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).toString();                    // 
 列末的 0 是写法约定，不是可以删掉的列：`(0)(0)` 是 `2` 而不是 `1`，所以只删零**行**。`of` 要求输入已经规范，
 `canonical`、`parse` 和 `BmsOrdinal.of(int[][])` 负责规范化。对标准式，这个字典序被断言与它们表示的序数顺序一致
 ——参考文件的 `(0)(1) = ω`、`(0)(1)(2) = ω^ω`、`(0,0)(1,1) = ε₀` 节点会与康托尔标准式交叉检查——
-对非标准矩阵则不然，所以构造会规范化列末的 0，并拒绝首列不全零的矩阵。更深的标准式条件（参考文件的列形状与行首
-跳变规则）在展开规则落地前仍由调用方负责。
+对非标准矩阵则不然，所以构造会规范化列末的 0，并拒绝首列不全零的矩阵。
 
-这一层**还不是** `Ordinal`：没有后继、加法或基本列，展开是后续 TODO。它是 BMS 的"顺序"那一半。
-规则、三个例子与注意事项见中文的 [`help/bms.md`](help/bms.md)。
+**展开。** `BmsOrdinal.fundamentalSequence(int n)` 实现参考文件的规则：
+
+- 空矩阵是 `0`，没有基本列；
+- 末列全零时没有坏根：它是去掉末列后那个矩阵的后继（`isSuccessor`、`predecessor`，反向的
+  `successor` 在末尾加 `(0)`）；
+- 否则，末列最下方的非零项（LNZ）给出父项链和坏根，坏根左边是 `G`，坏根到倒数第二列是 `B`，
+  阶差向量 `Δ` 按参考文件的规则计算；`B_m` 只在"元素在本行的祖先链经过坏根"的位置加 `m·Δ`，
+  这就是"祖先不经过坏根就不加 `Δ`"的例外。于是
+  `S[n] = G ~ B_0 ~ B_1 ~ … ~ B_{n-1}`（`B_0 = B`），所以 `S[0] = G`、`S[1] = G ~ B`，依此类推。
+
+自校验对每个测试的标准式断言 `S[n] < S` 且 `S[0] < S[1] < S[2] < …`（用同一套比较）：这正是基本列可用的性质。
+论证是 `S[0]`/`S[1]` 都是严格前缀，而第一份坏部在 LNZ 那一行小于末列；它是论证而不是形式证明，
+"字典序在所有标准式上都等于序数顺序"也没有在这里证明。规则、三个实例、祖先例外以及"测过/论证过/没证明"的清单
+见中文的 [`help/bms.md`](help/bms.md)。
+
+**非递归 BMS。** `NonRecursiveBms` 是第二篇参考文件的变体：首列是若干的 1，末列 `(1)` 是后继
+（`(1,1,1)(2,2)(1) = (1,1,1)(2,2) + 1`），其余情况按 BMS 坏根规则展开
+（`(1,1,1)(2,2)(3,3,1,1)` 展开成 `(1,1,1)(2,2)(3,3,1)` 后面接 `(4,4,2)`、`(5,5,3)`……）。
+LNZ 找不到父项时，按文章的非递归展开：去掉 LNZ、剩下的行各加 1、末尾拼无限长的 1
+（`(1,1,1)(2,2,1)` 变成 `(1,1,1)(2,2)(3,3,1,1,1,…)`）。新列是无限长的，不可能是有限的
+`NonRecursiveBms` 值，所以用 `NonRecursiveExpansion` 描述暴露。比较复用同一套字典序（`BmsOrder`）。
+没有 `fromBms`/`toBms`：两篇文章都没有给出翻译，而"每个条目加 1"这个语法映射并没有被断言保持序数。
+
+这一层**还不是** `Ordinal`：它有后继、前驱和基本列，但没有加法、有限系数乘法或 `ω^`，所以没有接上模块的
+`Ordinal` 接口。规则、例子与注意事项见中文的 [`help/bms.md`](help/bms.md)。
+
 
 ## 它有意不做的事
 
@@ -154,7 +186,7 @@ BmsMatrix.canonical(new int[][]{{0}, {1, 0}}).toString();                    // 
 - **除法、根或对数作为值。** 只有 `log10Approx()` 和 `toDoubleApprox()`，用于显示以及生命条之类的比例；`Natural.fractionOf(whole)` 以 float 返回该比例。
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
-- **BMS 展开，或把 BMS 当作完整的序数记号。** BMS 层只提供标准式与它们的字典序：它不把矩阵展开成基本列，`BmsOrdinal` 也不是 `Ordinal`。那是后续 TODO。
+- **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
 
@@ -184,16 +216,20 @@ src/main/java/io/github/sob1234509876/oc/googology/
     TransfiniteHyperoperation.java  序数层级的 n {α} m，包括 n {λ} m = n {λ[m]} m
     package-info.java            包文档
     bms/BmsMatrix.java           不可变矩阵、规范短形式与解析器
-    bms/BmsOrdinal.java          标准式读成的序数，按字典序比较
+    bms/BmsOrdinal.java          标准式读成的序数：比较、后继、展开
+    bms/BmsAnalysis.java         父项表、LNZ、坏根、Δ 与祖先矩阵（包内私有）
+    bms/BmsOrder.java            共享的字典序比较（包内私有）
+    bms/NonRecursiveBms.java     非递归变体：首列全 1、末列 (1) 后继、展开
+    bms/NonRecursiveExpansion.java  非递归展开的无限列描述
     bms/package-info.java        BMS 包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    267 项检查的自检程序
-src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 一节
+src/selfcheck/java/.../check/GoogologyCheck.java    351 项检查的自检程序
+src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 ```
 
 ## 相关
 
 - [`help/ordinals.md`](help/ordinals.md) —— 序数、基本列和超限超运算，中文。
-- [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式与它们的字典序，中文。
+- [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。

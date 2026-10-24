@@ -38,7 +38,8 @@ import java.util.Objects;
  * <p><b>What this type does not do.</b> It does not expand a matrix into a fundamental sequence, and it
  * does not decide the deep BMS standard-form conditions of the reference (first column all zeros,
  * non-increasing columns, row increments of at most one). It only normalises the writing. See
- * {@link BmsOrdinal} for the ordering and its scope.
+ * {@link BmsOrdinal} for the ordering, the expansion and their scope, and {@link NonRecursiveBms} for the
+ * non-recursive variant.
  *
  * @see BmsOrdinal
  */
@@ -157,6 +158,44 @@ public final class BmsMatrix {
     }
 
     /**
+     * This matrix with one more column at the right, normalised like {@link #canonical(int[][])}. The new
+     * column is the successor step in the short form - BMS appends {@code (0)} and non-recursive BMS
+     * appends {@code (1)} - so the method is the shared primitive behind
+     * {@link BmsOrdinal#successor()} and {@link NonRecursiveBms#successor()}.
+     *
+     * @throws IllegalArgumentException if the column is empty or contains a negative entry
+     * @throws NullPointerException if {@code column} is {@code null}
+     */
+    public BmsMatrix appendColumn(int... column) {
+        Objects.requireNonNull(column, "column");
+        if (column.length == 0) {
+            throw new IllegalArgumentException("every column needs at least one row");
+        }
+        int[][] raw = new int[columns.size() + 1][];
+        for (int index = 0; index < columns.size(); index++) {
+            raw[index] = toArray(columns.get(index));
+        }
+        raw[columns.size()] = column.clone();
+        return canonical(raw);
+    }
+
+    /**
+     * This matrix without its last column, normalised like {@link #canonical(int[][])}. The empty matrix is
+     * returned unchanged, so this is the predecessor step of the successor {@code (0)} of BMS (and, for
+     * non-recursive BMS, of the successor {@code (1)}).
+     */
+    public BmsMatrix removeLastColumn() {
+        if (columns.isEmpty()) {
+            return this;
+        }
+        int[][] raw = new int[columns.size() - 1][];
+        for (int index = 0; index < raw.length; index++) {
+            raw[index] = toArray(columns.get(index));
+        }
+        return canonical(raw);
+    }
+
+    /**
      * Whether the input this matrix was built from was already in the canonical short form. It is a fact
      * about the construction, not about equality: concatenating a zero row and dropping it again leaves an
      * "unstandard" matrix that is equal to the standard one.
@@ -230,8 +269,15 @@ public final class BmsMatrix {
         return columns.hashCode();
     }
 
-    private static List<List<Integer>> copy(int[][] columns) {
-        List<List<Integer>> raw = new ArrayList<>(columns.length);
+    private static int[] toArray(List<Integer> column) {
+        int[] values = new int[column.size()];
+        for (int index = 0; index < values.length; index++) {
+            values[index] = column.get(index);
+        }
+        return values;
+    }
+
+    private static List<List<Integer>> copy(int[][] columns) {        List<List<Integer>> raw = new ArrayList<>(columns.length);
         for (int index = 0; index < columns.length; index++) {
             int[] column = columns[index];
             if (column == null) {
