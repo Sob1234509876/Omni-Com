@@ -33,6 +33,7 @@
     "../src/render/placement.ts",
     "../src/render/minimap.ts",
     "../src/render/selection.ts",
+    "../src/render/commandbar.ts",
     "../src/render/tooltip.ts",
     "../src/render/events.ts",
     "../src/render/resources.ts"

@@ -9,7 +9,8 @@
     <style>
       /* Page chrome is monochrome by design: every colour literal here is a grey
          (equal red, green and blue channels). Game content is the exception; see
-         the #world-canvas rule below. */
+         the #world-canvas rule below and the chip health bars, which reuse the
+         ownership colours of the ground rings and minimap dots. */
       :root {
         color-scheme: dark;
         accent-color: #e6e6e6;
@@ -24,6 +25,10 @@
         --bad: #ffffff;
         --warn: #c8c8c8;
         --focus: #ffffff;
+        /* The three bottom zones keep one fixed height so the toast stack can sit
+           above them without measuring anything in JavaScript. Media queries lower
+           on this page adjust the same variable. */
+        --bottom-bar-height: 184px;
       }
 
       * {
@@ -48,9 +53,10 @@
         font: 15px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
       }
 
+      /* The game view is the whole page now: there is no permanent right-hand
+         protocol column. The canvas fills the stage and every panel floats over
+         it as translucent chrome. */
       main.app {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
         width: 100%;
         height: 100vh;
         height: 100dvh;
@@ -59,8 +65,8 @@
 
       .stage {
         position: relative;
-        min-width: 0;
-        min-height: 0;
+        width: 100%;
+        height: 100%;
         overflow: hidden;
         background: #000000;
       }
@@ -85,14 +91,220 @@
         outline-offset: -2px;
       }
 
-      /* The minimap is a fixed square of greyscale chrome in the bottom-left corner of the view. It
-         owns only its own canvas area, so it never swallows pointer input meant for the world view,
-         and it is a small panel rather than a scrim, so the game view keeps its full brightness. */
-      .minimap {
+      /* ---------------------------------------------------------------------
+         Top-right chrome: connection status, the 工兵 shortcut, the log and
+         view toggles and the 连接 toggle. The protocol form itself lives in the
+         overlay below this column; nothing here dims the canvas.
+         --------------------------------------------------------------------- */
+      .top-right {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        z-index: 4;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+        width: min(300px, calc(100% - 28px));
+        pointer-events: none;
+      }
+
+      .top-right > * {
+        pointer-events: auto;
+      }
+
+      .top-right-chrome {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+        width: 100%;
+      }
+
+      .top-right-chrome button {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      /* The status line keeps its old lightness-coded states, but is now a small
+         always-visible chip instead of a row in a side panel. */
+      #status {
+        flex: 1 1 100%;
+        max-width: 100%;
+        overflow: hidden;
+        padding: 4px 8px;
+        border: 1px solid #5a5a5a;
+        border-left: 3px solid #2a2a2a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        color: var(--muted);
+        font: 600 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #status[data-state="ok"] {
+        border-left-color: #c8c8c8;
+        color: #e6e6e6;
+        font-weight: 600;
+      }
+
+      #status[data-state="busy"] {
+        border-left-color: #6b6b6b;
+        color: #c8c8c8;
+        font-weight: 500;
+      }
+
+      #status[data-state="error"] {
+        border-left-color: #ffffff;
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      /* The connection overlay: a translucent panel under the top-right column.
+         Its container is transparent and takes no pointer input, so the canvas is
+         never dimmed and clicks outside the panel still reach the world. */
+      .connection-overlay {
+        position: fixed;
+        top: 132px;
+        right: 14px;
+        bottom: 14px;
+        z-index: 35;
+        width: min(460px, calc(100vw - 28px));
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-end;
+        pointer-events: none;
+        background: transparent;
+      }
+
+      .connection-overlay[hidden] {
+        display: none;
+      }
+
+      .connection-panel {
+        pointer-events: auto;
+        width: 100%;
+        max-height: 100%;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 14px;
+        border: 1px solid #5a5a5a;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      .connection-head {
+        margin-bottom: 10px;
+      }
+
+      .connection-head h1 {
+        margin: 0 0 3px;
+        font-size: 18px;
+        letter-spacing: 0.01em;
+      }
+
+      .connection-head h1 span {
+        color: #c8c8c8;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 0.72em;
+      }
+
+      .lede {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      /* The warehouse panel is a read-only total in the top-right column, under the
+         chrome. Same greyscale, translucent chrome as the HUD chips; the panel itself
+         takes no pointer input. */
+      .warehouse-panel {
+        width: max-content;
+        min-width: 148px;
+        max-width: min(220px, 100%);
+        padding: 7px 9px;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: none;
+        backdrop-filter: none;
+      }
+
+      .warehouse-panel h2 {
+        margin: 0 0 5px;
+        color: #c8c8c8;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      .warehouse-summary {
+        margin: 0;
+        color: #c8c8c8;
+      }
+
+      .warehouse-items {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .warehouse-items[hidden] {
+        display: none;
+      }
+
+      .warehouse-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .warehouse-amount {
+        color: #ffffff;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------------------------------------------------------------------
+         Bottom bar: minimap (left), command bar (centre), context panel (right).
+         The grid columns are the layout rule; JavaScript never positions these
+         zones. `pointer-events: none` on the bar means a click in the gap between
+         panels still reaches the world canvas.
+         --------------------------------------------------------------------- */
+      .bottom-bar {
         position: absolute;
         left: 14px;
+        right: 14px;
         bottom: 14px;
-        z-index: 2;
+        z-index: 3;
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr) minmax(240px, 340px);
+        grid-template-areas: "minimap command context";
+        gap: 14px;
+        height: var(--bottom-bar-height);
+        pointer-events: none;
+      }
+
+      .bottom-bar > * {
+        pointer-events: auto;
+      }
+
+      /* The minimap is unchanged in behaviour: the same own canvas, the same click
+         and drag mapping. It is now the first grid cell of the bottom bar instead of
+         an absolutely positioned square; visually it is still the bottom-left corner. */
+      .minimap {
+        grid-area: minimap;
+        align-self: end;
         width: 180px;
         height: 180px;
         overflow: hidden;
@@ -113,6 +325,211 @@
         touch-action: none;
       }
 
+      .command-bar {
+        grid-area: command;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+        padding: 7px 10px;
+        overflow: hidden;
+        border: 1px solid #5a5a5a;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      .command-bar-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .command-bar-title {
+        flex: 0 0 auto;
+        color: #c8c8c8;
+        font: 600 10px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        letter-spacing: 0.12em;
+      }
+
+      .gameplay-note {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      .command-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+
+      .command-actions[hidden] {
+        display: none;
+      }
+
+      .command-actions button {
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      #order-stop,
+      #order-attack-move {
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      }
+
+      /* The selected-units strip: one compact chip per unit, horizontally scrollable
+         when more chips fit than the centre column has room for. */
+      .selection-chips {
+        display: flex;
+        align-items: stretch;
+        gap: 4px;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: 2px;
+        scrollbar-width: thin;
+      }
+
+      .selection-chips[hidden] {
+        display: none;
+      }
+
+      .selection-chip {
+        display: inline-flex;
+        flex: 0 0 auto;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: space-between;
+        gap: 3px;
+        min-width: 42px;
+        padding: 3px 5px;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #e6e6e6;
+        font: 11px/1.2 ui-monospace, "Cascadia Code", Consolas, monospace;
+        cursor: pointer;
+      }
+
+      .selection-chip:hover:not(:disabled) {
+        border-color: #c8c8c8;
+        background: rgba(0, 0, 0, 0.72);
+      }
+
+      .selection-chip:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 1px;
+      }
+
+      .selection-chip-label {
+        max-width: 5ch;
+        overflow: hidden;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .selection-chip-bar {
+        display: block;
+        width: 100%;
+        height: 5px;
+        overflow: hidden;
+        border: 1px solid #8a8a8a;
+        border-radius: 1px;
+        background: #4a4a4a;
+      }
+
+      /* The fill keeps the ownership colour (mine / enemy / neutral), the same rule
+         as the ground rings and minimap dots. Everything around it stays grey. */
+      .selection-chip-fill {
+        display: block;
+        height: 100%;
+        width: 100%;
+        background: #9ca3af;
+      }
+
+      .selection-chip-more {
+        align-items: center;
+        justify-content: center;
+        min-width: 36px;
+        color: #c8c8c8;
+        cursor: default;
+      }
+
+      /* The context zone on the right is visually empty unless it has something to
+         show: a TRAIN section, a BUILD section or the building queue. */
+      .command-context {
+        grid-area: context;
+        min-width: 0;
+        max-height: 100%;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 0;
+        /* An empty context zone must not swallow canvas clicks; with content it becomes a panel. */
+        pointer-events: none;
+      }
+
+      .command-context.has-context {
+        padding: 7px 9px;
+        border-color: #5a5a5a;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        backdrop-filter: none;
+        pointer-events: auto;
+      }
+
+      .context-section {
+        margin: 0 0 6px;
+      }
+
+      .context-section[hidden] {
+        display: none;
+      }
+
+      .context-section h3 {
+        margin: 0 0 4px;
+        color: #c8c8c8;
+        font: 600 10px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        letter-spacing: 0.12em;
+      }
+
+      .context-section h3 span {
+        color: #e6e6e6;
+        font-weight: 400;
+        letter-spacing: 0;
+      }
+
+      .context-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .context-buttons button {
+        padding: 4px 7px;
+        border-radius: 4px;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 11px;
+      }
+
+      .context-buttons button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      /* ---------------------------------------------------------------------
+         HUD chips (top-left) and the selected-building construction bar.
+         --------------------------------------------------------------------- */
       .hud {
         position: absolute;
         top: 14px;
@@ -120,7 +537,7 @@
         display: flex;
         flex-wrap: wrap;
         gap: 6px 8px;
-        max-width: calc(100% - 28px);
+        max-width: calc(100% - 340px);
         padding: 0;
         border: 0;
         border-radius: 0;
@@ -147,20 +564,16 @@
         white-space: nowrap;
       }
 
-      #hud-atlas {
-        color: #e6e6e6;
-      }
-
+      #hud-atlas,
       #hud-world,
-      #hud-window {
-        color: #e6e6e6;
-      }
-
-      #hud-player {
-        color: #e6e6e6;
-      }
-
-      #hud-resources {
+      #hud-window,
+      #hud-player,
+      #hud-resources,
+      #hud-tile,
+      #hud-zoom,
+      #hud-fps,
+      #hud-selected,
+      #hud-building {
         color: #e6e6e6;
       }
 
@@ -168,20 +581,6 @@
       #hud-resources.unavailable {
         color: #e6e6e6;
         font-style: italic;
-      }
-
-      #hud-tile,
-      #hud-zoom,
-      #hud-fps {
-        color: #e6e6e6;
-      }
-
-      #hud-selected {
-        color: #e6e6e6;
-      }
-
-      #hud-building {
-        color: #e6e6e6;
       }
 
       /* Inline construction bar of the selected building: light grey track, white fill, 1px border. */
@@ -218,7 +617,8 @@
       }
 
       /* One small row per unfinished job of the selected building: the manifest name, a thin
-         `ticks / total` bar and the one-based `i/n`. The list is a chip like the rest of the HUD. */
+         `ticks / total` bar and the one-based `i/n`. In the new layout the queue lives in the
+         bottom-right context zone, next to the TRAIN entries. */
       .hud-queue {
         display: flex;
         flex-direction: column;
@@ -320,152 +720,19 @@
         text-overflow: ellipsis;
       }
 
-      /* The warehouse panel is a read-only total in the top-right corner of the view. Same greyscale,
-         translucent chrome as the HUD chips; the panel itself takes no pointer input. */
-      .warehouse-panel {
-        position: absolute;
-        top: 14px;
-        right: 14px;
-        z-index: 2;
-        width: max-content;
-        min-width: 148px;
-        max-width: min(220px, calc(100% - 28px));
-        padding: 7px 9px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
-        pointer-events: none;
-        backdrop-filter: none;
-      }
-
-      .warehouse-panel h2 {
-        margin: 0 0 5px;
-        color: #c8c8c8;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-      }
-
-      .warehouse-summary {
-        margin: 0;
-        color: #c8c8c8;
-      }
-
-      .warehouse-items {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      .warehouse-items[hidden] {
-        display: none;
-      }
-
-      .warehouse-item {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .warehouse-amount {
-        color: #ffffff;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .controls-hint {
-        position: absolute;
-        bottom: 12px;
-        left: 50%;
-        transform: translateX(-50%);
-        max-width: calc(100% - 28px);
-        margin: 0;
-        padding: 6px 12px;
-        border: 1px solid #5a5a5a;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.72);
-        color: #e6e6e6;
-        font-size: 12px;
-        line-height: 1.4;
-        text-align: center;
-        white-space: normal;
-        pointer-events: none;
-      }
-
-      /* The side panels are translucent too: no blur, a grey border, and the same 0.72 black. The
-         canvas never gets a scrim or a filter, so the game view keeps its full brightness. */
-      .console {
-        min-width: 0;
-        min-height: 0;
-        overflow-y: auto;
-        padding: 20px 18px 36px;
-        border-left: 1px solid var(--line);
-        background: rgba(0, 0, 0, 0.72);
-        backdrop-filter: none;
-      }
-
-      .console-head {
-        position: sticky;
-        top: 0;
-        z-index: 3;
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 14px;
-        padding: 2px 0 8px;
-        background: rgba(0, 0, 0, 0.72);
-        backdrop-filter: none;
-      }
-
-      .console-head h1 {
-        margin: 0 0 4px;
-        font-size: 23px;
-        letter-spacing: 0.01em;
-      }
-
-      .console-head h1 span {
-        color: #c8c8c8;
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-        font-size: 0.72em;
-      }
-
-      .lede {
-        margin: 0;
-        color: var(--muted);
-        font-size: 13px;
-      }
-
-      #toggle-view,
-      #open-log {
-        flex: 0 0 auto;
-        margin-top: 2px;
-        padding: 6px 10px;
-        font-size: 12px;
-        white-space: nowrap;
-      }
-
-      .console-actions {
-        display: flex;
-        flex: 0 0 auto;
-        gap: 6px;
-        align-items: flex-start;
-      }
-
+      /* ---------------------------------------------------------------------
+         Connection form and protocol buttons, unchanged in behaviour but now inside
+         the overlay panel instead of a permanent right column.
+         --------------------------------------------------------------------- */
       .notice {
-        margin: 14px 0;
-        padding: 10px 12px;
+        margin: 10px 0;
+        padding: 9px 11px;
         border: 1px solid #4a4a4a;
         border-left: 3px solid var(--warn);
         border-radius: 8px;
         background: rgba(0, 0, 0, 0.72);
         color: var(--muted);
-        font-size: 12.5px;
+        font-size: 12px;
         line-height: 1.55;
         backdrop-filter: none;
       }
@@ -475,17 +742,17 @@
       }
 
       .panel {
-        margin: 14px 0;
-        padding: 14px;
+        margin: 10px 0;
+        padding: 12px;
         border: 1px solid #4a4a4a;
-        border-radius: 10px;
+        border-radius: 8px;
         background: rgba(0, 0, 0, 0.72);
         backdrop-filter: none;
       }
 
       .panel h2 {
-        margin: 0 0 10px;
-        font-size: 13px;
+        margin: 0 0 8px;
+        font-size: 12px;
         font-weight: 600;
         color: var(--muted);
         text-transform: uppercase;
@@ -504,33 +771,6 @@
         color: var(--text);
         font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
         font-weight: 400;
-      }
-
-      .gameplay-section {
-        margin-top: 12px;
-        padding-top: 10px;
-        border-top: 1px dashed var(--line);
-      }
-
-      .gameplay-note {
-        flex: 1 1 180px;
-        min-width: 0;
-        color: var(--muted);
-        font-size: 12px;
-        overflow-wrap: anywhere;
-      }
-
-      #train-buttons button,
-      #build-buttons button {
-        padding: 6px 9px;
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-        font-size: 12px;
-      }
-
-      button.armed {
-        border-color: #ffffff;
-        background: #3a3a3a;
-        color: #ffffff;
       }
 
       .fields {
@@ -596,9 +836,9 @@
       .row {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px;
         align-items: center;
-        margin-top: 12px;
+        margin-top: 10px;
       }
 
       .row label.inline {
@@ -648,58 +888,29 @@
         color: #000000;
       }
 
-      /* The status line uses lightness, weight and a left bar only - never hue.
-         Error is bright white with a white bar, not red. */
-      #status {
-        padding-left: 8px;
-        border-left: 3px solid #2a2a2a;
-        color: var(--muted);
-        font-size: 13px;
-        font-weight: 400;
-      }
-
-      #status[data-state="ok"] {
-        border-left-color: #c8c8c8;
-        color: #e6e6e6;
-        font-weight: 600;
-      }
-
-      #status[data-state="busy"] {
-        border-left-color: #6b6b6b;
-        color: #c8c8c8;
-        font-weight: 500;
-      }
-
-      #status[data-state="error"] {
-        border-left-color: #ffffff;
+      button.armed {
+        border-color: #ffffff;
+        background: #3a3a3a;
         color: #ffffff;
-        font-weight: 700;
       }
 
-      /* The log is a single text node written by main.ts with textContent, so the
-         direction arrows and the ERR/! lines cannot be restyled individually
-         without changing main.ts; the pane is monochrome grey as a whole. */
-      .log {
-        min-height: 200px;
-        max-height: 360px;
-        margin: 0;
-        overflow: auto;
-        padding: 12px;
-        border: 1px solid #3a3a3a;
-        border-radius: 8px;
-        background: #000000;
-        color: #c8c8c8;
-        font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace;
-        white-space: pre-wrap;
-        word-break: break-word;
+      .footnote {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 11.5px;
+        line-height: 1.5;
       }
 
-      /* The toast console replaces the permanent log panel: one exchange per popup, bottom right.
-         Error and normal toasts differ only by brightness and weight; the chrome stays greyscale. */
+      code {
+        color: #e6e6e6;
+      }
+
+      /* The toast console: one exchange per popup, bottom-right, but raised above the
+         bottom bar so the three HUD zones and the popups never overlap. */
       .toast-stack {
         position: fixed;
         right: 14px;
-        bottom: 14px;
+        bottom: calc(var(--bottom-bar-height) + 26px);
         z-index: 40;
         display: flex;
         flex-direction: column;
@@ -773,8 +984,6 @@
 
       /* The full history the toasts summarise. `#log` keeps its id and its text semantics, so the
          existing TypeScript binding keeps working; it is simply no longer a permanent panel. */
-      /* The log overlay is translucent chrome, not a scrim: the container stays transparent so the
-         game canvas is never dimmed, and only the panel itself carries the 0.72 black. */
       .log-overlay {
         position: fixed;
         inset: 0;
@@ -837,55 +1046,130 @@
         color: #e6e6e6;
       }
 
+      /* The log is a single text node written by main.ts with textContent, so the
+         direction arrows and the ERR/! lines cannot be restyled individually
+         without changing main.ts; the pane is monochrome grey as a whole. */
+      .log {
+        min-height: 200px;
+        max-height: 360px;
+        margin: 0;
+        overflow: auto;
+        padding: 12px;
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        background: #000000;
+        color: #c8c8c8;
+        font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
       @media (max-width: 900px) {
         .log-overlay {
           padding: 10px;
         }
       }
 
-      .footnote {
-        margin: 10px 0 0;
-        color: var(--muted);
-        font-size: 12px;
-      }
-
-      code {
-        color: #e6e6e6;
-      }
-
-      body.view-hidden main.app {
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      body.view-hidden .stage {
+      /* Hide game view: the permanent chrome disappears, the top-right toggle stays
+         reachable, and main.ts opens the connection panel so the form can still be
+         used. The stage itself stays in the layout, so the toggle never disappears. */
+      body.view-hidden #world-canvas,
+      body.view-hidden .hud,
+      body.view-hidden .bottom-bar,
+      body.view-hidden .warehouse-panel,
+      body.view-hidden #entity-tooltip {
         display: none;
       }
 
-      body.view-hidden .console {
-        border-left: 0;
+      body.view-hidden .stage {
+        background: var(--bg);
       }
 
+      body.view-hidden .connection-overlay {
+        position: fixed;
+        top: 90px;
+        left: 50%;
+        right: auto;
+        bottom: auto;
+        width: min(760px, calc(100vw - 28px));
+        height: auto;
+        max-height: calc(100dvh - 110px);
+        transform: translateX(-50%);
+      }
+
+      body.view-hidden .connection-panel {
+        max-height: calc(100dvh - 110px);
+      }
+
+      /* Below 1100px the minimap shrinks and the context zone narrows; the three
+         zones still fit in one row without touching the minimap or the toasts. */
+      @media (max-width: 1100px) {
+        :root {
+          --bottom-bar-height: 200px;
+        }
+
+        .bottom-bar {
+          grid-template-columns: 140px minmax(0, 1fr) minmax(220px, 280px);
+        }
+
+        .minimap {
+          width: 140px;
+          height: 140px;
+        }
+      }
+
+      /* The top-right column can be two rows tall on smaller windows, so the HUD
+         moves below it instead of sharing the first row. */
       @media (max-width: 900px) {
-        main.app {
+        .hud {
+          top: 104px;
+        }
+      }
+
+      @media (max-width: 760px) {
+        :root {
+          --bottom-bar-height: 250px;
+        }
+
+        .bottom-bar {
           grid-template-columns: minmax(0, 1fr);
-          grid-template-rows: minmax(280px, 52dvh) minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr) auto;
+          grid-template-areas:
+            "command"
+            "context";
         }
 
-        .console {
-          border-top: 1px solid var(--line);
-          border-left: 0;
-        }
-
-        body.view-hidden main.app {
-          grid-template-rows: minmax(0, 1fr);
-        }
-
-        .controls-hint {
+        .minimap {
           display: none;
         }
+
+        .command-context {
+          max-height: 112px;
+        }
+
+        .top-right {
+          width: min(260px, calc(100% - 28px));
+        }
       }
 
-      @media (max-width: 420px) {
+      @media (max-width: 520px) {
+        .warehouse-panel {
+          display: none;
+        }
+
+        .hud {
+          top: 152px;
+          max-width: calc(100% - 28px);
+        }
+
+        .top-right {
+          width: calc(100% - 28px);
+        }
+
+        .top-right-chrome {
+          justify-content: flex-start;
+        }
+
         .fields {
           grid-template-columns: 1fr;
         }
@@ -896,14 +1180,7 @@
     <main class="app">
       <section id="game-view" class="stage" aria-label="游戏画面">
         <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面"></canvas>
-        <div id="minimap" class="minimap">
-          <canvas
-            id="minimap-canvas"
-            width="180"
-            height="180"
-            aria-label="小地图：显示已载入窗口，点击或拖动移动镜头"
-          ></canvas>
-        </div>
+
         <div class="hud" aria-live="off">
           <span id="hud-atlas">procedural</span>
           <span id="hud-world">世界：demo</span>
@@ -923,157 +1200,198 @@
               <span id="hud-building-percent">0%</span>
             </span>
           </span>
-          <div id="hud-queue" class="hud-queue" hidden></div>
         </div>
-        <aside id="warehouse-panel" class="warehouse-panel" aria-label="我的仓库库存">
-          <h2>仓库库存</h2>
-          <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
-          <ul id="warehouse-items" class="warehouse-items" hidden></ul>
-        </aside>
-        <div id="entity-tooltip" class="entity-tooltip" hidden></div>
-        <p class="controls-hint">
-          左键点选 · 双击单位选中窗口内自己的同类 · 双击建筑只选该建筑 · Shift+左键加减选单个单位
-          · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
-          · 右键移动/攻击所有选中单位 · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
-          · O 选中全部工兵 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
-          · 小地图左键/拖动移动镜头
-        </p>
-      </section>
 
-      <aside class="console">
-        <header class="console-head">
-          <div>
-            <h1>Omni Com <span>OC/1</span></h1>
-            <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
-          </div>
-          <div class="console-actions">
-            <button id="open-log" type="button">日志</button>
-            <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
-          </div>
-        </header>
-
-        <section class="notice">
-          <strong>操作说明：</strong>协议面板提供 <code>PING</code>、<code>COUNT</code>、<code>REGISTER</code>、
-          <code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与 <code>QUIT</code>；下面的
-          「游戏操作」面板会发送 <code>WHOAMI</code>、<code>ORDER</code>、<code>BUILD</code> 与
-          <code>TRAIN</code>，这些游戏命令会改变服务器上的世界（<code>WHOAMI</code> 只登记身份）。页面不会
-          修改服务器配置或插件状态；所有游戏命令都要求先在<strong>同一条连接</strong>上 <code>LOGIN</code>。
-          <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号。
-        </section>
-
-        <section class="panel">
-          <h2>连接</h2>
-          <div class="fields">
-            <label>
-              主机
-              <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
-            </label>
-            <label>
-              端口
-              <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
-            </label>
-            <label>
-              用户名
-              <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
-            </label>
-            <label>
-              密码
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                placeholder="只用于 REGISTER 与 LOGIN 命令"
-              />
-            </label>
-            <label class="wide">
-              debug.key
-              <textarea
-                id="debug-key"
-                name="debug-key"
-                rows="3"
-                spellcheck="false"
-                placeholder="64 个十六进制字符；从服务器的 data/oc-debug/debug.key 手工复制，只用于 engine-info"
-              ></textarea>
-            </label>
-          </div>
-          <div class="row">
-            <button id="connect" class="primary" type="button">连接</button>
+        <div class="top-right">
+          <div class="top-right-chrome">
             <span id="status" data-state="idle">未连接</span>
-          </div>
-          <p class="footnote">
-            开发时把主机与端口都留空，页面会连同源的 <code>/ws</code>，由 Vite 代理转发到
-            <code>ws://127.0.0.1:25567</code>。手填主机/端口则直连。
-          </p>
-        </section>
-
-        <section class="panel">
-          <h2>命令</h2>
-          <div class="row">
-            <button id="ping" type="button" disabled>PING</button>
-            <button id="count" type="button" disabled>COUNT</button>
-            <button id="register" type="button" disabled>REGISTER</button>
-            <button id="login" type="button" disabled>LOGIN</button>
-            <button id="engine-info" type="button" disabled>engine-info</button>
-            <button id="quit" type="button" disabled>QUIT</button>
-          </div>
-          <div class="row">
-            <label class="inline">
-              hello 名字
-              <input
-                id="hello-name"
-                name="hello-name"
-                value="world"
-                autocomplete="off"
-                placeholder="留空 = world"
-              />
-            </label>
-            <button id="hello" type="button" disabled>hello</button>
-          </div>
-          <p class="footnote">
-            <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
-            <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
-            <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
-            请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
-          </p>
-        </section>
-
-        <section class="panel" id="gameplay-panel">
-          <h2>游戏操作</h2>
-          <div class="row">
-            <button id="order-stop" type="button" disabled>STOP</button>
             <button
               id="select-engineers"
               type="button"
               aria-keyshortcuts="O"
               title="选中已载入窗口内自己的全部工兵；快照没有订单状态，无法只选空闲工兵"
             >工兵</button>
-            <span class="gameplay-note" id="gameplay-note">选中自己（HUD 中的玩家 id）的单位后可用</span>
+            <button id="open-log" type="button">日志</button>
+            <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
+            <button
+              id="connection-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="connection-overlay"
+              title="打开或关闭连接与协议面板（Esc 关闭）"
+            >连接</button>
           </div>
-          <div id="train-section" class="gameplay-section" hidden>
-            <h3>TRAIN <span id="train-target"></span></h3>
-            <div id="train-buttons" class="row"></div>
-          </div>
-          <div id="build-section" class="gameplay-section" hidden>
-            <h3>BUILD <span id="build-target"></span></h3>
-            <div id="build-buttons" class="row"></div>
-          </div>
-          <p class="footnote">
-            左键点选，Shift+左键加减选单个单位，空地左键拖拽框选自己的单位；双击单位选中窗口内自己的同类，
-            双击建筑只选该建筑；悬停实体显示名称、归属、生命、建筑足迹与队列摘要。右键对所有选中单位发
-            <code>ORDER MOVE</code>（目标是敌方实体时发 <code>ORDER ATTACK</code>），STOP 停止所有选中单位。
-            BUILD 按钮进入放置模式后，鼠标下的建筑足迹会先按格预览：绿色可建造、红色被地形/实体/窗口阻挡、
-            琥珀色超出工兵 16 格范围；只有绿色位置才会发 <code>BUILD</code>，非法位置保持放置模式并报告原因，
-            <kbd>Esc</kbd> 取消放置。右上角仓库面板只读地合计自己仓库里的物品；快照没有订单状态，工兵按钮与
-            <kbd>O</kbd> 选中全部自己的工兵，而不是只选空闲工兵。左下角小地图显示已载入窗口，左键点击或拖动可移动镜头。
-          </p>
-        </section>
 
-        <p class="footnote">
-          <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
-          打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
-        </p>
-      </aside>
+          <aside id="warehouse-panel" class="warehouse-panel" aria-label="我的仓库库存">
+            <h2>仓库库存</h2>
+            <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
+            <ul id="warehouse-items" class="warehouse-items" hidden></ul>
+          </aside>
+
+          <div id="connection-overlay" class="connection-overlay" hidden>
+            <section
+              id="connection-panel"
+              class="connection-panel"
+              aria-labelledby="connection-title"
+            >
+              <header class="connection-head">
+                <h1 id="connection-title">Omni Com <span>OC/1</span></h1>
+                <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
+              </header>
+
+              <section class="notice">
+                <strong>操作说明：</strong>本面板提供 <code>PING</code>、<code>COUNT</code>、<code>REGISTER</code>、
+                <code>LOGIN</code>、<code>REQ engine-info</code>、<code>REQ hello</code> 与 <code>QUIT</code>；
+                画面底部的命令栏会发送 <code>WHOAMI</code>、<code>ORDER</code>、<code>BUILD</code> 与
+                <code>TRAIN</code>，这些游戏命令会改变服务器上的世界（<code>WHOAMI</code> 只登记身份）。页面不会
+                修改服务器配置或插件状态；所有游戏命令都要求先在<strong>同一条连接</strong>上 <code>LOGIN</code>。
+                <code>REGISTER</code> 只在服务器上创建账号，不会自动登录，也不改已有账号。
+              </section>
+
+              <section class="panel">
+                <h2>连接</h2>
+                <div class="fields">
+                  <label>
+                    主机
+                    <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
+                  </label>
+                  <label>
+                    端口
+                    <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
+                  </label>
+                  <label>
+                    用户名
+                    <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
+                  </label>
+                  <label>
+                    密码
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autocomplete="current-password"
+                      placeholder="只用于 REGISTER 与 LOGIN 命令"
+                    />
+                  </label>
+                  <label class="wide">
+                    debug.key
+                    <textarea
+                      id="debug-key"
+                      name="debug-key"
+                      rows="3"
+                      spellcheck="false"
+                      placeholder="64 个十六进制字符；从服务器的 data/oc-debug/debug.key 手工复制，只用于 engine-info"
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="row">
+                  <button id="connect" class="primary" type="button">连接</button>
+                  <span class="footnote">连接状态显示在右上角的 <code>#status</code> 芯片里。</span>
+                </div>
+                <p class="footnote">
+                  开发时把主机与端口都留空，页面会连同源的 <code>/ws</code>，由 Vite 代理转发到
+                  <code>ws://127.0.0.1:25567</code>。手填主机/端口则直连。
+                </p>
+              </section>
+
+              <section class="panel">
+                <h2>命令</h2>
+                <div class="row">
+                  <button id="ping" type="button" disabled>PING</button>
+                  <button id="count" type="button" disabled>COUNT</button>
+                  <button id="register" type="button" disabled>REGISTER</button>
+                  <button id="login" type="button" disabled>LOGIN</button>
+                  <button id="engine-info" type="button" disabled>engine-info</button>
+                  <button id="quit" type="button" disabled>QUIT</button>
+                </div>
+                <div class="row">
+                  <label class="inline">
+                    hello 名字
+                    <input
+                      id="hello-name"
+                      name="hello-name"
+                      value="world"
+                      autocomplete="off"
+                      placeholder="留空 = world"
+                    />
+                  </label>
+                  <button id="hello" type="button" disabled>hello</button>
+                </div>
+                <p class="footnote">
+                  <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
+                  <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥就是上面的
+                  <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
+                  请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
+                </p>
+              </section>
+
+              <section class="panel">
+                <h2>游戏操作提示</h2>
+                <p class="footnote">
+                  左键点选 · 双击单位选中窗口内自己的同类 · 双击建筑只选该建筑 · Shift+左键加减选单个单位
+                  · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
+                  · 右键移动/攻击所有选中单位 · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
+                  · O 选中全部工兵 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
+                  · 小地图左键/拖动移动镜头。
+                </p>
+                <p class="footnote">
+                  底部命令栏：选中单位时出现 <strong>停止</strong>、<strong>攻击移动</strong> 与选中条；
+                  建筑选中时右下角是 TRAIN 与队列，工兵选中时右下角是 BUILD。混合选择（单位 + 建筑）只提供
+                  单位动作，避免把 TRAIN/BUILD 混进群体命令。
+                </p>
+              </section>
+
+              <p class="footnote">
+                <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
+                打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
+              </p>
+            </section>
+          </div>
+        </div>
+
+        <div id="entity-tooltip" class="entity-tooltip" hidden></div>
+
+        <div id="gameplay-panel" class="bottom-bar">
+          <div id="minimap" class="minimap">
+            <canvas
+              id="minimap-canvas"
+              width="180"
+              height="180"
+              aria-label="小地图：显示已载入窗口，点击或拖动移动镜头"
+            ></canvas>
+          </div>
+
+          <section id="command-bar" class="command-bar" aria-label="命令栏">
+            <div class="command-bar-head">
+              <span class="command-bar-title">命令</span>
+              <span id="gameplay-note" class="gameplay-note">未选中任何单位 · 左键点选、拖动框选，或按 O 选中工兵</span>
+            </div>
+            <div id="command-actions" class="command-actions" hidden>
+              <button id="order-stop" type="button" disabled title="ORDER STOP：停止所有选中的自己的单位">停止</button>
+              <button
+                id="order-attack-move"
+                type="button"
+                disabled
+                aria-pressed="false"
+                title="ORDER ATTACKMOVE：武装后左键点击目标地面，所有选中的自己的单位攻击移动过去；Esc 取消"
+              >攻击移动</button>
+            </div>
+            <div id="selection-chips" class="selection-chips" aria-label="已选单位" hidden></div>
+          </section>
+
+          <aside id="command-context" class="command-context" aria-label="上下文操作">
+            <section id="train-section" class="context-section" hidden>
+              <h3>TRAIN <span id="train-target"></span></h3>
+              <div id="train-buttons" class="context-buttons"></div>
+            </section>
+            <section id="build-section" class="context-section" hidden>
+              <h3>BUILD <span id="build-target"></span></h3>
+              <div id="build-buttons" class="context-buttons"></div>
+            </section>
+            <div id="hud-queue" class="hud-queue" hidden></div>
+          </aside>
+        </div>
+      </section>
     </main>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>

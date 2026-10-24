@@ -3,8 +3,9 @@
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
- * `fallback.ts`, `interpolate.ts`, `selection.ts`, `tooltip.ts`, `events.ts` and `resources.ts` the
- * browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only used for type checking.
+ * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `tooltip.ts`, `events.ts` and
+ * `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
@@ -156,6 +157,16 @@ import {
   engineerSelection,
   isEngineerKind,
 } from "../src/render/selection.ts";
+import {
+  ATTACK_MOVE_ACTION_LABEL,
+  EMPTY_SELECTION_HINT,
+  SELECTION_CHIP_LIMIT,
+  STOP_ACTION_LABEL,
+  chipLabel,
+  commandBarModel,
+  healthBarRatio,
+  selectionChipList,
+} from "../src/render/commandbar.ts";
 import {
   TOOLTIP_GAP_PX,
   TOOLTIP_MARGIN_PX,
@@ -2609,6 +2620,209 @@ check(
   "没有玩家 id 时仓库合计为空（不把无主建筑当成自己的）",
   warehouseResourceTotals(warehouseWorld, null).warehouseCount === 0 &&
     warehouseResourceTotals(warehouseWorld, null).items.length === 0,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Command bar: selection actions, the selected-units strip, abbreviations and health-bar ratios
+// ---------------------------------------------------------------------------------------------
+
+/** One unit fixture for the command-bar checks; `playerId` defaults to the local player. */
+function commandUnit(
+  id: number,
+  kind: string,
+  playerId = 1,
+  healthRatio?: number,
+): EntityView {
+  return {
+    id,
+    kind,
+    x: id,
+    y: id,
+    playerId,
+    ...(healthRatio === undefined ? {} : { healthRatio }),
+  };
+}
+
+/** One finished building fixture; `playerId` defaults to the local player. */
+function commandBuilding(
+  id: number,
+  kind = "building.armory.t1",
+  playerId = 1,
+): EntityView {
+  return { id, kind, x: id, y: id, playerId, progress: 1 };
+}
+
+const emptyCommand = commandBarModel([], 1);
+check(
+  "未选中时命令栏只有一条提示，没有任何动作或芯片",
+  emptyCommand.kind === "none" &&
+    emptyCommand.mixed === false &&
+    emptyCommand.actions.length === 0 &&
+    emptyCommand.hint === EMPTY_SELECTION_HINT,
+  `${emptyCommand.kind} / ${emptyCommand.actions.length}`,
+);
+
+const unitCommand = commandBarModel(
+  [commandUnit(1, "unit.melee.t1"), commandUnit(2, "unit.melee.t2")],
+  1,
+);
+check(
+  "选中单位时动作是 停止 + 攻击移动，且都在中间命令栏",
+  unitCommand.kind === "units" &&
+    unitCommand.actions.map((action) => action.kind).join(",") === "stop,attack-move" &&
+    unitCommand.actions.every((action) => action.zone === "bar") &&
+    unitCommand.actions.map((action) => action.label).join(",") ===
+      `${STOP_ACTION_LABEL},${ATTACK_MOVE_ACTION_LABEL}`,
+  `${unitCommand.kind} / ${unitCommand.actions.map((action) => action.kind).join(",")}`,
+);
+
+const engineerCommand = commandBarModel([commandUnit(3, "unit.engineer")], 1);
+check(
+  "选中工兵时在单位动作之外给出全部 BUILD 条目（右下角）",
+  engineerCommand.kind === "engineer" &&
+    engineerCommand.actions.slice(0, 2).map((action) => action.kind).join(",") ===
+      "stop,attack-move" &&
+    engineerCommand.actions.filter((action) => action.kind === "build").length ===
+      BUILDING_PATHS.length &&
+    engineerCommand.actions
+      .filter((action) => action.kind === "build")
+      .every((action) => action.zone === "context") &&
+    engineerCommand.actions
+      .filter((action) => action.kind === "build")
+      .map((action) => action.path)
+      .join(",") === BUILDING_PATHS.join(","),
+  `${engineerCommand.kind} / ${engineerCommand.actions.length}`,
+);
+
+const buildingCommand = commandBarModel([commandBuilding(4)], 1, {
+  labelForPath: (path) => (path === "unit.melee.t1" ? "普通" : path),
+});
+check(
+  "选中自己的建筑时只给出 TRAIN 条目（右下角），没有单位动作",
+  buildingCommand.kind === "building" &&
+    buildingCommand.actions.length === UNIT_PATHS.length &&
+    buildingCommand.actions.every(
+      (action) => action.kind === "train" && action.zone === "context",
+    ) &&
+    buildingCommand.actions[0]?.label === "普通",
+  `${buildingCommand.kind} / ${buildingCommand.actions.length}`,
+);
+
+const mixedCommand = commandBarModel(
+  [commandUnit(5, "unit.melee.t1"), commandBuilding(6)],
+  1,
+);
+check(
+  "单位 + 建筑混合选择只提供单位动作，并在提示里说明",
+  mixedCommand.kind === "mixed" &&
+    mixedCommand.mixed === true &&
+    mixedCommand.actions.map((action) => action.kind).join(",") === "stop,attack-move" &&
+    mixedCommand.actions.every((action) => action.zone === "bar") &&
+    !mixedCommand.actions.some(
+      (action) => action.kind === "train" || action.kind === "build",
+    ) &&
+    mixedCommand.hint.includes("混合选择只提供单位动作"),
+  mixedCommand.hint,
+);
+
+const engineerGroupCommand = commandBarModel(
+  [commandUnit(7, "unit.engineer"), commandUnit(8, "unit.melee.t1")],
+  1,
+);
+check(
+  "工兵与其他单位一起选中时按普通单位处理，不提供 BUILD",
+  engineerGroupCommand.kind === "units" &&
+    !engineerGroupCommand.actions.some((action) => action.kind === "build"),
+  engineerGroupCommand.kind,
+);
+
+const enemyBuildingCommand = commandBarModel(
+  [commandBuilding(9, "building.armory.t1", 2)],
+  1,
+);
+check(
+  "敌方建筑不提供 TRAIN，命令栏没有动作",
+  enemyBuildingCommand.kind === "other" &&
+    enemyBuildingCommand.actions.length === 0,
+  `${enemyBuildingCommand.kind} / ${enemyBuildingCommand.actions.length}`,
+);
+
+const chipName = (kind: string): string =>
+  kind === "unit.melee.t1" ? "普通" : kind === "unit.melee.t2" ? "强化" : kind;
+const chipSelection = [
+  commandUnit(11, "unit.melee.t1", 1, 1),
+  commandUnit(12, "unit.melee.t2", 1, 0.5),
+  commandBuilding(13),
+  commandUnit(14, "unit.melee.t1", 2, 0),
+];
+const chipList = selectionChipList(chipSelection, 1, chipName);
+check(
+  "选中条按单位生成芯片、排除建筑，并带上归属颜色与生命比例",
+  chipList.chips.length === 3 &&
+    chipList.total === 3 &&
+    chipList.overflow === 0 &&
+    chipList.overflowLabel === "" &&
+    chipList.chips.map((chip) => chip.label).join(",") === "普通,强化,普通" &&
+    chipList.chips[0]?.color === OWNERSHIP_MINE_COLOR &&
+    chipList.chips[2]?.color === OWNERSHIP_ENEMY_COLOR &&
+    chipList.chips[1]?.healthRatio === 0.5,
+  chipList.chips.map((chip) => `${chip.label}:${chip.healthRatio}`).join(","),
+);
+
+const twelveUnits = Array.from({ length: SELECTION_CHIP_LIMIT }, (_unused, index) =>
+  commandUnit(100 + index, "unit.melee.t1"),
+);
+const twelveChips = selectionChipList(twelveUnits, 1, chipName);
+check(
+  "正好 12 个单位时显示 12 个芯片，没有 +N",
+  twelveChips.chips.length === SELECTION_CHIP_LIMIT &&
+    twelveChips.overflow === 0 &&
+    twelveChips.overflowLabel === "",
+  `${twelveChips.chips.length} / ${twelveChips.overflowLabel}`,
+);
+
+const fourteenChips = selectionChipList(
+  [...twelveUnits, commandUnit(200, "unit.melee.t1"), commandUnit(201, "unit.melee.t1")],
+  1,
+  chipName,
+);
+check(
+  "超过 12 个单位时截断为前 12 个芯片并追加 +N",
+  fourteenChips.chips.length === SELECTION_CHIP_LIMIT &&
+    fourteenChips.total === 14 &&
+    fourteenChips.overflow === 2 &&
+    fourteenChips.overflowLabel === "+2" &&
+    fourteenChips.chips[0]?.entityId === 100 &&
+    fourteenChips.chips[11]?.entityId === 111,
+  `${fourteenChips.chips.length} / ${fourteenChips.overflowLabel}`,
+);
+
+check(
+  "芯片缩写取前两个字符：单字名保留、带数字名保留数字、空名显示 ?",
+  chipLabel("工程师") === "工程" &&
+    chipLabel("战王") === "战王" &&
+    chipLabel("王") === "王" &&
+    chipLabel("3级兵营") === "3级" &&
+    chipLabel("  ") === "?",
+  [chipLabel("工程师"), chipLabel("王"), chipLabel("3级兵营"), chipLabel("  ")].join(","),
+);
+
+const healthEntity = (healthRatio?: number): EntityView => ({
+  id: 21,
+  kind: "unit.melee.t1",
+  x: 0,
+  y: 0,
+  ...(healthRatio === undefined ? {} : { healthRatio }),
+});
+check("生命条在 0% 时比例为 0", healthBarRatio(healthEntity(0)) === 0);
+check("生命条在 50% 时比例为 0.5", healthBarRatio(healthEntity(0.5)) === 0.5);
+check(
+  "生命条在 100% 及未报告时比例为 1，越界值被夹紧",
+  healthBarRatio(healthEntity(1)) === 1 &&
+    healthBarRatio(healthEntity(undefined)) === 1 &&
+    healthBarRatio(healthEntity(2)) === 1 &&
+    healthBarRatio(healthEntity(-1)) === 0,
+  `${healthBarRatio(healthEntity(1))} / ${healthBarRatio(healthEntity(undefined))}`,
 );
 
 // ---------------------------------------------------------------------------------------------

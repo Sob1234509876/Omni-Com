@@ -31,6 +31,7 @@ import {
   UNIT_PATHS,
   build,
   orderAttack,
+  orderAttackMove,
   orderMove,
   orderStop,
   parseWhoAmI,
@@ -62,6 +63,11 @@ import {
   type PlacementTileState,
 } from "./render/placement";
 import { WorldRenderer } from "./render/renderer";
+import {
+  commandBarModel,
+  selectionChipList,
+  type CommandBarModel,
+} from "./render/commandbar";
 import { warehouseResourceTotals } from "./render/resources";
 import { doubleClickSelection, engineerSelection, isEngineerKind } from "./render/selection";
 import {
@@ -87,6 +93,7 @@ import {
   entityById,
   fetchWorldSnapshot,
   isBuildingEntityKind,
+  isOwnUnit,
   marqueeSelection,
   ownershipOf,
   ownershipTag,
@@ -148,7 +155,13 @@ const warehouseSummary = required<HTMLParagraphElement>("#warehouse-summary");
 const warehouseItems = required<HTMLUListElement>("#warehouse-items");
 const tooltipElement = required<HTMLDivElement>("#entity-tooltip");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
+const connectionToggle = required<HTMLButtonElement>("#connection-toggle");
+const connectionOverlay = required<HTMLDivElement>("#connection-overlay");
 const orderStopButton = required<HTMLButtonElement>("#order-stop");
+const attackMoveButton = required<HTMLButtonElement>("#order-attack-move");
+const commandActions = required<HTMLDivElement>("#command-actions");
+const selectionChips = required<HTMLDivElement>("#selection-chips");
+const commandContext = required<HTMLElement>("#command-context");
 const selectEngineersButton = required<HTMLButtonElement>("#select-engineers");
 const gameplayNote = required<HTMLSpanElement>("#gameplay-note");
 const trainSection = required<HTMLDivElement>("#train-section");
@@ -208,6 +221,46 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+/**
+ * Opens or closes the connection/protocol overlay under the top-right chrome.
+ *
+ * The overlay is a translucent panel, not a scrim: its container is transparent and takes no pointer
+ * input, so the canvas keeps its brightness and clicks outside the panel still reach the world. The
+ * 连接 toggle and Escape are the two ways in and out; opening parks focus in the host field and closing
+ * returns it to the toggle, so the form is reachable by keyboard without a permanent side column.
+ */
+function setConnectionOpen(open: boolean, moveFocus = true): void {
+  connectionOverlay.hidden = !open;
+  connectionToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  connectionToggle.classList.toggle("armed", open);
+  if (!moveFocus) {
+    return;
+  }
+  if (open) {
+    hostInput.focus({ preventScroll: true });
+  } else {
+    connectionToggle.focus({ preventScroll: true });
+  }
+}
+
+connectionToggle.addEventListener("click", () => {
+  setConnectionOpen(connectionOverlay.hidden === true);
+});
+
+// Capture phase: Escape must close the overlay before the canvas turns the same key into a
+// "cancel placement" or "clear selection", even when the owner clicked the world with the panel open.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Escape" && logOverlay.hidden && !connectionOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setConnectionOpen(false);
+    }
+  },
+  true,
+);
+
 type StatusState = "idle" | "ok" | "error" | "busy";
 type LogKind = "info" | "send" | "recv" | "error";
 
@@ -218,6 +271,8 @@ let connectionSeq = 0;
 let myPlayerId: number | null = null;
 /** Building path armed for placement, or null when the canvas is not in placement mode. */
 let placementPath: string | null = null;
+/** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
+let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
 let connected = false;
 /** Automatic PING timer; null while it is not running. */
@@ -228,6 +283,8 @@ let heartbeatInFlight = false;
 function setStatus(text: string, state: StatusState): void {
   statusLine.textContent = text;
   statusLine.dataset.state = state;
+  // The chip is narrow in the top-right chrome; the title keeps the full message reachable.
+  statusLine.title = text;
 }
 
 function setCommandsEnabled(enabled: boolean): void {
@@ -290,6 +347,7 @@ function isErrorAnswer(answer: string): boolean {
 function clearGameplayIdentity(): void {
   myPlayerId = null;
   placementPath = null;
+  attackMoveArmed = false;
   // Group ids belong to one world's entity id space; a disconnect must not leave a binding that a
   // later world could resolve to a different entity.
   controlGroups = EMPTY_CONTROL_GROUPS;
@@ -1008,6 +1066,10 @@ function pruneSelection(): void {
       cancelPlacement(false);
     }
   }
+  // An armed attack move has no target once the last own unit leaves the selection.
+  if (attackMoveArmed && selectedOwnUnits().length === 0) {
+    attackMoveArmed = false;
+  }
 }
 
 /**
@@ -1159,6 +1221,8 @@ function updateHud(force = false, now = performance.now()): void {
     hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
   }
   renderQueueList(selectedBuilding);
+  // The context zone has a panel background only while it has a TRAIN/BUILD section or queue rows.
+  updateCommandContextVisibility();
   updateWarehousePanel();
   // While a BUILD is armed the status line belongs to the placement ghost: it names the reason for the
   // tile under the cursor (可建造 / 地形不可建 / ...). Without a hovered tile it restores the reminder.
@@ -1306,30 +1370,162 @@ function sendGameplayCommand(
   return sendGameplayBatch(label, [line], [line], confirmation);
 }
 
+/**
+ * The signature of the last rendered chip strip.
+ *
+ * A snapshot changes positions but not the chip contents; rebuilding up to 12 buttons on every HUD
+ * tick would drop hover/focus for no reason. The strip is rebuilt only when an id, name, ownership,
+ * rounded health percentage or the overflow marker actually changed.
+ */
+let commandBarSignature = "";
+
+/**
+ * Shows the context column's panel background only while it has something in it (TRAIN, BUILD or the
+ * building queue). An empty zone is then literally nothing, as the layout asks, instead of an empty
+ * grey box.
+ */
+function updateCommandContextVisibility(): void {
+  const visible = !trainSection.hidden || !buildSection.hidden || !hudQueue.hidden;
+  commandContext.classList.toggle("has-context", visible);
+}
+
+/**
+ * Renders the selected-units strip from the pure `selectionChipList`.
+ *
+ * Every chip shows the two-character manifest-name abbreviation and a thin health bar whose fill uses
+ * the shared ownership colour. Clicking a chip replaces the whole selection with just that unit, then
+ * returns focus to the canvas so WASD, Escape and the group keys keep working. The `+N` marker is a
+ * plain span: it reports the hidden units but is not a selection target.
+ */
+function renderSelectionChips(resolved: readonly EntityView[]): void {
+  const chips = selectionChipList(resolved, myPlayerId, contentLabel);
+  const signature =
+    `${myPlayerId ?? "none"}|` +
+    chips.chips
+      .map(
+        (chip) =>
+          `${chip.entityId}:${chip.kind}:${chip.label}:${chip.ownership}:` +
+          `${Math.round(chip.healthRatio * 100)}`,
+      )
+      .join(",") +
+    `|${chips.overflowLabel}`;
+  if (signature === commandBarSignature) {
+    return;
+  }
+  commandBarSignature = signature;
+
+  if (chips.chips.length === 0) {
+    selectionChips.hidden = true;
+    selectionChips.replaceChildren();
+    return;
+  }
+
+  const nodes: HTMLElement[] = chips.chips.map((chip) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "selection-chip";
+    button.dataset["entityId"] = String(chip.entityId);
+    const healthPercent = Math.round(chip.healthRatio * 100);
+    button.title =
+      `e${chip.entityId} ${chip.name} · [${ownershipTag(chip.ownership)}] · ` +
+      `生命 ${healthPercent}% · 点击只选中它`;
+    button.setAttribute(
+      "aria-label",
+      `e${chip.entityId} ${chip.name}，生命 ${healthPercent}%，点击只选中它`,
+    );
+    const label = document.createElement("span");
+    label.className = "selection-chip-label";
+    label.textContent = chip.label;
+    const bar = document.createElement("span");
+    bar.className = "selection-chip-bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.className = "selection-chip-fill";
+    fill.style.width = `${chip.healthRatio * 100}%`;
+    fill.style.background = chip.color;
+    bar.append(fill);
+    button.append(label, bar);
+    button.addEventListener("click", () => {
+      applySelection(chip.entityId, "replace");
+      gameCanvas.focus({ preventScroll: true });
+    });
+    return button;
+  });
+
+  if (chips.overflow > 0) {
+    const more = document.createElement("span");
+    more.className = "selection-chip selection-chip-more";
+    more.textContent = chips.overflowLabel;
+    more.title = `还有 ${chips.overflow} 个选中单位未显示`;
+    nodes.push(more);
+  }
+
+  selectionChips.replaceChildren(...nodes);
+  selectionChips.hidden = false;
+}
+
+/** The command bar's one hint line, with the armed placement / attack-move modes taking precedence. */
+function commandBarNote(model: CommandBarModel): string {
+  if (placementPath !== null) {
+    return `BUILD ${labelledContent(placementPath)}：左键点地面放置 · Esc 取消`;
+  }
+  if (attackMoveArmed) {
+    return "攻击移动：左键点目标地面 · Esc 取消";
+  }
+  if (!(loggedIn && socket !== null)) {
+    return `${model.hint} · 先连接并 LOGIN`;
+  }
+  if (myPlayerId === null && model.selectedCount > 0) {
+    return `${model.hint} · 等待 WHOAMI 回答玩家 id…`;
+  }
+  return model.hint;
+}
+
+/**
+ * Rebuilds the bottom command bar and the context zone for the current selection.
+ *
+ * The pure `commandBarModel` decides which actions exist; this half only shows or hides the existing
+ * `#order-stop` / `#order-attack-move` / TRAIN / BUILD buttons. A selected own building keeps its
+ * TRAIN section visible even before login (the buttons are disabled), and an engineer keeps its BUILD
+ * section visible the same way; the queue list is still owned by `updateHud` / `renderQueueList`.
+ */
 function updateGameplayPanel(): void {
-  const selected = singleSelectedEntity();
   const resolved = selectedEntities();
-  const ownUnits = resolved.filter((entity) => isMine(entity) && !isBuildingEntity(entity));
-  const ownBuilding = selected !== undefined && isMine(selected) && isBuildingEntity(selected);
-  const ownEngineer = selected !== undefined && isMine(selected) && isEngineerEntity(selected);
+  const model = commandBarModel(resolved, myPlayerId, { labelForPath: contentLabel });
   const gameplayReady = loggedIn && socket !== null;
+  const ownUnits = resolved.filter((entity) => isOwnUnit(entity, myPlayerId));
+  const single = singleSelectedEntity();
+  const ownBuilding = single !== undefined && isMine(single) && isBuildingEntity(single);
+  const ownEngineer = single !== undefined && isMine(single) && isEngineerEntity(single);
 
+  // The selection can lose its last own unit between snapshots; an armed attack move then has no
+  // legal target and must not wait forever for a click that would send nothing.
+  if (attackMoveArmed && ownUnits.length === 0) {
+    attackMoveArmed = false;
+  }
+
+  const showStop = model.actions.some((action) => action.kind === "stop");
+  const showAttackMove = model.actions.some((action) => action.kind === "attack-move");
+  commandActions.hidden = !(showStop || showAttackMove);
+  orderStopButton.hidden = !showStop;
   orderStopButton.disabled = !(gameplayReady && ownUnits.length > 0);
+  attackMoveButton.hidden = !showAttackMove;
+  attackMoveButton.disabled = !(gameplayReady && ownUnits.length > 0);
+  attackMoveButton.classList.toggle("armed", attackMoveArmed);
+  attackMoveButton.setAttribute("aria-pressed", attackMoveArmed ? "true" : "false");
 
-  trainSection.hidden = !(gameplayReady && ownBuilding);
+  const showTrain = model.actions.some((action) => action.kind === "train");
+  trainSection.hidden = !showTrain;
   trainTarget.textContent =
-    gameplayReady && ownBuilding && selected !== undefined
-      ? `· e${selected.id} ${contentLabel(selected.kind)}`
-      : "";
+    showTrain && single !== undefined ? `· e${single.id} ${contentLabel(single.kind)}` : "";
   for (const button of trainButtons) {
     button.disabled = !(gameplayReady && ownBuilding);
   }
 
-  buildSection.hidden = !(gameplayReady && ownEngineer);
+  const showBuild = model.actions.some((action) => action.kind === "build");
+  buildSection.hidden = !showBuild;
   buildTarget.textContent =
-    gameplayReady && ownEngineer && selected !== undefined
-      ? `· e${selected.id} ${contentLabel(selected.kind)}`
-      : "";
+    showBuild && single !== undefined ? `· e${single.id} ${contentLabel(single.kind)}` : "";
   for (const button of buildButtons) {
     button.disabled = !(gameplayReady && ownEngineer);
     const armed =
@@ -1341,28 +1537,9 @@ function updateGameplayPanel(): void {
     button.setAttribute("aria-pressed", armed ? "true" : "false");
   }
 
-  if (placementPath !== null) {
-    gameplayNote.textContent = `BUILD ${labelledContent(placementPath)}：左键点地面放置 · Esc 取消`;
-  } else if (!gameplayReady) {
-    gameplayNote.textContent = "先连接并 LOGIN；游戏命令都要求同一条连接已登录";
-  } else if (myPlayerId === null) {
-    gameplayNote.textContent = "等待 WHOAMI 回答玩家 id…";
-  } else if (ownBuilding && selected !== undefined) {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：TRAIN 一次只排一个单位`;
-  } else if (ownEngineer && selected !== undefined) {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：点 BUILD 进入放置模式`;
-  } else if (resolved.length === 0) {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：选中自己的单位或建筑后可用`;
-  } else if (resolved.length > 1) {
-    gameplayNote.textContent =
-      `玩家 ${myPlayerId}：已选 ${resolved.length} 个单位，右键移动/攻击，STOP 停止全部`;
-  } else if (selected !== undefined && !isMine(selected)) {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：选中的实体 e${selected.id} 不属于你`;
-  } else if (ownUnits.length > 0) {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：右键地面移动，右键敌方实体攻击`;
-  } else {
-    gameplayNote.textContent = `玩家 ${myPlayerId}：没有可用的操作`;
-  }
+  renderSelectionChips(resolved);
+  gameplayNote.textContent = commandBarNote(model);
+  updateCommandContextVisibility();
 }
 
 function doOrderStop(): void {
@@ -1370,9 +1547,9 @@ function doOrderStop(): void {
   if (units.length === 0) {
     const selected = selectedEntities();
     if (selected.length > 0 && selected.every(isBuildingEntity)) {
-      refuse("STOP 只能下达给单位，不能下达给建筑");
+      refuse("停止只能下达给单位，不能下达给建筑");
     } else {
-      refuse("先选中自己的单位，再点 STOP");
+      refuse("先选中自己的单位，再点停止");
     }
     return;
   }
@@ -1383,6 +1560,67 @@ function doOrderStop(): void {
       ? `已停止 ${describeEntity(first)}`
       : `已停止 ${units.length} 个单位`;
   void sendGameplayBatch("ORDER STOP", lines, lines, confirmation);
+}
+
+/**
+ * Arms attack-move for every selected own unit.
+ *
+ * `ORDER ATTACKMOVE <id> <x> <y>` needs a target tile, so the button only arms the mode; the next
+ * left click on the canvas sends one line per own unit and clears the mode. Like BUILD placement it
+ * takes the status line, keeps the canvas focused for Escape, and cancels itself if the selection
+ * loses its last own unit.
+ */
+function armAttackMove(): void {
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const units = selectedOwnUnits();
+  if (units.length === 0) {
+    refuse("先选中自己的单位，再点攻击移动");
+    return;
+  }
+  if (placementPath !== null) {
+    cancelPlacement(false);
+  }
+  attackMoveArmed = true;
+  gameCanvas.focus({ preventScroll: true });
+  setStatus(`攻击移动：左键点击目标地面（${units.length} 个单位），Esc 取消`, "busy");
+  updateGameplayPanel();
+  updateHud(true);
+}
+
+/** Cancels an armed attack move; the selection itself is kept. */
+function cancelAttackMove(showStatus: boolean): void {
+  if (!attackMoveArmed) {
+    return;
+  }
+  attackMoveArmed = false;
+  if (showStatus) {
+    setStatus("已取消攻击移动", "idle");
+  }
+  updateGameplayPanel();
+  updateHud(true);
+}
+
+/** Sends one `ORDER ATTACKMOVE` line per selected own unit to the clicked tile. */
+function doAttackMove(tile: TileCoord): void {
+  const units = selectedOwnUnits();
+  attackMoveArmed = false;
+  if (units.length === 0) {
+    refuse("选中里已经没有自己的单位，攻击移动没有发送");
+    updateGameplayPanel();
+    updateHud(true);
+    return;
+  }
+  const lines = units.map((unit) => orderAttackMove(unit.id, tile.x, tile.y));
+  const first = units[0];
+  const confirmation =
+    units.length === 1 && first !== undefined
+      ? `已攻击移动 ${describeEntity(first)} 到 ${tile.x},${tile.y}`
+      : `${units.length} 个单位攻击移动到 ${tile.x},${tile.y}`;
+  void sendGameplayBatch("ORDER ATTACKMOVE", lines, lines, confirmation);
+  updateGameplayPanel();
+  updateHud(true);
 }
 
 function doTrain(unitPath: string): void {
@@ -1408,6 +1646,8 @@ function armBuild(buildingPath: string): void {
     refuse("先选中自己的工程师，再点 BUILD");
     return;
   }
+  // Placement and attack-move both wait for the next left click; only one may be armed.
+  attackMoveArmed = false;
   placementPath = buildingPath;
   // Moving focus to the canvas keeps the existing Escape shortcut (bound to the canvas) working.
   gameCanvas.focus({ preventScroll: true });
@@ -1432,6 +1672,12 @@ function cancelPlacement(showStatus: boolean): void {
 function doRightClick(tile: TileCoord, targetId: number | null): void {
   if (placementPath !== null) {
     setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置，Esc 取消`, "busy");
+    return;
+  }
+  if (attackMoveArmed) {
+    // A right click is the ordinary move/attack order, so it must not double as an attack-move
+    // target. Report how to leave the mode instead of sending a surprise order.
+    setStatus("攻击移动：左键点目标地面，Esc 取消", "busy");
     return;
   }
   if (!requireLoggedInForGameplay()) {
@@ -1467,8 +1713,17 @@ function doRightClick(tile: TileCoord, targetId: number | null): void {
   void sendGameplayBatch("ORDER MOVE", lines, lines, confirmation);
 }
 
-/** Places the armed building; returns true when the click was consumed by placement mode. */
+/**
+ * Places the armed building, or sends the armed attack move; returns true when the click was consumed.
+ *
+ * Both modes take priority over selection: the click that chooses a site or a target tile must not
+ * also replace the selection that the command is aimed with.
+ */
 function doLeftClick(tile: TileCoord): boolean {
+  if (attackMoveArmed) {
+    doAttackMove(tile);
+    return true;
+  }
   if (placementPath === null) {
     return false;
   }
@@ -1500,8 +1755,12 @@ function doLeftClick(tile: TileCoord): boolean {
   return true;
 }
 
-/** Escape cancels an armed placement before the input controller clears the selection. */
+/** Escape cancels an armed placement or attack move before the input controller clears the selection. */
 function doCancel(): boolean {
+  if (attackMoveArmed) {
+    cancelAttackMove(true);
+    return true;
+  }
   if (placementPath === null) {
     return false;
   }
@@ -2084,6 +2343,10 @@ function setViewVisible(visible: boolean): void {
     startGameLoop();
     startWorldPolling();
   }
+  // The hidden view is the old "protocol console full page" mode: open the connection panel so the
+  // page is not blank, and close it again when the canvas comes back. No focus stealing here - the
+  // toggle button keeps focus in both directions.
+  setConnectionOpen(viewHidden, false);
   updateHud(true);
 }
 
@@ -2155,19 +2418,34 @@ function refreshContentLabels(): void {
 refreshContentLabels();
 
 orderStopButton.addEventListener("click", doOrderStop);
+attackMoveButton.addEventListener("click", () => {
+  if (attackMoveArmed) {
+    cancelAttackMove(true);
+  } else {
+    armAttackMove();
+  }
+});
 selectEngineersButton.addEventListener("click", selectEngineers);
 
-// The canvas owns Escape for its own focus; this fallback keeps "cancel placement" working while
-// focus is still on the BUILD button that armed the mode.
+// The canvas owns Escape for its own focus; this fallback keeps "cancel placement / attack move"
+// working while focus is still on the button that armed the mode. The connection overlay's capture
+// handler runs first, so Escape closes that panel instead of cancelling a mode behind it.
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || placementPath === null || !logOverlay.hidden) {
+  if (event.key !== "Escape" || !logOverlay.hidden) {
+    return;
+  }
+  if (placementPath === null && !attackMoveArmed) {
     return;
   }
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
   event.preventDefault();
-  cancelPlacement(true);
+  if (placementPath !== null) {
+    cancelPlacement(true);
+  } else {
+    cancelAttackMove(true);
+  }
 });
 
 updateGameplayPanel();
