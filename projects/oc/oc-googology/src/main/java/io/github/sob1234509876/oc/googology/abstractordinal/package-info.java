@@ -21,6 +21,17 @@
  * are BMS-representable and are therefore deliberately not constants of this package; the help document
  * {@code help/abstract-ordinals.md} lists them as the rungs below the limit.
  *
+ * <p><b>The stage-one ladder.</b> The package also contains the register of {@code documents/Human/
+ * Ordinals.md}'s first two segments: {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal}
+ * holds a delegated {@link io.github.sob1234509876.oc.googology.bms.BmsOrdinal} for {@code 0 ~ SHO}, an
+ * abstract {@code f(alpha) = TTBMS(0)(1^alpha)} value for {@code SHO ~ LRPO} (printed as
+ * {@code TBMS(0)(1^alpha)} below {@code omega_1^CK} and as {@code TTBMS(0)(1^alpha)} at or above it),
+ * and the named placeholders {@code psi}, {@code SHO}, {@code LRPO} and {@code omega_1^CK}
+ * ({@link io.github.sob1234509876.oc.googology.abstractordinal.LadderPlaceholder}). Its comparison reports
+ * the {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment}s it took place in, and
+ * its two owner assumptions are documented as assumptions rather than proved. The Chinese guide is
+ * {@code help/ordinal-ladder.md}.
+ *
  * @since 2.0a
  */
 package io.github.sob1234509876.oc.googology.abstractordinal;

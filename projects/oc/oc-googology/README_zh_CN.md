@@ -13,10 +13,11 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（378 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（437 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
+| 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一：BMS 段、抽象 `f(α) = TTBMS(0)(1^α)` 段与具名占位符 |
 
 ## 它提供什么
 
@@ -223,6 +224,66 @@ AbstractOrdinal.SHO.compareWithBms(tsso);                    // ComparisonResult
 API 和常见坑。
 
 
+## 序数阶梯（阶段一）
+
+`documents/Human/Ordinals.md` 是从 `0` 到 `Ω_Absolute` 的 21 级阶梯。阶段一实现前两段和后面阶段要复用
+的抽象层。`LadderOrdinal` 能装下三类值，比较是带段信息的声明全序：
+
+| 层 | 值 | 写法 |
+| --- | --- | --- |
+| 段一，`0 ~ SHO` | 委托的 `BmsOrdinal` | `0`、`BMS(0)(1)`、`BMS(0)(1)(2)`…… |
+| 段二，`SHO ~ LRPO` | 抽象函数 `f(α) = TTBMS(0)(1^α)` | `α < ω₁^CK` 时 `TBMS(0)(1^α)`，否则 `TTBMS(0)(1^α)` |
+| 具名抽象层 | `ψ`、`SHO`、`LRPO`、`ω₁^CK` | `ψ`、`SHO`、`LRPO`、`ω₁^CK` |
+
+```java
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderPlaceholder;
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment;
+
+LadderOrdinal zero = LadderOrdinal.zero();                                  // 0
+LadderOrdinal omega = LadderOrdinal.omega();                                // BMS(0)(1) = ω
+LadderOrdinal omegaOmega = LadderOrdinal.ofBms(new int[][]{{0}, {1}, {2}}); // ω^ω
+
+zero.bms();                                  // 被委托的 BmsOrdinal
+zero.compareTo(omega);                       // < 0，来自 BmsOrdinal
+LadderOrdinal.f(omega) == LadderOrdinal.sho(); // true：SHO = lim(BMS) = TBMS(0)(1^ω)
+LadderOrdinal.f(LadderOrdinal.sho()).toString(); // "TBMS(0)(1^SHO)"，SHO 上面第一个 f 值
+
+LadderOrdinal fValue = LadderOrdinal.f(omegaOmega);
+fValue.segment();                            // LadderSegment.SEGMENT_TWO
+fValue.toString();                           // "TBMS(0)(1^(0)(1)(2))"
+
+LadderOrdinal fAtOmegaOne = LadderOrdinal.f(LadderOrdinal.omegaOneCk());
+fAtOmegaOne.toString();                      // "TTBMS(0)(1^ω₁^CK)"
+fAtOmegaOne.compareTo(LadderOrdinal.lrpo()); // < 0
+LadderOrdinal.lrpo().compareTo(LadderOrdinal.omegaOneCk()); // < 0
+
+LadderPlaceholder.SHO.abstractOrdinal().orElseThrow(); // AbstractOrdinal.SHO：阶梯复用它
+```
+
+声明顺序是 `ψ < 每个 BMS 值 < SHO ≤ 每个物化的 f(α) < LRPO < ω₁^CK`。段一在段二之下，两者都在上方
+的具名占位符之下，且按所有者说明 `LRPO < ω₁^CK`。`compareWithin` 返回带两个 `LadderSegment` 的
+`LadderComparison`，跨段比较不会被误当成同段比较；`compareMagnitude` 永远是证明，因为这个寄存器没有
+声明未知对，也没有倾向。
+
+**哪些是假设。** 所有者的两条不等式是**假设**，不是证明：
+
+- **A1.** 对每个 `α < ω₁^CK`，`f(α) > α`。
+- **A2.** 对 `ω₁^CK ≤ α < X`（`X` 是 `α ↦ TNRBMS(0)(1^α)` 的最小不动点），`ψ(α) < f(α) < α`，
+  假设到 `α` 为止存在 OCF。
+
+自检在样本上检查它们，并用 `[ASSUMPTION]` 标签打印。实现还记录了一个阶段二必须处理的边界：
+A2 给出 `f(ω₁^CK) < ω₁^CK`，严格递增于是给出 `f(f(ω₁^CK)) < f(ω₁^CK)`，而 A1 在 `f(ω₁^CK)` 上会要求
+相反方向；两条假设在这一点上不能同时成立。中文指南解释了原因，并把实参/值的域分离留给阶段二。
+`SHO` 是下边界，也是合法实参（`f(SHO)` 是它上面第一个 `f` 值）；`LRPO` 与 `ψ` 是**值名**，不是 `f`
+的实参。
+
+**哪些有意不做。** 不把 TBMS / TTBMS 实现成矩阵系统；NRBMS 段、`ω_α` 梯级与基数寄存器都还没开始。
+`LadderOrdinal` 不是 `Ordinal`：没有后继、加法、`ω^` 或基本列，也没有接上 `OrdinalNotation`。它的 `f`
+是抽象严格递增函数，不是计算。阶段二到四的路线图见
+[`help/ordinal-ladder.md`](help/ordinal-ladder.md)。
+
+
 ## 它有意不做的事
 
 - **阈值以上的精确算术。** 在那里，加上或减去一个可忽略的量不会改变塔，两个塔相乘返回较大的那个 —— 与浮点数在数轴另一端所做的是同一种近似。顺序仍是全序，`equals`/`hashCode` 仍是结构化的，因此排序可用；对于精确值以及比较预算能够归约的任何东西，排序本身是精确的，超出之后则是有文档说明的启发式。
@@ -230,6 +291,7 @@ API 和常见坑。
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
 - **BMS 之上的记法。** `AbstractOrdinal` 只**命名** BMS 极限及其之上的阶段，并给它们一个声明顺序；它不是记法，没有基本列、算术或值，它的"高于一切 BMS 值"比较是一条显式公理。它不说明一个名字比 BMS 高多少，低于极限的参考节点也被有意排除在名册之外。
+- **TBMS/TTBMS 矩阵系统，或阶梯的后续段。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一：段一委托 BMS，段二是**抽象**函数 `f(α) = TTBMS(0)(1^α)`，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`。它不构造 TBMS/TTBMS 矩阵，不算 OCF，不证明所有者的两条假设（A1 与 A2），也不实现 NRBMS 段、`ω_α` 梯级或基数寄存器。它的 `f` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。
 - **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
@@ -267,13 +329,19 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveExpansion.java  非递归展开的无限列描述
     bms/package-info.java        BMS 包文档
     abstractordinal/AbstractOrdinal.java   BMS 极限之上的名册，带声明秩
+    abstractordinal/LadderOrdinal.java     阶段一阶梯：BMS、f(alpha)=TTBMS(0)(1^alpha) 与具名层
+    abstractordinal/LadderPlaceholder.java psi、SHO、LRPO、omega_1^CK 及声明 tier
+    abstractordinal/LadderSegment.java     段一 / 段二 / 具名抽象层
+    abstractordinal/LadderComparison.java  比较及其所属的两个段
     abstractordinal/package-info.java      抽象序数包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
 help/abstract-ordinals.md        BMS 之上名册的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    378 项检查的自检程序
+help/ordinal-ladder.md           阶段一序数阶梯的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    437 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
+src/selfcheck/java/.../check/LadderCheck.java       其中的阶段一阶梯三节（第 21–23 节）
 ```
 
 ## 相关
@@ -281,4 +349,6 @@ src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两
 - [`help/ordinals.md`](help/ordinals.md) —— 序数、基本列和超限超运算，中文。
 - [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体，中文。
 - [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上名册、声明未知对与"高于 BMS"公理，中文。
+- [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一：BMS 段、抽象
+  `f(α) = TTBMS(0)(1^α)` 段、具名占位符、假设，以及阶段二到四的路线图，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。
