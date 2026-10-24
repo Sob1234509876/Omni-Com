@@ -14,6 +14,8 @@ import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
+import io.github.sob1234509876.oc.rts.order.MoveOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.auth.LocalUserStore;
@@ -392,6 +394,180 @@ public final class PlayerCommandCheck {
         check.that(mover.position().distance(start) > 1f,
                 "几个世界步之后单位确实移动了（距离 " + mover.position().distance(start) + "）");
 
+        check.section("玩家命令：维修、继续建造与回收");
+        // The snapshot advertises the two new building services before either is used: the site is
+        // reclaimable for half its placement cost and the half-health t2 armory has a repair price.
+        String serviceSnapshot = host.snapshotJson();
+        String reclaimOffer = entityRow(serviceSnapshot, site == null ? -1L : site.id().value());
+        check.that(reclaimOffer.contains("\"reclaim\":{\"gold\":50,\"wood\":10}"),
+                "unfinished 工地快照带 reclaim 返还（100 金 / 20 木 的一半）: " + reclaimOffer);
+        String repairOffer = entityRow(serviceSnapshot, newArmoryId);
+        check.that(repairOffer.contains("\"repair\":{\"gold\":450,\"wood\":0}"),
+                "半血 t2 兵营快照带 repair 费用（450 血 × 1 金）: " + repairOffer);
+
+        // Continue building through the ordinary BUILD form the client's 继续建造 entry uses: the same kind
+        // and origin join the existing site, charge nothing, and a second engineer attaches to it.
+        long siteId = site == null ? -1L : site.id().value();
+        world.map().setTerrain(new GridPos(18, 41), host.content().terrain("grass"));
+        world.map().setTerrain(new GridPos(19, 41), host.content().terrain("grass"));
+        Unit joiner = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(18, 41));
+        Natural goldBeforeJoin = human.logistics().amount(gold);
+        Natural woodBeforeJoin = human.logistics().amount(wood);
+        int buildingsBeforeJoin = world.buildingsOf(human).size();
+        String joinAnswer = run(dispatcher, host, first,
+                "BUILD " + joiner.id().value() + " " + ARMORY_T1 + " 20 40");
+        check.equal("OK " + siteId, joinAnswer,
+                "对已有工地再发普通 BUILD 会加入它并返回同一个工地 id（继续建造）");
+        check.equal(goldBeforeJoin, human.logistics().amount(gold),
+                "继续建造不再次扣金币");
+        check.equal(woodBeforeJoin, human.logistics().amount(wood),
+                "继续建造不再次扣木材");
+        check.equal(buildingsBeforeJoin, world.buildingsOf(human).size(),
+                "继续建造没有放下第二座工地");
+        host.step();
+        check.that(site != null && site.builderCount() == 2,
+                "两个工程师都附着到同一个工地上");
+
+        // Reclaim the site the BUILD section placed. The builders that are raising it must lose their
+        // orders with a readable reason on the same world step, and half of the placement cost comes back.
+        Natural goldBeforeReclaim = human.logistics().amount(gold);
+        Natural woodBeforeReclaim = human.logistics().amount(wood);
+        java.util.List<Events.OrderFinished> reclaimEvents = new java.util.ArrayList<>();
+        world.events().subscribe(Events.OrderFinished.class, event -> {
+            if ("build".equals(event.orderName())) {
+                reclaimEvents.add(event);
+            }
+        });
+        String reclaimAnswer = run(dispatcher, host, first, "RECLAIM " + siteId);
+        check.that(reclaimAnswer.startsWith("OK"), "回收自己的未完工工地成功: " + reclaimAnswer);
+        check.that(reclaimAnswer.contains("50 gold") && reclaimAnswer.contains("10 wood"),
+                "回收回答带返还内容: " + reclaimAnswer);
+        check.equal(goldBeforeReclaim.add(Natural.of(50)), human.logistics().amount(gold),
+                "回收返还一半金币（50），不额外扣费");
+        check.equal(woodBeforeReclaim.add(Natural.of(10)), human.logistics().amount(wood),
+                "回收返还一半木材（10），不额外扣费");
+        check.that(site != null && !site.isAlive(), "回收后工地把被销毁");
+        check.that(site != null && site.builderCount() == 0, "回收后工地不再挂着建造者");
+        check.that(builder.orders().isEmpty(), "被回收工地的建造者不再持有建造命令");
+        boolean reclaimedReason = reclaimEvents.stream().anyMatch(event ->
+                event.state() == io.github.sob1234509876.oc.rts.order.OrderState.FAILED
+                        && event.reason().contains("reclaimed"));
+        check.that(reclaimedReason, "建造者收到带回收原因的失败事件: "
+                + reclaimEvents.stream().map(Events.OrderFinished::reason).toList());
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "RECLAIM nope"),
+                "RECLAIM 非数字 id 回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "RECLAIM 1 2"),
+                "RECLAIM 多余参数回答 ERR bad arguments");
+        check.equal("ERR unknown entity", run(dispatcher, host, first, "RECLAIM 999999"),
+                "RECLAIM 不存在的实体回答 ERR unknown entity");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "RECLAIM " + enemyBuilding.id().value()),
+                "RECLAIM 别人的建筑回答 ERR not yours");
+        String finishedReclaim = run(dispatcher, host, first, "RECLAIM " + warehouse.id().value());
+        check.that(finishedReclaim.startsWith("ERR ") && finishedReclaim.contains("already finished"),
+                "RECLAIM 已完工建筑被拒绝并说明原因: " + finishedReclaim);
+
+        // Repair the damaged t2 armory. The engineer walks to its entrance and heals four hit points per
+        // tick at one gold each; the loop advances the deterministic world step by step.
+        deposit(check, human, warehouse, ItemBundle.of(gold, 1000));
+        GridPos armoryEntrance = world.dimensionOf(newArmory).entranceTile(newArmory);
+        Unit repairer = world.spawnUnit(host.content().unit(WORKER), human, armoryEntrance);
+        Natural goldBeforeRepair = human.logistics().amount(gold);
+        Natural healthBeforeRepair = newArmory.health().current();
+        check.equal(Natural.of(450), healthBeforeRepair, "维修前 t2 兵营是半血 450/900");
+        check.equal("OK", run(dispatcher, host, first,
+                        "REPAIR " + repairer.id().value() + " " + newArmoryId),
+                "REPAIR 自己的受损建筑成功");
+        for (int step = 0; step < 300
+                && newArmory.health().current().compareTo(Natural.of(900)) < 0; step++) {
+            host.step();
+        }
+        check.equal(Natural.of(900), newArmory.health().current(), "维修把 t2 兵营恢复到满血 900");
+        check.equal(goldBeforeRepair.subtractClamped(Natural.of(450)),
+                human.logistics().amount(gold), "维修恰好扣掉 450 金（450 血 × 1 金/血）");
+        host.step();
+        check.that(repairer.orders().isEmpty(), "维修完成后工程师空闲");
+        String fullRepair = run(dispatcher, host, first,
+                "REPAIR " + repairer.id().value() + " " + newArmoryId);
+        check.that(fullRepair.startsWith("ERR ") && fullRepair.contains("full health"),
+                "满血建筑再次 REPAIR 被拒绝: " + fullRepair);
+        check.equal(goldBeforeRepair.subtractClamped(Natural.of(450)),
+                human.logistics().amount(gold), "被拒绝的满血维修不扣费");
+        check.that(!entityRow(host.snapshotJson(), newArmoryId).contains("\"repair\""),
+                "满血建筑的快照不再提供 repair 入口");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "REPAIR " + repairer.id().value() + " " + enemyBuilding.id().value()),
+                "REPAIR 别人的建筑回答 ERR not yours");
+        check.equal("ERR unknown entity", run(dispatcher, host, first,
+                        "REPAIR " + repairer.id().value() + " " + siteId),
+                "REPAIR 已回收建筑回答 ERR unknown entity");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "REPAIR 1"),
+                "REPAIR 参数不足回答 ERR bad arguments");
+
+        // Unaffordable repair: the poor player's ten gold cannot cover a 100 hit point repair.
+        Building poorArmory2 = world.spawnBuilding(host.content().building(ARMORY_T1), poor,
+                new GridPos(52, 50));
+        poorArmory2.health().damage(100);
+        GridPos poorEntrance = world.dimensionOf(poorArmory2).entranceTile(poorArmory2);
+        Unit poorRepairer = world.spawnUnit(host.content().unit(WORKER), poor, poorEntrance);
+        String poorRepair = run(dispatcher, host, second,
+                "REPAIR " + poorRepairer.id().value() + " " + poorArmory2.id().value());
+        check.that(poorRepair.startsWith("ERR ") && poorRepair.contains("cannot afford"),
+                "买不起的 REPAIR 回答 ERR 并说明买不起: " + poorRepair);
+        check.equal(Natural.of(10), poor.logistics().amount(gold),
+                "失败的 REPAIR 没有扣钱");
+        check.equal(Natural.of(500), poorArmory2.health().current(),
+                "失败的 REPAIR 没有回血（600 血中仍是 500）");
+
+        check.section("玩家命令：ORDER MOVE 的多路径点形式与快照 path");
+        // A single point still behaves exactly like the historical form; three points are a route.
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER MOVE " + mover.id().value() + " 3 4"),
+                "单点 ORDER MOVE 仍然成功，字节形式不变");
+        check.that(mover.orders().pending().size() == 1
+                        && mover.orders().pending().get(0) instanceof MoveOrder singleMove
+                        && singleMove.route().size() == 1,
+                "单点 ORDER MOVE 仍然只产生一个路径点");
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER MOVE " + mover.id().value() + " 4 4 6 6 8 8"),
+                "三点 ORDER MOVE 成功");
+        check.that(mover.orders().pending().size() == 1
+                        && mover.orders().pending().get(0) instanceof MoveOrder routeMove
+                        && routeMove.route().size() == 3,
+                "三点 ORDER MOVE 产生一个三个路径点的 MoveOrder");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "ORDER MOVE " + mover.id().value() + " 1 1 2"),
+                "坐标不成的 ORDER MOVE 回答 ERR bad arguments");
+        StringBuilder ninePoints = new StringBuilder("ORDER MOVE ").append(mover.id().value());
+        for (int point = 0; point < 9; point++) {
+            ninePoints.append(' ').append(point + 1).append(' ').append(2);
+        }
+        check.equal("ERR bad arguments", run(dispatcher, host, first, ninePoints.toString()),
+                "九个路径点的 ORDER MOVE 超过上限，回答 ERR bad arguments");
+
+        String moveAnswer = run(dispatcher, host, first,
+                "ORDER MOVE " + mover.id().value() + " 40 14");
+        check.equal("OK", moveAnswer, "远距离单点移动成功，用于检查 path");
+        host.step();
+        host.step();
+        String movingRow = entityRow(host.snapshotJson(), mover.id().value());
+        check.that(movingRow.contains("\"path\":") && movingRow.contains("\"target\":["),
+                "移动中的单位快照带 path 与 target: " + movingRow);
+        check.that(pathPointCount(movingRow) <= WorldHost.MAX_SNAPSHOT_PATH_POINTS,
+                "快照 path 最多 " + WorldHost.MAX_SNAPSHOT_PATH_POINTS + " 个点");
+        java.util.List<Vec2> longPath = new java.util.ArrayList<>();
+        for (int index = 0; index < 200; index++) {
+            longPath.add(new Vec2(index + 0.5f, 10.5f));
+        }
+        mover.motion().setPath(longPath);
+        check.equal(WorldHost.MAX_SNAPSHOT_PATH_POINTS,
+                pathPointCount(entityRow(host.snapshotJson(), mover.id().value())),
+                "服务端把超长 path 截断到 " + WorldHost.MAX_SNAPSHOT_PATH_POINTS + " 个点");
+        check.equal("OK", run(dispatcher, host, first, "ORDER STOP " + mover.id().value()),
+                "ORDER STOP 成功，单位停下");
+        check.that(!entityRow(host.snapshotJson(), mover.id().value()).contains("\"path\""),
+                "停下的单位快照不再带 path");
+
         check.section("玩家命令：运行中的世界也会经由同一队列作答");
         host.start();
         try {
@@ -554,6 +730,32 @@ public final class PlayerCommandCheck {
         return "";
     }
 
+    /**
+     * Number of tile pairs in the {@code path} array of one entity row, or {@code 0} when it has none.
+     *
+     * <p>The row has already been brace matched, so the path array cannot run past the entity. Each point
+     * contributes one {@code [} inside the array; the array's own opening bracket is outside the counted
+     * substring, so this is simply the number of opening brackets in {@code "path":[...]}.
+     */
+    private static int pathPointCount(String row) {
+        int start = row.indexOf("\"path\":[");
+        if (start < 0) {
+            return 0;
+        }
+        int end = row.indexOf("],\"target\"", start);
+        if (end < 0) {
+            return 0;
+        }
+        String array = row.substring(start, end);
+        int count = 0;
+        for (int index = 0; index < array.length(); index++) {
+            if (array.charAt(index) == '[') {
+                count++;
+            }
+        }
+        return Math.max(0, count - 1);
+    }
+
     /** Deposits a stock into one warehouse and asserts that all of it fits. */
     private static void deposit(Check check, Player player, Building warehouse, ItemBundle bundle) {
         ItemBundle leftover = player.logistics().deposit(bundle, warehouse.position());
@@ -612,12 +814,16 @@ public final class PlayerCommandCheck {
                     .building(WAREHOUSE).name("Warehouse").size(3, 3).health(500).cost(WOOD, 10)
                     .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE)
                     .building(ARMORY_T1).name("Armory T1").size(3, 3).health(600).level(1)
-                    .cost(GOLD, 100).cost(WOOD, 20).buildTime(150).storage(6).producer("armory")
+                    .cost(GOLD, 100).cost(WOOD, 20)
+                    .repairCostPerHealth(GOLD, 1)
+                    .buildTime(150).storage(6).producer("armory")
                     .upgradeTo(ARMORY_T2).upgradeCost(GOLD, ARMORY_UPGRADE_GOLD)
                     .upgradeCost(WOOD, ARMORY_UPGRADE_WOOD)
                     .spriteSet(ARMORY_T1)
                     .building(ARMORY_T2).name("Armory T2").size(3, 3).health(900).level(2)
-                    .cost(GOLD, 240).cost(WOOD, 60).buildTime(240).storage(8).producer("armory")
+                    .cost(GOLD, 240).cost(WOOD, 60)
+                    .repairCostPerHealth(GOLD, 1)
+                    .buildTime(240).storage(8).producer("armory")
                     .spriteSet(ARMORY_T2)
                     .recipe(TRAIN_T1).name("Train Melee T1").producer("armory").requiredBuildingLevel(1)
                     .input(GOLD, 20).unitOutput(MELEE_T1).duration(60)

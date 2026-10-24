@@ -76,6 +76,7 @@ public final class BuildOrder implements Order {
 
     private long startTick = -1L;
     private int stalledTicks;
+    private String failureReason;
 
     /**
      * Orders the builder to work on an already placed site.
@@ -121,6 +122,7 @@ public final class BuildOrder implements Order {
     public void onStart(OrderContext context) {
         this.startTick = context.tick().number();
         this.stalledTicks = 0;
+        this.failureReason = null;
         Motion motion = context.unit().motion();
         // Building is an individual order, so it also ends any formation the unit took part in.
         motion.clearFormation();
@@ -146,16 +148,21 @@ public final class BuildOrder implements Order {
         Building current = site;
         if (current == null) {
             // Already released; an order that ran the same path twice must not fail on a lost reference.
+            if (failureReason == null) {
+                failureReason = "the construction site is gone";
+            }
             return OrderState.FAILED;
         }
         if (!current.isAlive()) {
-            // The site was destroyed (a scenario, or a combat layer that targets buildings).
+            // The site was destroyed (a scenario, combat, or a reclaim that finished this order first).
+            failureReason = "the construction site was destroyed";
             return OrderState.FAILED;
         }
         if (current.isConstructed()) {
             return OrderState.COMPLETED;
         }
         if (context.tick().number() - startTick > TIMEOUT_TICKS) {
+            failureReason = "timed out waiting for the construction site";
             return OrderState.FAILED;
         }
         if (atSite(unit, context.world())) {
@@ -176,12 +183,18 @@ public final class BuildOrder implements Order {
         if (MoveOrder.isStalled(motion)) {
             stalledTicks++;
             if (stalledTicks > STALLED_TICKS_BEFORE_FAILURE) {
+                failureReason = "no route to the construction site";
                 return OrderState.FAILED;
             }
         } else {
             stalledTicks = 0;
         }
         return OrderState.RUNNING;
+    }
+
+    @Override
+    public String failureReason() {
+        return failureReason;
     }
 
     /**

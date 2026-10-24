@@ -47,6 +47,20 @@ export interface UpgradeView {
   readonly wood: number;
 }
 
+/**
+ * A service offer of a building row: a repair price or a reclaim refund in the two wire resources.
+ *
+ * Both objects have the same shape (`{"gold":300,"wood":0}`), so one type describes both; the field that
+ * carries it says which command it belongs to.
+ */
+export interface BuildingCostView {
+  readonly gold: number;
+  readonly wood: number;
+}
+
+/** Largest number of path points one snapshot row may carry; the server caps at the same number. */
+export const MAX_SNAPSHOT_PATH_POINTS = 64;
+
 export interface EntityView {
   /** Stable entity id; the demo uses small numbers, the server will use its own ids. */
   readonly id: number;
@@ -135,6 +149,31 @@ export interface EntityView {
    * and a top-tier building omit it.
    */
   readonly upgrade?: UpgradeView;
+  /**
+   * Cost of repairing every missing hit point, from the snapshot's optional `repair` object.
+   *
+   * Present only on an own-or-enemy finished building that is damaged and whose content declares a
+   * repair price; a full-health building and a type without a price omit it. The client offers
+   * `REPAIR` only to the local player's own buildings, so an enemy row carrying it is ignored.
+   */
+  readonly repairCost?: BuildingCostView;
+  /**
+   * Refund a reclaim would deposit, from the snapshot's optional `reclaim` object.
+   *
+   * Present only on an unfinished site. It is half of the placement cost recorded by the engine, and
+   * the client shows it in the `回收` entry.
+   */
+  readonly reclaim?: BuildingCostView;
+  /**
+   * Remaining route of a moving unit as absolute world tiles, from the snapshot's optional `path`.
+   *
+   * At most {@link MAX_SNAPSHOT_PATH_POINTS} points; consumed waypoints are not sent. The renderer
+   * prepends the unit's own position and draws a dashed line to {@link pathTarget}. Absent for an idle or
+   * stopped unit and for an older snapshot.
+   */
+  readonly path?: readonly TileCoord[];
+  /** Goal tile of the active move order, from the snapshot's optional `target` pair. */
+  readonly pathTarget?: TileCoord;
 }
 
 /**
@@ -651,6 +690,79 @@ function snapshotUpgrade(value: unknown): UpgradeView | undefined {
 }
 
 /**
+ * Reads one `{"gold":..., "wood":...}` building-service object.
+ *
+ * A missing field, a non-object or a negative/fractional amount drops the whole object rather than
+ * half-reading it: the HUD then offers no action instead of an action with an invented price. An older
+ * snapshot simply omits the field, which is the same legacy path as `upgrade`.
+ */
+function snapshotBuildingCost(value: unknown): BuildingCostView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const gold = finiteNumber(value["gold"]);
+  const wood = finiteNumber(value["wood"]);
+  if (
+    gold === null ||
+    wood === null ||
+    !Number.isSafeInteger(gold) ||
+    gold < 0 ||
+    !Number.isSafeInteger(wood) ||
+    wood < 0
+  ) {
+    return undefined;
+  }
+  return { gold, wood };
+}
+
+/**
+ * Reads the optional `path` / `target` pair of a moving unit.
+ *
+ * `path` is an array of `[x, y]` tile pairs; malformed pairs are dropped, valid ones are kept up to
+ * {@link MAX_SNAPSHOT_PATH_POINTS}, and a missing or malformed `target` is simply absent (the renderer
+ * then marks the last point). Coordinates may be negative and are not clipped to the loaded window: the
+ * unit's route can leave the window, and the renderer culls off-screen segments itself.
+ */
+function snapshotPath(
+  rawPath: unknown,
+  rawTarget: unknown,
+): { path?: TileCoord[]; target?: TileCoord } {
+  let path: TileCoord[] | undefined;
+  if (Array.isArray(rawPath) && rawPath.length > 0) {
+    const points: TileCoord[] = [];
+    for (const rawPoint of rawPath) {
+      if (!Array.isArray(rawPoint) || rawPoint.length !== 2) {
+        continue;
+      }
+      const x = finiteNumber(rawPoint[0]);
+      const y = finiteNumber(rawPoint[1]);
+      if (x === null || y === null || !Number.isInteger(x) || !Number.isInteger(y)) {
+        continue;
+      }
+      points.push({ x, y });
+      if (points.length >= MAX_SNAPSHOT_PATH_POINTS) {
+        break;
+      }
+    }
+    if (points.length > 0) {
+      path = points;
+    }
+  }
+  let target: TileCoord | undefined;
+  if (Array.isArray(rawTarget) && rawTarget.length === 2) {
+    const x = finiteNumber(rawTarget[0]);
+    const y = finiteNumber(rawTarget[1]);
+    if (x !== null && y !== null && Number.isInteger(x) && Number.isInteger(y)) {
+      target = { x, y };
+    }
+  }
+  return {
+    ...(path === undefined ? {} : { path }),
+    ...(target === undefined ? {} : { target }),
+  };
+}
+
+/**
  * Reads the optional `queueItems` array of a building row.
  *
  * `undefined` means the snapshot predates the field (or the row has no queue), which is the legacy path
@@ -836,6 +948,9 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const queueItems = snapshotQueueItems(rawEntity["queueItems"]);
     const contents = snapshotContents(rawEntity["contents"]);
     const upgrade = snapshotUpgrade(rawEntity["upgrade"]);
+    const repairCost = snapshotBuildingCost(rawEntity["repair"]);
+    const reclaim = snapshotBuildingCost(rawEntity["reclaim"]);
+    const snapshotRoute = snapshotPath(rawEntity["path"], rawEntity["target"]);
     entities.push({
       id,
       kind: kindName(kind.trim()),
@@ -855,6 +970,10 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(queueItems === undefined ? {} : { queueItems }),
       ...(contents === undefined ? {} : { contents }),
       ...(upgrade === undefined ? {} : { upgrade }),
+      ...(repairCost === undefined ? {} : { repairCost }),
+      ...(reclaim === undefined ? {} : { reclaim }),
+      ...(snapshotRoute.path === undefined ? {} : { path: snapshotRoute.path }),
+      ...(snapshotRoute.target === undefined ? {} : { pathTarget: snapshotRoute.target }),
     });
   }
 

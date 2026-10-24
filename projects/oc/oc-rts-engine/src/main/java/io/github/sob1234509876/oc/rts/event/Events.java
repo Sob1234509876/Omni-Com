@@ -11,6 +11,8 @@ import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.order.OrderState;
 
+import java.util.Objects;
+
 /**
  * Facts published by the simulation. Systems subscribe to the ones they care about instead of the
  * engine having to call every subsystem for every change.
@@ -79,7 +81,26 @@ public final class Events {
     public record OrderIssued(Unit unit, String orderName, long tick) {
     }
 
-    /** An order stopped being the active order of a unit. */
-    public record OrderFinished(Unit unit, String orderName, OrderState state, long tick) {
+    /**
+     * An order stopped being the active order of a unit.
+     *
+     * <p>{@code reason} is the order's own explanation when it failed - which waypoint of a route could
+     * not be reached, or that a construction site was reclaimed - and the empty string otherwise. The
+     * four-argument constructor is kept for callers written before the reason existed, so existing event
+     * subscribers keep compiling and see an empty reason instead of a null.
+     */
+    public record OrderFinished(Unit unit, String orderName, OrderState state, long tick, String reason) {
+
+        public OrderFinished {
+            Objects.requireNonNull(unit, "unit");
+            Objects.requireNonNull(orderName, "orderName");
+            Objects.requireNonNull(state, "state");
+            reason = reason == null ? "" : reason;
+        }
+
+        /** Compatibility form for callers that have no reason to report. */
+        public OrderFinished(Unit unit, String orderName, OrderState state, long tick) {
+            this(unit, orderName, state, tick, "");
+        }
     }
 }

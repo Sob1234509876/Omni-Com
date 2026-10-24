@@ -39,12 +39,17 @@ import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.CommandService;
+import io.github.sob1234509876.oc.rts.order.MoveOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.order.OrderState;
+import io.github.sob1234509876.oc.rts.order.RepairOrder;
+import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ConstructionSystem;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.rts.visual.AnimationClips;
+import io.github.sob1234509876.oc.rts.visual.EntitySnapshot;
+import io.github.sob1234509876.oc.rts.visual.SnapshotFactory;
 import io.github.sob1234509876.oc.rts.visual.SpriteFrame;
 import io.github.sob1234509876.oc.rts.visual.SpriteSheet;
 import io.github.sob1234509876.oc.rts.visual.UnitAnimator;
@@ -103,6 +108,8 @@ public final class RtsScenario {
         checkBuildingUpgrades(check);
         checkCooperativeConstruction(check);
         checkBuilderArrival(check);
+        checkRepairAndReclaim(check);
+        checkWaypointsAndPaths(check);
 
         check.summary("RTS engine scenario");
     }
@@ -2206,7 +2213,333 @@ public final class RtsScenario {
         check.equal(0, site.builderCount(), "the completed site keeps no attached builder");
     }
 
-    /** The content of the cooperative check: a 40 tick hut, a depot and fast engineers. */
+    // ------------------------------------------------------------------ 17) repair and reclaim
+
+    private static final String SERVICE_ENGINEER = "engineer";
+    private static final String SERVICE_DEPOT = "depot";
+    private static final String SERVICE_TOWER = "tower";
+    private static final String SERVICE_SHED = "shed";
+    private static final String SERVICE_HUT = "hut";
+    private static final int SERVICE_REPAIR_COST = 1;
+
+    /**
+     * Repair and reclaim, the two halves of item 20.
+     *
+     * <p>Repair is asserted against exact arithmetic: a 200 hit point tower damaged by 100 costs exactly
+     * 100 gold at one gold per hit point, heals 4 hit points per tick while the engineer stands at its
+     * entrance, stops at full health without charging again, and refuses every free case (full health,
+     * unfinished, destroyed, no content price, unaffordable) without touching the warehouse.
+     *
+     * <p>Reclaim is asserted from a real placement: two engineers join a site, the site is reclaimed, the
+     * refund is half the placement bundle, both builders lose their order on the reclaim tick with a
+     * readable {@link Events.OrderFinished#reason() reason}, and a finished building is refused. The
+     * catalogue is local so every tick and amount is arithmetic rather than a measurement of terrain.
+     */
+    private static void checkRepairAndReclaim(Check check) {
+        check.section("17) repair a damaged building, reclaim an unfinished site");
+        ContentRegistry content = serviceContent();
+        ItemType gold = content.item("gold");
+        BuildingType towerType = content.building(SERVICE_TOWER);
+
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 221L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building depot = world.spawnBuilding(content.building(SERVICE_DEPOT), player, new GridPos(10, 10));
+        depositStock(check, player, depot, ItemBundle.of(gold, 1000),
+                "the service check starts with 1000 gold in the depot");
+
+        check.equal(ItemBundle.of(gold, SERVICE_REPAIR_COST), towerType.repairCostPerHealth(),
+                "the tower's repair price is one gold per missing hit point");
+        Building tower = world.spawnBuilding(towerType, player, new GridPos(20, 10));
+        tower.health().damage(100);
+        check.equal(Natural.of(100), tower.missingHealth(), "the damaged tower is missing 100 hit points");
+        check.equal(ItemBundle.of(gold, 100), tower.repairCost(),
+                "a full repair of the tower costs exactly 100 gold");
+        GridPos entrance = world.dimensionOf(tower).entranceTile(tower);
+        Unit repairer = world.spawnUnit(content.unit(SERVICE_ENGINEER), player, entrance);
+        Natural goldBeforeRepair = player.logistics().amount(gold);
+
+        var repair = engine.commands().tryRepair(repairer, tower);
+        check.that(repair.repairing(), "an affordable repair order is issued: " + repair.refusal());
+        check.that(!repairer.orders().pending().isEmpty()
+                        && repairer.orders().pending().get(0) instanceof RepairOrder,
+                "the engineer's queued order is a repair order");
+        check.equal(goldBeforeRepair, player.logistics().amount(gold),
+                "issuing a repair charges nothing yet; only the affordability probe ran");
+
+        engine.tick();
+        check.equal(Natural.of(104), tower.health().current(),
+                "the first standing tick restores " + RepairOrder.REPAIR_POINTS_PER_TICK
+                        + " hit points (100 -> 104)");
+        check.equal(goldBeforeRepair.subtractClamped(Natural.of(4)), player.logistics().amount(gold),
+                "that tick charged exactly four gold, one per restored hit point");
+        engine.tick(24);
+        check.equal(Natural.of(200), tower.health().current(), "25 ticks restore all 100 missing hit points");
+        check.equal(goldBeforeRepair.subtractClamped(Natural.of(100)), player.logistics().amount(gold),
+                "the complete repair charged exactly its 100 gold price once");
+        // The heal that reaches the maximum happens on the 25th tick; the order observes the full health
+        // and completes on the following tick, which charges nothing.
+        engine.tick();
+        check.that(repairer.orders().isEmpty(), "the repair order completes at full health");
+
+        Natural goldAtFull = player.logistics().amount(gold);
+        engine.tick(5);
+        check.equal(Natural.of(200), tower.health().current(), "extra ticks do not heal past the maximum");
+        check.equal(goldAtFull, player.logistics().amount(gold),
+                "extra ticks after full health charge nothing (no over-repair)");
+
+        var fullRepair = engine.commands().tryRepair(repairer, tower);
+        check.that(!fullRepair.repairing(), "a full-health tower cannot be repaired again");
+        check.that(fullRepair.refusal() != null && fullRepair.refusal().contains("full health"),
+                "the full-health refusal says so: " + fullRepair.refusal());
+        check.equal(goldAtFull, player.logistics().amount(gold),
+                "the refused full-health repair charges nothing");
+
+        // A building type without a repair price is refused outright.
+        Building shed = world.spawnBuilding(content.building(SERVICE_SHED), player, new GridPos(30, 10));
+        shed.health().damage(10);
+        Unit shedRepairer = world.spawnUnit(content.unit(SERVICE_ENGINEER), player, new GridPos(28, 10));
+        var noPrice = engine.commands().tryRepair(shedRepairer, shed);
+        check.that(!noPrice.repairing() && noPrice.refusal().contains("no repair cost"),
+                "a type whose content declares no repair price is refused: " + noPrice.refusal());
+
+        // An unfinished site is not repaired; it is built.
+        Building unfinished = world.placeBuilding(towerType, player, new GridPos(40, 10));
+        var unfinishedRepair = engine.commands().tryRepair(repairer, unfinished);
+        check.that(!unfinishedRepair.repairing()
+                        && unfinishedRepair.refusal().contains("under construction"),
+                "an unfinished site is refused with 'under construction': " + unfinishedRepair.refusal());
+
+        // A destroyed building cannot be repaired.
+        EntityId towerId = tower.id();
+        world.destroy(tower);
+        var destroyedRepair = engine.commands().tryRepair(repairer, tower);
+        check.that(!destroyedRepair.repairing() && destroyedRepair.refusal().contains("destroyed"),
+                "a destroyed building cannot be repaired: " + destroyedRepair.refusal());
+        check.equal(goldAtFull, player.logistics().amount(gold),
+                "the destroyed-building refusal charges nothing");
+        world.flush();
+        check.that(world.findEntity(towerId).isEmpty(), "the destroyed tower is gone from the world");
+
+        // Unaffordable: ten gold cannot cover a 100 gold repair, and the refusal is free.
+        OcRtsEngine poor = flatEngine(content, VisualLibrary.empty(), 222L);
+        Player poorPlayer = poor.players().get(0);
+        Building poorDepot = poor.world().spawnBuilding(content.building(SERVICE_DEPOT), poorPlayer,
+                new GridPos(10, 10));
+        depositStock(check, poorPlayer, poorDepot, ItemBundle.of(gold, 10),
+                "the unaffordable repair check starts with ten gold");
+        Building poorTower = poor.world().spawnBuilding(towerType, poorPlayer, new GridPos(20, 10));
+        poorTower.health().damage(100);
+        GridPos poorEntrance = poor.world().dimensionOf(poorTower).entranceTile(poorTower);
+        Unit poorRepairer = poor.world().spawnUnit(content.unit(SERVICE_ENGINEER), poorPlayer, poorEntrance);
+        var poorRepair = poor.commands().tryRepair(poorRepairer, poorTower);
+        check.that(!poorRepair.repairing() && poorRepair.refusal().contains("cannot afford"),
+                "a repair the warehouses cannot cover is refused: " + poorRepair.refusal());
+        check.equal(Natural.of(10), poorPlayer.logistics().amount(gold),
+                "the unaffordable repair charged nothing");
+        check.equal(Natural.of(100), poorTower.health().current(),
+                "the unaffordable repair healed nothing");
+        check.that(poorRepairer.orders().isEmpty(), "the unaffordable repair issued no order");
+
+        // ------------------------------------------------------------------ reclaim
+        BuildingType hutType = content.building(SERVICE_HUT);
+        Unit firstBuilder = world.spawnUnit(content.unit(SERVICE_ENGINEER), player, new GridPos(48, 10));
+        Unit secondBuilder = world.spawnUnit(content.unit(SERVICE_ENGINEER), player, new GridPos(49, 10));
+        Natural goldBeforeBuild = player.logistics().amount(gold);
+        var placed = engine.commands().tryBuild(firstBuilder, hutType, new GridPos(50, 10));
+        check.that(placed.placed(), "the reclaim check places a hut site: " + placed.refusal());
+        Building site = placed.site();
+        check.equal(ItemBundle.of(gold, 10), site.invested(),
+                "the site records its 10 gold placement investment");
+        check.that(engine.commands().tryBuild(secondBuilder, site).placed(),
+                "the second engineer joins the site through the ordinary build path");
+        engine.tick();
+        check.equal(2, site.builderCount(), "both engineers are attached after the first order tick");
+        List<Events.OrderFinished> buildFinishEvents = new ArrayList<>();
+        world.events().subscribe(Events.OrderFinished.class, event -> {
+            if ("build".equals(event.orderName())) {
+                buildFinishEvents.add(event);
+            }
+        });
+
+        Natural goldBeforeReclaim = player.logistics().amount(gold);
+        ItemBundle expectedRefund = ItemBundle.of(gold, 5);
+        check.equal(expectedRefund, CommandService.reclaimRefund(site),
+                "a reclaim refunds half of the 10 gold placement cost");
+        var reclaimed = engine.commands().tryReclaim(site);
+        check.that(reclaimed.reclaimed(), "the unfinished site is reclaimed: " + reclaimed.refusal());
+        check.equal(expectedRefund, reclaimed.refund(), "the returned refund is exactly half the cost");
+        check.equal(goldBeforeReclaim.add(expectedRefund.amount(gold)), player.logistics().amount(gold),
+                "the refund was deposited into the warehouse and nothing else was charged");
+        check.that(!site.isAlive(), "the reclaimed site is destroyed");
+        check.equal(0, site.builderCount(), "the reclaimed site keeps no attached builder");
+        boolean allDetached = true;
+        for (Unit builder : List.of(firstBuilder, secondBuilder)) {
+            allDetached &= builder.orders().isEmpty() && builder.orders().current() == null;
+        }
+        check.that(allDetached, "both builders lost their build order on the reclaim tick");
+        check.equal(2, buildFinishEvents.size(), "both build orders report a terminal event");
+        boolean reasonsClear = true;
+        for (Events.OrderFinished event : buildFinishEvents) {
+            reasonsClear &= event.state() == OrderState.FAILED
+                    && event.reason().contains("reclaimed");
+        }
+        check.that(reasonsClear, "both failures carry the reclaim reason: "
+                + buildFinishEvents.stream().map(Events.OrderFinished::reason).toList());
+        check.equal(goldBeforeBuild.subtractClamped(Natural.of(10)), player.logistics().amount(gold)
+                        .subtractClamped(expectedRefund.amount(gold)),
+                "placement charged ten gold and the reclaim returned five, with no further charge");
+
+        var finishedReclaim = engine.commands().tryReclaim(depot);
+        check.that(!finishedReclaim.reclaimed()
+                        && finishedReclaim.refusal().contains("already finished"),
+                "a finished building cannot be reclaimed: " + finishedReclaim.refusal());
+        check.equal(ItemBundle.EMPTY, finishedReclaim.refund(),
+                "the refused finished reclaim returns nothing");
+    }
+
+    /** Content for the repair/reclaim checks: a repairable tower, a shed with no price and a hut. */
+    private static ContentRegistry serviceContent() {
+        return ContentRegistry.builder("service")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .item("gold").name("Gold").maxStack(10_000)
+                .unit(SERVICE_ENGINEER).name("Engineer").role(UnitRole.WORKER).health(80).speed(10f)
+                        .radius(0.3f).cargo(10).spriteSet("engineer").tag("builder")
+                .building(SERVICE_DEPOT).name("Depot").size(2, 2).health(500).storage(24).warehouse()
+                        .spriteSet("depot")
+                .building(SERVICE_TOWER).name("Tower").size(2, 2).health(200).cost("gold", 40)
+                        .repairCostPerHealth("gold", SERVICE_REPAIR_COST)
+                        .buildTime(20).spriteSet("tower")
+                .building(SERVICE_SHED).name("Shed").size(2, 2).health(100).spriteSet("shed")
+                .building(SERVICE_HUT).name("Hut").size(2, 2).health(100).cost("gold", 10)
+                        .buildTime(20).spriteSet("hut")
+                .build();
+    }
+
+    // ------------------------------------------------------------------ 18) waypoints and paths
+
+    /**
+     * Waypoint routes and the path snapshot.
+     *
+     * <p>A three point route is walked in order and ends at the last point; a one point route keeps the
+     * historical single-target shape; an empty or over-cap route is refused without replacing the unit's
+     * current order. The path fields of the engine snapshot report a moving unit's remaining route and
+     * goal, omit both for a stopped unit, and honour the 64 point cap. A two leg route whose second leg is
+     * walled off fails with a reason that names that leg.
+     */
+    private static void checkWaypointsAndPaths(Check check) {
+        check.section("18) waypoint routes and the path a moving unit reports");
+        ContentRegistry content = ContentRegistry.builder("paths")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .terrain("water").name("Water").impassable().sprite("terrain/water")
+                .unit("runner").name("Runner").role(UnitRole.COMBAT).health(100).speed(6f).radius(0.35f)
+                        .spriteSet("runner")
+                .build();
+
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 301L);
+        Player player = engine.players().get(0);
+        Unit runner = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 5));
+        List<GridPos> route = List.of(new GridPos(10, 5), new GridPos(10, 10), new GridPos(15, 10));
+        var moved = engine.commands().moveRoute(runner, route);
+        check.that(moved.issued(), "a three point route is issued: " + moved.refusal());
+        check.equal(3, moved.order().route().size(), "the order carries all three points");
+        check.equal(0, moved.order().legIndex(), "the order starts at the first leg");
+        List<GridPos> goalsSeen = new ArrayList<>();
+        for (int tick = 0; tick < 800 && !runner.orders().isEmpty(); tick++) {
+            engine.tick();
+            Vec2 goal = runner.motion().goalOrNull();
+            if (goal != null) {
+                GridPos tile = goal.tile();
+                if (goalsSeen.isEmpty() || !goalsSeen.get(goalsSeen.size() - 1).equals(tile)) {
+                    goalsSeen.add(tile);
+                }
+            }
+        }
+        check.that(runner.orders().isEmpty(), "the three point order finishes");
+        check.equal(route, goalsSeen, "the unit visited the legs in order, with no repeats");
+        check.atMost(1.0f, runner.position().distance(route.get(2).center()),
+                "the unit ends at the last point");
+        check.equal(2, moved.order().legIndex(), "the finished order reports the final leg");
+        check.that(moved.order().failureReason() == null, "the successful route reports no failure reason");
+
+        // A one point route behaves like the historical single-target order.
+        Unit single = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 15));
+        engine.commands().move(single, new GridPos(8, 15));
+        engine.tick();
+        Order current = single.orders().current();
+        check.that(current instanceof MoveOrder move && move.route().size() == 1,
+                "move(unit, tile) still produces a one point MoveOrder");
+        for (int tick = 0; tick < 400 && !single.orders().isEmpty(); tick++) {
+            engine.tick();
+        }
+        check.that(single.orders().isEmpty()
+                        && single.position().distance(new GridPos(8, 15).center()) <= 1.0f,
+                "the single-target order still arrives at its destination");
+
+        // Empty and over-cap routes are refused and leave the unit idle.
+        Unit idle = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 25));
+        var empty = engine.commands().moveRoute(idle, List.of());
+        check.that(!empty.issued() && empty.refusal().contains("at least one"),
+                "an empty route is refused: " + empty.refusal());
+        List<GridPos> tooMany = new ArrayList<>();
+        for (int index = 0; index <= UnitDirector.MAX_MOVE_POINTS; index++) {
+            tooMany.add(new GridPos(10 + index, 25));
+        }
+        var overCap = engine.commands().moveRoute(idle, tooMany);
+        check.that(!overCap.issued() && overCap.refusal().contains("at most"),
+                "a route longer than " + UnitDirector.MAX_MOVE_POINTS + " points is refused: "
+                        + overCap.refusal());
+        check.that(idle.orders().isEmpty(), "neither refused route replaced the unit's order");
+
+        // A walled-off second leg fails the order and names the leg.
+        for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -2; dx <= 2; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dy)) == 2) {
+                    engine.map().setTerrain(new GridPos(30 + dx, 25 + dy), content.terrain("water"));
+                }
+            }
+        }
+        Unit trapped = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 30));
+        var doomed = engine.commands().moveRoute(trapped, List.of(new GridPos(8, 30), new GridPos(30, 25)));
+        check.that(doomed.issued(), "the two leg route with an isolated second target is issued");
+        for (int tick = 0; tick < 2600 && !trapped.orders().isEmpty(); tick++) {
+            engine.tick();
+        }
+        check.that(trapped.orders().isEmpty(), "the order eventually fails instead of hanging");
+        check.that(doomed.order().failureReason() != null
+                        && doomed.order().failureReason().contains("waypoint 2"),
+                "the failure names the unreachable second leg: " + doomed.order().failureReason());
+
+        // The snapshot reports a moving unit's remaining path and goal, and omits them when it stops.
+        Unit marcher = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 40));
+        engine.commands().move(marcher, new GridPos(60, 40));
+        engine.tick(2);
+        WorldSnapshot shot = engine.snapshot(new GridPos(30, 40), 32);
+        EntitySnapshot marcherShot = shot.entity(marcher.id()).orElseThrow();
+        check.that(marcherShot.hasPath(), "a moving unit reports a non-empty path");
+        check.equal(new GridPos(60, 40), marcherShot.target(),
+                "the path's target is the goal tile");
+        check.atMost(SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS, marcherShot.path().size(),
+                "the reported path is at most " + SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS + " points");
+
+        List<Vec2> hundred = new ArrayList<>();
+        for (int index = 0; index < 100; index++) {
+            hundred.add(new Vec2(10f + index, 40.5f));
+        }
+        marcher.motion().setPath(hundred);
+        EntitySnapshot capped = engine.snapshot(new GridPos(30, 40), 32)
+                .entity(marcher.id()).orElseThrow();
+        check.equal(SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS, capped.path().size(),
+                "a longer route is capped at " + SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS + " points");
+
+        engine.commands().stop(marcher);
+        EntitySnapshot stopped = engine.snapshot(new GridPos(30, 40), 32)
+                .entity(marcher.id()).orElseThrow();
+        check.that(!stopped.hasPath() && stopped.target() == null,
+                "a stopped unit reports no path and no target");
+    }
+
+
     private static ContentRegistry cooperativeContent() {
         return ContentRegistry.builder("coop")
                 .terrain("grass").name("Grass").buildable().sprite("terrain/grass")

@@ -1,7 +1,9 @@
 package io.github.sob1234509876.oc.rts.entity;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
@@ -38,15 +40,44 @@ public final class Building extends Entity {
     private final BuildingType type;
     private final GridPos origin;
     private final Inventory inventory;
+    /**
+     * What placing this building cost its owner, as recorded by the placement path.
+     *
+     * <p>A site created by {@link io.github.sob1234509876.oc.rts.World#placeBuilding} records the
+     * type's {@link BuildingType#cost()} because that is what the ordinary placement transaction charges;
+     * a finished building created by {@code spawnBuilding} records nothing, because nothing was spent on
+     * construction. The reclaim command refunds a documented fraction of this bundle - it never looks at
+     * the current catalog price, so a content change after a site was placed cannot mint resources.
+     * A scenario that places a site directly, without charging for it, still records the nominal cost;
+     * that is intentional so a scenario site can be reclaimed with the same arithmetic as a real one.
+     */
+    private final ItemBundle invested;
     private final Map<Unit, GridPos> builders = new LinkedHashMap<>();
     private Vec2 rallyPoint;
     private int constructionRemaining;
     private boolean constructed;
 
     public Building(EntityId id, Player owner, BuildingType type, GridPos origin, long spawnTick) {
+        this(id, owner, type, origin, spawnTick, type.cost());
+    }
+
+    /**
+     * Creates a building with an explicit record of what placing it cost.
+     *
+     * <p>The ordinary constructors are used by the two placement paths of
+     * {@link io.github.sob1234509876.oc.rts.dimension.Dimension}: a finished spawned building records
+     * {@link ItemBundle#EMPTY} because nothing was paid for it, and a construction site records the
+     * type's cost because that is the placement charge. Exposed so a scenario or a check can create a
+     * building with a precise investment record, which is what the reclaim refund is computed from.
+     *
+     * @param invested what the placement charged, or {@link ItemBundle#EMPTY} for a free/spawned building
+     */
+    public Building(EntityId id, Player owner, BuildingType type, GridPos origin, long spawnTick,
+            ItemBundle invested) {
         super(id, owner, footprintCenter(type, origin), new Health(type.maxHealth()), spawnTick);
         this.type = Objects.requireNonNull(type, "type");
         this.origin = Objects.requireNonNull(origin, "origin");
+        this.invested = invested == null ? ItemBundle.EMPTY : invested;
         this.inventory = new Inventory(
                 "storage of " + id,
                 type.storageSlots(),
@@ -63,6 +94,36 @@ public final class Building extends Entity {
 
     public BuildingType type() {
         return type;
+    }
+
+    /** What placing this building cost its owner; empty for a building that was spawned finished. */
+    public ItemBundle invested() {
+        return invested;
+    }
+
+    /** Hit points missing from the maximum, i.e. what a repair has left to restore. */
+    public Natural missingHealth() {
+        return health().max().subtractClamped(health().current());
+    }
+
+    /**
+     * What repairing every missing hit point would cost at the type's current repair price.
+     *
+     * <p>Empty when the type declares no repair price or the building is already at full health. The
+     * result is the exact cost of a complete repair; an order charges it in slices as hit points are
+     * actually restored, so a cancelled repair is not charged for work it did not do.
+     */
+    public ItemBundle repairCost() {
+        ItemBundle perHealth = type.repairCostPerHealth();
+        if (perHealth.isEmpty()) {
+            return ItemBundle.EMPTY;
+        }
+        return perHealth.multiplied(missingHealth());
+    }
+
+    /** Whether this finished building could be repaired right now (damaged and priced by content). */
+    public boolean canBeRepaired() {
+        return isConstructed() && isAlive() && !repairCost().isEmpty() && !missingHealth().isZero();
     }
 
     /** Tile of the minimum corner of the footprint. */

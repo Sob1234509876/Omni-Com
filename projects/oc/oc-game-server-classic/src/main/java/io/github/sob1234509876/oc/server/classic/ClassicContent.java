@@ -103,6 +103,14 @@ import java.util.Objects;
  * player invests in rather than something the first minute hands out. The two numbers are the
  * content's, not an engine rule.
  *
+ * <p><strong>Repair and reclaim.</strong> Every building type opts into repair with
+ * {@code .repairCostPerHealth(GOLD, 1)}: the engine charges one gold per missing hit point and restores four
+ * points per tick per engineer at the building's entrance, so a half-health 600 hit point armory costs 300
+ * gold to repair. An unfinished site can be reclaimed for half of the bundle recorded at placement - a
+ * warehouse site returns 50 gold and 20 wood - and a finished building refuses reclaim because it is no
+ * longer a construction investment. Continue-building is the ordinary BUILD command on an existing site's
+ * kind and origin; it joins the site and charges nothing.
+ *
  * <p><strong>Starting resources.</strong> A new player receives <strong>300 gold and 60 wood</strong>, which
  * is what {@link #STARTING_RESOURCES} declares. The documented opening - one armory t1, one mine t1 and two
  * t1 melee units - costs 100 + 80 + 2 x 20 = <strong>220 gold</strong> and <strong>20 wood</strong>, leaving
@@ -294,6 +302,19 @@ public final class ClassicContent implements WorldContent {
     /** Cost of the engineer, in gold. */
     private static final long ENGINEER_GOLD = 10;
 
+    /**
+     * Gold charged per missing hit point when a building is repaired.
+     *
+     * <p>Every classic building opts into repair at this one rate, which makes the price of a repair
+     * exactly its missing hit points in gold: a half-health 600 hit point armory costs 300 gold to bring
+     * back to full, and a lightly scratched one costs a few gold. It is deliberately a content number,
+     * not an engine constant - the engine charges {@code missing * repairCostPerHealth} and a catalogue
+     * that leaves the field empty gets buildings that cannot be repaired at all. Repairing keeps the
+     * footprint and skips the construction time, so it is priced as a service, not as a discount on
+     * rebuilding.
+     */
+    private static final long REPAIR_GOLD_PER_HEALTH = 1;
+
     /** No arguments: the catalogue is constants and the content is stateless. */
     public ClassicContent() {
     }
@@ -392,6 +413,7 @@ public final class ClassicContent implements WorldContent {
                     .health(500)
                     .level(mine.level())
                     .cost(GOLD, mine.costGold())
+                    .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
                     .buildTime(mine.buildTimeTicks())
                     .storage(6)
                     .spriteSet(mine.buildingPath())
@@ -411,6 +433,7 @@ public final class ClassicContent implements WorldContent {
                     .level(camp.level())
                     // Gold only: a lumber camp must never compete with the armory for the wood it makes.
                     .cost(GOLD, camp.costGold())
+                    .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
                     .buildTime(camp.buildTimeTicks())
                     .storage(6)
                     .spriteSet(camp.buildingPath())
@@ -429,6 +452,7 @@ public final class ClassicContent implements WorldContent {
                 .level(1)
                 .cost(GOLD, ARMORY_T1_GOLD)
                 .cost(WOOD, ARMORY_T1_WOOD)
+                .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
                 .buildTime(150)
                 .storage(6)
                 .producer(ARMORY_TAG)
@@ -444,6 +468,7 @@ public final class ClassicContent implements WorldContent {
                 .level(2)
                 .cost(GOLD, ARMORY_T2_GOLD)
                 .cost(WOOD, ARMORY_T2_WOOD)
+                .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
                 .buildTime(240)
                 .storage(8)
                 .producer(ARMORY_TAG)
@@ -455,6 +480,7 @@ public final class ClassicContent implements WorldContent {
                 .health(500)
                 .cost(GOLD, WAREHOUSE_GOLD)
                 .cost(WOOD, WAREHOUSE_WOOD)
+                .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
                 .buildTime(120)
                 .storage(24)
                 .warehouse()

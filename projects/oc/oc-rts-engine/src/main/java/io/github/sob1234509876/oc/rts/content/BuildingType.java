@@ -37,6 +37,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int buildTimeTicks;
     private final int level;
     private final ItemBundle cost;
+    private final ItemBundle repairCostPerHealth;
     private final ResourceKey upgradeTo;
     private final ItemBundle upgradeCost;
     private final Natural storageSlots;
@@ -56,6 +57,7 @@ public final class BuildingType implements Comparable<BuildingType> {
             int buildTimeTicks,
             int level,
             ItemBundle cost,
+            ItemBundle repairCostPerHealth,
             ResourceKey upgradeTo,
             ItemBundle upgradeCost,
             Natural storageSlots,
@@ -76,6 +78,7 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.buildTimeTicks = buildTimeTicks;
         this.level = level;
         this.cost = cost;
+        this.repairCostPerHealth = repairCostPerHealth == null ? ItemBundle.EMPTY : repairCostPerHealth;
         this.upgradeTo = upgradeTo;
         this.upgradeCost = upgradeCost == null ? ItemBundle.EMPTY : upgradeCost;
         this.storageSlots = storageSlots;
@@ -153,6 +156,32 @@ public final class BuildingType implements Comparable<BuildingType> {
      */
     public ItemBundle cost() {
         return cost;
+    }
+
+    /**
+     * Items the owner's warehouses have to provide to repair <em>one missing hit point</em> of this
+     * building type.
+     *
+     * <p>This is the cost side of the repair mechanic
+     * ({@link io.github.sob1234509876.oc.rts.order.UnitDirector#tryRepair}), not a flat repair price: the
+     * engine multiplies the bundle by the number of hit points actually missing, so a barely damaged
+     * building costs a little and a heavily damaged one costs proportionally more. The bundle is empty by
+     * default, which means the type <strong>cannot be repaired at all</strong>; content opts in by
+     * declaring an amount, for example {@code .repairCostPerHealth("gold", 1)}. The classic catalogue
+     * charges one gold per hit point on every building.
+     *
+     * <p>The arithmetic uses {@link Natural} amounts, so a scenario whose buildings have astronomical hit
+     * points still gets an exact price instead of an overflow. Only finished buildings with at least one
+     * missing hit point are repairable; the engine never charges for hit points it did not restore, and it
+     * never heals past {@link #maxHealth()}.
+     */
+    public ItemBundle repairCostPerHealth() {
+        return repairCostPerHealth;
+    }
+
+    /** Whether this type declares a repair price, i.e. whether its buildings can be repaired at all. */
+    public boolean canRepair() {
+        return !repairCostPerHealth.isEmpty();
     }
 
     /**

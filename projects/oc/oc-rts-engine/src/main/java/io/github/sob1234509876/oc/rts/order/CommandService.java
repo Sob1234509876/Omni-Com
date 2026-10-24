@@ -25,6 +25,7 @@ import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.Motion;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -72,6 +73,27 @@ public final class CommandService implements UnitDirector {
     /** Fragment every out-of-reach build refusal contains, so a caller can recognise that case. */
     public static final String OUT_OF_REACH = "out of reach";
 
+    /**
+     * Numerator of the fraction of a construction site's placement charge that a reclaim refunds.
+     *
+     * <p>The documented fraction is one half ({@link #RECLAIM_REFUND_NUMERATOR} /
+     * {@link #RECLAIM_REFUND_DENOMINATOR}), applied to the bundle recorded in
+     * {@link Building#invested()}: the price that was actually charged when the site was placed, not the
+     * current catalogue price. Amounts are halved with exact integer arithmetic and rounded down; an
+     * amount too large to store exactly is halved by magnitude and saturated. The order itself charges
+     * nothing, so a reclaim can only ever return half of the placement cost.
+     */
+    public static final int RECLAIM_REFUND_NUMERATOR = 1;
+
+    /** Denominator of the reclaim refund fraction; see {@link #RECLAIM_REFUND_NUMERATOR}. */
+    public static final int RECLAIM_REFUND_DENOMINATOR = 2;
+
+    /** Reason attached to a build order that a reclaim detached from its site. */
+    public static final String REASON_RECLAIMED = "the construction site was reclaimed by its owner";
+
+    /** Reason attached to a build order whose site was destroyed by something else. */
+    public static final String REASON_SITE_DESTROYED = "the construction site was destroyed";
+
     private final World world;
     private final FormationPlanner planner;
     private final int ticksPerSecond;
@@ -108,13 +130,24 @@ public final class CommandService implements UnitDirector {
      * reference to a unit that is not building it.
      */
     private void onEntityDestroyed(Events.EntityDestroyed event) {
-        if (!(event.entity() instanceof Building building) || building.builderCount() == 0) {
+        if (!(event.entity() instanceof Building building)) {
+            return;
+        }
+        // A repair order is not an attachment on the building, so it is found by walking the units. Doing
+        // it here means a destroyed building never leaves an engineer holding a repair order for it.
+        for (Unit unit : world.units()) {
+            Order current = unit.orders().current();
+            if (current instanceof RepairOrder repair && repair.building() == building) {
+                unit.orders().finishCurrent(context(unit), OrderState.FAILED, REASON_SITE_DESTROYED);
+            }
+        }
+        if (building.builderCount() == 0) {
             return;
         }
         for (Unit builder : building.builders()) {
             Order current = builder.orders().current();
             if (current instanceof BuildOrder order && order.site() == building) {
-                builder.orders().finishCurrent(context(builder), OrderState.FAILED);
+                builder.orders().finishCurrent(context(builder), OrderState.FAILED, REASON_SITE_DESTROYED);
             } else {
                 building.detachBuilder(builder);
             }
@@ -144,6 +177,38 @@ public final class CommandService implements UnitDirector {
             return;
         }
         unit.orders().replace(context(unit), new MoveOrder(destination));
+    }
+
+    /**
+     * Sends one unit through a route of one to {@value UnitDirector#MAX_MOVE_POINTS} tiles.
+     *
+     * <p>An empty route and an over-long route are refused before anything is changed, so a malformed
+     * command cannot cancel the unit's current order. A one-point route is the historical single-target
+     * move; a longer one is a waypoint order whose legs are walked in order and whose failure reason names
+     * the leg that could not be reached.
+     */
+    @Override
+    public MoveResult moveRoute(Unit unit, List<GridPos> route) {
+        if (!isCommandable(unit)) {
+            return MoveResult.refused("the unit cannot be commanded");
+        }
+        if (route == null || route.isEmpty()) {
+            return MoveResult.refused("a move route needs at least one destination");
+        }
+        if (route.size() > UnitDirector.MAX_MOVE_POINTS) {
+            return MoveResult.refused("a move route may have at most " + UnitDirector.MAX_MOVE_POINTS
+                    + " destinations, was " + route.size());
+        }
+        List<Vec2> points = new ArrayList<>(route.size());
+        for (GridPos destination : route) {
+            if (destination == null) {
+                return MoveResult.refused("a move route must not contain an empty destination");
+            }
+            points.add(destination.center());
+        }
+        MoveOrder order = new MoveOrder(points);
+        unit.orders().replace(context(unit), order);
+        return MoveResult.issued(order);
     }
 
     @Override
@@ -314,12 +379,162 @@ public final class CommandService implements UnitDirector {
     }
 
     /**
+     * Orders one engineer to repair a finished, damaged building.
+     *
+     * <p>The full remaining repair cost is {@link Building#repairCost()}: the type's
+     * {@link BuildingType#repairCostPerHealth()} bundle multiplied by the missing hit points. This method
+     * proves the owner can cover that whole amount by taking a reservation and immediately releasing it
+     * again, so an unaffordable repair is refused before any order exists and charges nothing. The
+     * {@link RepairOrder} then charges each tick's restored hit points with its own reserve/commit pair.
+     *
+     * <p>A building that is destroyed, unfinished, full-health, in another dimension, owned by somebody
+     * else or of a type without a repair price is refused with a readable sentence. The engineer's current
+     * order is replaced only after every check passed.
+     */
+    @Override
+    public RepairResult tryRepair(Unit engineer, Building building) {
+        Objects.requireNonNull(building, "building");
+        if (!isCommandable(engineer)) {
+            return RepairResult.refused("the engineer cannot be commanded");
+        }
+        if (!building.isAlive()) {
+            return RepairResult.refused("cannot repair building " + building.id().value()
+                    + ": it was destroyed");
+        }
+        if (!building.isConstructed()) {
+            return RepairResult.refused("cannot repair " + building.type().key().path()
+                    + " at " + building.origin() + ": it is still under construction");
+        }
+        if (!building.owner().equals(engineer.owner())) {
+            return RepairResult.refused("cannot repair the building at " + building.origin()
+                    + ": it belongs to another player");
+        }
+        if (!building.dimensionId().equals(engineer.dimensionId())) {
+            return RepairResult.refused("cannot repair the building at " + building.origin()
+                    + ": it is in another dimension");
+        }
+        if (!building.type().canRepair()) {
+            return RepairResult.refused("cannot repair " + building.type().key().path()
+                    + ": its content declares no repair cost");
+        }
+        if (building.missingHealth().isZero()) {
+            return RepairResult.refused("cannot repair " + building.type().key().path() + " at "
+                    + building.origin() + ": it is already at full health");
+        }
+        ItemBundle cost = building.repairCost();
+        Player owner = engineer.owner();
+        if (!cost.isEmpty()) {
+            if (!owner.hasLogistics()) {
+                return RepairResult.refused("cannot pay for the repair (needs " + describe(cost)
+                        + "): the player has no warehouse network");
+            }
+            Optional<Logistics.Reservation> probe = owner.logistics().reserve(cost);
+            if (probe.isEmpty()) {
+                return RepairResult.refused("cannot afford the repair (needs " + describe(cost) + ")");
+            }
+            // The probe only proves affordability; the order charges the work in per-tick slices, so
+            // nothing is withheld from production while the engineer walks to the building.
+            probe.get().release();
+        }
+        engineer.orders().replace(context(engineer), new RepairOrder(building));
+        return RepairResult.repairing(building);
+    }
+
+    /**
+     * Cancels one of the player's unfinished construction sites and refunds half of what it cost.
+     *
+     * <p>The refused cases are free and readable: a missing or dead building, a finished building (the
+     * sentence says a finished building cannot be reclaimed), and an owner with no warehouse network to
+     * receive the refund. On success every attached builder's {@link BuildOrder} is finished in this tick
+     * with {@link OrderState#FAILED} and {@link #REASON_RECLAIMED}, the site is destroyed, and
+     * {@link #reclaimRefund(Building)} is deposited into the owner's warehouses at the site. The command
+     * charges nothing else, so cancelling never costs the player more than the original placement.
+     */
+    @Override
+    public ReclaimResult tryReclaim(Building site) {
+        if (site == null) {
+            return ReclaimResult.refused("no building to reclaim");
+        }
+        if (!site.isAlive()) {
+            return ReclaimResult.refused("cannot reclaim building " + site.id().value()
+                    + ": it is already gone");
+        }
+        if (site.isConstructed()) {
+            return ReclaimResult.refused("cannot reclaim " + site.type().key().path() + " at "
+                    + site.origin() + ": it is already finished, and a finished building cannot be reclaimed");
+        }
+        Player owner = site.owner();
+        if (!owner.hasLogistics()) {
+            return ReclaimResult.refused("cannot reclaim " + site.type().key().path() + " at "
+                    + site.origin() + ": the player has no warehouse network to receive the refund");
+        }
+        ItemBundle refund = reclaimRefund(site);
+        // Detach every builder before the site dies, with a reason a player can read. Finishing the order
+        // calls BuildOrder.onFinish, which detaches; a builder whose current order is not a build order
+        // for this site is detached directly so the site keeps no stale reference.
+        site.pruneDeadBuilders();
+        for (Unit builder : site.builders()) {
+            Order current = builder.orders().current();
+            if (current instanceof BuildOrder order && order.site() == site) {
+                builder.orders().finishCurrent(context(builder), OrderState.FAILED, REASON_RECLAIMED);
+            } else {
+                site.detachBuilder(builder);
+            }
+        }
+        world.destroy(site);
+        ItemBundle leftover = ItemBundle.EMPTY;
+        if (!refund.isEmpty()) {
+            leftover = owner.logistics().deposit(refund, site.position());
+        }
+        ItemBundle deposited = refund.minusClamped(leftover);
+        return ReclaimResult.reclaimed(site, deposited);
+    }
+
+    /**
+     * What a reclaim of the site would refund: a documented fraction of its recorded investment.
+     *
+     * <p>The fraction is {@link #RECLAIM_REFUND_NUMERATOR} / {@link #RECLAIM_REFUND_DENOMINATOR} (one
+     * half). Exact amounts are halved with integer arithmetic and rounded down; a structural magnitude
+     * that cannot be stored exactly is halved by its floating approximation and saturated, so the result
+     * is always a non-negative {@link Natural}. A building spawned finished has an empty investment
+     * record, so its refund is empty.
+     */
+    public static ItemBundle reclaimRefund(Building site) {
+        Objects.requireNonNull(site, "site");
+        ItemBundle invested = site.invested();
+        if (invested.isEmpty()) {
+            return ItemBundle.EMPTY;
+        }
+        ItemBundle.Builder refund = ItemBundle.builder();
+        for (ItemBundle.Amount component : invested.components()) {
+            Natural amount = component.amount().multiply(RECLAIM_REFUND_NUMERATOR);
+            Natural share;
+            if (amount.isExact()) {
+                share = Natural.of(amount.toBigInteger()
+                        .divide(BigInteger.valueOf(RECLAIM_REFUND_DENOMINATOR)));
+            } else {
+                double approx = amount.toDoubleApprox() / RECLAIM_REFUND_DENOMINATOR;
+                share = !Double.isFinite(approx) || approx >= (double) Long.MAX_VALUE
+                        ? Natural.of(Long.MAX_VALUE)
+                        : Natural.of((long) Math.max(0d, approx));
+            }
+            if (!share.isZero()) {
+                refund.add(component.item(), share);
+            }
+        }
+        return refund.build();
+    }
+
+    /**
      * The owner's living, unfinished site of this type whose footprint overlaps the requested one, or
      * {@code null}.
      *
      * <p>It is what turns a repeated build command into a join: the tile is occupied by a site that is
      * already being raised, and the request is retargeted to that site instead of being refused or
-     * creating a second, overlapping construction.
+     * creating a second, overlapping construction. It is also the server half of the client's
+     * {@code 继续建造} action: a site started by one of the player's engineers can be joined by another
+     * one through the ordinary {@code BUILD <engineer> <path> <x> <y>} form, with no new command and no
+     * second placement charge.
      */
     private Building unfinishedSiteAt(Unit unit, BuildingType type, GridPos origin) {
         TileRect requested = type.footprint(origin.x(), origin.y());

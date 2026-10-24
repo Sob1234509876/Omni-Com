@@ -73,8 +73,8 @@ export interface InputHooks {
   readonly isMarqueeEnabled?: () => boolean;
   readonly onHoverChange?: (tile: TileCoord | null) => void;
   readonly onCameraChange?: () => void;
-  /** A right click on a world tile; `targetId` is the entity under the cursor, if any. */
-  readonly onRightClick?: (tile: TileCoord, targetId: number | null) => void;
+  /** A right click on a world tile; `targetId` is the entity under the cursor, if any, and `shift` requests a waypoint. */
+  readonly onRightClick?: (tile: TileCoord, targetId: number | null, shift: boolean) => void;
   /**
    * A second click on the same entity (or on empty ground) within the double-click window. The page
    * replaces the selection with the whole-world same-kind rule, or with a single clicked building.
@@ -458,7 +458,7 @@ export class InputController {
       }
       const point = this.localPoint(event);
       this.updateHover(point.x, point.y);
-      this.emitRightClick(point.x, point.y);
+      this.emitRightClick(point.x, point.y, event.shiftKey);
       event.preventDefault();
       return;
     }
@@ -511,13 +511,13 @@ export class InputController {
     }
   };
 
-  /** Emits a right click with its tile and the entity body under the cursor, if there is a tile. */
-  private emitRightClick(screenX: number, screenY: number): void {
+  /** Emits a right click with its tile, the entity body under the cursor and the Shift waypoint flag. */
+  private emitRightClick(screenX: number, screenY: number, shift: boolean): void {
     const tile = this.hoverTileValue;
     if (tile === null) {
       return;
     }
-    this.hooks.onRightClick?.(tile, this.pickEntity(screenX, screenY));
+    this.hooks.onRightClick?.(tile, this.pickEntity(screenX, screenY), shift);
   }
 
   private readonly handleContextMenu = (event: MouseEvent): void => {

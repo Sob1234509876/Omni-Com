@@ -41,4 +41,16 @@ public interface Order {
     default String describe() {
         return name();
     }
+
+    /**
+     * Why the order last failed, or {@code null} when it did not fail.
+     *
+     * <p>The order queue copies this into the {@link io.github.sob1234509876.oc.rts.event.Events.OrderFinished}
+     * event, which is how a caller learns <em>which leg</em> of a waypoint route failed or that a builder
+     * lost its site to a reclaim. An order that succeeds or is cancelled keeps {@code null}; the state on
+     * the event already says that much.
+     */
+    default String failureReason() {
+        return null;
+    }
 }

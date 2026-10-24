@@ -8,6 +8,8 @@ import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 
+import java.util.List;
+
 /**
  * Immutable description of one entity at the moment a {@link WorldSnapshot} was taken.
  *
@@ -44,6 +46,10 @@ import io.github.sob1234509876.oc.rts.core.Vec2;
  * @param currentOrderName name of the active order, may be {@code null}
  * @param orderCount      number of orders the entity has, active one included
  * @param carrying        items the entity carries, never {@code null}
+ * @param path            remaining route of a moving unit as tiles, at most
+ *                        {@link SnapshotFactory#MAX_SNAPSHOT_PATH_POINTS} points; empty when the unit is
+ *                        idle or standing still
+ * @param target          goal tile of the active move order, or {@code null} when the unit is not moving
  */
 public record EntitySnapshot(
         EntityId id,
@@ -66,7 +72,9 @@ public record EntitySnapshot(
         boolean moving,
         String currentOrderName,
         int orderCount,
-        ItemBundle carrying) {
+        ItemBundle carrying,
+        List<GridPos> path,
+        GridPos target) {
 
     public EntitySnapshot {
         if (id == null) {
@@ -83,6 +91,7 @@ public record EntitySnapshot(
         }
         displayName = displayName == null ? typeKey.path() : displayName;
         carrying = carrying == null ? ItemBundle.EMPTY : carrying;
+        path = path == null ? List.of() : List.copyOf(path);
     }
 
     /** Whether the entity has a frame to draw right now. */
@@ -105,6 +114,11 @@ public record EntitySnapshot(
     /** Whether the entity carries items, which is what makes a hauler look loaded. */
     public boolean isCarrying() {
         return !carrying.isEmpty();
+    }
+
+    /** Whether this snapshot carries a remaining route to draw. */
+    public boolean hasPath() {
+        return !path.isEmpty();
     }
 
     /** Role of the unit, or {@code null} when this snapshot describes a building. */

@@ -69,12 +69,24 @@ import {
   isBuildingEntityKind,
   ownerBadge,
   ownershipColor,
+  ownershipOf,
   terrainAt,
   tileInWindow,
   underConstruction,
   type EntityView,
   type WorldView,
 } from "./view";
+import {
+  PATH_COLOR,
+  PATH_DASH,
+  PATH_TARGET_DOT_RATIO,
+  PENDING_CROSS_RATIO,
+  pathPointsFor,
+  pathSegments,
+  pathSegmentVisible,
+  pendingRoutePoints,
+  type PathPoint,
+} from "./paths";
 
 const BACKGROUND_COLOR = "#0b1016";
 
@@ -109,6 +121,14 @@ export interface RenderOptions {
   readonly flashStarts: ReadonlyMap<number, number>;
   /** Monotonic milliseconds on the same clock as the values in `flashStarts`. */
   readonly nowMs: number;
+  /**
+   * Whether the route overlay is enabled (`路径` toggle in the top chrome).
+   *
+   * It controls both the committed path of selected own units and the pending Shift+right-click route.
+   */
+  readonly showPaths: boolean;
+  /** Pending (uncommitted) waypoints of the current selection, as absolute world tiles. */
+  readonly pendingPath: readonly TileCoord[];
 }
 
 interface Size {
@@ -160,8 +180,7 @@ function drawEntitySprite(
   zoom: number,
   clockSeconds: number,
   tileSize: number,
-): void {
-  const frame = frameFor(sprite, entity, clockSeconds);
+): void {  const frame = frameFor(sprite, entity, clockSeconds);
   if (frame === null) {
     return;
   }
@@ -184,6 +203,114 @@ function drawEntitySprite(
     drawWidth,
     drawHeight,
   );
+}
+
+/**
+ * Draws the route overlay: the committed path of every selected own unit and the pending waypoints.
+ *
+ * The committed line is drawn only for a unit the local player owns and has selected, never for an enemy,
+ * even if an enemy id somehow sits in `selectedIds`. It starts at the sprite (the view's fractional
+ * position) and runs through the snapshot's remaining tile centres to the target dot. `路径` turns the
+ * whole overlay off. Segments whose screen bounding box is entirely outside the padded canvas are
+ * skipped, which is the cheap cull that keeps a long route from issuing hundreds of off-screen draw
+ * calls; Canvas itself clips anything that survives the bounding-box test.
+ */
+function drawPathOverlays(
+  context: CanvasRenderingContext2D,
+  world: WorldView,
+  camera: Camera,
+  tileSize: number,
+  devicePixelRatio: number,
+  width: number,
+  height: number,
+  selectedIds: ReadonlySet<number>,
+  myPlayerId: number | null,
+  pendingPath: readonly TileCoord[],
+): void {
+  const tileOnScreen = camera.effectiveTileSize;
+  const margin = Math.max(24, tileOnScreen * 2);
+  const bounds = {
+    x: -margin,
+    y: -margin,
+    width: width + margin * 2,
+    height: height + margin * 2,
+  };
+  const lineWidth = Math.max(1, 1.25 / devicePixelRatio);
+  const toScreen = (point: PathPoint): PathPoint => {
+    const screen = camera.worldToScreen(point.x * tileSize, point.y * tileSize);
+    return { x: screen.x, y: screen.y };
+  };
+
+  context.save();
+  context.strokeStyle = PATH_COLOR;
+  context.fillStyle = PATH_COLOR;
+  context.lineWidth = lineWidth;
+  context.setLineDash([...PATH_DASH]);
+
+  for (const entity of world.entities) {
+    if (ownershipOf(entity.playerId, myPlayerId) !== "mine") {
+      continue;
+    }
+    const selected = entity.selected === true || selectedIds.has(entity.id);
+    if (!selected) {
+      continue;
+    }
+    const points = pathPointsFor(entity);
+    if (points.length < 2) {
+      continue;
+    }
+    const screenPoints = points.map(toScreen);
+    for (const segment of pathSegments(screenPoints)) {
+      if (!pathSegmentVisible(segment.from, segment.to, bounds)) {
+        continue;
+      }
+      context.beginPath();
+      context.moveTo(segment.from.x, segment.from.y);
+      context.lineTo(segment.to.x, segment.to.y);
+      context.stroke();
+    }
+    // The target marker: the explicit goal when the snapshot carries one, otherwise the last point of a
+    // truncated route. It is a small filled dot, not a ring, so it never competes with the selection ring.
+    const targetScreen = entity.pathTarget === undefined
+      ? screenPoints[screenPoints.length - 1]
+      : toScreen({ x: entity.pathTarget.x + 0.5, y: entity.pathTarget.y + 0.5 });
+    if (targetScreen !== undefined && pathSegmentVisible(targetScreen, targetScreen, bounds)) {
+      const radius = Math.max(2, tileOnScreen * PATH_TARGET_DOT_RATIO);
+      context.beginPath();
+      context.arc(targetScreen.x, targetScreen.y, radius, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+
+  // Pending waypoints: small crosses joined by the same dashed light-grey line. They are not part of a
+  // unit's committed order yet and are drawn even while nothing is selected only when a route exists.
+  const pending = pendingRoutePoints(pendingPath);
+  if (pending.length > 0) {
+    const screenPending = pending.map(toScreen);
+    for (const segment of pathSegments(screenPending)) {
+      if (!pathSegmentVisible(segment.from, segment.to, bounds)) {
+        continue;
+      }
+      context.beginPath();
+      context.moveTo(segment.from.x, segment.from.y);
+      context.lineTo(segment.to.x, segment.to.y);
+      context.stroke();
+    }
+    const half = Math.max(3, tileOnScreen * PENDING_CROSS_RATIO);
+    for (const point of screenPending) {
+      if (!pathSegmentVisible(point, point, bounds)) {
+        continue;
+      }
+      context.beginPath();
+      context.moveTo(point.x - half, point.y - half);
+      context.lineTo(point.x + half, point.y + half);
+      context.moveTo(point.x + half, point.y - half);
+      context.lineTo(point.x - half, point.y + half);
+      context.stroke();
+    }
+  }
+
+  context.restore();
 }
 
 export class WorldRenderer {
@@ -238,6 +365,7 @@ export class WorldRenderer {
     const range = camera.visibleTileRange();
     const origin = camera.worldToScreen(range.minX * tileSize, range.minY * tileSize);
     const drawSize = tileOnScreen + 0.5;
+    const selectedIds = new Set(options.selectedIds);
 
     // Terrain: atlas frame when present, procedural fallback otherwise.
     for (let tileY = range.minY; tileY <= range.maxY; tileY += 1) {
@@ -267,6 +395,24 @@ export class WorldRenderer {
 
     if (atlas === null) {
       drawTileGrid(context, camera, range, size.devicePixelRatio);
+    }
+
+    // Route overlay: above the terrain and the grid, below every shadow, ring and sprite. It is the same
+    // layer for the committed path and the pending waypoints, so the two styles can only differ by their
+    // marks (a target dot versus crosses).
+    if (options.showPaths) {
+      drawPathOverlays(
+        context,
+        world,
+        camera,
+        tileSize,
+        size.devicePixelRatio,
+        size.width,
+        size.height,
+        selectedIds,
+        options.myPlayerId,
+        options.pendingPath,
+      );
     }
 
     const hover = options.hoverTile;
@@ -335,7 +481,6 @@ export class WorldRenderer {
 
     // Ground pass: every shadow first, then every ownership ring. The gold selection ring is drawn
     // after the flash halo below, so the flash can never hide it.
-    const selectedIds = new Set(options.selectedIds);
     for (const item of prepared) {
       drawGroundShadow(
         context,

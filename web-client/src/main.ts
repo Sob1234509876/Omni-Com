@@ -32,12 +32,15 @@ import {
 import {
   BUILDING_PATHS,
   UNIT_PATHS,
+  MAX_MOVE_POINTS,
   build,
   orderAttack,
   orderAttackMove,
-  orderMove,
+  orderMoveRoute,
   orderStop,
   parseWhoAmI,
+  reclaim,
+  repair,
   trainBatch,
   upgrade,
   whoAmI,
@@ -117,9 +120,11 @@ import {
   tooltipThumbnail,
 } from "./render/tooltip";
 import { upgradeEntry } from "./render/upgrade";
+import { buildingActionModel } from "./render/buildingActions";
 import {
   demoWorld,
   entityById,
+  entityFootprintOrigin,
   fetchWorldSnapshot,
   isBuildingEntityKind,
   isOwnUnit,
@@ -217,6 +222,12 @@ const buildButtonHost = required<HTMLDivElement>("#build-buttons");
 const upgradeSection = required<HTMLDivElement>("#upgrade-section");
 const upgradeTarget = required<HTMLSpanElement>("#upgrade-target");
 const upgradeButton = required<HTMLButtonElement>("#upgrade-button");
+const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
+const buildingActionsSection = required<HTMLElement>("#building-actions-section");
+const buildingActionsTarget = required<HTMLSpanElement>("#building-actions-target");
+const continueBuildButton = required<HTMLButtonElement>("#continue-build-button");
+const repairButton = required<HTMLButtonElement>("#repair-button");
+const reclaimButton = required<HTMLButtonElement>("#reclaim-button");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -320,6 +331,10 @@ let myPlayerId: number | null = null;
 let loginName: string | null = null;
 /** Building path armed for placement, or null when the canvas is not in placement mode. */
 let placementPath: string | null = null;
+/** Pending waypoints of the current selection (Shift+right-click), in click order. */
+let pendingRoute: TileCoord[] = [];
+/** Whether the route overlay is drawn; a session preference, on by default. */
+let showPaths = true;
 /** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
 let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
@@ -408,6 +423,7 @@ function clearGameplayIdentity(): void {
   loginName = null;
   placementPath = null;
   attackMoveArmed = false;
+  pendingRoute = [];
   // Group ids belong to one world's entity id space; a disconnect must not leave a binding that a
   // later world could resolve to a different entity.
   controlGroups = EMPTY_CONTROL_GROUPS;
@@ -1094,6 +1110,63 @@ function placementEngineer(): EntityView | undefined {
 }
 
 /**
+ * The own engineer that receives a building service for a selected building.
+ *
+ * A selected building is not an engineer, so the panel cannot reuse `placementEngineer`; it picks the
+ * first own engineer in the loaded window, which is the same rule the `工兵` button uses. The id is shown
+ * in the entry's tooltip so the operator knows who will walk.
+ */
+function serviceEngineer(): EntityView | undefined {
+  const engineers = engineerSelection(world, myPlayerId);
+  const first = engineers[0];
+  return first === undefined ? undefined : entityById(world, first);
+}
+
+/** Clears the pending Shift+right-click route; returns whether there was one. */
+function clearPendingRoute(showStatus: boolean): boolean {
+  if (pendingRoute.length === 0) {
+    return false;
+  }
+  pendingRoute = [];
+  if (showStatus) {
+    setStatus("已清除路径点", "idle");
+  }
+  updateGameplayPanel();
+  updateHud(true);
+  return true;
+}
+
+/**
+ * Appends one Shift+right-click waypoint to the current selection's pending route.
+ *
+ * The cap is the protocol's: a committed line may carry one to eight points including the final
+ * destination, so the pending route may hold at most eight tiles before the plain right-click that
+ * commits it (which adds the final point) would already be over the limit. A repeated click on the same
+ * tile is ignored rather than adding a zero-length leg.
+ */
+function appendPendingWaypoint(tile: TileCoord): void {
+  const last = pendingRoute[pendingRoute.length - 1];
+  if (last !== undefined && last.x === tile.x && last.y === tile.y) {
+    setStatus(
+      `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：同一个点不重复添加 · 右键提交 · Esc 清除`,
+      "busy",
+    );
+    return;
+  }
+  if (pendingRoute.length >= MAX_MOVE_POINTS) {
+    refuse(`路径点最多 ${MAX_MOVE_POINTS} 个；右键提交当前路线，或 Esc 清除`);
+    return;
+  }
+  pendingRoute = [...pendingRoute, { x: tile.x, y: tile.y }];
+  setStatus(
+    `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：Shift+右键加点 · 右键提交 · Esc 清除`,
+    "busy",
+  );
+  updateGameplayPanel();
+  updateHud(true);
+}
+
+/**
  * The ghost for the armed BUILD at the tile under the cursor, or null when no placement is armed, the
  * pointer is outside the canvas, or the engineer selection is gone.
  *
@@ -1156,6 +1229,7 @@ function pruneSelection(): void {
   }
   if (selectedIds.length === 0) {
     selectedGroup = null;
+    pendingRoute = [];
   }
   if (placementPath !== null) {
     if (placementEngineer() === undefined) {
@@ -1749,7 +1823,8 @@ let commandBarSignature = "";
  */
 function updateCommandContextVisibility(): void {
   const visible =
-    !trainSection.hidden || !buildSection.hidden || !upgradeSection.hidden || !hudQueue.hidden;
+    !trainSection.hidden || !buildSection.hidden || !upgradeSection.hidden
+      || !buildingActionsSection.hidden || !hudQueue.hidden;
   commandContext.classList.toggle("has-context", visible);
 }
 
@@ -1835,6 +1910,9 @@ function commandBarNote(model: CommandBarModel): string {
   }
   if (attackMoveArmed) {
     return "攻击移动：左键点目标地面 · Esc 取消";
+  }
+  if (pendingRoute.length > 0) {
+    return `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：Shift+右键加点 · 右键提交 · Esc 清除`;
   }
   if (!(loggedIn && socket !== null)) {
     return `${model.hint} · 先连接并 LOGIN`;
@@ -1937,6 +2015,54 @@ function updateGameplayPanel(): void {
       ? `UPGRADE ${upgradeOffer.buildingId}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
       : `UPGRADE ${upgradeOffer.buildingId}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
     upgradeButton.disabled = !(gameplayReady && upgradeOffer.affordable);
+  }
+
+  // Building services: 继续建造 / 修理 / 回收. The pure rule decides which entries exist and what
+  // they cost; this half only paints the buttons and keeps the engineer-less case visible but disabled.
+  const buildingActions = selectedBuildingActions();
+  const showBuildingActions =
+    buildingActions !== null
+    && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim);
+  buildingActionsSection.hidden = !showBuildingActions;
+  if (!showBuildingActions || buildingActions === null) {
+    continueBuildButton.hidden = true;
+    repairButton.hidden = true;
+    reclaimButton.hidden = true;
+    continueBuildButton.disabled = true;
+    repairButton.disabled = true;
+    reclaimButton.disabled = true;
+    void renderLatexInto(buildingActionsTarget, "");
+  } else {
+    const selected = singleSelectedEntity();
+    void renderLatexInto(
+      buildingActionsTarget,
+      selected === undefined
+        ? ""
+        : `· e${selected.id} ${contentLabel(selected.kind)}`,
+    );
+    continueBuildButton.hidden = !buildingActions.continueBuild;
+    continueBuildButton.disabled = !(gameplayReady && buildingActions.continueEnabled);
+    continueBuildButton.title =
+      buildingActions.engineerId === null
+        ? "继续建造：载入窗口内没有自己的工兵"
+        : `BUILD ${buildingActions.engineerId} ${buildingActions.kind}：附着到半成品工地，不再次收费`;
+    void renderLatexInto(continueBuildButton, buildingActions.continueLabel ?? "继续建造");
+
+    repairButton.hidden = !buildingActions.repair;
+    repairButton.disabled = !(gameplayReady && buildingActions.repairEnabled);
+    repairButton.title =
+      buildingActions.engineerId === null
+        ? "修理：载入窗口内没有自己的工兵"
+        : buildingActions.repairEnabled
+          ? `REPAIR ${buildingActions.engineerId} ${buildingActions.buildingId}：${buildingActions.repairLabel ?? ""}`
+          : `修理：资源不足（${buildingActions.repairLabel ?? "未知费用"}）`;
+    void renderLatexInto(repairButton, buildingActions.repairLabel ?? "修理");
+
+    reclaimButton.hidden = !buildingActions.reclaim;
+    reclaimButton.disabled = !(gameplayReady && buildingActions.reclaimEnabled);
+    reclaimButton.title =
+      `RECLAIM ${buildingActions.buildingId}：移除未完工工地，返还 ${buildingActions.reclaimLabel ?? "一半成本"}`;
+    void renderLatexInto(reclaimButton, buildingActions.reclaimLabel ?? "回收");
   }
 
   renderSelectionChips(resolved);
@@ -2099,6 +2225,76 @@ function doUpgrade(): void {
   );
 }
 
+/**
+ * The service state for the single selected building, or null when the panel offers nothing.
+ *
+ * Reading it fresh at click time (instead of trusting the last render) keeps the command consistent with
+ * the selection and the stock even if a snapshot arrived between the paint and the click.
+ */
+function selectedBuildingActions() {
+  return buildingActionModel(singleSelectedEntity(), myPlayerId, myPlayerRow(), serviceEngineer());
+}
+
+/**
+ * `继续建造`: sends the ordinary `BUILD <engineer> <kind> <originX> <originY>` for a selected half-built
+ * site. The engine's join path recognises the unfinished site of the same type and attaches the engineer
+ * without a second placement charge.
+ */
+function doContinueBuild(): void {
+  const building = singleSelectedEntity();
+  const actions = selectedBuildingActions();
+  if (building === undefined || actions === null || !actions.continueBuild) {
+    refuse("先选中自己未完工的工地，再继续建造");
+    return;
+  }
+  if (actions.engineerId === null) {
+    refuse("载入窗口内没有自己的工兵：无法继续建造");
+    return;
+  }
+  const origin = entityFootprintOrigin(building);
+  void sendGameplayCommand(
+    "BUILD",
+    build(actions.engineerId, building.kind, origin.x, origin.y),
+    `已让 e${actions.engineerId} 继续建造 e${building.id} ${contentLabel(building.kind)}`,
+  );
+}
+
+/** `修理 (cost)`: sends `REPAIR <engineerId> <buildingId>` for the selected damaged own building. */
+function doRepairBuilding(): void {
+  const actions = selectedBuildingActions();
+  if (actions === null || !actions.repair) {
+    refuse("先选中自己受损的完工建筑，再修理");
+    return;
+  }
+  if (actions.engineerId === null) {
+    refuse("载入窗口内没有自己的工兵：无法修理");
+    return;
+  }
+  if (!actions.repairEnabled) {
+    refuse(`资源不足：修理需要 ${actions.repairLabel ?? "未知费用"}`);
+    return;
+  }
+  void sendGameplayCommand(
+    "REPAIR",
+    repair(actions.engineerId, actions.buildingId),
+    `已让 e${actions.engineerId} 修理 e${actions.buildingId}（${actions.repairLabel ?? ""}）`,
+  );
+}
+
+/** `回收 (refund)`: sends `RECLAIM <buildingId>` for the selected own unfinished site. */
+function doReclaimBuilding(): void {
+  const actions = selectedBuildingActions();
+  if (actions === null || !actions.reclaim) {
+    refuse("先选中自己未完工的工地，再回收");
+    return;
+  }
+  void sendGameplayCommand(
+    "RECLAIM",
+    reclaim(actions.buildingId),
+    `已回收 e${actions.buildingId}（${actions.reclaimLabel ?? "回收"}）`,
+  );
+}
+
 /** Arms build placement for the selected engineer; the next left click on the canvas sends BUILD. */
 function armBuild(buildingPath: string): void {
   if (!requireLoggedInForGameplay()) {
@@ -2132,7 +2328,17 @@ function cancelPlacement(showStatus: boolean): void {
   updateHud(true);
 }
 
-function doRightClick(tile: TileCoord, targetId: number | null): void {
+/**
+ * Applies one right click: a waypoint, an order, or a move route.
+ *
+ * <p>Shift+right-click only appends a pending waypoint to the current selection's route; a plain
+ * right-click commits the route, and the clicked tile becomes its final destination. With an empty
+ * pending route a plain right-click is exactly the historical single `ORDER MOVE` (the one-point form),
+ * so the interaction is unchanged for a player who never uses waypoints. A plain right-click on an enemy
+ * still issues `ORDER ATTACK` and clears any pending route; Shift+right-click on the same enemy adds a
+ * waypoint instead, because Shift is the mode modifier.
+ */
+function doRightClick(tile: TileCoord, targetId: number | null, shift: boolean): void {
   if (placementPath !== null) {
     setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置，Esc 取消`, "busy");
     return;
@@ -2156,24 +2362,49 @@ function doRightClick(tile: TileCoord, targetId: number | null): void {
     }
     return;
   }
+  if (shift) {
+    appendPendingWaypoint(tile);
+    return;
+  }
   const target = entityById(world, targetId);
   if (target !== undefined && !isMine(target)) {
+    pendingRoute = [];
     const lines = units.map((unit) => orderAttack(unit.id, target.id));
     const confirmation =
       units.length === 1
         ? `已攻击 ${describeEntity(target)}`
         : `${units.length} 个单位攻击 ${describeEntity(target)}`;
     void sendGameplayBatch("ORDER ATTACK", lines, lines, confirmation);
+    updateGameplayPanel();
+    updateHud(true);
     return;
   }
-  // The wire takes whole tile indices; the engine turns that GridPos into the tile's centre.
-  const lines = units.map((unit) => orderMove(unit.id, tile.x, tile.y));
+  // The clicked tile is the final destination; the pending points (if any) precede it.
+  const points = [...pendingRoute, { x: tile.x, y: tile.y }];
+  if (points.length > MAX_MOVE_POINTS) {
+    refuse(`路径点最多 ${MAX_MOVE_POINTS} 个：请先按 Esc 清除已有点`);
+    return;
+  }
+  let lines: string[];
+  try {
+    lines = units.map((unit) => orderMoveRoute(unit.id, points));
+  } catch (error: unknown) {
+    refuse(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  pendingRoute = [];
   const first = units[0];
   const confirmation =
     units.length === 1 && first !== undefined
-      ? `已移动 ${describeEntity(first)}`
-      : `${units.length} 个单位移动到 ${tile.x},${tile.y}`;
+      ? points.length === 1
+        ? `已移动 ${describeEntity(first)}`
+        : `已让 ${describeEntity(first)} 沿 ${points.length} 个路径点移动`
+      : points.length === 1
+        ? `${units.length} 个单位移动到 ${tile.x},${tile.y}`
+        : `${units.length} 个单位沿 ${points.length} 个路径点移动`;
   void sendGameplayBatch("ORDER MOVE", lines, lines, confirmation);
+  updateGameplayPanel();
+  updateHud(true);
 }
 
 /**
@@ -2225,7 +2456,8 @@ function doCancel(): boolean {
     return true;
   }
   if (placementPath === null) {
-    return false;
+    // A pending waypoint route is the remaining cancelable mode; clearing it keeps the selection.
+    return clearPendingRoute(true);
   }
   cancelPlacement(true);
   return true;
@@ -2236,6 +2468,7 @@ function applySelection(id: number | null, mode: SelectionMode): void {
   const previous = new Set(selectedIds);
   // A click is a fresh selection, not a recall: the HUD stops claiming it came from group N.
   selectedGroup = null;
+  pendingRoute = [];
   if (mode === "replace") {
     selectedIds = id === null ? [] : [id];
   } else if (id !== null) {
@@ -2258,6 +2491,7 @@ function applySelection(id: number | null, mode: SelectionMode): void {
 function applyMarquee(range: TileRange): void {
   const previous = new Set(selectedIds);
   selectedGroup = null;
+  pendingRoute = [];
   selectedIds = marqueeSelection(world, range, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
@@ -2275,6 +2509,7 @@ function applyMarquee(range: TileRange): void {
 function applyDoubleClick(id: number | null): void {
   const previous = new Set(selectedIds);
   selectedGroup = null;
+  pendingRoute = [];
   selectedIds = doubleClickSelection(world, id, myPlayerId);
   // Replacing the selection can invalidate an armed BUILD; pruning reports and cancels that case.
   pruneSelection();
@@ -2293,6 +2528,7 @@ function applyDoubleClick(id: number | null): void {
 function selectEngineers(): void {
   const previous = new Set(selectedIds);
   selectedGroup = null;
+  pendingRoute = [];
   selectedIds = engineerSelection(world, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
@@ -2319,6 +2555,7 @@ function selectEngineers(): void {
  * because a group may hold any selection the operator made - and a later recall simply applies it.
  */
 function doControlGroup(group: number, mode: ControlGroupMode): void {
+  pendingRoute = [];
   if (mode === "recall") {
     const livingIds = new Set<number>();
     for (const entity of world.entities) {
@@ -2388,8 +2625,8 @@ const inputHooks: InputHooks = {
   onCameraChange: () => {
     updateHud(true);
   },
-  onRightClick: (tile, targetId) => {
-    doRightClick(tile, targetId);
+  onRightClick: (tile, targetId, shift) => {
+    doRightClick(tile, targetId, shift);
   },
   onLeftClick: (tile) => doLeftClick(tile),
   onCancel: () => doCancel(),
@@ -2695,6 +2932,7 @@ function useWorld(next: WorldView, fromDemo = false): void {
     // part of that selection state, so they reset with it.
     selectedIds = [];
     placementPath = null;
+    pendingRoute = [];
     controlGroups = EMPTY_CONTROL_GROUPS;
     selectedGroup = null;
   }
@@ -2923,6 +3161,8 @@ function animationFrame(now: number): void {
       myPlayerId,
       flashStarts: flashes,
       nowMs: now,
+      showPaths,
+      pendingPath: pendingRoute,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.
@@ -3046,6 +3286,25 @@ attackMoveButton.addEventListener("click", () => {
   }
 });
 upgradeButton.addEventListener("click", doUpgrade);
+continueBuildButton.addEventListener("click", doContinueBuild);
+repairButton.addEventListener("click", doRepairBuilding);
+reclaimButton.addEventListener("click", doReclaimBuilding);
+
+/** Reflects the 路径 session toggle on its chrome button. */
+function updatePathsButton(): void {
+  togglePathsButton.classList.toggle("armed", showPaths);
+  togglePathsButton.setAttribute("aria-pressed", showPaths ? "true" : "false");
+  togglePathsButton.title = showPaths
+    ? "路径：显示选中单位的移动路径与待定路径点（点击关闭）"
+    : "路径：已隐藏（点击显示选中单位的移动路径与待定路径点）";
+}
+
+togglePathsButton.addEventListener("click", () => {
+  showPaths = !showPaths;
+  updatePathsButton();
+  updateHud(true);
+});
+updatePathsButton();
 selectEngineersButton.addEventListener("click", selectEngineers);
 
 // The canvas owns Escape for its own focus; this fallback keeps "cancel placement / attack move"

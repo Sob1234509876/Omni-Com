@@ -130,6 +130,27 @@ and 40 wood, so a second warehouse needs one t1 mine payout (30 gold per minute)
 checks that the site is within the engineer's reach (a path of at most 16 tiles to the footprint's one-tile
 approach ring) before it charges anything.
 
+## Repair, continue building and reclaim
+
+All nine classic building types opt into repair at **1 gold per missing hit point**, declared with
+`.repairCostPerHealth(GOLD, 1)`. `REPAIR <engineerId> <buildingId>` sends one engineer to a damaged,
+finished building of the same player; it restores **4 hit points per tick** while standing at the
+building's entrance and charges each tick's healed points from the warehouses. A half-health 600 HP
+armory therefore costs exactly **300 gold** to bring back to full, and the repair stops at full health
+without charging again. A full-health building, an unfinished site, a destroyed building and a player who
+cannot cover the whole remaining repair are refused with a readable reason and are charged nothing.
+
+An unfinished site of yours can be **continued** by sending the ordinary
+`BUILD <engineerId> <buildingPath> <x> <y>` for its kind and origin: the engine attaches the engineer to
+the existing site instead of placing a second one, and the join costs nothing. The client offers this as
+`继续建造` on a selected half-built site.
+
+`RECLAIM <buildingId>` cancels one of your **unfinished** sites. Every attached builder's build order fails
+with the reason `the construction site was reclaimed by its owner`, the site is removed, and exactly
+**half of the placement cost** is deposited back into your warehouses — 50 gold + 20 wood for a warehouse
+site, for example. A **finished building cannot be reclaimed**; the refusal says so. The command itself
+charges nothing.
+
 ## Starting resources and the opening
 
 A new player receives **300 gold and 60 wood**, declared once by `ClassicContent.STARTING_RESOURCES`. The host

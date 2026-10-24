@@ -149,10 +149,59 @@ export function whoAmI(): string {
 
 /** `ORDER MOVE <entityId> <x> <y>`; the coordinates are whole tile indices on the current server. */
 export function orderMove(entityId: number, x: number, y: number): string {
+  return orderMoveRoute(entityId, [{ x, y }]);
+}
+
+/**
+ * Maximum number of points one `ORDER MOVE` line may carry, including the final destination.
+ *
+ * <p>The server refuses `ORDER MOVE` with more than eight coordinate pairs, and a client that built a
+ * longer line would only learn that from an `ERR bad arguments`. The builder therefore refuses locally;
+ * the same cap gates the Shift+right-click pending route.
+ */
+export const MAX_MOVE_POINTS = 8;
+
+/** One destination of a move route: an absolute world tile. */
+export interface MovePoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * `ORDER MOVE <entityId> <x> <y> [<x> <y> ...]` for a route of one to {@link MAX_MOVE_POINTS} points.
+ *
+ * The one-point form is byte-identical to the historical `orderMove(entityId, x, y)` line, so a client
+ * that only ever moves once is unaffected by waypoints. An empty route, a route longer than the cap and
+ * a non-finite coordinate all throw before a line can reach the socket.
+ */
+export function orderMoveRoute(entityId: number, points: readonly MovePoint[]): string {
   const id = requirePositiveInteger(entityId, "实体 id");
-  const targetX = requireFiniteNumber(x, "目标瓦片 x");
-  const targetY = requireFiniteNumber(y, "目标瓦片 y");
-  return `ORDER MOVE ${id} ${targetX} ${targetY}`;
+  if (!Array.isArray(points) || points.length === 0) {
+    throw new Error("移动路线至少需要一个目标点");
+  }
+  if (points.length > MAX_MOVE_POINTS) {
+    throw new Error(`移动路线最多 ${MAX_MOVE_POINTS} 个目标点，当前是 ${points.length} 个`);
+  }
+  const fields: string[] = [];
+  for (const point of points) {
+    const x = requireFiniteNumber(point.x, "目标瓦片 x");
+    const y = requireFiniteNumber(point.y, "目标瓦片 y");
+    fields.push(String(x), String(y));
+  }
+  return `ORDER MOVE ${id} ${fields.join(" ")}`;
+}
+
+/** `REPAIR <engineerId> <buildingId>`; the engineer repairs a damaged building of the same player. */
+export function repair(engineerId: number, buildingId: number): string {
+  const engineer = requirePositiveInteger(engineerId, "工程师 id");
+  const building = requirePositiveInteger(buildingId, "建筑 id");
+  return `REPAIR ${engineer} ${building}`;
+}
+
+/** `RECLAIM <buildingId>` on an own unfinished site; the answer carries the half-cost refund. */
+export function reclaim(buildingId: number): string {
+  const id = requirePositiveInteger(buildingId, "建筑 id");
+  return `RECLAIM ${id}`;
 }
 
 /** `ORDER ATTACK <entityId> <targetId>`. */

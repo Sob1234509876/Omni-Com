@@ -475,7 +475,7 @@ ceil(buildTimeTicks / min(b, MAX_BUILDERS_PER_SITE))  个建造 tick 之后（b 
 
 `CommandService.upgradeBuilding(Building)` 是建造之外唯一的"改变建筑类型"入口，规则与成本在这里收口：
 
-1. **只升级已完工建筑**（`isConstructed()`）；血量不要求满，因为引擎没有修理机制，而升级会保留血量比例。
+1. **只升级已完工建筑**（`isConstructed()`）；血量不要求满：升级会保留血量比例，而受损建筑的修复是单独的 `REPAIR` 命令，所以不会出现"既不能修也不能升"的死角。
 2. 源类型的 `upgradeTo()` 必须指向目录里存在的类型；悬空、自指、目标占地不同都直接拒绝。
 3. 新建筑必须能放在旧原点：`World.canPlace(dimension, target, origin, replaced)` 忽略正在被替换的那一座，其它建筑仍然阻挡。
 4. 费用是 `source.upgradeCost()`，走 `Logistics.reserve(...)`；预留成功才生成替换建筑，生成后 `commit()` 一次。任何拒绝都不扣费、不留预留。
@@ -483,6 +483,28 @@ ceil(buildTimeTicks / min(b, MAX_BUILDERS_PER_SITE))  个建造 tick 之后（b 
 6. `world.destroy(old)` 触发 `ProductionSystem` 丢弃旧队列（**排队任务被取消，不继承**）和 `HaulingSystem` 失败指向旧建筑的送货任务；`world.clearTargets(oldId)` 把旧 id 从所有单位的战斗目标里清掉；旧 id 也随 `spatial.remove` 立刻离开空间索引。回答里的新 id 与旧 id 不同。
 
 `UnitDirector.UpgradeResult` 与 `BuildResult` 同构：`upgraded()`、`upgraded(Building)`、`refused(reason)`、`replacement()`、`refusal()`，拒绝文案直接给玩家看。
+
+### 维修：`UnitDirector.tryRepair`
+
+维修是升级之外另一个改变建筑血量的入口，数值全部来自内容：
+
+- **内容字段。** `BuildingType.repairCostPerHealth()` 返回一个 `ItemBundle`，表示**每一点缺失血量**的价格；默认空 bundle 表示该类型**完全不能维修**。构建器写作 `.repairCostPerHealth("gold", 1)`，经典目录给全部九种建筑都设成 1 金/点。总价是 `missingHealth() × 每点价格`，`Building.repairCost()` 就是这个精确值；金额是 `Natural`，天文血量也不会溢出。
+- **接受条件。** `tryRepair(Unit engineer, Building building)` 只接受自己的、**已完工**、**受损**、同维度、内容声明了维修价的建筑。摧毁、未完工、满血、别人的、跨维度、没有维修价都会给可读理由，且都在**改任何状态之前**拒绝。
+- **先探测整笔、再按 tick 扣。** 命令应用时用 `Logistics.reserve(整笔剩余维修费)` 证明玩家付得起，然后立即 `release()`——探测不占物资。真正的 `RepairOrder` 每 tick 只对**该 tick 实际恢复的血量**做一次 `reserve` + `commit`，所以维修中途被取消、被打断或库存耗尽时，**没有为没做的工扣费**，治疗量也永远不会超过 `maxHealth`。
+- **速率。** `RepairOrder.REPAIR_POINTS_PER_TICK = 4`：站在建筑入口的每个工程师每 tick 恢复 4 点；多个工程师可以同时修同一座建筑，各自贡献 4 点。入口是 `Dimension.entranceTile(building)` 解析出来的可通行地块，到达前不治疗（与建造的"到达才算工"一致），走不过去会按 `STALLED_TICKS_BEFORE_FAILURE` / `TIMEOUT_TICKS` 失败并带理由。
+- **失败清理。** 建筑被摧毁时 `CommandService` 在销毁的同一 tick 以 `FAILED`（理由 `the construction site was destroyed`）结束指向它的维修命令；取消/替换命令时 `RepairOrder.onCancel` 清掉移动目标，不残留引用。
+
+### 回收：`UnitDirector.tryReclaim`
+
+`CommandService.tryReclaim(Building)` 取消一座**未完工**工地：
+
+1. 工地必须存活、属于玩家、且 `!isConstructed()`；**已完工建筑拒绝**，文案明确说明已完工建筑不能回收。
+2. 返还比例是 `CommandService.RECLAIM_REFUND_NUMERATOR / DENOMINATOR = 1/2`，即**一半放置成本**。基准是 `Building.invested()`——放置时记录的实际扣费 bundle（`World.placeBuilding` 写入 `type.cost()`；`spawnBuilding` 写空，所以直接生成的完工建筑没有可返还成本）。精确金额用整数除法向下取整，结构性巨量用浮点近似并饱和。
+3. 返还通过 `owner.logistics().deposit(...)` 存进最近的仓库；仓库放不下的部分不返还。
+4. 回收前先把所有已附着建造者的 `BuildOrder` 以 `FAILED`、`CommandService.REASON_RECLAIMED` 结束，再 `world.destroy(site)`；因此建造者在同一 tick 收到 `Events.OrderFinished` 的明确理由，工地也不会留下附着引用。
+5. 命令自身不扣费。回答 `OK <refund>`（可读资源列表，例如 `50 gold, 10 wood`），失败则是 `ERR <reason>`。
+
+**继续建造。** 协议没有单独的"按建筑 id 加入"命令：客户端对选中的半成品工地发送普通的 `BUILD <engineerId> <kind> <originX> <originY>`。`CommandService.tryBuild` 在目标占地与同类型、同所有者、未完工的工地相交时改走加入路径（`tryBuild(Unit, Building)`），不放置第二座工地、不重复扣费；多个工程师都可以加入同一工地。
 
 ## 端到端示例
 
@@ -607,8 +629,11 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `production.ProductionQueue` | `building()`、`enqueue(recipe, count)`、`jobs()`、`size()`、`isEmpty()`、`current()`、`cancel(index)`、`clear()` | 请求展开成多个 job |
 | `production.ProductionSystem` | `SYSTEM_ORDER = 600`、`DEFAULT_DELIVERY_TIMEOUT_TICKS = 3000`、私有 `STATE_REPEAT_TICKS = 600`、`enqueue`、`queueOf`、`queue`、`cancel(b, i)`、`availableRecipes(b)`、`totalJobs()`、`trackedBuildings()`、`close()` | 相位 600 |
 | `production.ConstructionSystem` | `SYSTEM_ORDER = 500`、`MAX_BUILDERS_PER_SITE = 4`、`progressPerTick(standingBuilders)` | 相位 500；按 `min(到位的建造者, 4)` 推进，完工/死亡时同一 tick 结束所有附着命令并发布 `ConstructionCompleted` |
-| `entity.Building` 的建造面 | `constructionRemaining()`、`constructionFraction()`、`advanceConstruction(ticks)`、`completeConstruction()`、`restartConstruction()`、`builderCount()`、`builders()`、`builderStandTile(builder)`、`builderStandTiles()`、`attachBuilder(builder, tile)`、`detachBuilder(builder)`、`hasBuilder(builder)`、`pruneDeadBuilders()` | `builders()` 按实体 id 排序的快照；完工/死亡后为空 |
+| `entity.Building` 的建造面 | `constructionRemaining()`、`constructionFraction()`、`advanceConstruction(ticks)`、`completeConstruction()`、`restartConstruction()`、`builderCount()`、`builders()`、`builderStandTile(builder)`、`builderStandTiles()`、`attachBuilder(builder, tile)`、`detachBuilder(builder)`、`hasBuilder(builder)`、`pruneDeadBuilders()`、`invested()`、`missingHealth()`、`repairCost()`、`canBeRepaired()` | `builders()` 按实体 id 排序的快照；完工/死亡后为空；`invested()` 是放置时记录的成本，`repairCost()` 是缺失血量 × 内容每点维修价 |
 | `order.UnitDirector` 的建造面 | `build(Unit, BuildingType, GridPos)`、`tryBuild(Unit, BuildingType, GridPos)`、`build(Unit, Building)`、`tryBuild(Unit, Building)`、`BuildResult` | 前两者放置并扣费；后两者加入一个已存在、未完工、同所有者、同维度且在射程内的工地，分文不扣 |
+| `order.UnitDirector` 的维修/回收面 | `tryRepair(Unit, Building)`、`RepairResult`、`tryReclaim(Building)`、`ReclaimResult`、`CommandService.reclaimRefund(Building)` | 维修按 tick 只对恢复的血量扣费；回收只接受未完工工地并返还一半 `invested()` |
+| `content.BuildingType` 的维修面 | `repairCostPerHealth()`、`canRepair()`、`.repairCostPerHealth(item, amount)` | 空 bundle = 不能维修；经典目录全部设为 1 金/点 |
+| `order.RepairOrder` | `REPAIR_POINTS_PER_TICK = 4`、`REPAIR_RANGE_TILES`、`building()`、`restored()` | 站在入口每 tick 恢复 4 点；被摧毁/未完工/缺钱时失败并带理由 |
 | 相位数 | 100 区块流式 / 200 订单 / 300 寻路 / 400 移动 / 450 战斗 / **500 建造** / **600 生产** / **700 搬运** / 800 动画 | 见 `SystemPipeline` 与 [04-units-orders-and-movement.md](04-units-orders-and-movement.md) |
 
 ## 常见坑

@@ -3,6 +3,7 @@ package io.github.sob1234509876.oc.rts.dimension;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.PlayerId;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
@@ -307,15 +308,22 @@ public final class Dimension {
 
     /** Creates a finished building, as if it had been constructed beforehand. */
     public Building spawnBuilding(BuildingType type, Player owner, GridPos origin) {
-        Building building = new Building(idSource.get(), owner, type, origin, spawnTick());
+        Building building = new Building(idSource.get(), owner, type, origin, spawnTick(), ItemBundle.EMPTY);
         building.completeConstruction();
         register(building);
         return building;
     }
 
-    /** Places a building that still has to be constructed. */
+    /**
+     * Places a building that still has to be constructed.
+     *
+     * <p>The site records the type's cost as its investment, which is what a later reclaim refunds half
+     * of. The ordinary placement command charges exactly that bundle before calling this method; a
+     * scenario that places a site directly still records the nominal price, so both paths reclaim by the
+     * same rule.
+     */
     public Building placeBuilding(BuildingType type, Player owner, GridPos origin) {
-        Building building = new Building(idSource.get(), owner, type, origin, spawnTick());
+        Building building = new Building(idSource.get(), owner, type, origin, spawnTick(), type.cost());
         register(building);
         return building;
     }

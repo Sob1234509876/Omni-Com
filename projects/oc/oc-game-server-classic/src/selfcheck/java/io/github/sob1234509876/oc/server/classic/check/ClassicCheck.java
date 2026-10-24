@@ -25,6 +25,7 @@ import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.AttackOrder;
+import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ProductionQueue;
@@ -142,6 +143,7 @@ public final class ClassicCheck {
         mines(check, registry);
         lumberCamps(check, registry);
         upgradeLadders(check, registry);
+        repairAndReclaim(check, registry);
         economy(check, classic, registry);
         warehouseBuild(check, registry);
         startingResources(check, classic, registry);
@@ -501,6 +503,87 @@ public final class ClassicCheck {
         check.equal(0L, player.logistics().amount(wood).toLongSaturated(),
                 "兵营升级恰好扣光 40 木材");
         check.that(!armory.isAlive(), "旧兵营被替换");
+    }
+
+    // ------------------------------------------------------------------ 3b) repair and reclaim
+
+    /**
+     * The classic repair price and reclaim refund: every building type declares one gold per hit point,
+     * the engine prices a damaged t1 armory at exactly its missing hit points, half of a warehouse site's
+     * placement cost comes back on a reclaim, and a finished building refuses both.
+     *
+     * <p>The numbers are the catalogue's, not the engine's: the engine only multiplies the content's
+     * per-health bundle. This keeps the classic README's table and the code from drifting.
+     */
+    private static void repairAndReclaim(Check check, ContentRegistry registry) {
+        check.section("维修与回收");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
+        int repairable = 0;
+        for (BuildingType type : registry.buildings()) {
+            if (!type.canRepair()) {
+                continue;
+            }
+            repairable++;
+            check.equal(1L, asLong(type.repairCostPerHealth().amount(gold)),
+                    type.key().path() + " 每点缺失血量维修费 1 金币");
+            check.equal(0L, asLong(type.repairCostPerHealth().amount(wood)),
+                    type.key().path() + " 维修不花木材");
+        }
+        check.equal(9, repairable, "九个经典建筑类型全部可维修");
+
+        Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
+        OcRtsEngine engine = flatEngine(registry, player, Player.of(2, "Enemy", 0xFFEF5350));
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        check.equal(0L, asLong(player.logistics().deposit(
+                        ItemBundle.builder().add(gold, 1200).add(wood, 100).build(), warehouse.position())
+                .totalUnits()), "维修与回收检查的仓库收下了 1200 金币与 100 木材");
+
+        // A real site: the warehouse costs 100 gold + 40 wood, so half is 50 + 20.
+        Unit siteBuilder = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player,
+                new GridPos(48, 10));
+        var placed = engine.commands().tryBuild(siteBuilder, registry.building(ClassicContent.WAREHOUSE),
+                new GridPos(50, 10));
+        check.that(placed.placed(), "回收检查放下一个仓库工地: " + placed.refusal());
+        Building site = placed.site();
+        check.equal(ItemBundle.of(gold, 100, wood, 40), site.invested(),
+                "工地记录 100 金币 + 40 木材的投放成本");
+        check.equal(ItemBundle.of(gold, 50, wood, 20), CommandService.reclaimRefund(site),
+                "回收返还是投放成本的一半（50 金币 + 20 木材）");
+        Natural goldBeforeReclaim = player.logistics().amount(gold);
+        Natural woodBeforeReclaim = player.logistics().amount(wood);
+        var reclaimed = engine.commands().tryReclaim(site);
+        check.that(reclaimed.reclaimed(), "未完工仓库工地回收成功: " + reclaimed.refusal());
+        check.equal(ItemBundle.of(gold, 50, wood, 20), reclaimed.refund(),
+                "回收回答里的返还就是一半成本");
+        check.equal(goldBeforeReclaim.add(Natural.of(50)), player.logistics().amount(gold),
+                "仓库里确实多出 50 金币");
+        check.equal(woodBeforeReclaim.add(Natural.of(20)), player.logistics().amount(wood),
+                "仓库里确实多出 20 木材");
+        check.that(!site.isAlive(), "回收后的工地被销毁");
+        check.that(!engine.commands().tryReclaim(warehouse).reclaimed(),
+                "已完工的仓库不能被回收");
+
+        // A real repair: 300 missing hit points at one gold each.
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(20, 10));
+        armory.health().damage(300);
+        check.equal(ItemBundle.of(gold, 300), armory.repairCost(),
+                "半血 t1 兵营的维修总价是 300 金币");
+        GridPos entrance = world.dimensionOf(armory).entranceTile(armory);
+        Unit repairer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player, entrance);
+        Natural goldBeforeRepair = player.logistics().amount(gold);
+        var repair = engine.commands().tryRepair(repairer, armory);
+        check.that(repair.repairing(), "经典兵营维修命令成功: " + repair.refusal());
+        engine.tick(80);
+        check.equal(600L, asLong(armory.health().current()),
+                "维修把 t1 兵营恢复到 600 满血");
+        check.equal(goldBeforeRepair.subtractClamped(Natural.of(300)),
+                player.logistics().amount(gold), "维修恰好扣掉 300 金币");
+        check.that(!engine.commands().tryRepair(repairer, armory).repairing(),
+                "满血兵营不会再维修");
     }
 
     // ------------------------------------------------------------------ 4b) mine income

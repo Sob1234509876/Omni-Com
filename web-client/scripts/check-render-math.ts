@@ -16,13 +16,17 @@ import {
   BUILDING_PATHS,
   CLASSIC_BUILDING_KINDS,
   UNIT_PATHS,
+  MAX_MOVE_POINTS,
   build,
   buildingContent,
   orderAttack,
   orderAttackMove,
   orderMove,
+  orderMoveRoute,
   orderStop,
   parseWhoAmI,
+  reclaim,
+  repair,
   train,
   trainBatch,
   trainableUnitsForBuilding,
@@ -119,6 +123,7 @@ import {
   isWorldTile,
   localPlayerIdFromRoster,
   marqueeSelection,
+  MAX_SNAPSHOT_PATH_POINTS,
   OWN_UNIT_OUTLINE_COLOR,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
@@ -147,6 +152,22 @@ import {
   upgradeCostLabel,
   upgradeEntry,
 } from "../src/render/upgrade.ts";
+import {
+  CONTINUE_BUILD_ACTION_LABEL,
+  REPAIR_ACTION_LABEL,
+  RECLAIM_ACTION_LABEL,
+  buildingActionModel,
+  buildingCostLabel,
+  reclaimLabel,
+  repairLabel,
+} from "../src/render/buildingActions.ts";
+import {
+  PATH_COLOR,
+  pathPointsFor,
+  pathSegments,
+  pathSegmentVisible,
+  pendingRoutePoints,
+} from "../src/render/paths.ts";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
@@ -4126,6 +4147,289 @@ check(
     renderedDisplay.includes('class="katex"') &&
     renderedDisplay.includes("katex-display"),
   `${renderedInline.slice(0, 60)} / ${renderedDisplay.slice(0, 80)}`,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Item 20-22: repair/reclaim entries, route commands, path parsing and path rendering math
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "单点 ORDER MOVE 与旧的 orderMove 字节完全相同",
+  orderMove(7, 3, -2) === "ORDER MOVE 7 3 -2" &&
+    orderMoveRoute(7, [{ x: 3, y: -2 }]) === orderMove(7, 3, -2),
+  `${orderMove(7, 3, -2)} / ${orderMoveRoute(7, [{ x: 3, y: -2 }])}`,
+);
+check(
+  "两点与三点 ORDER MOVE 按点顺序拼接坐标",
+  orderMoveRoute(7, [{ x: 1, y: 2 }, { x: 3, y: 4 }]) === "ORDER MOVE 7 1 2 3 4" &&
+    orderMoveRoute(7, [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: -5, y: 6 }]) ===
+      "ORDER MOVE 7 1 2 3 4 -5 6",
+  orderMoveRoute(7, [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: -5, y: 6 }]),
+);
+check(
+  "九个路径点被客户端拒绝，空路线也被拒绝",
+  MAX_MOVE_POINTS === 8 &&
+    (() => {
+      try {
+        orderMoveRoute(7, Array.from({ length: 9 }, (_, index) => ({ x: index, y: 0 })));
+        return false;
+      } catch {
+        return true;
+      }
+    })() &&
+    (() => {
+      try {
+        orderMoveRoute(7, []);
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  `MAX_MOVE_POINTS=${MAX_MOVE_POINTS}`,
+);
+check(
+  "REPAIR 与 RECLAIM 生成正确的命令行，非法 id 在本地拒绝",
+  repair(9, 12) === "REPAIR 9 12" &&
+    reclaim(12) === "RECLAIM 12" &&
+    (() => {
+      try {
+        repair(0, 12);
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  `${repair(9, 12)} / ${reclaim(12)}`,
+);
+
+const pathPayload = worldViewFromSnapshot({
+  tick: 1,
+  originX: 0,
+  originY: 0,
+  width: 2,
+  height: 2,
+  tiles: [["grass", "grass"], ["grass", "grass"]],
+  entities: [
+    {
+      id: 1,
+      kind: "unit.melee.t1",
+      x: 1.5,
+      y: 1.5,
+      player: 1,
+      path: [[0, 0], [1, 1]],
+      target: [5, 5],
+    },
+  ],
+});
+const pathEntity = pathPayload?.entities[0];
+check(
+  "快照 path / target 被解析为绝对瓦片点",
+  pathEntity?.path?.length === 2 &&
+    pathEntity.path[0]?.x === 0 &&
+    pathEntity.path[1]?.y === 1 &&
+    pathEntity.pathTarget?.x === 5 &&
+    pathEntity.pathTarget?.y === 5,
+  JSON.stringify(pathEntity?.path) + " -> " + JSON.stringify(pathEntity?.pathTarget),
+);
+const overlongPayload = worldViewFromSnapshot({
+  tick: 1,
+  originX: 0,
+  originY: 0,
+  width: 2,
+  height: 2,
+  tiles: [["grass", "grass"], ["grass", "grass"]],
+  entities: [
+    {
+      id: 1,
+      kind: "unit.melee.t1",
+      x: 1.5,
+      y: 1.5,
+      player: 1,
+      path: Array.from({ length: 100 }, (_, index) => [index, 0]),
+    },
+  ],
+});
+check(
+  "超长快照 path 按上限截断",
+  overlongPayload?.entities[0]?.path?.length === MAX_SNAPSHOT_PATH_POINTS &&
+    MAX_SNAPSHOT_PATH_POINTS === 64,
+  String(overlongPayload?.entities[0]?.path?.length),
+);
+const malformedPathPayload = worldViewFromSnapshot({
+  tick: 1,
+  originX: 0,
+  originY: 0,
+  width: 2,
+  height: 2,
+  tiles: [["grass", "grass"], ["grass", "grass"]],
+  entities: [
+    {
+      id: 1,
+      kind: "unit.melee.t1",
+      x: 1.5,
+      y: 1.5,
+      player: 1,
+      path: [[0, 0], ["x", 1], [2.5, 3], [4, 5]],
+      target: ["bad", 1],
+    },
+  ],
+});
+check(
+  "非法 path 点被逐点丢弃，非法 target 直接缺席",
+  malformedPathPayload?.entities[0]?.path?.length === 2 &&
+    malformedPathPayload.entities[0]?.pathTarget === undefined,
+  JSON.stringify(malformedPathPayload?.entities[0]?.path) + " / " +
+    JSON.stringify(malformedPathPayload?.entities[0]?.pathTarget),
+);
+
+const pathFixture: EntityView = {
+  id: 1,
+  kind: "unit.melee.t1",
+  x: 2.5,
+  y: 3.5,
+  playerId: 1,
+  path: [{ x: 2, y: 3 }, { x: 4, y: 3 }],
+  pathTarget: { x: 6, y: 3 },
+};
+const drawnPath = pathPointsFor(pathFixture);
+check(
+  "路径折线从单位位置开始，去掉重复点并补上目标点",
+  drawnPath.length === 3 &&
+    drawnPath[0]?.x === 2.5 &&
+    drawnPath[0]?.y === 3.5 &&
+    drawnPath[1]?.x === 4.5 &&
+    drawnPath[2]?.x === 6.5,
+  JSON.stringify(drawnPath),
+);
+const cappedFixture: EntityView = {
+  ...pathFixture,
+  path: Array.from({ length: 100 }, (_, index) => ({ x: index, y: 0 })),
+};
+check(
+  "客户端折线同样按 64 点上限截断",
+  pathPointsFor(cappedFixture).length === MAX_SNAPSHOT_PATH_POINTS,
+  String(pathPointsFor(cappedFixture).length),
+);
+check(
+  "折线段数量是点数减一，屏幕外线段被剔除",
+  pathSegments(drawnPath).length === 2 &&
+    pathSegmentVisible(
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 5, y: 5, width: 20, height: 20 },
+    ) &&
+    !pathSegmentVisible(
+      { x: 100, y: 100 },
+      { x: 110, y: 110 },
+      { x: 5, y: 5, width: 20, height: 20 },
+    ) &&
+    !pathSegmentVisible(
+      { x: Number.NaN, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 0, width: 10, height: 10 },
+    ),
+  `${pathSegments(drawnPath).length} / ${PATH_COLOR}`,
+);
+check(
+  "待定路径点转换为瓦片中心",
+  JSON.stringify(pendingRoutePoints([{ x: 0, y: 0 }, { x: 2, y: 3 }])) ===
+    JSON.stringify([{ x: 0.5, y: 0.5 }, { x: 2.5, y: 3.5 }]),
+  JSON.stringify(pendingRoutePoints([{ x: 0, y: 0 }, { x: 2, y: 3 }])),
+);
+
+const servicePlayer = { id: 3, name: "service", gold: 100, wood: 0 };
+const serviceEngineer: EntityView = {
+  id: 9,
+  kind: "unit.engineer",
+  x: 1,
+  y: 1,
+  playerId: 3,
+};
+const damagedBuilding: EntityView = {
+  id: 5,
+  kind: "building.armory.t1",
+  x: 5.5,
+  y: 5.5,
+  playerId: 3,
+  progress: 1,
+  healthRatio: 0.5,
+  repairCost: { gold: 30, wood: 0 },
+};
+const unfinishedBuilding: EntityView = {
+  id: 6,
+  kind: "building.armory.t1",
+  x: 8.5,
+  y: 5.5,
+  playerId: 3,
+  progress: 0.4,
+  reclaim: { gold: 50, wood: 10 },
+};
+const repairModel = buildingActionModel(damagedBuilding, 3, servicePlayer, serviceEngineer);
+check(
+  "受损的自有完工建筑提供 修理 (cost)",
+  repairModel !== null &&
+    repairModel.repair &&
+    !repairModel.continueBuild &&
+    !repairModel.reclaim &&
+    repairModel.repairEnabled &&
+    repairModel.repairLabel === `${REPAIR_ACTION_LABEL} (金 30 · 木 0)` &&
+    buildingCostLabel({ gold: 30, wood: 0 }) === "金 30 · 木 0",
+  repairModel?.repairLabel ?? "null",
+);
+const poorRepair = buildingActionModel(
+  damagedBuilding,
+  3,
+  { ...servicePlayer, gold: 10 },
+  serviceEngineer,
+);
+check(
+  "买不起时修理入口保留但禁用",
+  poorRepair !== null && poorRepair.repair && !poorRepair.repairEnabled,
+  String(poorRepair?.repairEnabled),
+);
+const engineerlessRepair = buildingActionModel(damagedBuilding, 3, servicePlayer, undefined);
+check(
+  "没有己方工兵时修理与继续建造禁用但可见",
+  engineerlessRepair !== null &&
+    engineerlessRepair.repair &&
+    !engineerlessRepair.repairEnabled &&
+    engineerlessRepair.continueLabel === null,
+  String(engineerlessRepair?.repairEnabled),
+);
+const unfinishedModel = buildingActionModel(
+  unfinishedBuilding,
+  3,
+  servicePlayer,
+  serviceEngineer,
+);
+check(
+  "未完工的自有工地提供 继续建造 与 回收 (refund)",
+  unfinishedModel !== null &&
+    unfinishedModel.continueBuild &&
+    unfinishedModel.reclaim &&
+    !unfinishedModel.repair &&
+    unfinishedModel.continueEnabled &&
+    unfinishedModel.reclaimEnabled &&
+    unfinishedModel.continueLabel === CONTINUE_BUILD_ACTION_LABEL &&
+    unfinishedModel.reclaimLabel === `${RECLAIM_ACTION_LABEL} (金 50 · 木 10)` &&
+    reclaimLabel({ gold: 50, wood: 10 }) === "回收 (金 50 · 木 10)" &&
+    repairLabel({ gold: 30, wood: 0 }) === "修理 (金 30 · 木 0)",
+  unfinishedModel?.reclaimLabel ?? "null",
+);
+check(
+  "敌方建筑、单位与空选择不提供建筑服务入口",
+  buildingActionModel({ ...damagedBuilding, playerId: 2 }, 3, servicePlayer, serviceEngineer) ===
+    null &&
+    buildingActionModel(
+      { ...damagedBuilding, kind: "unit.engineer" },
+      3,
+      servicePlayer,
+      serviceEngineer,
+    ) === null &&
+    buildingActionModel(undefined, 3, servicePlayer, serviceEngineer) === null &&
+    buildingActionModel({ ...damagedBuilding, repairCost: undefined }, 3, servicePlayer,
+      serviceEngineer) === null,
+  "all null",
 );
 
 // ---------------------------------------------------------------------------------------------

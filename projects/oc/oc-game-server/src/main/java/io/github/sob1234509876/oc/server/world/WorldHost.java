@@ -26,6 +26,8 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
+import io.github.sob1234509876.oc.rts.movement.Motion;
+import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.production.ProductionJob;
 import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
@@ -156,6 +158,16 @@ public final class WorldHost {
 
     /** Largest snapshot radius a request may ask for, in tiles. */
     public static final int MAX_SNAPSHOT_RADIUS = 64;
+
+    /**
+     * Largest number of route points one entity row carries for a moving unit.
+     *
+     * <p>It is the engine's snapshot cap ({@link io.github.sob1234509876.oc.rts.visual.SnapshotFactory#MAX_SNAPSHOT_PATH_POINTS})
+     * repeated here because this class serialises the live world itself rather than going through the
+     * engine's snapshot factory. The document stays small: at most 64 tile pairs plus one target pair,
+     * omitted entirely for a unit that has no remaining route.
+     */
+    public static final int MAX_SNAPSHOT_PATH_POINTS = 64;
 
     /** Pixel size of one tile the browser is told to expect; the client still scales to its camera. */
     public static final int TILE_PIXELS = 16;
@@ -1508,6 +1520,17 @@ public final class WorldHost {
      * additive: an older client ignores it, and a client that reads it paints the 升级 entry and disables it
      * from its own player row when the stock is short, which is why affordability is not encoded here.
      *
+     * <p><strong>Repair, reclaim and route fields.</strong> A finished damaged building whose content
+     * declares a repair price also carries {@code "repair":{"gold":<cost>,"wood":<cost>}}, the total cost of
+     * repairing every missing hit point (see {@link #appendBuildingServices}). An unfinished site carries
+     * {@code "reclaim":{"gold":<refund>,"wood":<refund>}}, half of its recorded placement cost (see
+     * {@link CommandService#reclaimRefund(io.github.sob1234509876.oc.rts.entity.Building)}). A moving unit
+     * with a route also carries {@code "path":[[x,y],...]} with at most
+     * {@value #MAX_SNAPSHOT_PATH_POINTS} remaining points and {@code "target":[x,y]} for the goal; both are
+     * omitted when the unit is idle or stopped (see {@link #appendUnitPath}). These fields are additive and
+     * presentational; the documented client uses them for the {@code 修理 / 回收} entries and the route
+     * overlay, and an older client ignores them.
+     *
      * <p><strong>The {@code players} array carries two starting resources explicitly.</strong> Every
      * player that exists in the world, not only a human connection, contributes one row with its id, its
      * display name and the amounts of the two classic resources: the flat keys are {@code gold} and
@@ -1664,7 +1687,7 @@ public final class WorldHost {
         ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
         ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
 
-        int capacity = 96 + size * size * 8 + entities.size() * 128;
+        int capacity = 96 + size * size * 8 + entities.size() * 320;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
                 .append(",\"originX\":").append(originX)
@@ -1703,6 +1726,8 @@ public final class WorldHost {
             appendFootprintProgressAndQueue(json, entity, production);
             appendContents(json, entity);
             appendUpgradeOffer(json, entity, goldItem, woodItem);
+            appendBuildingServices(json, entity, goldItem, woodItem);
+            appendUnitPath(json, entity);
             json.append('}');
         }
         json.append("],\"players\":[");
@@ -1912,6 +1937,90 @@ public final class WorldHost {
         json.append(",\"gold\":").append(gold)
                 .append(",\"wood\":").append(wood)
                 .append('}');
+    }
+
+    /**
+     * Appends the optional {@code repair} and {@code reclaim} objects of a building row.
+     *
+     * <p>{@code repair} appears on a finished building that is damaged and whose content declares a
+     * per-health repair price. Its shape is {@code ,"repair":{"gold":300,"wood":0}} and the amounts are
+     * the cost of repairing every missing hit point at the moment of the snapshot - exactly what
+     * {@code REPAIR <engineer> <building>} would spend in total. The field is omitted for a full-health
+     * building, an unfinished site and a type without a repair price, so the client never offers a
+     * repair the command would refuse.
+     *
+     * <p>{@code reclaim} appears on an unfinished site. Its shape is
+     * {@code ,"reclaim":{"gold":50,"wood":10}} and the amounts are what
+     * {@code RECLAIM <buildingId>} would deposit: half of the bundle the site recorded as its placement
+     * investment ({@link CommandService#reclaimRefund(io.github.sob1234509876.oc.rts.entity.Building)}).
+     * It is present even for a free site (both amounts {@code 0}), because the action still removes the
+     * site.
+     *
+     * <p>Like every optional field these are additive: an older client ignores them, and the classic
+     * catalogue's repairs and reclaims are counted in gold and wood, the two resources this document
+     * already carries. A repair price in another item kind is real engine data but has no wire field yet.
+     */
+    private void appendBuildingServices(StringBuilder json, Entity entity, ItemType goldItem,
+            ItemType woodItem) {
+        if (!(entity instanceof Building building)) {
+            return;
+        }
+        if (building.isConstructed()) {
+            if (building.missingHealth().isZero() || !building.type().canRepair()) {
+                return;
+            }
+            ItemBundle cost = building.repairCost();
+            json.append(",\"repair\":{\"gold\":").append(amountOf(cost, goldItem))
+                    .append(",\"wood\":").append(amountOf(cost, woodItem))
+                    .append('}');
+            return;
+        }
+        ItemBundle refund = CommandService.reclaimRefund(building);
+        json.append(",\"reclaim\":{\"gold\":").append(amountOf(refund, goldItem))
+                .append(",\"wood\":").append(amountOf(refund, woodItem))
+                .append('}');
+    }
+
+    /**
+     * Appends the remaining route of a moving unit: {@code ,"path":[[x,y],...],"target":[x,y]}.
+     *
+     * <p>The array holds the first {@value #MAX_SNAPSHOT_PATH_POINTS} tile pairs of the <em>remaining</em>
+     * polyline (consumed waypoints are history and are not sent) and {@code target} is the goal tile, so a
+     * client can draw the line and mark its end. Coordinates are absolute world tiles in the same space
+     * as an entity's {@code x} / {@code y}, and may be negative. A unit with no goal, a unit that has
+     * arrived, and a unit that is still waiting for its first route all omit both fields, which is what
+     * makes the line disappear when the unit stops.
+     */
+    private static void appendUnitPath(StringBuilder json, Entity entity) {
+        if (!(entity instanceof Unit unit) || !unit.motion().isMoving()) {
+            return;
+        }
+        Motion motion = unit.motion();
+        if (motion.goalOrNull() == null) {
+            return;
+        }
+        List<Vec2> waypoints = motion.waypoints();
+        int from = motion.waypointIndex();
+        int available = Math.max(0, waypoints.size() - from);
+        int count = Math.min(available, MAX_SNAPSHOT_PATH_POINTS);
+        if (count == 0) {
+            return;
+        }
+        json.append(",\"path\":[");
+        for (int index = 0; index < count; index++) {
+            if (index > 0) {
+                json.append(',');
+            }
+            var tile = waypoints.get(from + index).tile();
+            json.append('[').append(tile.x()).append(',').append(tile.y()).append(']');
+        }
+        var target = motion.goalOrNull().tile();
+        json.append("],\"target\":[").append(target.x()).append(',').append(target.y()).append(']');
+    }
+
+    /** One item's amount in a bundle, or {@code 0} when that item is not registered. */
+    private static long amountOf(ItemBundle bundle, ItemType item) {
+        return item == null ? 0L : bundle.amount(item).toLongSaturated();
     }
 
     /**

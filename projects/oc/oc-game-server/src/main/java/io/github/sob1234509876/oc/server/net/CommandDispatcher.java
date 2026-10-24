@@ -3,6 +3,7 @@ package io.github.sob1234509876.oc.server.net;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
@@ -17,7 +18,9 @@ import io.github.sob1234509876.oc.server.plugin.RequestHandler;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
 import io.github.sob1234509876.oc.server.world.WorldHost;
 
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,13 +41,15 @@ import java.util.function.Supplier;
  * COUNT                             -&gt; OK &lt;registered users&gt;
  * REQ &lt;name&gt; &lt;base64-payload&gt;        -&gt; OK &lt;base64-payload&gt; | ERR &lt;message&gt;
  * WHOAMI                            -&gt; OK player &lt;id&gt; | ERR &lt;reason&gt;
- * ORDER MOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt;      -&gt; OK | ERR &lt;reason&gt;
+ * ORDER MOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; [&lt;x&gt; &lt;y&gt; ...] -&gt; OK | ERR &lt;reason&gt;
  * ORDER ATTACK &lt;entityId&gt; &lt;targetId&gt; -&gt; OK | ERR &lt;reason&gt;
  * ORDER ATTACKMOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; -&gt; OK | ERR &lt;reason&gt;
  * ORDER STOP &lt;entityId&gt;              -&gt; OK | ERR &lt;reason&gt;
  * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
  * TRAIN &lt;buildingId&gt; &lt;unitPath&gt;      -&gt; OK | ERR &lt;reason&gt;
  * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
+ * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; -&gt; OK | ERR &lt;reason&gt;
+ * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
  * </pre>
@@ -126,7 +131,7 @@ public final class CommandDispatcher {
 
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
-            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE");
+            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -254,6 +259,8 @@ public final class CommandDispatcher {
             case "BUILD" -> build(rest, session);
             case "TRAIN" -> train(rest, session);
             case "UPGRADE" -> upgrade(rest, session);
+            case "REPAIR" -> repair(rest, session);
+            case "RECLAIM" -> reclaim(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
     }
@@ -300,13 +307,27 @@ public final class CommandDispatcher {
         String kind = tokens[0].toUpperCase(Locale.ROOT);
         return switch (kind) {
             case "MOVE" -> {
-                if (tokens.length != 4) {
+                // One to eight coordinate pairs after the entity id. The historical single-target form
+                // has exactly one pair and stays byte-identical; a longer form is a waypoint route.
+                int pairTokens = tokens.length - 2;
+                if (pairTokens < 2 || pairTokens % 2 != 0) {
+                    yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+                }
+                int pointCount = pairTokens / 2;
+                if (pointCount > UnitDirector.MAX_MOVE_POINTS) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
                 OptionalLong unitId = parseId(tokens[1]);
-                OptionalInt x = parseCoordinate(tokens[2]);
-                OptionalInt y = parseCoordinate(tokens[3]);
-                if (unitId.isEmpty() || x.isEmpty() || y.isEmpty()) {
+                List<GridPos> route = new ArrayList<>(pointCount);
+                for (int point = 0; point < pointCount; point++) {
+                    OptionalInt x = parseCoordinate(tokens[2 + point * 2]);
+                    OptionalInt y = parseCoordinate(tokens[3 + point * 2]);
+                    if (x.isEmpty() || y.isEmpty()) {
+                        yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+                    }
+                    route.add(new GridPos(x.getAsInt(), y.getAsInt()));
+                }
+                if (unitId.isEmpty()) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
                 yield worldGameplay(session, (host, player) -> {
@@ -314,8 +335,9 @@ public final class CommandDispatcher {
                     if (unit.error() != null) {
                         return unit.error();
                     }
-                    host.engine().commands().move(unit.unit(), new GridPos(x.getAsInt(), y.getAsInt()));
-                    return "OK";
+                    UnitDirector.MoveResult result = host.engine().commands()
+                            .moveRoute(unit.unit(), route);
+                    return result.issued() ? "OK" : "ERR " + result.refusal();
                 });
             }
             case "ATTACK" -> {
@@ -497,6 +519,85 @@ public final class CommandDispatcher {
                     ? "OK " + result.replacement().id().value()
                     : "ERR " + result.refusal();
         });
+    }
+
+    /**
+     * {@code REPAIR <engineerId> <buildingId>}: send one owned engineer to repair an owned, damaged,
+     * finished building.
+     *
+     * <p>Both ids are resolved on the world thread with the usual existence and ownership rules, and the
+     * actual transaction is {@link UnitDirector#tryRepair}: the full remaining cost is probed, the
+     * engineer is ordered to the building's entrance, and the repair order charges each tick's restored
+     * hit points. The answer is {@code OK} or the engine's readable {@code ERR <reason>} (destroyed,
+     * unfinished, full health, no repair price, unaffordable, not yours).
+     */
+    private PendingAnswer repair(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length != 2) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong engineerId = parseId(tokens[0]);
+        OptionalLong buildingId = parseId(tokens[1]);
+        if (engineerId.isEmpty() || buildingId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        return worldGameplay(session, (host, player) -> {
+            UnitRef engineer = ownedUnit(host.engine().world(), engineerId.getAsLong(), player);
+            if (engineer.error() != null) {
+                return engineer.error();
+            }
+            BuildingRef building = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
+            if (building.error() != null) {
+                return building.error();
+            }
+            UnitDirector.RepairResult result = host.engine().commands()
+                    .tryRepair(engineer.unit(), building.building());
+            return result.repairing() ? "OK" : "ERR " + result.refusal();
+        });
+    }
+
+    /**
+     * {@code RECLAIM <buildingId>}: cancel one owned unfinished site and refund half of its placement
+     * cost.
+     *
+     * <p>Ownership and existence are the same rules as every other gameplay command; the transaction is
+     * {@link UnitDirector#tryReclaim}, which detaches every builder with a failure reason, removes the
+     * site and deposits the refund. The answer is {@code OK <refund>} where {@code <refund>} is a readable
+     * list such as {@code 50 gold, 10 wood} (plain {@code OK} when nothing is owed), or
+     * {@code ERR <reason>} - including the sentence that a finished building cannot be reclaimed.
+     */
+    private PendingAnswer reclaim(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length != 1) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong buildingId = parseId(tokens[0]);
+        if (buildingId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        return worldGameplay(session, (host, player) -> {
+            BuildingRef ref = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
+            if (ref.error() != null) {
+                return ref.error();
+            }
+            UnitDirector.ReclaimResult result = host.engine().commands().tryReclaim(ref.building());
+            if (!result.reclaimed()) {
+                return "ERR " + result.refusal();
+            }
+            return result.refund().isEmpty() ? "OK" : "OK " + describe(result.refund());
+        });
+    }
+
+    /** Renders an item bundle as the readable refund text of a {@code RECLAIM} answer. */
+    private static String describe(ItemBundle bundle) {
+        StringBuilder text = new StringBuilder();
+        for (ItemBundle.Amount component : bundle.components()) {
+            if (text.length() > 0) {
+                text.append(", ");
+            }
+            text.append(component.amount()).append(' ').append(component.item().key().path());
+        }
+        return text.length() == 0 ? "nothing" : text.toString();
     }
 
     /**

@@ -1,6 +1,7 @@
 package io.github.sob1234509876.oc.rts.order;
 
 import io.github.sob1234509876.oc.rts.content.BuildingType;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -10,6 +11,7 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -22,11 +24,35 @@ import java.util.Optional;
  */
 public interface UnitDirector {
 
+    /**
+     * Maximum number of points one move order may visit, including the final destination.
+     *
+     * <p>The wire form {@code ORDER MOVE <id> <x> <y> [<x> <y> ...]} accepts one to eight points; the
+     * engine refuses an empty or longer route rather than truncating it, because silently dropping the
+     * tail of a route would be a different order than the player issued.
+     */
+    int MAX_MOVE_POINTS = 8;
+
     /** Sends the unit to the tile, replacing whatever it was doing. */
     void move(Unit unit, GridPos destination);
 
     /** Sends the unit to an exact world position, replacing whatever it was doing. */
     void move(Unit unit, Vec2 destination);
+
+    /**
+     * Sends the unit through a route of one to {@value #MAX_MOVE_POINTS} tiles, in order.
+     *
+     * <p>A one-point route is exactly {@link #move(Unit, GridPos)}. With several points, each leg sets
+     * the next goal on the unit's motion, so the path service plans every leg with the same terrain,
+     * avoidance and reach rules as a plain move. The order completes when the last point is reached, and
+     * a leg that cannot be reached fails the whole order with a reason that names that leg (see
+     * {@link MoveOrder#failureReason()}).
+     *
+     * @param unit  the unit to move
+     * @param route one to {@value #MAX_MOVE_POINTS} tile destinations, in visit order
+     * @return the issued order, or the refusal reason; never {@code null}
+     */
+    MoveResult moveRoute(Unit unit, List<GridPos> route);
 
     /**
      * Sends a group to the tile and arranges it in the default formation.
@@ -161,6 +187,45 @@ public interface UnitDirector {
     BuildResult tryBuild(Unit unit, Building site);
 
     /**
+     * Orders an engineer to repair a finished, damaged building of the same player.
+     *
+     * <p>Repair is priced by {@link BuildingType#repairCostPerHealth()}: the full price of the remaining
+     * repair is {@code missingHealth * perHealth}, and the command reserves that whole amount once to
+     * prove the owner can cover it before any order is issued. The reservation is released immediately
+     * (nothing is charged yet); the {@link RepairOrder} then reserves and commits the exact slice for each
+     * tick's restored hit points, so a repair that is cancelled after one tick costs one tick, not the
+     * whole job, and a repair that fails charges nothing for work it did not do.
+     *
+     * <p>Every refusal is free and readable: a unit that cannot be commanded, a building that is gone, a
+     * building still under construction, a full-health building ({@code already at full health}), a type
+     * whose content declares no repair price, a building of another player or another dimension, and an
+     * owner whose warehouses cannot cover the full remaining repair.
+     *
+     * @param engineer the engineer to send, normally a unit with the content's builder role
+     * @param building the finished, damaged building to repair
+     * @return the repair order, or the refusal reason; never {@code null}
+     */
+    RepairResult tryRepair(Unit engineer, Building building);
+
+    /**
+     * Cancels one of the player's unfinished construction sites and refunds a documented fraction of
+     * what was spent on it.
+     *
+     * <p>Only an unfinished site qualifies. A finished building is refused with a sentence that says so,
+     * because reclaiming a completed building would be a demolition mechanic with different economics.
+     * On success every attached builder is finished with {@link OrderState#FAILED} and a reason that says
+     * the site was reclaimed, the site is destroyed, and half (rounded down) of the bundle recorded in
+     * {@link Building#invested()} is deposited into the owner's warehouses at the site's position. The
+     * command itself charges nothing: it only returns stock that was paid at placement. A building
+     * spawned finished has an empty investment record, so it has nothing to refund.
+     *
+     * @param site the unfinished site to reclaim
+     * @return the removed site and the refund actually deposited, or the refusal reason; never
+     *         {@code null}
+     */
+    ReclaimResult tryReclaim(Building site);
+
+    /**
      * Upgrades one finished building into the type its content names, paying the source type's
      * {@link BuildingType#upgradeCost() upgrade cost}.
      *
@@ -170,11 +235,11 @@ public interface UnitDirector {
      *
      * <ul>
      *   <li><strong>Finished only.</strong> The building has to be
-     *       {@link Building#isConstructed() constructed}; its health does not have to be full. There is no
-     *       repair mechanic in the engine, and an upgrade preserves the health fraction, so demanding full
-     *       health would add a hidden repair requirement and let a damaged building become neither repaired
-     *       nor upgraded. A half-health building stays half-health, which is also the property the scenario
-     *       asserts.</li>
+     *       {@link Building#isConstructed() constructed}; its health does not have to be full. An upgrade
+     *       preserves the health fraction, and repair is the separate {@link #tryRepair(Unit, Building)}
+     *       command, so demanding full health here would add a hidden requirement and leave a damaged
+     *       building unable to be either repaired or upgraded. A half-health building stays half-health,
+     *       which is also the property the scenario asserts.</li>
      *   <li><strong>Real target.</strong> {@link BuildingType#upgradeTo()} has to name a building type that
      *       exists in the same {@link io.github.sob1234509876.oc.rts.content.ContentRegistry}. A missing
      *       target, a self reference and a target with a different footprint are refused before anything is
@@ -265,6 +330,117 @@ public interface UnitDirector {
 
         /** Whether a site was placed. */
         public boolean placed() {
+            return site != null;
+        }
+    }
+
+    /**
+     * Outcome of one route request: either the issued {@link MoveOrder} or a refusal reason.
+     *
+     * <p>At most one field is set. An empty route and a route longer than {@value #MAX_MOVE_POINTS} are
+     * both refused, and neither replaces the unit's existing order.
+     *
+     * @param order   the order that was issued, or {@code null} when nothing was issued
+     * @param refusal why no order was issued, or {@code null} on success
+     */
+    record MoveResult(MoveOrder order, String refusal) {
+
+        public MoveResult {
+            if ((order == null) == (refusal == null)) {
+                throw new IllegalArgumentException("a move result is either an order or a refusal");
+            }
+        }
+
+        /** An order that is now the unit's active order. */
+        public static MoveResult issued(MoveOrder order) {
+            return new MoveResult(Objects.requireNonNull(order, "order"), null);
+        }
+
+        /** Nothing was issued, for the given reason. */
+        public static MoveResult refused(String reason) {
+            return new MoveResult(null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether an order was issued. */
+        public boolean issued() {
+            return order != null;
+        }
+    }
+
+    /**
+     * Outcome of one repair request: either the building whose repair order was issued, or a refusal.
+     *
+     * <p>At most one field is set. The building is named rather than the {@link RepairOrder} because the
+     * caller's question is "who is being repaired"; the order is the engineer's active order.
+     *
+     * @param building the building being repaired, or {@code null} when nothing was ordered
+     * @param refusal  why no order was issued, or {@code null} on success
+     */
+    record RepairResult(Building building, String refusal) {
+
+        public RepairResult {
+            if ((building == null) == (refusal == null)) {
+                throw new IllegalArgumentException("a repair result is either a building or a refusal");
+            }
+        }
+
+        /** A repair order was issued for the building. */
+        public static RepairResult repairing(Building building) {
+            return new RepairResult(Objects.requireNonNull(building, "building"), null);
+        }
+
+        /** Nothing was ordered, for the given reason. */
+        public static RepairResult refused(String reason) {
+            return new RepairResult(null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether a repair order was issued. */
+        public boolean repairing() {
+            return building != null;
+        }
+    }
+
+    /**
+     * Outcome of one reclaim request: the removed site, the refund actually deposited, or a refusal.
+     *
+     * <p>On success {@link #site()} is already destroyed and every attached builder has been detached;
+     * {@link #refund()} is what the warehouses really accepted (empty when nothing was owed or nothing
+     * fit). On refusal both fields are {@code null} except {@link #refusal()}.
+     *
+     * @param site    the reclaimed site, or {@code null} when nothing changed
+     * @param refund  the bundle deposited into the owner's warehouses; empty on a refusal or when
+     *                nothing was owed
+     * @param refusal why nothing changed, or {@code null} on success
+     */
+    record ReclaimResult(Building site, ItemBundle refund, String refusal) {
+
+        public ReclaimResult {
+            refund = refund == null ? ItemBundle.EMPTY : refund;
+            if (site == null) {
+                if (!refund.isEmpty()) {
+                    throw new IllegalArgumentException("a refused reclaim has no refund");
+                }
+                if (refusal == null) {
+                    throw new IllegalArgumentException("a reclaim result needs a site or a refusal");
+                }
+            } else if (refusal != null) {
+                throw new IllegalArgumentException("a reclaimed site has no refusal");
+            }
+        }
+
+        /** The site was reclaimed; the refund is what the warehouses accepted. */
+        public static ReclaimResult reclaimed(Building site, ItemBundle refund) {
+            return new ReclaimResult(Objects.requireNonNull(site, "site"),
+                    refund == null ? ItemBundle.EMPTY : refund, null);
+        }
+
+        /** Nothing changed, for the given reason. */
+        public static ReclaimResult refused(String reason) {
+            return new ReclaimResult(null, null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether a site was reclaimed. */
+        public boolean reclaimed() {
             return site != null;
         }
     }

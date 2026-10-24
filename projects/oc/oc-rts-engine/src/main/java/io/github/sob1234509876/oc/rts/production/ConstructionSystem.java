@@ -106,14 +106,15 @@ public final class ConstructionSystem implements SimulationSystem {
                 // A site killed during this tick (combat runs at 450) is still in the list until flush.
                 // Fail its builders now instead of leaving them attached to a corpse for a tick.
                 if (building.builderCount() > 0) {
-                    releaseBuilders(world, building, tick, OrderState.FAILED);
+                    releaseBuilders(world, building, tick, OrderState.FAILED,
+                            "the construction site was destroyed");
                 }
                 continue;
             }
             if (building.isConstructed()) {
                 // A site completed outside this system (completeConstruction) can still carry builders.
                 if (building.builderCount() > 0) {
-                    releaseBuilders(world, building, tick, OrderState.COMPLETED);
+                    releaseBuilders(world, building, tick, OrderState.COMPLETED, null);
                 }
                 continue;
             }
@@ -123,7 +124,7 @@ public final class ConstructionSystem implements SimulationSystem {
                 continue;
             }
             if (building.advanceConstruction(advance)) {
-                releaseBuilders(world, building, tick, OrderState.COMPLETED);
+                releaseBuilders(world, building, tick, OrderState.COMPLETED, null);
                 world.events().publish(new Events.ConstructionCompleted(building, tick.number()));
             }
         }
@@ -156,12 +157,13 @@ public final class ConstructionSystem implements SimulationSystem {
      * current order is not a {@link BuildOrder} for this site is simply detached: the site must never
      * keep a builder that is no longer building it.
      */
-    private static void releaseBuilders(World world, Building building, Tick tick, OrderState state) {
+    private static void releaseBuilders(World world, Building building, Tick tick, OrderState state,
+            String reason) {
         building.pruneDeadBuilders();
         for (Unit unit : building.builders()) {
             Order current = unit.orders().current();
             if (current instanceof BuildOrder order && order.site() == building) {
-                unit.orders().finishCurrent(new OrderContext(world, unit, tick), state);
+                unit.orders().finishCurrent(new OrderContext(world, unit, tick), state, reason);
             } else {
                 building.detachBuilder(unit);
             }

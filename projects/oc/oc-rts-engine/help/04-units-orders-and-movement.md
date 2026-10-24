@@ -154,6 +154,8 @@ boolean arrived = engine.tickUntil(engine -> groupSettled(units, target, 4f), 16
 UnitDirector commands = engine.commands();
 commands.move(unit, new GridPos(40, 10));                 // MoveOrder(tile.center())
 commands.move(unit, new Vec2(40.5f, 10.5f));              // 精确到世界坐标
+commands.moveRoute(unit, List.of(new GridPos(8, 10),      // 路点：按顺序走过，最后一个点是终点
+        new GridPos(8, 16), new GridPos(20, 16)));        // 返回 MoveResult(issued/refused)
 int id = commands.moveGroup(units, new GridPos(48, 40));  // 默认 BOX；返回编队 id，无一单位可下令时为 0
 commands.moveGroup(units, new GridPos(48, 40), FormationShape.WEDGE);
 commands.stop(unit);   // clear 队列 + motion.clearGoal() + clearFormation() + 速度归零
@@ -161,6 +163,8 @@ commands.stop(units);
 commands.hold(unit);   // replace 成 HoldOrder：永不自己结束，等被取消或替换
 commands.travel(unit, DimensionId.of("mars"));   // replace 成 TransferOrder：沿传送门链路走到另一张图，见 13
 ```
+
+`moveRoute` 接受 1 到 `UnitDirector.MAX_MOVE_POINTS = 8` 个点；空路线和超长路线在**改动单位当前订单之前**就返回 `MoveResult.refused(...)`。单点路线与 `move(unit, tile)` 完全等价，协议里的 `ORDER MOVE <id> <x> <y>` 仍是同一行字节；多点路线就是 `ORDER MOVE <id> <x> <y> [<x> <y> ...]`。
 
 它不接受 tick 参数，所以自己造 `OrderContext`：
 
@@ -178,7 +182,7 @@ tick 号从 `World.tickNumber()` 读，速率来自构造器（`DEFAULT_TICKS_PE
 
 | 订单 | `name()` | 行为 |
 | --- | --- | --- |
-| `MoveOrder` | `move` | `onStart` 里 `clearFormation()` + `setGoal(destination)`；到达即 `COMPLETED` |
+| `MoveOrder` | `move` | `onStart` 里 `clearFormation()` + 把路线第一个点设为 `goal`；到达一段就 `setGoal` 下一段，最后一段到达即 `COMPLETED`；每条腿单独计时/计超时 |
 | `FormationMoveOrder` | `formation_move` | `onStart` 里 `setFormation(id, slotOffset)` + `setGoal(anchor + slotOffset)`；到达时 `clearFormation()` |
 | `HoldOrder` | `hold` | `onStart` 里 `clearGoal()` + `clearFormation()`；`tick()` 恒返回 `RUNNING`，永不自己结束 |
 
@@ -188,6 +192,8 @@ tick 号从 `World.tickNumber()` 读，速率来自构造器（`DEFAULT_TICKS_PE
 - `STALLED_TICKS_BEFORE_FAILURE = 300`：连续 300 tick 处于 `MoveOrder.isStalled(motion)` 就 `FAILED`。`isStalled` 的定义是 `!motion.hasPath() && !motion.isPathPending() && motion.repathCooldown() > 0`——即“没有路径、没有在查、但处于重寻冷却”，正好是一次失败的寻路留下的状态。
 
 `FormationMoveOrder` 同名的两个常量值一样，另外有 `ANCHOR_EPSILON = 0.25f`：只有当新锚点和 `motion.goal()` 的距离 ≥ 0.25 格时才重新 `setGoal`，因为 `setGoal` 会清空路径，否则整队每 tick 都在重规划。`isActive()` 判定该订单的成员是否还在跟着这个 `formationId` 走。
+
+**多段路线。** `MoveOrder(List<Vec2>)` 保存整条路线（`route()` 只读），`legIndex()` 是当前第几段（0 起），`finalLegIndex()` 是最后一段。每段到达后 `legIndex++`、重置 `startTick` 与 `stalledTicks`，再 `setGoal(下一段)`——路径服务因此会为每一段重新寻路，地形、避让与射程规则都与单点移动完全一致。失败理由通过 `Order.failureReason()` 暴露，并随 `Events.OrderFinished.reason()` 发布，例如 `no route to waypoint 2 of 3 at (30.0, 25.0)` 或 `timed out walking to waypoint 2 of 3 ...`；超时与停滞都按**单段**计算，所以第一段很长不会吃掉第二段的预算。空路线构造 `MoveOrder` 会抛 `IllegalArgumentException`，`CommandService.moveRoute` 则在更早的地方拒绝。
 
 `HoldOrder` 的意义是“有命令的静止”：它留在队首，所以后面还能 `push` 新命令，脚本也能区分“待命”和“没事干”。它会 `clearGoal()`，但**不会**让单位免疫分离避让——站着不动不等于能站在别人身上。
 

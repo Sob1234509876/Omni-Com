@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -539,6 +540,32 @@ public final class ContentRegistry {
         }
 
         /**
+         * Declares what repairing the current building type costs for <em>one missing hit point</em>.
+         *
+         * <p>The bundle is multiplied by the number of hit points actually restored, so content scales
+         * repair with damage instead of charging a flat fee. The default is empty, meaning the type cannot
+         * be repaired; call this method on a type that should be serviceable. See
+         * {@link BuildingType#repairCostPerHealth()}.
+         *
+         * @param itemPath content path of the item charged per hit point
+         * @param amount   units of that item per missing hit point; must be positive
+         * @throws IllegalArgumentException when the amount is not positive
+         */
+        public Builder repairCostPerHealth(String itemPath, Natural amount) {
+            Objects.requireNonNull(amount, "amount");
+            if (amount.isZero()) {
+                throw new IllegalArgumentException("a repair cost per health point must be positive");
+            }
+            draft(BuildingDraft.class, "building").repairCostPerHealth.add(new ItemRef(itemPath, amount));
+            return this;
+        }
+
+        /** Convenience for {@link #repairCostPerHealth(String, Natural)} with a small literal. */
+        public Builder repairCostPerHealth(String itemPath, long amount) {
+            return repairCostPerHealth(itemPath, Natural.of(amount));
+        }
+
+        /**
          * Adds a producer tag: on a building it declares what the building can run, on a recipe it
          * declares which buildings may run it.
          */
@@ -684,6 +711,8 @@ public final class ContentRegistry {
                             building.buildTimeTicks,
                             building.level,
                             resolveItems(items, building.cost, "building " + building.key),
+                            resolveItems(items, building.repairCostPerHealth,
+                                    "repair cost per health point of building " + building.key),
                             building.upgradeTo == null ? null : resolveKey(building.upgradeTo),
                             resolveItems(items, building.upgradeCost,
                                     "upgrade of building " + building.key),
@@ -875,6 +904,7 @@ public final class ContentRegistry {
         final Set<String> storageTags = new LinkedHashSet<>();
         final Set<String> producerTags = new LinkedHashSet<>();
         final List<ItemRef> cost = new ArrayList<>();
+        final List<ItemRef> repairCostPerHealth = new ArrayList<>();
         final List<ItemRef> upgradeCost = new ArrayList<>();
 
         BuildingDraft(ResourceKey key) {

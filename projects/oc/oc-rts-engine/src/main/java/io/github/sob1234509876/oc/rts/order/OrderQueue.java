@@ -110,7 +110,8 @@ public final class OrderQueue {
         current = null;
         finished.onFinish(context, state);
         context.world().events().publish(
-                new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number()));
+                new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number(),
+                        state == OrderState.FAILED ? finished.failureReason() : null));
         return state;
     }
 
@@ -125,9 +126,10 @@ public final class OrderQueue {
      *
      * @param context the context of the tick that is finishing the order
      * @param state   the terminal state, never {@link OrderState#RUNNING}
+     * @param reason  a player-readable explanation for a failure, or {@code null}
      * @return whether an active order was finished
      */
-    public boolean finishCurrent(OrderContext context, OrderState state) {
+    public boolean finishCurrent(OrderContext context, OrderState state, String reason) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(state, "state");
         if (!state.isFinished()) {
@@ -140,8 +142,20 @@ public final class OrderQueue {
         current = null;
         finished.onFinish(context, state);
         context.world().events().publish(
-                new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number()));
+                new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number(), reason));
         return true;
+    }
+
+    /**
+     * Finishes the active order on its behalf without an extra reason.
+     *
+     * <p>Equivalent to {@link #finishCurrent(OrderContext, OrderState, String)} with {@code null}; a
+     * {@link OrderState#FAILED} order still reports its own {@link Order#failureReason()} when it has one.
+     */
+    public boolean finishCurrent(OrderContext context, OrderState state) {
+        return finishCurrent(context, state, state == OrderState.FAILED && current != null
+                ? current.failureReason()
+                : null);
     }
 
     @Override

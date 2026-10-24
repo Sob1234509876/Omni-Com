@@ -8,12 +8,14 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
+import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.Dimension;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
+import io.github.sob1234509876.oc.rts.movement.Motion;
 import io.github.sob1234509876.oc.rts.order.OrderQueue;
 
 import java.util.ArrayList;
@@ -50,6 +52,17 @@ public final class SnapshotFactory {
      * {@code OcRtsEngine.elapsedSeconds()}.
      */
     public static final int DEFAULT_TICKS_PER_SECOND = 20;
+
+    /**
+     * Largest number of route points one snapshot carries for a moving unit.
+     *
+     * <p>A path can be hundreds of tiles long, so the snapshot sends only the first points of the
+     * remaining polyline and the final goal tile. Sixty-four points is enough for a readable line on
+     * screen while keeping the document small; the last point is always the live goal separately through
+     * {@link EntitySnapshot#target()}, so a truncated route still ends at the right destination marker.
+     * The cap is a presentation rule and does not affect movement, which always follows the full route.
+     */
+    public static final int MAX_SNAPSHOT_PATH_POINTS = 64;
 
     private final World world;
     private final VisualLibrary library;
@@ -163,6 +176,13 @@ public final class SnapshotFactory {
         ItemBundle carrying = entity instanceof Unit unit ? unit.cargo().contents()
                 : entity instanceof Building building ? building.inventory().contents()
                 : ItemBundle.EMPTY;
+        List<GridPos> path = List.of();
+        GridPos target = null;
+        if (entity instanceof Unit unit && unit.motion().isMoving()) {
+            Motion motion = unit.motion();
+            target = motion.goalOrNull() == null ? null : motion.goalOrNull().tile();
+            path = remainingPath(motion);
+        }
         Player owner = entity.owner();
         return new EntitySnapshot(
                 entity.id(),
@@ -185,7 +205,29 @@ public final class SnapshotFactory {
                 moving,
                 orderName,
                 orderCount,
-                carrying);
+                carrying,
+                path,
+                target);
+    }
+
+    /**
+     * The remaining route of a moving unit as tiles, capped at {@value #MAX_SNAPSHOT_PATH_POINTS}.
+     *
+     * <p>Only the part the unit has not consumed yet is reported: the path service keeps the full route
+     * on the motion and advances {@link Motion#waypointIndex()}, so a client drawing the line behind the
+     * unit would be drawing history. A unit waiting for its first route has no remaining points and gets
+     * an empty list; the next snapshot picks the route up.
+     */
+    private static List<GridPos> remainingPath(Motion motion) {
+        List<Vec2> waypoints = motion.waypoints();
+        int from = motion.waypointIndex();
+        int available = Math.max(0, waypoints.size() - from);
+        int count = Math.min(available, MAX_SNAPSHOT_PATH_POINTS);
+        List<GridPos> path = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            path.add(waypoints.get(from + index).tile());
+        }
+        return List.copyOf(path);
     }
 
     /** Role of a unit as declared by its type; {@code null} for buildings. */

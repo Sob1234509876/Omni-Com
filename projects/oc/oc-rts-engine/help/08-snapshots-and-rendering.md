@@ -123,7 +123,7 @@ public WorldSnapshot(long tick, int ticksPerSecond, TileRect bounds, TerrainType
 
 ## 四、`EntitySnapshot` 逐字段
 
-record 的 21 个分量，顺序即声明顺序：
+record 的 23 个分量，顺序即声明顺序：
 
 | # | 字段 | 类型 | 含义 |
 | --- | --- | --- | --- |
@@ -148,15 +148,24 @@ record 的 21 个分量，顺序即声明顺序：
 | 19 | `currentOrderName` | `String` | 当前订单的 `name()`，没有订单为 null |
 | 20 | `orderCount` | `int` | 订单总数（含当前），建筑恒 0 |
 | 21 | `carrying` | `ItemBundle` | 单位是 `cargo().contents()`，建筑是 `inventory().contents()`，null 回退 `ItemBundle.EMPTY` |
+| 22 | `path` | `List<GridPos>` | 移动中单位**剩余路线**的瓦片点，最多 `SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS = 64` 个；空闲/停下时是空列表，永不 null |
+| 23 | `target` | `GridPos` | 当前移动命令的目标瓦片；不移动时为 null。路线被截断时它仍指向真正的终点 |
 
-构造期校验：`id`、`typeKey`、`position`、`anchorTile` 为 null 时抛 `IllegalArgumentException`。派生方法只有四个：
+构造期校验：`id`、`typeKey`、`position`、`anchorTile` 为 null 时抛 `IllegalArgumentException`；`path` 为 null 时归一成 `List.of()`。派生方法有五个：
 
 ```java
 entity.hasSprite();     // spriteFrame != null
 entity.isDead();        // healthFraction <= 0f；快照只含活实体，所以实践中恒为 false
 entity.isCarrying();    // !carrying.isEmpty()
+entity.hasPath();       // !path.isEmpty()
 entity.roleOrNull();    // 等同于 role()
 ```
+
+**路径字段的语义。** `SnapshotFactory` 只在 `unit.motion().isMoving()` 时才读路线：它从 `waypointIndex()` 开始取**还没走过**的 waypoint，逐个转成瓦片，最多 64 个，并把 `goalOrNull().tile()` 放进 `target`。所以：
+
+- 空闲单位、刚停下（`clearGoal()`）的单位、以及还在等 PathService 第一条路线的单位，`path` 为空且 `target == null`；
+- 路线很长时只带前 64 个点，`target` 仍是真实终点；客户端从实体位置连到这些点，再在 `target` 画目标点，得到一条可读的折线；
+- 这是纯表现数据，不参与移动：移动系统始终消费完整的 `Motion.waypoints()`。协议层（`WorldHost.snapshotJson`）用同样的 64 点上限序列化成 `path` / `target` 两个可选字段，旧客户端忽略即可。
 
 ## 五、`AsciiMapRenderer`：一个完整的消费示例
 
@@ -273,8 +282,9 @@ engine.dimension(DimensionId.of("moon")).focus(new Vec2(0f, 0f), 3); // 等价�
 | `WorldSnapshot.tick/elapsedSeconds/ticksPerSecond/bounds/width/height` | 时间与范围 |
 | `WorldSnapshot.entities/entityCount/unitCount/buildingCount/loadedChunks` | 内容清单 |
 | `WorldSnapshot.terrainAt/fallbackTerrain/entity/requireEntity/contains/entitiesOf/selectedEntities` | 查询 |
-| `EntitySnapshot` 21 个 record 分量 | 见第四节表格 |
-| `EntitySnapshot.hasSprite/isDead/isCarrying/roleOrNull` | 派生方法 |
+| `EntitySnapshot` 23 个 record 分量 | 见第四节表格 |
+| `EntitySnapshot.hasSprite/isDead/isCarrying/hasPath/roleOrNull` | 派生方法 |
+| `SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS` | 路径点上限 64；引擎快照与协议 `path` 用同一个数 |
 | `AsciiMapRenderer.render(WorldSnapshot)` / `symbolOf(EntitySnapshot)` / `symbolOf(TerrainType)` | 文本渲染与字符规则（图例行以 `dimension <键> (<展示名>)` 打头）；常量 `UNKNOWN_SYMBOL='?'`、`OTHER_SYMBOL='%'` |
 | `OcRtsEngine.focus(GridPos)` / `focus(Vec2)` / `focus(DimensionId, Vec2, int)` / `streaming()` / `loadedBounds()` | 相机与流式；前两个只动默认维度，第三个点名维度并可改半径 |
 | `MapStreaming.focus(Vec2, int)` / `focus(GridPos, int)` / `focus()` / `radiusChunks()` / `loadedChunks()` / `loadArea(GridPos, GridPos)` / `unload(ChunkPos)` | 区块控制面（`engine.streaming()` 是默认维度的那一份） |

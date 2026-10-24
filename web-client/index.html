@@ -1554,6 +1554,13 @@
               aria-keyshortcuts="O"
               title="选中已载入窗口内自己的全部工兵；快照没有订单状态，无法只选空闲工兵"
             >工兵</button>
+            <button
+              id="toggle-paths"
+              type="button"
+              class="armed"
+              aria-pressed="true"
+              title="路径：显示选中单位的移动路径与待定路径点（点击关闭）"
+            >路径</button>
             <button id="open-log" type="button">日志</button>
             <button
               id="open-resources"
@@ -1686,14 +1693,16 @@
                 <p class="footnote">
                   左键点选 · 双击单位选中窗口内自己的同类 · 双击建筑只选该建筑 · Shift+左键加减选单个单位
                   · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
-                  · 右键移动/攻击所有选中单位 · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
+                  · 右键移动/攻击所有选中单位 · Shift+右键添加路径点（右键提交，Esc 清除）
+                  · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
                   · O 选中全部工兵 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
-                  · 小地图左键/拖动移动镜头。
+                  · 小地图左键/拖动移动镜头 · 顶部“路径”开关选中单位的路线显示。
                 </p>
                 <p class="footnote">
                   底部命令栏：选中单位时出现 <strong>停止</strong>、<strong>攻击移动</strong> 与选中条；
-                  建筑选中时右下角是 TRAIN 与队列，工兵选中时右下角是 BUILD。混合选择（单位 + 建筑）只提供
-                  单位动作，避免把 TRAIN/BUILD 混进群体命令。
+                  建筑选中时右下角是 TRAIN、队列与 <strong>修理 / 继续建造 / 回收</strong>，工兵选中时右下角是 BUILD。
+                  修理与回收需要自己受损的完工建筑或未完工工地；混合选择（单位 + 建筑）只提供单位动作，避免把
+                  TRAIN/BUILD 混进群体命令。
                 </p>
               </section>
 
@@ -1748,6 +1757,14 @@
               <h3>升级 <span id="upgrade-target"></span></h3>
               <div id="upgrade-buttons" class="context-buttons">
                 <button id="upgrade-button" type="button" disabled>升级</button>
+              </div>
+            </section>
+            <section id="building-actions-section" class="context-section" hidden>
+              <h3>建筑 <span id="building-actions-target"></span></h3>
+              <div id="building-action-buttons" class="context-buttons">
+                <button id="continue-build-button" type="button" disabled>继续建造</button>
+                <button id="repair-button" type="button" disabled>修理</button>
+                <button id="reclaim-button" type="button" disabled>回收</button>
               </div>
             </section>
             <div id="hud-queue" class="hud-queue" hidden></div>
