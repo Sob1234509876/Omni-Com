@@ -7,12 +7,14 @@
 > 函数只接受 `LadderArgument`，值永远不能当实参；阶段三沿用并再次确认这个决定（`ω_α` 值不当实参，
 > 见第五节与 Q7）。所有者的 A1/A2 重新表述在实参侧；旧矛盾在寄存器里不再可表达，但改变形状为对所有者
 > 字面量词的限定（见第七节）。**本阶段不实现 TBMS / TTBMS / TNRBMS 矩阵系统**；NRBMS 直接复用现有的
-> `NonRecursiveBms` / `NonRecursiveExpansion`。
+> `NonRecursiveBms` / `NonRecursiveExpansion`。阶段四的**基数寄存器**也已落地，但它是独立寄存器，见
+> [`cardinal-register.md`](cardinal-register.md)。
 
 ## 这一篇讲什么
 
 - `documents/Human/Ordinals.md` 的 21 级阶梯里，阶段一实现前两段，阶段二实现 NRBMS 段（第 3–4 条），
-  阶段三实现 `ω_α` 段（第 5 条）。
+  阶段三实现 `ω_α` 段（第 5 条）；阶段四实现第 6–21 条的基数寄存器（独立类型 `CardinalRung`，见
+  [`cardinal-register.md`](cardinal-register.md)）。
 - 段一：`0 ~ SHO`。它**已经由 BMS 实现**，本阶段不改 BMS，只让阶梯的下端引用
   [`BmsOrdinal`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java) 和旧名册里的
   [`AbstractOrdinal.SHO`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/AbstractOrdinal.java)。
@@ -28,7 +30,7 @@
   表达所有者列出的所有梯级，但排除了 `ω_{ω_X}` 这类迭代下标；最小放宽写在第五节与 Q7 里，本阶段不实现。
 - 抽象边界：`ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)` 七个具名条目，以及它们与四段值
   之间的**声明全序**。
-- 哪些是**做出来的**，哪些是**假设的**，哪些是**有意不做**的，阶段四要接什么。
+- 哪些是**做出来的**，哪些是**假设的**，哪些是**有意不做**的，阶段四已经落地成什么。
 
 相关：序数层见 [`ordinals.md`](ordinals.md)，BMS 层见 [`bms.md`](bms.md)，BMS 之上的旧名册见
 [`abstract-ordinals.md`](abstract-ordinals.md)，库总览见 [`../README.md`](../README.md)。
@@ -38,14 +40,14 @@
 ## 一、路线图：21 级阶梯与四个阶段
 
 `documents/Human/Ordinals.md` 的 21 条从 `0` 排到 `Ω_Absolute`。本库把它分成四个实现阶段；阶段一、
-阶段二与阶段三已经落地：
+阶段二与阶段三落在序数阶梯里，阶段四是独立的基数寄存器，四者都已落地：
 
 | 阶段 | `Ordinals.md` 的条目 | 内容 | 本库状态 |
 | --- | --- | --- | --- |
 | **阶段一** | 1–2 | `0 ~ SHO` 用 BMS；`SHO ~ LRPO` 用 `f(α) = TTBMS(0)(1^α)` 的两种记法；`ω₁^CK`、`ψ`、`SHO`、`LRPO` 具名占位符 | **已实现** |
 | **阶段二** | 3–4 | NRBMS 段：`ω₁^CK ~ ψ_H(ε_{H+1}) = lim(NRBMS) = TNRBMS(0)(1^ω)`，再往上到 `X = min α → TNRBMS(0)(1^α)` 的不动点；记法改成 `TNRBMS(0)(1^α)`；实参/值分离 | **已实现** |
 | **阶段三** | 5 | `ω_α` 的梯级：`ω₁ ~ min α → ω_α` 的不动点 `= ψ_𝕀(𝕀)`；记法改成 `ω_α`；`X` 是切换点与新下端输入 | **已实现**（本页） |
-| **阶段四** | 6–21 | 基数寄存器：不可达基数 `I`、Mahlo、`α`-Mahlo、hyper-Mahlo、弱紧、不可描述、可测、强、超紧、I3~I0、Icarus、Reinhardt、Berkeley、Ord-Berkeley、limit club Berkeley，直到 `Ω ~ Ω_Absolute` | 未开始 |
+| **阶段四** | 6–21 | 基数寄存器：不可达基数 `I`、Mahlo、`α`-Mahlo、hyper-Mahlo、弱紧、不可描述、可测、强、超紧、I3~I0、Icarus、Reinhardt、Berkeley、Ord-Berkeley、limit club Berkeley，直到 `Ω ~ Ω_Absolute` | **已实现**（独立的 `CardinalRung` 寄存器，见 [`cardinal-register.md`](cardinal-register.md)） |
 
 已经实现的四段与具名边界：
 
@@ -671,8 +673,9 @@ LadderArgument.psiII().isFunctionArgument();  // true：h 的下标可以到 ψ_
 
 ## 九、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **532 项**，其中第 21–31 节是阶梯
-（`LadderCheck`，154 项）：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **582 项**，其中第 21–31 节是阶梯
+（`LadderCheck`，154 项），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
+[`cardinal-register.md`](cardinal-register.md)）：
 
 - **第 21 节（寄存器，32 项）**：四段的文本与 `notationName`；段一比较与 `BmsOrdinal` 完全一致；
   `f(ω) = SHO`、`f(X) = LRPO`；`f(ω^ω)` / `f(ω₁^CK)` 保存实参；七个占位符及声明 tier；`SHO` 复用
@@ -749,30 +752,39 @@ LadderArgument.psiII().isFunctionArgument();  // true：h 的下标可以到 ψ_
 15. **段四的第一个物化值不是 `ω₁`。** 下标寄存器和 `f`/`g` 一样只物化 `≥ ω` 的实参，所以 `h(1) = ω₁`
     不在寄存器里；第一个物化值是 `h(ω) = ω_ω`。本库不声称 `ω_ω = ω₁`。
 
-## 十一、阶段四要接什么
+## 十一、阶段四已落地：基数寄存器
 
-### 阶段四：基数寄存器（未开始）
+### 阶段四：基数寄存器（已实现，独立寄存器）
 
-- 从 `Ordinals.md` 第 6 条 `I = min Inaccessible Cardinal` 起，依次加入 Mahlo、`α`-Mahlo、
-  hyper-Mahlo、弱紧、不可描述、可测、`α`-Strong、超紧、I3~I0、Icarus、Reinhardt、Berkeley、
-  Ord-Berkeley、limit club Berkeley，直到第 21 条 `Ω ~ Ω_Absolute`。
-- **定义全部委托给 `documents/Human/Cardinals/`**：比较规则与条目定义来自
+- `Ordinals.md` 第 6–21 条已经落地成 **`CardinalRung`**：不可达基数 `I`、Mahlo、`α`-Mahlo、
+  hyper-Mahlo、弱紧、不可描述、可测、`α`-Strong 与 Strong、超紧、I3、I2、I1、I0、Icarus、Reinhardt、
+  Berkeley、Ord-Berkeley、limit club Berkeley，直到第 21 条 `Ω ~ Ω_Absolute`，一共 19 级（第 15 条的
+  `I3~I0` 按 `Big Cardinals.md` 的四个定义拆开）。
+- **定义全部委托给 `documents/Human/Cardinals/`**：每一级都带 `RelativePath`（仓库根相对路径 + 节
+  标题），自校验解析文件、核对节标题并检查标题提到这一级的名字；比较规则与条目定义来自
   [`Cardinals/Big Cardinals.md`](../../../../documents/Human/Cardinals/Big%20Cardinals.md)、
   [`Cardinals/Inaccessible Cardinal Extension.md`](../../../../documents/Human/Cardinals/Inaccessible%20Cardinal%20Extension.md)
   和 [`Cardinals/Fake Googology.md`](../../../../documents/Human/Cardinals/Fake%20Googology.md)；本库不
   另造基数定义。
-- 它需要**独立的基数寄存器**，不是 `LadderOrdinal` 的段四值：`ω_α` 是序数梯级，基数是另一层。两者
+- 它是**独立的基数寄存器**，不是 `LadderOrdinal` 的段四值：`ω_α` 是序数梯级，基数是另一层。两者
   保持"低端在 BMS/序数阶梯，高端在基数"的清晰分界。
 - 阶段四的下端输入是本阶段（含段四）的声明全序：
   `ψ < BMS < SHO < f ≤ LRPO < ω₁^CK < NRBMS < lim(NRBMS) < TNRBMS < X < ω_α < ψ_𝕀(𝕀)`。
-  基数的第一个条目 `I` 必须严格高于这个全序的顶端 `ψ_𝕀(𝕀)`；`ψ_𝕀(𝕀)` 里的 `𝕀` 只是名字，不是
-  阶段四寄存器的值，二者不要混用。
+  基数的第一个条目 `I` 严格高于这个全序的顶端 `ψ_𝕀(𝕀)`：
+  `CardinalRung.compareWithLadder(LadderOrdinal)` 对每个梯级都回 `GREATER`，这是寄存器的**公理**；
+  `ψ_𝕀(𝕀)` 里的 `𝕀` 只是名字，不是阶段四寄存器的值，二者不要混用。
+- 顺序是一致性强度：Berkeley 在 Reinhardt 之上；所有者的"Reinhardt 在概念上更大"由**单独的访问器**
+  记录，不是第二个全序。
+- 三条未核实条目（Icarus、Ord-Berkeley、limit club Berkeley）的 `isVerified()` 为 `false`，gloss 复用
+  `Big Cardinals.md` 的措辞；Ord-Berkeley 的两种读法都写在 gloss 里，没有静默选一种。
 - Q7 若被回答成"切换点不在 `X`"，阶段四的上端输入不变（仍是 `ψ_𝕀(𝕀)`），只影响段四内部的记法
   边界。
+- 完整的 19 级表、API、常见坑与自校验见 [`cardinal-register.md`](cardinal-register.md)。
 
 ## 相关文档
 
-- [`../README.md`](../README.md) —— 库总览，阶段一至三阶梯在其中的位置
+- [`../README.md`](../README.md) —— 库总览，阶段一至三阶梯与阶段四基数寄存器在其中的位置
+- [`cardinal-register.md`](cardinal-register.md) —— 阶段四：19 个基数梯级、文档委托、Berkeley/Reinhardt 约定与未核实条目
 - [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
 - [`bms.md`](bms.md) —— BMS 标准式、比较、展开与非递归 BMS
 - [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的旧名册，以及 `SHO` 的声明
@@ -791,5 +803,8 @@ LadderArgument.psiII().isFunctionArgument();  // true：h 的下标可以到 ψ_
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/AbstractOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/AbstractOrdinal.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/bms/NonRecursiveBms.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/NonRecursiveBms.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java) —— 阶段四的基数寄存器（独立于本页的序数阶梯）
+- [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/LadderCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/LadderCheck.java)
+- [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)

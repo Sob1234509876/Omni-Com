@@ -16,11 +16,12 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (532 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (582 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
 | Ordinal ladder | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α` segment up to `ψ_𝕀(𝕀)`, the argument/value separation and the named boundaries |
+| Cardinal register | [`help/cardinal-register.md`](help/cardinal-register.md) — stage four: the separate 19-rung register from the inaccessible cardinal to the fictional `Ω ~ Ω_Absolute` segment, its document delegation, the Berkeley/Reinhardt convention and the three unverified entries |
 
 ## What it gives you
 
@@ -422,10 +423,79 @@ not arguments of `f`.
 
 **What is deliberately not here.** TBMS, TTBMS and TNRBMS are **not** implemented as matrix systems; the
 NRBMS segment reuses `NonRecursiveBms` and its expansion rules, and the TNRBMS and `ω_α` steps are abstract
-in the same sense as `f`. The cardinal register (stage four) is not started. `LadderOrdinal` is not an
-`Ordinal`: it has no successor, addition, `ω^` or fundamental sequence, and it is not plugged into
-`OrdinalNotation`. Its `f`, `g` and `h` are abstract strictly increasing functions, not computations. See
-[`help/ordinal-ladder.md`](help/ordinal-ladder.md) for the boundary results and the roadmap of stage four.
+in the same sense as `f`. `LadderOrdinal` is not an `Ordinal`: it has no successor, addition, `ω^` or
+fundamental sequence, and it is not plugged into `OrdinalNotation`. Its `f`, `g` and `h` are abstract strictly
+increasing functions, not computations. See [`help/ordinal-ladder.md`](help/ordinal-ladder.md) for the
+boundary results; the cardinal register is the separate stage four described in the next section.
+
+
+## Cardinal register (stage four)
+
+`documents/Human/Ordinals.md` items 6-21 are the cardinal rungs: inaccessible `I`, Mahlo, `α`-Mahlo,
+hyper-Mahlo, weakly compact, indescribable, measurable, `α`-strong and strong, supercompact, I3, I2, I1, I0,
+Icarus, Reinhardt, Berkeley, Ord-Berkeley, limit club Berkeley, and the fictional `Ω ~ Ω_Absolute` segment.
+Stage four is a **separate register**, not a fifth ladder segment: `CardinalRung` is a name-and-rank register,
+and every cardinal definition is delegated to `documents/Human/Cardinals/`.
+
+| Rank | Rung | `Ordinals.md` notation | Delegated section |
+| --- | --- | --- | --- |
+| 0 | Inaccessible | `𝕀` | Inaccessible Cardinal Extension § Strongly inaccessible cardinals |
+| 1 | Mahlo | `𝕄_α` | Big Cardinals § 1. Mahlo cardinals |
+| 2 | `α`-Mahlo | `𝕄(α, β)` | Big Cardinals § 2. `$\alpha$`-Mahlo cardinals |
+| 3 | hyper-Mahlo | `𝕄(1, 0, α)` | Big Cardinals § 3. Hyper-Mahlo cardinals |
+| 4 | weakly compact | `𝕂_α` | Big Cardinals § 4. Weakly compact cardinals |
+| 5 | indescribable | `𝕂^{Π^n_m}_α` | Big Cardinals § 5. Indescribable cardinals |
+| 6 | measurable | `Measurable` | Big Cardinals § 6. Measurable cardinals |
+| 7 | `α`-strong and strong | `α-Strong / Strong` | Big Cardinals § 7. `$\alpha$`-strong and strong cardinals |
+| 8 | supercompact | `Supercompact` | Big Cardinals § 9. Supercompact cardinals |
+| 9 | I3 | `I3` | Big Cardinals § 10. I3 |
+| 10 | I2 | `I2` | Big Cardinals § 11. I2 |
+| 11 | I1 | `I1` | Big Cardinals § 12. I1 |
+| 12 | I0 | `I0` | Big Cardinals § 13. I0 |
+| 13 | Icarus | `Icarus` | Big Cardinals § 14. Icarus cardinals (unverified) |
+| 14 | Reinhardt | `Reinhardt` | Big Cardinals § 15. Reinhardt cardinals |
+| 15 | Berkeley | `Berkeley` | Big Cardinals § 16. Berkeley cardinals |
+| 16 | Ord-Berkeley | `Ord-Berkeley` | Big Cardinals § 17. Ord-Berkeley cardinals (unverified, two readings) |
+| 17 | limit club Berkeley | `Limit club Berkeley` | Big Cardinals § 18. Limit club Berkeley cardinals (unverified) |
+| 18 | `Ω ~ Ω_Absolute` | `Ω ~ Ω_Absolute` | Fake Googology § 1. The joke-ordinal of ordinal size: `Ω` (fiction) |
+
+The declared order is consistency strength: `rank()` is the enum position and `compareTo` compares it;
+`compareMagnitude` reports the same order as a proof. Berkeley (rank 15) is above Reinhardt (14) in that
+order, because a Berkeley cardinal requires the embedding property for every transitive set containing it,
+not only for `V`. The owner's convention that Reinhardt is **conceptually** larger is recorded by a separate
+accessor, not by a second order.
+
+Every rung answers `GREATER` to `compareWithLadder(LadderOrdinal)`, including against the ladder's top
+`ψ_𝕀(𝕀)`. That is the register's **axiom, not a computation**, exactly like `AbstractOrdinal.compareWithBms`:
+the register stores no cardinal to compare, so it refuses to drop the one fact it carries - that every cardinal
+rung lies above the whole ordinal ladder.
+
+Three entries are flagged for verification by `Big Cardinals.md`: Icarus, Ord-Berkeley and limit club
+Berkeley. Their `isVerified()` is `false`, their glosses quote the document's own wording, and the
+Ord-Berkeley gloss states both readings of the name (the unbounded reading the document adopts and the
+cumulative-hierarchy reading, which the literature calls rank-Berkeley and which would put the rung below
+Berkeley rather than above it). The last rung is the fiction of `Fake Googology.md`; its gloss repeats the
+file's warning instead of treating the segment as mathematics.
+
+```java
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
+import io.github.sob1234509876.oc.googology.cardinalregister.CardinalRung;
+
+CardinalRung.values().length;                        // 19
+CardinalRung.INACCESSIBLE.rank();                    // 0
+CardinalRung.ALPHA_MAHLO.definition().section();     // "2. $\alpha$-Mahlo cardinals"
+CardinalRung.BERKELEY.compareTo(CardinalRung.REINHARDT); // > 0, the consistency-strength order
+CardinalRung.REINHARDT.isConceptuallyLargerThan(CardinalRung.BERKELEY); // true, by convention
+CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.psiII());    // GREATER, by axiom
+CardinalRung.ICARUS.isVerified();                    // false
+```
+
+**Honesty.** It does not build or expand a cardinal, does not prove a consistency strength, and does not
+repair the three flagged definitions: the register records the document's status and refuses to invent.
+`RelativePath` resolves the file and the self check matches the section heading, so a broken delegation
+fails the build rather than lingering in a comment. `Fake Googology.md` is fiction, and the
+rung that quotes it is labelled as such in both the enum and this document. See
+[`help/cardinal-register.md`](help/cardinal-register.md) for the full table, API, pitfalls and self check.
 
 
 ## What it deliberately does not do
@@ -447,14 +517,15 @@ in the same sense as `f`. The cardinal register (stage four) is not started. `La
   them a declared order; it is not a notation, has no fundamental sequence, arithmetic or value, and its
   "greater than every BMS value" comparison is an explicit axiom. It does not say how far above BMS a name
   lies, and the below-limit reference nodes are deliberately not part of it.
-- **A TBMS/TTBMS/TNRBMS matrix system, or the cardinal register.** `LadderOrdinal` implements stages one to
+- **A TBMS/TTBMS/TNRBMS matrix system.** `LadderOrdinal` implements stages one to
   three of `Ordinals.md`: segment 1 delegates to BMS, segment 2 is the **abstract** function
   `f(α) = TTBMS(0)(1^α)`, segment 3 is the NRBMS/TNRBMS segment up to the fixed point `X`, segment 4 is
   the **abstract** `ω_α` segment up to `ψ_𝕀(𝕀)`, and the named layer is `ψ`, `SHO`, `LRPO`, `ω₁^CK`,
   `lim(NRBMS)`, `X` and `ψ_𝕀(𝕀)`. It does not build a TBMS, TTBMS or TNRBMS matrix, does not compute an
-  OCF or a cardinal, does not prove the two owner assumptions (A1 and A2), and does not implement the
-  cardinal register. Its `f`, `g` and `h` values compare by argument, which is the order-isomorphism the
-  owner asked for, not a matrix expansion.
+  OCF or a cardinal, and does not prove the two owner assumptions (A1 and A2). Its `f`, `g` and `h` values
+  compare by argument, which is the order-isomorphism the owner asked for, not a matrix expansion. The
+  cardinal register is separate and is described above: it delegates every definition and builds no cardinal
+  either.
 - **BMS as a full `Ordinal`, and a proof of its strength.** The BMS layer expands a matrix, but it is not
   an `Ordinal`: it has no addition, no multiplication by a finite coefficient and no `ω^`, and it is not
   plugged into `OrdinalNotation`. The expansion's consistency (`S > S[n]`, strictly increasing sequences)
@@ -505,14 +576,19 @@ src/main/java/io/github/sob1234509876/oc/googology/
     abstractordinal/LadderSegment.java        segment 1 / segment 2 / segment 3 / segment 4 / named abstract layer
     abstractordinal/LadderComparison.java     a comparison plus the segments it took place in
     abstractordinal/package-info.java         abstract-ordinal package documentation
+    cardinalregister/CardinalRung.java        the 19 cardinal rungs: title, notation, gloss, document link, rank, verified
+    cardinalregister/RelativePath.java        a document path relative to the repository root plus a section heading
+    cardinalregister/package-info.java        cardinal-register package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
 help/bms.md                       the Chinese guide to the BMS layer
 help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
-src/selfcheck/java/.../check/GoogologyCheck.java    the 532 check self check program
+help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
+src/selfcheck/java/.../check/GoogologyCheck.java    the 582 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)
+src/selfcheck/java/.../check/CardinalRegisterCheck.java  its cardinal-register section (sections 32-36)
 ```
 
 ## Related
@@ -525,8 +601,11 @@ src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections
   BMS limit, the declared-unknown pair and the "above BMS" axiom, in Chinese.
 - [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS
   segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α`
-  segment up to `ψ_𝕀(𝕀)`, the argument/value separation, the boundary result and the roadmap for stage
-  four, in Chinese.
+  segment up to `ψ_𝕀(𝕀)`, the argument/value separation, the boundary result and the stage-four handoff,
+  in Chinese.
+- [`help/cardinal-register.md`](help/cardinal-register.md) — stage four: the 19-rung cardinal register,
+  every rung's document section, the Berkeley/Reinhardt convention, the three unverified entries, the API
+  and the pitfalls, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

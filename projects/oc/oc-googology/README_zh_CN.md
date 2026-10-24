@@ -13,11 +13,12 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（532 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（582 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
 | 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、抽象 `f(α) = TTBMS(0)(1^α)` 段、直到 `X` 的 NRBMS/TNRBMS 段、直到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、实参/值分离与具名边界 |
+| 基数寄存器 | [`help/cardinal-register.md`](help/cardinal-register.md) —— 阶段四：从不可达基数到虚构的 `Ω ~ Ω_Absolute` 段的独立 19 级寄存器、文档委托、Berkeley/Reinhardt 约定与三条未核实条目 |
 
 ## 它提供什么
 
@@ -330,10 +331,71 @@ A1 要求 `f(α) > α`，严格递增又给出 `f(α) < f(β) = α`，矛盾。�
 边界，也是合法实参（`f(SHO)` 是它上面第一个 `f` 值）；`LRPO` 与 `ψ` 是**值名**，不是 `f` 的实参。
 
 **哪些有意不做。** 不把 TBMS、TTBMS 或 TNRBMS 实现成矩阵系统；NRBMS 段复用 `NonRecursiveBms` 及其展开
-规则，TNRBMS 步与 `ω_α` 步和 `f` 一样是抽象函数。基数寄存器（阶段四）还没开始。`LadderOrdinal` 不是
-`Ordinal`：没有后继、加法、`ω^` 或基本列，也没有接上 `OrdinalNotation`。它的 `f`、`g` 与 `h` 是抽象严格
-递增函数，不是计算。边界结果与阶段四的路线图见
-[`help/ordinal-ladder.md`](help/ordinal-ladder.md)。
+规则，TNRBMS 步与 `ω_α` 步和 `f` 一样是抽象函数。`LadderOrdinal` 不是 `Ordinal`：没有后继、加法、`ω^`
+或基本列，也没有接上 `OrdinalNotation`。它的 `f`、`g` 与 `h` 是抽象严格递增函数，不是计算。边界结果见
+[`help/ordinal-ladder.md`](help/ordinal-ladder.md)；阶段四是下一节描述的独立基数寄存器。
+
+
+## 基数寄存器（阶段四）
+
+`documents/Human/Ordinals.md` 第 6–21 条是基数梯级：不可达基数 `I`、Mahlo、`α`-Mahlo、hyper-Mahlo、
+弱紧、不可描述、可测、`α`-Strong 与 Strong、超紧、I3、I2、I1、I0、Icarus、Reinhardt、Berkeley、
+Ord-Berkeley、limit club Berkeley，以及虚构的 `Ω ~ Ω_Absolute` 段。阶段四是**独立的寄存器**，不是
+`LadderOrdinal` 的段五：`CardinalRung` 是名字与秩的名册，每一条基数定义都委托给
+`documents/Human/Cardinals/`。
+
+| 秩 | 梯级 | `Ordinals.md` 的记号 | 委托文档与节 |
+| --- | --- | --- | --- |
+| 0 | 不可达 | `𝕀` | Inaccessible Cardinal Extension § Strongly inaccessible cardinals |
+| 1 | Mahlo | `𝕄_α` | Big Cardinals § 1. Mahlo cardinals |
+| 2 | `α`-Mahlo | `𝕄(α, β)` | Big Cardinals § 2. `$\alpha$`-Mahlo cardinals |
+| 3 | hyper-Mahlo | `𝕄(1, 0, α)` | Big Cardinals § 3. Hyper-Mahlo cardinals |
+| 4 | 弱紧 | `𝕂_α` | Big Cardinals § 4. Weakly compact cardinals |
+| 5 | 不可描述 | `𝕂^{Π^n_m}_α` | Big Cardinals § 5. Indescribable cardinals |
+| 6 | 可测 | `Measurable` | Big Cardinals § 6. Measurable cardinals |
+| 7 | `α`-Strong 与 Strong | `α-Strong / Strong` | Big Cardinals § 7. `$\alpha$`-strong and strong cardinals |
+| 8 | 超紧 | `Supercompact` | Big Cardinals § 9. Supercompact cardinals |
+| 9 | I3 | `I3` | Big Cardinals § 10. I3 |
+| 10 | I2 | `I2` | Big Cardinals § 11. I2 |
+| 11 | I1 | `I1` | Big Cardinals § 12. I1 |
+| 12 | I0 | `I0` | Big Cardinals § 13. I0 |
+| 13 | Icarus | `Icarus` | Big Cardinals § 14. Icarus cardinals（未核实） |
+| 14 | Reinhardt | `Reinhardt` | Big Cardinals § 15. Reinhardt cardinals |
+| 15 | Berkeley | `Berkeley` | Big Cardinals § 16. Berkeley cardinals |
+| 16 | Ord-Berkeley | `Ord-Berkeley` | Big Cardinals § 17. Ord-Berkeley cardinals（未核实，两种读法） |
+| 17 | limit club Berkeley | `Limit club Berkeley` | Big Cardinals § 18. Limit club Berkeley cardinals（未核实） |
+| 18 | `Ω ~ Ω_Absolute` | `Ω ~ Ω_Absolute` | Fake Googology § 1. The joke-ordinal of ordinal size: `Ω`（虚构） |
+
+顺序是一致性强度：`rank()` 是枚举位置，`compareTo` 比较的正是它；`compareMagnitude` 把同一个顺序报告成
+证明。Berkeley（秩 15）在这个顺序里高于 Reinhardt（秩 14），因为 Berkeley 要求每一个包含它的传递集都
+有嵌入，而不只是 `V`。所有者的约定——Reinhardt 在**概念上**更大——由单独的访问器记录，不是第二个全序。
+
+每个梯级对 `compareWithLadder(LadderOrdinal)` 都回 `GREATER`，包括对阶梯顶端 `ψ_𝕀(𝕀)`。这是寄存器的
+**公理，不是计算**，与 `AbstractOrdinal.compareWithBms` 相同：寄存器里没有可比较的基数，它拒绝丢掉
+"每个基数梯级都在整个序数阶梯之上"这个唯一事实。
+
+`Big Cardinals.md` 标出三条待核实：Icarus、Ord-Berkeley 与 limit club Berkeley。它们的
+`isVerified()` 为 `false`，gloss 复用文档措辞；Ord-Berkeley 的 gloss 同时写出两种读法（文档采用的
+无界读法与文献里叫 rank-Berkeley 的累积层级读法，后者会把它移到 Berkeley 之下）。最后一级是
+`Fake Googology.md` 的虚构；gloss 复述文件的警告，不把它当数学。
+
+```java
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
+import io.github.sob1234509876.oc.googology.cardinalregister.CardinalRung;
+
+CardinalRung.values().length;                        // 19
+CardinalRung.INACCESSIBLE.rank();                    // 0
+CardinalRung.ALPHA_MAHLO.definition().section();     // "2. $\alpha$-Mahlo cardinals"
+CardinalRung.BERKELEY.compareTo(CardinalRung.REINHARDT); // > 0，一致性强度
+CardinalRung.REINHARDT.isConceptuallyLargerThan(CardinalRung.BERKELEY); // true，所有者的约定
+CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.psiII());    // GREATER，公理
+CardinalRung.ICARUS.isVerified();                    // false
+```
+
+**哪些有意不做。** 不构造或展开基数、不证明一致性强度、不"修好"三条待核实定义：寄存器只记录文档的
+状态并拒绝发明。`RelativePath` 解析文件，自校验核对节标题，所以悬空的委托会让构建失败而不是留在注释里。
+`Fake Googology.md` 是虚构，引用它的梯级在枚举与本文件中都标明了。完整表、API、常见坑与自校验见
+[`help/cardinal-register.md`](help/cardinal-register.md)。
 
 
 ## 它有意不做的事
@@ -343,7 +405,7 @@ A1 要求 `f(α) > α`，严格递增又给出 `f(α) < f(β) = α`，矛盾。�
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
 - **BMS 之上的记法。** `AbstractOrdinal` 只**命名** BMS 极限及其之上的阶段，并给它们一个声明顺序；它不是记法，没有基本列、算术或值，它的"高于一切 BMS 值"比较是一条显式公理。它不说明一个名字比 BMS 高多少，低于极限的参考节点也被有意排除在名册之外。
-- **TBMS/TTBMS/TNRBMS 矩阵系统，或基数寄存器。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一至阶段三：段一委托 BMS，段二是**抽象**函数 `f(α) = TTBMS(0)(1^α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，段四是直到 `ψ_𝕀(𝕀)` 的**抽象** `ω_α` 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF 或基数，不证明所有者的两条假设（A1 与 A2），也不实现基数寄存器。它的 `f`、`g` 与 `h` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。
+- **TBMS/TTBMS/TNRBMS 矩阵系统。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一至阶段三：段一委托 BMS，段二是**抽象**函数 `f(α) = TTBMS(0)(1^α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，段四是直到 `ψ_𝕀(𝕀)` 的**抽象** `ω_α` 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF 或基数，不证明所有者的两条假设（A1 与 A2）。它的 `f`、`g` 与 `h` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。基数寄存器是独立的，见上一节：它只委托定义，同样不构造基数。
 - **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
@@ -387,14 +449,19 @@ src/main/java/io/github/sob1234509876/oc/googology/
     abstractordinal/LadderSegment.java     段一 / 段二 / 段三 / 段四 / 具名抽象层
     abstractordinal/LadderComparison.java  比较及其所属的两个段
     abstractordinal/package-info.java      抽象序数包文档
+    cardinalregister/CardinalRung.java     19 个基数梯级：名字、记号、gloss、文档链接、秩与核实标记
+    cardinalregister/RelativePath.java     仓库根相对路径 + 节标题的文档引用
+    cardinalregister/package-info.java     基数寄存器包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
 help/abstract-ordinals.md        BMS 之上名册的中文指南
 help/ordinal-ladder.md           阶段一至阶段三序数阶梯的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    532 项检查的自检程序
+help/cardinal-register.md        阶段四基数寄存器的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    582 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）
+src/selfcheck/java/.../check/CardinalRegisterCheck.java  其中的基数寄存器五节（第 32–36 节）
 ```
 
 ## 相关
@@ -404,5 +471,7 @@ src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（�
 - [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上名册、声明未知对与"高于 BMS"公理，中文。
 - [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、抽象
   `f(α) = TTBMS(0)(1^α)` 段、直到 `X` 的 NRBMS/TNRBMS 段、直到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、实参/值分离、
-  边界结果，以及阶段四的路线图，中文。
+  边界结果，以及阶段四的交接，中文。
+- [`help/cardinal-register.md`](help/cardinal-register.md) —— 阶段四：19 级基数寄存器、每一级的文档节、
+  Berkeley/Reinhardt 约定、三条未核实条目、API 与常见坑，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。

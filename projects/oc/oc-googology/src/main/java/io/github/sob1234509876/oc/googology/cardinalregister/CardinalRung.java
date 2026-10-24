@@ -1,0 +1,440 @@
+package io.github.sob1234509876.oc.googology.cardinalregister;
+
+import io.github.sob1234509876.oc.googology.ComparisonResult;
+import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
+
+import java.util.Objects;
+
+/**
+ * The rungs of {@code documents/Human/Ordinals.md} items 6-21, kept as a <strong>name-and-rank register</strong>
+ * - a separate register from the ordinal ladder, not a fourth {@link
+ * io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment}.
+ *
+ * <p><b>What this is.</b> Item 3 of {@code AI TODO.md} describes a 21-rung ladder from {@code 0} to
+ * {@code Omega_Absolute}. Stages one to three implemented the ordinal part, up to {@code psi_I(I)}; stage four
+ * is this enum: the cardinal rungs from {@code I = min Inaccessible Cardinal} to the fictional
+ * {@code Omega ~ Omega_Absolute} segment. Each constant carries its name, its notation from
+ * {@code Ordinals.md}, a one-line gloss, the {@link RelativePath} of the document section that defines it,
+ * its declared rank, and whether the document itself flags its definition as verified. The register
+ * <strong>defines no cardinal</strong>: every definition is delegated to {@code documents/Human/Cardinals/}
+ * and the self check resolves every one of those links.
+ *
+ * <p><b>The declared order is consistency strength.</b> {@link #rank()} is the constant's position in this
+ * enum (a static initialiser keeps the two equal) and {@link #compareTo(CardinalRung)} is the inherited
+ * {@link Enum#compareTo(Enum)}, so the order is total, transitive, antisymmetric and consistent with
+ * {@code equals} by construction. This is a declaration of the register, following the order of
+ * {@code Ordinals.md} and of the consistency-strength ladder in {@code Big Cardinals.md}; it is not a proof
+ * of any consistency-strength comparison. {@link #compareMagnitude(CardinalRung)} reports the same order
+ * through the module's four-valued API (always a proof, never {@code UNKNOWN} or a lean).
+ *
+ * <p><b>Berkeley versus Reinhardt, and the owner's convention.</b> The declared order follows
+ * <em>consistency strength</em>: {@link #BERKELEY} is above {@link #REINHARDT}, because a Berkeley cardinal
+ * requires the embedding property for every transitive set containing it, not only for {@code V}. The owner's
+ * document also records that <em>conceptual size</em> orders Reinhardt <em>above</em> Berkeley, because a
+ * Reinhardt embedding has domain {@code V} while a Berkeley cardinal only embeds transitive sets. The two
+ * directions are not reconciled into one order: {@link #isConceptuallyLargerThan(CardinalRung)} and
+ * {@link #reinhardtIsConceptuallyLargerThanBerkeley()} record the convention in a separate accessor, and the
+ * declared order stays the consistency-strength order. The convention is not a second {@code compareTo}.
+ *
+ * <p><b>Above the ordinal ladder, by axiom.</b> {@link #compareWithLadder(LadderOrdinal)} answers
+ * {@link ComparisonResult#GREATER} for every rung and every ladder value, including the ladder's top
+ * {@code psi_I(I)}. That is an <strong>axiom of this register, not a computation</strong>, exactly like
+ * {@link io.github.sob1234509876.oc.googology.abstractordinal.AbstractOrdinal#compareWithBms}: the enum stores
+ * no cardinal and no ordinal to compare, so it has nothing to compute with, and it refuses to hand back a
+ * comparison that would drop the one fact it carries - that every cardinal rung lies above the whole ordinal
+ * ladder. The axiom is true in the intended reading, because the least cardinal rung {@code I} is above every
+ * ordinal of the ladder; it is still an axiom, and it does not say <em>how far</em> above the ladder a rung
+ * lies. {@link #isAboveLadder()} is its predicate form.
+ *
+ * <p><b>The three unverified rungs.</b> {@code Big Cardinals.md} ends with a section, "Definitions to verify
+ * against a source", which names three entries whose definitions are not on the same footing as the other
+ * fifteen: {@link #ICARUS} (assembled from secondary sources), {@link #ORD_BERKELEY} (two readings in
+ * circulation, on opposite sides of Berkeley), and {@link #LIMIT_CLUB_BERKELEY} (the parametrised part is
+ * verified, the unparametrised form and the "limit" clause are reconstructions). Their {@link #isVerified()}
+ * is {@code false}; every other rung's is {@code true}. The gloss of each of the three quotes the document's
+ * own wording instead of inventing a definition, and the Ord-Berkeley gloss states both readings rather than
+ * silently picking one. {@code isVerified()} means "the linked document does not flag this definition for
+ * verification"; it is not a claim that the mathematics is true.
+ *
+ * <p><b>The fictional last rung.</b> {@code Fake Googology.md} is explicitly fiction: nothing in it defines a
+ * set, an ordinal or a cardinal, and no statement in it is a theorem. {@link #OMEGA_TO_OMEGA_ABSOLUTE} is
+ * nevertheless one rung of the owner's ladder, so the register carries it with that warning in the gloss and
+ * points at the file. Being fiction is not the same as being flagged: the document does not ask for its
+ * definitions to be verified, it says they are not mathematics, so {@link #isVerified()} is {@code true} and
+ * the gloss says what the document says.
+ *
+ * <p><b>Not a notation and not an ordinal.</b> This enum cannot be expanded into a fundamental sequence,
+ * added, multiplied, compared with a {@code Natural} or an {@code Ordinal}, or used as a
+ * {@link LadderOrdinal}. {@link #compareWithLadder(LadderOrdinal)} is the only cross-register operation, and
+ * it is the axiom above; the cardinal register and the ordinal ladder otherwise stay separate types with
+ * separate orders. The Chinese guide is {@code help/cardinal-register.md}.
+ *
+ * @see RelativePath
+ * @see #compareWithLadder(LadderOrdinal)
+ * @see #isVerified()
+ * @see io.github.sob1234509876.oc.googology.abstractordinal.AbstractOrdinal#compareWithBms
+ * @since 2.0a
+ */
+public enum CardinalRung {
+
+    /**
+     * <strong>Inaccessible</strong> - {@code I = min Inaccessible Cardinal}, the first rung above the whole
+     * ordinal ladder. A cardinal is strongly inaccessible iff it is uncountable, regular and a strong limit;
+     * under GCH the several notions of limit of powers coincide. The companion document builds the
+     * hyper-inaccessible hierarchy below Mahlo and is where this rung delegates.
+     */
+    INACCESSIBLE(0, "Inaccessible", "𝕀",
+            "the least inaccessible cardinal I = min Inaccessible Cardinal, the first rung above the whole"
+                    + " ordinal ladder and the base of the inaccessible Veblen extension; uncountable, regular"
+                    + " and a strong limit under GCH",
+            RelativePath.of("documents/Human/Cardinals/Inaccessible Cardinal Extension.md",
+                    "Strongly inaccessible cardinals"),
+            true),
+
+    /**
+     * <strong>Mahlo</strong> - {@code M_alpha}, the least rung of the embedding-free region that forces the
+     * inaccessible extension to stop below it.
+     */
+    MAHLO(1, "Mahlo", "𝕄_α",
+            "inaccessible and the regular cardinals below it are stationary in it; every cardinal of the"
+                    + " inaccessible extension lies below the least Mahlo cardinal",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "1. Mahlo cardinals"),
+            true),
+
+    /**
+     * <strong>{@code alpha}-Mahlo</strong> - {@code M(alpha, beta)}; {@code 0}-Mahlo is inaccessible and
+     * {@code 1}-Mahlo is Mahlo by the document's convention.
+     */
+    ALPHA_MAHLO(2, "alpha-Mahlo", "𝕄(α, β)",
+            "0-Mahlo is inaccessible and (alpha+1)-Mahlo asks that the alpha-Mahlo cardinals be stationary"
+                    + " below; M(alpha, beta) enumerates the alpha-Mahlo cardinals",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "2. $\\alpha$-Mahlo cardinals"),
+            true),
+
+    /**
+     * <strong>Hyper-Mahlo</strong> - {@code M(1, 0, alpha)}, the diagonal form: {@code alpha}-Mahlo for every
+     * {@code alpha < kappa}.
+     */
+    HYPER_MAHLO(3, "hyper-Mahlo", "𝕄(1, 0, α)",
+            "alpha-Mahlo for every alpha < kappa, the diagonal form of the Mahlo ladder, below every weakly"
+                    + " compact cardinal",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "3. Hyper-Mahlo cardinals"),
+            true),
+
+    /**
+     * <strong>Weakly compact</strong> - {@code K_alpha}, inaccessible and {@code Pi^1_1}-indescribable, the
+     * first rung of the indescribability ladder.
+     */
+    WEAKLY_COMPACT(4, "Weakly compact", "𝕂_α",
+            "inaccessible and Pi^1_1-indescribable, equivalently the tree property or"
+                    + " kappa -> (kappa)^2_2; the first rung of the indescribability ladder",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "4. Weakly compact cardinals"),
+            true),
+
+    /**
+     * <strong>Indescribable</strong> - {@code K^{Pi^n_m}_alpha}, the {@code Pi^1_m} ladder up to total
+     * indescribability, still below measurability.
+     */
+    INDESCRIBABLE(5, "Indescribable", "𝕂^{Π^n_m}_α",
+            "Pi^1_m-indescribable for m >= 1; total indescribability is the union of the ladder, strictly"
+                    + " weaker than measurability and the last rung of the embedding-free region",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "5. Indescribable cardinals"),
+            true),
+
+    /**
+     * <strong>Measurable</strong> - the first rung whose definition is a nontrivial elementary embedding;
+     * equivalently a {@code kappa}-complete nonprincipal ultrafilter.
+     */
+    MEASURABLE(6, "Measurable", "Measurable",
+            "the critical point of a nontrivial elementary embedding V -> M into a transitive class,"
+                    + " equivalently a kappa-complete nonprincipal ultrafilter on kappa; the first"
+                    + " embedding-defined rung and exactly 1-strongness",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "6. Measurable cardinals"),
+            true),
+
+    /**
+     * <strong>{@code alpha}-strong and strong</strong> - one rung of {@code Ordinals.md} item 13. The
+     * document's section covers both the fixed-{@code alpha} levels and the all-{@code alpha} case; the ladder
+     * table, not the section order, is the authority on where each sits relative to Woodin.
+     */
+    ALPHA_STRONG_AND_STRONG(7, "alpha-strong and strong", "α-Strong / Strong",
+            "alpha-strong embeds V into M with V_{kappa+alpha} contained in M, and strong is the case for"
+                    + " every alpha; 1-strong is measurable, and the document's ladder table (not the section"
+                    + " order) places the fixed-alpha levels below Woodin and the all-alpha case above it",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md",
+                    "7. $\\alpha$-strong and strong cardinals"),
+            true),
+
+    /**
+     * <strong>Supercompact</strong> - {@code lambda}-supercompact for every {@code lambda >= kappa}; the
+     * target is closed under {@code lambda}-sequences and {@code j(kappa) > lambda}.
+     */
+    SUPERCOMPACT(8, "Supercompact", "Supercompact",
+            "lambda-supercompact for every lambda >= kappa, with j(kappa) > lambda and M closed under"
+                    + " lambda-sequences; above every strong cardinal and below every rank-into-rank axiom",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "9. Supercompact cardinals"),
+            true),
+
+    /**
+     * <strong>I3</strong> - the weakest rank-into-rank axiom: a nontrivial elementary embedding
+     * {@code V_lambda -> V_lambda}. {@code Ordinals.md} item 15 is the range I3-I0; the register keeps the
+     * four rungs separate because {@code Big Cardinals.md} defines them in four sections.
+     */
+    I3(9, "I3", "I3",
+            "a nontrivial elementary embedding V_lambda -> V_lambda with critical point below lambda; the"
+                    + " weakest rank-into-rank axiom and compatible with Choice",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "10. I3"),
+            true),
+
+    /** <strong>I2</strong> - an embedding {@code V -> M} whose target contains {@code V_lambda} at the limit of the critical sequence. */
+    I2(10, "I2", "I2",
+            "a nontrivial elementary embedding V -> M whose target contains V_lambda at the limit of the"
+                    + " critical sequence; above I3 and below I1",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "11. I2"),
+            true),
+
+    /** <strong>I1</strong> - a nontrivial elementary embedding {@code V_{lambda+1} -> V_{lambda+1}}. */
+    I1(11, "I1", "I1",
+            "a nontrivial elementary embedding V_{lambda+1} -> V_{lambda+1} with critical point below"
+                    + " lambda; above I2 and below I0",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "12. I1"),
+            true),
+
+    /** <strong>I0</strong> - a nontrivial elementary embedding {@code L(V_{lambda+1}) -> L(V_{lambda+1})}, the top of the rank-into-rank family under Choice. */
+    I0(12, "I0", "I0",
+            "a nontrivial elementary embedding L(V_{lambda+1}) -> L(V_{lambda+1}) with critical point below"
+                    + " lambda; the strongest rank-into-rank axiom known to be compatible with Choice",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "13. I0"),
+            true),
+
+    /**
+     * <strong>Icarus</strong> - flagged for verification by the document itself. The gloss quotes the
+     * document's wording and its caveat; the register does not invent a definition.
+     */
+    ICARUS(13, "Icarus", "Icarus",
+            "the definition below is the best formulation available to this document, and it is flagged for"
+                    + " verification; the formulation is assembled from secondary sources and is not verified"
+                    + " against a primary definition. What is uncertain: whether the standard definition"
+                    + " quantifies 'there is X' or 'for every X'; whether the model is L(X,V_{lambda+1}) or the"
+                    + " differently closed L(V_{lambda+1},X); and whether the critical point must satisfy"
+                    + " crit(j) < lambda or only crit(j) <= lambda",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "14. Icarus cardinals"),
+            false),
+
+    /**
+     * <strong>Reinhardt</strong> - the critical point of a nontrivial elementary embedding {@code V -> V};
+     * stated in ZF and refuted by Choice. Conceptual size places it above Berkeley; consistency strength
+     * places it below.
+     */
+    REINHARDT(14, "Reinhardt", "Reinhardt",
+            "the critical point of a nontrivial elementary embedding V -> V, stated in ZF (or ZF+DC) and"
+                    + " refuted by Choice through Kunen's theorem; conceptually the largest notion in the"
+                    + " document apart from Berkeley, although Berkeley is above it in consistency strength",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "15. Reinhardt cardinals"),
+            true),
+
+    /**
+     * <strong>Berkeley</strong> - every transitive set containing {@code delta} has nontrivial self-embeddings
+     * with critical points arbitrarily close to {@code delta}. Above Reinhardt in consistency strength by the
+     * declared order; below it in conceptual size by the owner's convention.
+     */
+    BERKELEY(15, "Berkeley", "Berkeley",
+            "every transitive set containing delta has nontrivial self-embeddings with critical points"
+                    + " arbitrarily close to delta; above Reinhardt in consistency strength by the declared"
+                    + " order, and below it in conceptual size by the owner's convention",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "16. Berkeley cardinals"),
+            true),
+
+    /**
+     * <strong>Ord-Berkeley</strong> - flagged for verification by the document itself, and the one rung whose
+     * name has two readings in circulation. The gloss states both readings; the register does not pick one.
+     */
+    ORD_BERKELEY(16, "Ord-Berkeley", "Ord-Berkeley",
+            "the name is used in two different ways in the literature and this entry must not be read as"
+                    + " settling which is meant: the unbounded reading used here is 'lambda-Berkeley for every"
+                    + " lambda' (the choiceless-large-cardinal definition the document adopts); the"
+                    + " cumulative-hierarchy reading is 'for every alpha, a nontrivial j : V_alpha -> V_alpha"
+                    + " with critical point kappa', which the literature calls rank-Berkeley"
+                    + " (Goldberg-Schlutzenberg) and which would put the rung below Berkeley rather than above"
+                    + " it",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md", "17. Ord-Berkeley cardinals"),
+            false),
+
+    /**
+     * <strong>Limit club Berkeley</strong> - flagged for verification by the document itself: the
+     * parametrised club {@code lambda}-Berkeley definition is verified, the unparametrised form and the
+     * "limit" clause are reconstructions.
+     */
+    LIMIT_CLUB_BERKELEY(17, "Limit club Berkeley", "Limit club Berkeley",
+            "the definition below is reconstructed, and it is flagged for verification: the parametrized club"
+                    + " lambda-Berkeley definition is verified, but the unparametrized 'club Berkeley' form and"
+                    + " the 'limit of club Berkeley cardinals' clause are not",
+            RelativePath.of("documents/Human/Cardinals/Big Cardinals.md",
+                    "18. Limit club Berkeley cardinals"),
+            false),
+
+    /**
+     * <strong>{@code Omega ~ Omega_Absolute}</strong> - the last rung of {@code Ordinals.md} item 21,
+     * delegated to {@code Fake Googology.md}. That file is fiction and says so at the top: nothing in it
+     * defines a set, an ordinal or a cardinal, and no statement in it is a theorem. The register carries the
+     * rung because the owner's ladder has it, and the gloss repeats the fiction warning instead of treating
+     * the segment as mathematics.
+     */
+    OMEGA_TO_OMEGA_ABSOLUTE(18, "Omega ~ Omega_Absolute", "Ω ~ Ω_Absolute",
+            "the fake-googology segment from Omega to Omega_Absolute: the file is fiction, nothing here"
+                    + " defines a set, an ordinal or a cardinal, no statement in it is a theorem, and"
+                    + " Omega_Absolute 'contains every joke-ordinal including itself, hence is a member of"
+                    + " itself, hence is not a class, hence is nothing at all'",
+            RelativePath.of("documents/Human/Cardinals/Fake Googology.md",
+                    "1. The joke-ordinal of ordinal size: $\\Omega$"),
+            true);
+
+    private final int rank;
+    private final String title;
+    private final String notation;
+    private final String gloss;
+    private final RelativePath definition;
+    private final boolean verified;
+
+    CardinalRung(int rank, String title, String notation, String gloss, RelativePath definition,
+            boolean verified) {
+        this.rank = rank;
+        this.title = requireText(title, "title");
+        this.notation = requireText(notation, "notation");
+        this.gloss = requireText(gloss, "gloss");
+        this.definition = Objects.requireNonNull(definition, "definition");
+        this.verified = verified;
+    }
+
+    static {
+        CardinalRung[] values = values();
+        for (int index = 0; index < values.length; index++) {
+            if (values[index].rank != index) {
+                throw new ExceptionInInitializerError("the declared rank " + values[index].rank + " of "
+                        + values[index] + " is not its enum position " + index);
+            }
+        }
+    }
+
+    /**
+     * The declared rank of this rung: its position in the register, counting from zero. The rank is the
+     * consistency-strength order of {@code Big Cardinals.md}; a static initialiser keeps it equal to the enum
+     * position, so {@link #compareTo(CardinalRung)} compares exactly this number.
+     */
+    public int rank() {
+        return rank;
+    }
+
+    /** The name of the rung as it appears in {@code Ordinals.md}, for example {@code "alpha-Mahlo"}. */
+    public String title() {
+        return title;
+    }
+
+    /** The notation of the rung as {@code Ordinals.md} writes it, for example {@code "M(alpha, beta)"}. */
+    public String notation() {
+        return notation;
+    }
+
+    /** The one-line gloss of the rung: what it means, in the register's own words where the document does. */
+    public String gloss() {
+        return gloss;
+    }
+
+    /** The document section that defines this rung; the self check resolves it and matches its heading. */
+    public RelativePath definition() {
+        return definition;
+    }
+
+    /**
+     * Whether the linked document does <strong>not</strong> flag this definition for verification.
+     *
+     * <p>{@code Big Cardinals.md}'s final section flags exactly three entries: Icarus, Ord-Berkeley and limit
+     * club Berkeley. Those three answer {@code false}; every other rung answers {@code true}. The flag records
+     * the document's own status, not a proof: even a verified rung is a definition quoted from prose, and the
+     * register never computes with it.
+     */
+    public boolean isVerified() {
+        return verified;
+    }
+
+    /**
+     * The same comparison as {@link #compareTo(CardinalRung)}, reported through the module's four-valued API.
+     * Because the declared rank is a total order with no unknown pair and no lean, the result is always one of
+     * the three proofs {@link ComparisonResult#LESS}, {@link ComparisonResult#EQUAL} or
+     * {@link ComparisonResult#GREATER}; it is never {@link ComparisonResult#UNKNOWN} and never
+     * {@code PROBABLE_*}.
+     *
+     * @param other the rung to compare with
+     * @return a proof in the direction of the declared rank
+     * @throws NullPointerException if {@code other} is {@code null}
+     */
+    public ComparisonResult compareMagnitude(CardinalRung other) {
+        Objects.requireNonNull(other, "other");
+        return ComparisonResult.of(compareTo(other));
+    }
+
+    /**
+     * Answers {@link ComparisonResult#GREATER} for every ladder value: an <strong>axiom of this register, not
+     * a computation</strong>. This is the cross-register counterpart of
+     * {@link io.github.sob1234509876.oc.googology.abstractordinal.AbstractOrdinal#compareWithBms}: the register
+     * stores no cardinal and no ordinal, so there is no honest comparison to compute, and it refuses to hand
+     * back a comparison that would drop the one fact it carries - that every cardinal rung lies strictly above
+     * the whole ordinal ladder. In particular it answers {@code GREATER} for {@code LadderOrdinal.psiII()},
+     * the top of the ladder.
+     *
+     * <p>The axiom is true in the intended reading, because the least rung {@link #INACCESSIBLE} is the least
+     * inaccessible cardinal, which is above every ordinal of the ladder; it is still an axiom. It says nothing
+     * about <em>how far</em> above the ladder a rung lies, and it cannot compare two rungs with each other;
+     * use {@link #compareTo(CardinalRung)} or {@link #compareMagnitude(CardinalRung)} for that.
+     *
+     * @param ladder the ladder value to compare with
+     * @return always {@link ComparisonResult#GREATER}
+     * @throws NullPointerException if {@code ladder} is {@code null}
+     */
+    public ComparisonResult compareWithLadder(LadderOrdinal ladder) {
+        Objects.requireNonNull(ladder, "ladder");
+        return ComparisonResult.GREATER;
+    }
+
+    /**
+     * Whether this rung lies above the ordinal ladder. It is always {@code true}; this is the predicate form
+     * of the axiom documented on {@link #compareWithLadder(LadderOrdinal)}.
+     */
+    public boolean isAboveLadder() {
+        return true;
+    }
+
+    /**
+     * The owner's convention for the one pair where conceptual size and consistency strength disagree:
+     * Reinhardt is conceptually larger than Berkeley. The declared order is consistency strength, so
+     * {@link #BERKELEY} is above {@link #REINHARDT}; this accessor records the convention separately and
+     * deliberately answers {@code true} for exactly that one ordered pair. It is <strong>not</strong> a second
+     * order and is not consulted by {@link #compareTo(CardinalRung)}. Every other pair, including the reverse
+     * pair, answers {@code false}; for those the register makes no conceptual-size claim.
+     *
+     * @param other the rung to compare with
+     * @return {@code true} only for {@code (REINHARDT, BERKELEY)}
+     * @throws NullPointerException if {@code other} is {@code null}
+     */
+    public boolean isConceptuallyLargerThan(CardinalRung other) {
+        Objects.requireNonNull(other, "other");
+        return this == REINHARDT && other == BERKELEY;
+    }
+
+    /**
+     * The owner's convention stated as a single accessor: Reinhardt is conceptually larger than Berkeley,
+     * even though the declared order (consistency strength) puts Berkeley above Reinhardt. This is a
+     * convention of the owner's document, not a theorem and not a second order.
+     */
+    public static boolean reinhardtIsConceptuallyLargerThanBerkeley() {
+        return true;
+    }
+
+    private static String requireText(String text, String what) {
+        Objects.requireNonNull(text, what);
+        if (text.isBlank()) {
+            throw new IllegalArgumentException("the " + what + " must not be blank");
+        }
+        return text;
+    }
+}

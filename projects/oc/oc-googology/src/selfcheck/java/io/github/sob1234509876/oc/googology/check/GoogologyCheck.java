@@ -22,7 +22,9 @@ import java.util.Random;
  * the ordinal layer that extends the hyperoperation to transfinite levels, the Bashicu matrix
  * standard forms with their lexicographic order, the register of abstract ordinals above the BMS
  * limit, and the ordinal ladder (stage one: BMS, TBMS/TTBMS and the named placeholders; stage two: the
- * NRBMS/TNRBMS segment, the argument/value separation and the boundary analysis). Run with
+ * NRBMS/TNRBMS segment, the argument/value separation and the boundary analysis; stage three: the
+ * {@code omega_alpha} segment up to {@code psi_I(I)}; stage four: the separate cardinal register from the
+ * inaccessible cardinal to the fictional {@code Omega ~ Omega_Absolute} segment). Run with
  * {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
  */
 public final class GoogologyCheck {
@@ -227,6 +229,9 @@ public final class GoogologyCheck {
         LadderCheck.Result ladder = LadderCheck.run();
         passed += ladder.passed();
         FAILURES.addAll(ladder.failures());
+        CardinalRegisterCheck.Result cardinals = CardinalRegisterCheck.run();
+        passed += cardinals.passed();
+        FAILURES.addAll(cardinals.failures());
 
         summary();
     }
