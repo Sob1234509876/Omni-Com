@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Queue of orders of one unit. Only the head order is active; when it finishes the next one starts on
@@ -92,9 +93,40 @@ public final class OrderQueue {
         }
         Order finished = current;
         current = null;
+        finished.onFinish(context, state);
         context.world().events().publish(
                 new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number()));
         return state;
+    }
+
+    /**
+     * Finishes the active order on its behalf, without running it, and publishes its
+     * {@link Events.OrderFinished} in the current tick.
+     *
+     * <p>This is how a world fact that the order merely waits for ends the order in the same tick instead
+     * of one tick later: a construction site that just completed or was just destroyed calls it for every
+     * builder it has, so none of them spends a tick holding an order for a lost building. The order's
+     * {@link Order#onFinish(OrderContext, OrderState)} still runs, so it can drop its references.
+     *
+     * @param context the context of the tick that is finishing the order
+     * @param state   the terminal state, never {@link OrderState#RUNNING}
+     * @return whether an active order was finished
+     */
+    public boolean finishCurrent(OrderContext context, OrderState state) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(state, "state");
+        if (!state.isFinished()) {
+            throw new IllegalArgumentException("an order can only be finished with a terminal state, was " + state);
+        }
+        if (current == null) {
+            return false;
+        }
+        Order finished = current;
+        current = null;
+        finished.onFinish(context, state);
+        context.world().events().publish(
+                new Events.OrderFinished(context.unit(), finished.name(), state, context.tick().number()));
+        return true;
     }
 
     @Override

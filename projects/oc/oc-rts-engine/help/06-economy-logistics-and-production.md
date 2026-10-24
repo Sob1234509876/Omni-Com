@@ -431,9 +431,31 @@ queueOf(building).enqueue(recipe, count);   // count <= 0 时由 ProductionQueue
 
 `abandonAll()` 是给"建筑本身没了"用的：只 `release()` 仓库预订，**不退款**——缓冲区随建筑一起消失了，往那里退款只会凭空造出物品。
 
-### ConstructionSystem：相位 500
+### ConstructionSystem：相位 500，多名建造者合作
 
-`production.ConstructionSystem implements SimulationSystem`，`SYSTEM_ORDER = 500`（在生产之前）。每 tick 遍历所有 `isAlive()` 且 `!isConstructed()` 的建筑，调 `building.advanceConstruction(1)`；返回 `true` 的那一 tick 发布 `Events.ConstructionCompleted(building, tick.number())`，**恰好一次**。
+`production.ConstructionSystem implements SimulationSystem`，`SYSTEM_ORDER = 500`（在生产之前）。每 tick 遍历所有 `isAlive()` 且 `!isConstructed()` 的建筑，按下面的公式推进：
+
+```text
+progressPerTick = 0                                      当 attachedBuilders == 0
+progressPerTick = min(attachedBuilders, 4)               当 attachedBuilders > 0
+```
+
+`MAX_BUILDERS_PER_SITE = 4` 是 `ConstructionSystem` 的公共常量，公式也以 `ConstructionSystem.progressPerTick(int)` 公开，便于内容之外的代码和自检直接验证。`attachedBuilders` 是 `Building.builderCount()`，即当前挂了 `BuildOrder` 且仍附着的建造者数量；公式只读这个**集合大小**，不读附着顺序，所以两个建造者永远是两个建造者的速度，第五个不再加速。一个没有附着建造者的工地**不推进**——建造命令才是真正在施工的东西。
+
+一个工期为 `buildTimeTicks` 的工地在 `b` 个建造者下的完工时刻是：
+
+```text
+ceil(buildTimeTicks / min(b, MAX_BUILDERS_PER_SITE))  个建造 tick 之后（b > 0）
+永不完工                                                （b == 0）
+```
+
+自检第 16 节用 40 tick 的小屋实测：1 个建造者 40 tick，2 个 20 tick，4 个和 5 个都是 10 tick。
+
+**加入规则。** 工地可以被多个建造者同时附着。`UnitDirector.tryBuild(Unit, Building)`（以及 `build(Unit, Building)`）让第二个工兵**加入**一个已存在、未完工的工地：不放置新工地、不重复扣费，只把该单位的当前命令替换成指向同一个 `Building` 的 `BuildOrder`。`tryBuild(Unit, BuildingType, GridPos)` 在目标占地与一个同类型、同所有者、未完工的工地相交时也会自动改走这条加入路径，而不是报“占用”或放第二座工地；不同建筑类型、别的玩家、已完工、已摧毁、跨维度的工地都会被可读理由拒绝。加入仍受与放置相同的 `MAX_BUILD_PATH_TILES` 射程限制。
+
+**站位。** 每个 `BuildOrder` 在启动时通过 `Building.attachBuilder(Unit, GridPos)` 占用一块自己的空地：优先用建造者已经站着的、位于占地外一环且未被其他建造者占用的可通行地块，否则取离它最近的空闲环上地块（平局按行优先）。第二个建造者因此不会和第一个挤在入口。附着的两端都会在终止时解除：命令完成、失败或被取消时由 `BuildOrder` 自己 `detachBuilder` 并把 `site` 引用置空；工地完工或死亡时由 `ConstructionSystem` 对每个仍附着的建造者调用 `OrderQueue.finishCurrent(...)`。
+
+**完工同步。** `advanceConstruction` 翻成 `constructed = true` 的那一 tick，`ConstructionSystem` 先把该工地所有已附着命令以 `COMPLETED` 结束（发布各自的 `Events.OrderFinished`），再发布 `Events.ConstructionCompleted(building, tick.number())`，**恰好一次**。所以完工 tick 上所有建造者的队列都是空的、没有残留命令、也不再持有工地引用。工地被摧毁时，`CommandService` 订阅的 `Events.EntityDestroyed` 在销毁的同一 tick 就把所有附着命令以 `FAILED` 结束并解除附着，不需要等下一次订单阶段；`completeConstruction()` 在外部被调用时，则在下一次 `ConstructionSystem` 阶段以 `COMPLETED` 清理。两条路径都不会把建造者留在死工地上。
 
 `Building.advanceConstruction(int)` 把 `constructionRemaining` 减到 0 时置 `constructed = true` 并返回 `true`；`constructionFraction()` 给出 `1 - remaining / type.buildTimeTicks()` 的进度。此外还有 `completeConstruction()`（立即完工）与 `restartConstruction()`（打回工地）。未完工的建筑：不生产、不计入物流网络、不作为送货目标（`HaulingSystem.isViable` 与 `WarehouseLogistics.index` 都检查 `isConstructed()`）。
 
@@ -441,11 +463,11 @@ queueOf(building).enqueue(recipe, count);   // count <= 0 时由 ProductionQueue
 
 | API | 结果 | 典型用途 |
 | --- | --- | --- |
-| `world.placeBuilding(type, owner, origin)` | 建一个**未建成**的建筑，`constructionRemaining = type.buildTimeTicks()` | 真实建造流程，交给 `ConstructionSystem` 推进 |
+| `world.placeBuilding(type, owner, origin)` | 建一个**未建成**的建筑，`constructionRemaining = type.buildTimeTicks()` | 手动布置工地；真实建造流程用 `commands().tryBuild(unit, type, origin)`，由附着的建造者让 `ConstructionSystem` 推进 |
 | `world.spawnBuilding(type, owner, origin)` | 先 `building.completeConstruction()` 再 `register(...)`，**直接可用** | 场景布置、测试、调试 |
 | `engine.spawnBuilding(path, owner, origin)` | 按内容路径取 `BuildingType` 后走 `spawnBuilding` | 同上，省一次 `content.building(...)` |
 
-两者都通过 `World.register` 发布 `Events.EntitySpawned`，所以 `WarehouseLogistics` 两条路径都能索引到。想同时验证"建造完成事件"这条路径，必须用 `placeBuilding` 或 `restartConstruction()`（`RtsScenario` 用的是 `spawnBuilding`，因此它验证的是 `EntitySpawned` 分支）。
+两者都通过 `World.register` 发布 `Events.EntitySpawned`，所以 `WarehouseLogistics` 两条路径都能索引到。想走到 `Events.ConstructionCompleted` 这条路径，需要 `placeBuilding` / `tryBuild` 先建出工地、再让附着的建造者推进到完工（`RtsScenario` 第 16 节就是这样验证的）；`spawnBuilding` 走的是 `EntitySpawned` 分支。
 
 ### 原地升级：`UnitDirector.upgradeBuilding`
 
@@ -582,7 +604,9 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `production.ProductionJob` | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`pendingOutput()`、`enteredStateTick()`、`stateTicks()`、`isFinished()`、`describe()`（修改方法包内可见） | 可变小记录 |
 | `production.ProductionQueue` | `building()`、`enqueue(recipe, count)`、`jobs()`、`size()`、`isEmpty()`、`current()`、`cancel(index)`、`clear()` | 请求展开成多个 job |
 | `production.ProductionSystem` | `SYSTEM_ORDER = 600`、`DEFAULT_DELIVERY_TIMEOUT_TICKS = 3000`、私有 `STATE_REPEAT_TICKS = 600`、`enqueue`、`queueOf`、`queue`、`cancel(b, i)`、`availableRecipes(b)`、`totalJobs()`、`trackedBuildings()`、`close()` | 相位 600 |
-| `production.ConstructionSystem` | `SYSTEM_ORDER = 500` | 相位 500，发布 `ConstructionCompleted` |
+| `production.ConstructionSystem` | `SYSTEM_ORDER = 500`、`MAX_BUILDERS_PER_SITE = 4`、`progressPerTick(attachedBuilders)` | 相位 500；按 `min(builders, 4)` 推进，完工/死亡时同一 tick 结束所有附着命令并发布 `ConstructionCompleted` |
+| `entity.Building` 的建造面 | `constructionRemaining()`、`constructionFraction()`、`advanceConstruction(ticks)`、`completeConstruction()`、`restartConstruction()`、`builderCount()`、`builders()`、`builderStandTile(builder)`、`builderStandTiles()`、`attachBuilder(builder, tile)`、`detachBuilder(builder)`、`hasBuilder(builder)`、`pruneDeadBuilders()` | `builders()` 按实体 id 排序的快照；完工/死亡后为空 |
+| `order.UnitDirector` 的建造面 | `build(Unit, BuildingType, GridPos)`、`tryBuild(Unit, BuildingType, GridPos)`、`build(Unit, Building)`、`tryBuild(Unit, Building)`、`BuildResult` | 前两者放置并扣费；后两者加入一个已存在、未完工、同所有者、同维度且在射程内的工地，分文不扣 |
 | 相位数 | 100 区块流式 / 200 订单 / 300 寻路 / 400 移动 / 450 战斗 / **500 建造** / **600 生产** / **700 搬运** / 800 动画 | 见 `SystemPipeline` 与 [04-units-orders-and-movement.md](04-units-orders-and-movement.md) |
 
 ## 常见坑

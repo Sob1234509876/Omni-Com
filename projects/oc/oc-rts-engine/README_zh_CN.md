@@ -43,11 +43,11 @@
 ./gradlew :projects:oc:oc-rts-engine:scenario
 ```
 
-该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一个单位在带 LRU 区块预算的无界地图上真的走 2000 格、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一座兵营训练士兵、动画帧推进、三个维度并排模拟、一场近战、建筑受伤并死亡、一次建造扣费、一次保留占地/所有者/血量比例的原地建筑升级，以及一幅世界的 ASCII 图。
+该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一个单位在带 LRU 区块预算的无界地图上真的走 2000 格、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一座兵营训练士兵、动画帧推进、三个维度并排模拟、一场近战、建筑受伤并死亡、一次建造扣费、一次保留占地/所有者/血量比例的原地建筑升级、多名工程师合作加快同一工地，以及一幅世界的 ASCII 图。
 成功运行以以下内容结束：
 
 ```text
-RTS engine scenario: all 392 checks passed.
+RTS engine scenario: all 515 checks passed.
 ```
 
 自检是一个程序，而不是基于框架的测试套件，因此它位于自己的 `selfCheck` 源集（`src/selfcheck/java`）中；`src/test/java` 保持为空，留给以后真正的单元测试。
@@ -73,6 +73,7 @@ RTS engine scenario: all 392 checks passed.
 | 13 建造扣费 | 放置工地时按目录成本恰好扣一次费；付不起的第二座与压住仓库的放置都被拒绝，且分文不扣 |
 | 14 建造射程 | 工兵旁边的工地被接受并扣费，二十格外的工地与被水围住的工地都以 `out of reach` 拒绝，且都不放置、不留预留 |
 | 15 建筑升级 | 付得起的升级在同一原点替换类型，所有者与血量比例保持不变，费用只扣一次，旧生产队列被取消，旧 id 从单位战斗目标与空间索引清除，替换建筑是完工状态；付不起、目标不存在、占地不同都以可读理由拒绝，分文不扣并留下旧建筑；没有 `upgradeTo()` 的类型不可升级 |
+| 16 合作建造 | 一个建造者用 40 tick 完成 40 tick 的小屋，两个用 20 tick，四个和五个都用 10 tick，因为速度上限是 `min(builders, 4)`；每个建造者占用自己的一块空闲相邻地块；放置时只扣一次费，之后加入都不扣费；完工那一 tick 所有已附着命令都报告 `COMPLETED`，建造者全部空闲且不再持有工地引用；停掉一个建造者会立即解除附着，工地仍按每 tick 2 点推进；摧毁工地会在同一 tick 让所有已附着命令失败且不再扣费；同一脚本跑两次得到完全相同的 tick、进度与命令事件 |
 
 生成世界的真实预览，仅地形，每地块一个字符
 （`~` 水、`:` 沙、`.` 草、`f` 森林、`^` 丘陵、`#` 岩石；单位绘制为 `C`、`W`、`S`）：
@@ -103,6 +104,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 6 | 一个世界中的多张地图（维度） | `dimension.DimensionId`、`dimension.DimensionProfile`、`dimension.Dimension`、`dimension.Gateway`、`World` 的维度访问器、`map.ChunkStreamer` |
 | 7 | 通过网关在地图之间旅行 | `World.addGateway`、`World.route`、`order.TransferOrder`、`order.UnitDirector.travel`、`event.Events.EntityTransferred` |
 | 8 | 会自己开战的单位 | `combat.CombatSystem`、`combat.CombatStats`、`order.AttackOrder`、`order.AttackMoveOrder`、`event.Events.DamageDealt`、`event.Events.EntityKilled` |
+| 9 | 多名建造者合作加快同一工地 | `order.BuildOrder`、`order.UnitDirector.tryBuild(Unit, Building)`、`production.ConstructionSystem.MAX_BUILDERS_PER_SITE`、`entity.Building.builders()` |
 
 ## 架构
 

@@ -364,7 +364,7 @@ production.cancel(barracks, 0);                                       // 取消�
 
 - `enqueue` 会校验建筑能不能跑这条配方（producer tag 不匹配会抛 `IllegalArgumentException`）。
 - 状态含义：`WAITING_MATERIALS` → `DELIVERING` → `PRODUCING` → `WAITING_OUTPUT` / `COMPLETED`（完整流转见 06）。
-- **未建成的建筑不生产**：用 `world.placeBuilding(...)` 放的建筑要靠 `ConstructionSystem` 推进，或直接 `building.completeConstruction()`。注意 `enqueue` 本身不检查是否建成，工地也能排产，任务会一直等到完工。
+- **未建成的建筑不生产**：用 `world.placeBuilding(...)` 放的建筑要靠附着到它上面的 `BuildOrder`（`commands().tryBuild(unit, type, origin)` 或 `commands().tryBuild(unit, site)`）让 `ConstructionSystem` 推进；没有附着建造者的工地不会自己推进，也可以直接 `building.completeConstruction()`。注意 `enqueue` 本身不检查是否建成，工地也能排产，任务会一直等到完工。
 
 ## 15. 监听引擎事件
 

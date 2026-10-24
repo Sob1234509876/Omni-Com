@@ -37,6 +37,8 @@ b.completeConstruction();      // 立刻可用（spawnBuilding() 就是这么做
 b.restartConstruction();       // 回到施工中
 ```
 
+上面的 `advanceConstruction` 是手动推进。正常对局里由 `ConstructionSystem` 每 tick 推进：工地挂着几个 `BuildOrder`，就按 `min(builderCount(), ConstructionSystem.MAX_BUILDERS_PER_SITE)` 扣几点，没有附着建造者的工地不会自己推进；多个建造者、各自占一块相邻地块的规则见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
+
 `entranceTile()` 是 `(origin.x + sizeX, origin.y + sizeY / 2)`，`entrance()` 是它的中心点——搬运工的目标点就是这个，见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
 
 `Health` 只有 `damage(amount)` / `heal(amount)` / `setCurrent(value)` / `restore()`，`max` 为零会在构造时抛 `IllegalArgumentException`。血量与伤害都是 `Natural`（`Health(long)` 是便捷构造器，`damage(long)` / `heal(long)` 是小字面量重载），所以 `damage(Natural.BEYOND)` 能一击打死任何有限血量的实体：伤害的语义是 `min(当前血量, 伤害)`。`fraction()` 仍然是 `float`——渲染要的是比例，不是数量；完整的数值约定见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
@@ -62,7 +64,7 @@ engine.tick();        // tick 末 pipeline 跑完后 engine 调 world.flush()，
 `world.destroy()` 会立刻 `spatial.remove(entity)` 并 `publish(new Events.EntityDestroyed(entity, tickNumber))`；`entities` / `units` / `buildings` 列表和 `entitiesById` 的清理都推迟到 `world.flush()`。所以在一个 tick 内遍历 `world.units()` 时不能一边 spawn、一边 destroy 就期望列表立刻变短（`OrderSystem` 和 `MovementSystem` 都用索引 for 循环遍历，靠“只有末尾 flush 才改变列表”这条规则）。
 ## order：订单层
 
-`Order` 是一个 5 方法的接口，其中三个有默认实现：`name()`、`tick(OrderContext)`（唯一必须实现的）、`onStart(OrderContext)`、`onCancel(OrderContext)`（默认空实现）、`describe()`（默认返回 `name()`）。`tick` 返回 `OrderState`：`RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`，`OrderState.isFinished()` 就是 `this != RUNNING`。
+`Order` 是一个 6 方法的接口：`name()` 与 `tick(OrderContext)` 必须实现，`onStart(OrderContext)`、`onFinish(OrderContext, OrderState)`、`onCancel(OrderContext)`（默认空实现）与 `describe()`（默认返回 `name()`）有默认实现。`onFinish` 在订单自己报告终态、或被外部系统（例如工地完工 / 被毁）结束时调用，是 `BuildOrder` 释放工地引用的位置；`onCancel` 只处理被玩家取消或替换的情况。`tick` 返回 `OrderState`：`RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`，`OrderState.isFinished()` 就是 `this != RUNNING`。
 
 `OrderQueue` 的语义：
 
@@ -72,7 +74,8 @@ engine.tick();        // tick 末 pipeline 跑完后 engine 调 world.flush()，
 | `replace(context, order)` | 先 `clear(context)` 再入队——**取消当前订单** |
 | `replaceAll(context, list)` | 同上，但按顺序入队多个 |
 | `clear(context)` | 对当前订单调 `onCancel` 并发 `OrderFinished(CANCELLED)`，然后清空待办 |
-| `tick(context)` | 没有 current 就从队首取一个、调 `onStart` 并发 `OrderIssued`；跑 `tick()`，结束时发 `OrderFinished` |
+| `tick(context)` | 没有 current 就从队首取一个、调 `onStart` 并发 `OrderIssued`；跑 `tick()`，结束时调 `onFinish` 并发 `OrderFinished` |
+| `finishCurrent(context, state)` | 外部系统以终态结束当前订单（不跑 `tick()`），仍调 `onFinish` 并发 `OrderFinished`；工地完工 / 被毁结束所有附着 `BuildOrder` 就用它 |
 | `current()` / `hasCurrent()` / `pending()` / `size()` / `isEmpty()` | 查询 |
 
 `tick()` 的返回值是刚**结束**的那个订单的状态，仍在中途则返回 `RUNNING`，无事可做返回 `null`。事件在队列里发布，不在订单里：`Events.OrderIssued(unit, orderName, tick)` 和 `Events.OrderFinished(unit, orderName, state, tick)`。

@@ -48,6 +48,7 @@ import {
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord, type TileRange } from "./render/camera";
 import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
+import { pruneFlashes, startFlash } from "./render/flash";
 import {
   InputController,
   type ControlGroupMode,
@@ -922,6 +923,13 @@ const minimapRenderer = new MinimapRenderer(minimapCanvas);
 let atlas: Atlas | null = null;
 /** Every selected entity id, in selection order. A plain click replaces it; Shift+click toggles. */
 let selectedIds: number[] = [];
+/**
+ * Entity id -> `performance.now()` when its brief selection flash started.
+ *
+ * Only a player action fills this map; pruning, world swaps and reconnect restores never do. The
+ * animation loop prunes finished entries, so it stays as small as the recent selection.
+ */
+const flashes = new Map<number, number>();
 /** Control groups 1..9; the pure model lives in `controlGroups.ts`. */
 let controlGroups: ControlGroups = EMPTY_CONTROL_GROUPS;
 /** The group the current selection was recalled from, or null after a click/marquee/order. */
@@ -1075,6 +1083,26 @@ function pruneSelection(): void {
   // An armed attack move has no target once the last own unit leaves the selection.
   if (attackMoveArmed && selectedOwnUnits().length === 0) {
     attackMoveArmed = false;
+  }
+}
+
+/**
+ * Starts the brief selection flash for the entities a player action has just newly selected.
+ *
+ * `previous` is the selection from before the action, so an entity that was already selected keeps its
+ * existing timer instead of strobing again. Only the player-action paths call this; {@link
+ * pruneSelection}, `useWorld` and the snapshot handlers deliberately do not, which is what keeps
+ * programmatic selection changes silent.
+ */
+function flashNewSelection(previous: ReadonlySet<number>, now = performance.now()): void {
+  const added: number[] = [];
+  for (const id of selectedIds) {
+    if (!previous.has(id)) {
+      added.push(id);
+    }
+  }
+  if (added.length > 0) {
+    startFlash(flashes, added, now);
   }
 }
 
@@ -1839,6 +1867,7 @@ function doCancel(): boolean {
 
 /** Applies one click: replace the whole selection, or toggle one entity for Shift+left click. */
 function applySelection(id: number | null, mode: SelectionMode): void {
+  const previous = new Set(selectedIds);
   // A click is a fresh selection, not a recall: the HUD stops claiming it came from group N.
   selectedGroup = null;
   if (mode === "replace") {
@@ -1855,17 +1884,20 @@ function applySelection(id: number | null, mode: SelectionMode): void {
       cancelPlacement(false);
     }
   }
+  flashNewSelection(previous);
   updateHud(true);
   updateGameplayPanel();
 }
 
 /** Replaces the selection with every own unit drawn inside the finished marquee. */
 function applyMarquee(range: TileRange): void {
+  const previous = new Set(selectedIds);
   selectedGroup = null;
   selectedIds = marqueeSelection(world, range, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
   }
+  flashNewSelection(previous);
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1876,10 +1908,12 @@ function applyMarquee(range: TileRange): void {
  * the two panels. A double click always replaces the selection, never merges with it.
  */
 function applyDoubleClick(id: number | null): void {
+  const previous = new Set(selectedIds);
   selectedGroup = null;
   selectedIds = doubleClickSelection(world, id, myPlayerId);
   // Replacing the selection can invalidate an armed BUILD; pruning reports and cancels that case.
   pruneSelection();
+  flashNewSelection(previous);
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1892,12 +1926,14 @@ function applyDoubleClick(id: number | null): void {
  * both READMEs spell the limitation out.
  */
 function selectEngineers(): void {
+  const previous = new Set(selectedIds);
   selectedGroup = null;
   selectedIds = engineerSelection(world, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
   }
   pruneSelection();
+  flashNewSelection(previous);
   updateHud(true);
   updateGameplayPanel();
   if (myPlayerId === null) {
@@ -1932,9 +1968,11 @@ function doControlGroup(group: number, mode: ControlGroupMode): void {
       log("info", message);
       return;
     }
+    const previous = new Set(selectedIds);
     selectedIds = [...ids];
     selectedGroup = group;
     pruneSelection();
+    flashNewSelection(previous);
     updateHud(true);
     updateGameplayPanel();
     setStatus(message, "ok");
@@ -2364,6 +2402,8 @@ function animationFrame(now: number): void {
     // Follow the camera: once its focus reaches the loaded window's edge, ask for a new window now
     // instead of waiting for the next poll.
     maybeStreamWindow(now);
+    // Drop finished flash entries before drawing; the map then holds only the recent selection.
+    pruneFlashes(flashes, now);
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
@@ -2371,6 +2411,8 @@ function animationFrame(now: number): void {
       placement: placementPreviewAt(hoverTile),
       marquee: input.marqueeRect,
       myPlayerId,
+      flashStarts: flashes,
+      nowMs: now,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.

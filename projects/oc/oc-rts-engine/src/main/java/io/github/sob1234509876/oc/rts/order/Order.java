@@ -23,6 +23,20 @@ public interface Order {
     default void onCancel(OrderContext context) {
     }
 
+    /**
+     * Called once when the order becomes inactive after reporting a terminal state, or when an external
+     * system finished it on the order's behalf.
+     *
+     * <p>Most orders need no cleanup and keep the empty default. It exists for orders that hold a
+     * reference to something in the world - {@link BuildOrder} holds its construction site - so that a
+     * site can finish every attached order in the same tick and the order can drop the reference
+     * immediately. It is not called for a cancellation; {@link #onCancel(OrderContext)} owns that path.
+     *
+     * @param state the terminal state the order reached, never {@link OrderState#RUNNING}
+     */
+    default void onFinish(OrderContext context, OrderState state) {
+    }
+
     /** Human readable description, used by the future GUI and by debug output. */
     default String describe() {
         return name();

@@ -153,7 +153,7 @@
 | --- | --- | --- | --- |
 | `Entity` | 世界里的一切：身份、归属、位置、生命、动画状态 | `id()`、`owner()`、`position()`、`health()`、`isUnit()`、`asUnit()`、`visual()`、`dimensionId()`、`dimensionIfAny()` | [09](09-architecture-and-tick-pipeline.md) / [13](13-dimensions.md) |
 | `Unit` | 可移动实体：士兵、工人、载具 | `type()`、`role()`、`combat()`、`attackCooldown()`、`canAttackNow()`、`targetId()`、`setTargetId(EntityId)`、`clearTarget()`、`hasTarget()`、`motion()`、`orders()`、`cargo()`、`tile()`、`setSelected()` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) |
-| `Building` | 带占地面积的静态实体：仓库、兵营、工厂；也是战斗目标 | `origin()`、`inventory()`、`entrance()`、`armour()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()` | [06](06-economy-logistics-and-production.md) / [14](14-combat.md) |
+| `Building` | 带占地面积的静态实体：仓库、兵营、工厂；也是战斗目标和多人施工的工地 | `origin()`、`inventory()`、`entrance()`、`armour()`、`isConstructed()`、`advanceConstruction()`、`rallyPoint()`、`builderCount()`、`builders()`、`builderStandTile()`、`builderStandTiles()`、`attachBuilder()`、`detachBuilder()`、`hasBuilder()`、`pruneDeadBuilders()` | [06](06-economy-logistics-and-production.md) / [14](14-combat.md) |
 | `Health` | 生命值小值对象，承接伤害与治疗；血量与伤害都是 `Natural`，`fraction()` 仍是 `float` 比例 | `max()`、`current()`、`fraction()`、`damage()`、`heal()`、`restore()`、`setCurrent()` | [09](09-architecture-and-tick-pipeline.md) |
 | `SpatialIndex` | 宽阶段空间查询接口（不是位置感知的） | `inRadius()`、`inRect()`、`nearest()`、`insert()`/`update()`/`remove()` | [04](04-units-orders-and-movement.md) |
 | `GridSpatialIndex` | 均匀网格实现，实体按小方格分桶 | `GridSpatialIndex(float cellSize)`（默认由 `World` 用 `4f` 构造）、`occupiedCellCount()` | [04](04-units-orders-and-movement.md) |
@@ -233,20 +233,20 @@
 
 | 类型 | 一句话作用 | 关键方法/字段 | 详见 |
 | --- | --- | --- | --- |
-| `Order` | 单位能做的一件事：走、待命、取货、送货 | `name()`、`onStart()`、`tick(OrderContext)`、`onCancel()`、`describe()` | [04](04-units-orders-and-movement.md) |
+| `Order` | 单位能做的一件事：走、待命、取货、送货 | `name()`、`onStart()`、`tick(OrderContext)`、`onFinish(context, state)`、`onCancel()`、`describe()` | [04](04-units-orders-and-movement.md) |
 | `OrderContext` | 订单运行时能拿到的一切：世界、单位、当前 tick | `world()`、`unit()`、`tick()`、`director()` | [04](04-units-orders-and-movement.md) |
 | `OrderState` | 订单生命周期 | `RUNNING`/`COMPLETED`/`FAILED`/`CANCELLED`、`isFinished()` | [04](04-units-orders-and-movement.md) |
-| `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()` | [04](04-units-orders-and-movement.md) |
+| `OrderQueue` | 单个单位的订单队列；只有队头在跑 | `push()`、`replace()`、`replaceAll()`、`clear()`、`current()`、`pending()`、`tick()`、`finishCurrent(context, state)` | [04](04-units-orders-and-movement.md) |
 | `OrderSystem` | 推进每个单位的订单队列 | `order()`（返回 200） | [04](04-units-orders-and-movement.md) |
-| `UnitDirector` | 给单位派活的唯一入口；建筑建造与原地升级也在这里 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2/EntityId)`、`build(Unit, BuildingType, GridPos)`、`tryBuild(...)`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
-| `UnitDirector.BuildResult` | 一次建造请求的结果：已放置的工地或拒绝原因，两者恰有其一 | `placed()`、`refused()`、`site()`、`refusal()` | [06](06-economy-logistics-and-production.md) |
+| `UnitDirector` | 给单位派活的唯一入口；建筑建造、多人合作施工与原地升级也在这里 | `move()`、`moveGroup()`、`stop()`、`hold()`、`attack(Unit, EntityId)`、`attackMove(Unit, GridPos/Vec2/EntityId)`、`build(Unit, BuildingType, GridPos)`、`build(Unit, Building)`、`tryBuild(...)`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)` | [04](04-units-orders-and-movement.md) / [14](14-combat.md) / [13](13-dimensions.md) |
+| `UnitDirector.BuildResult` | 一次建造/加入请求的结果：可施工的工地或拒绝原因，两者恰有其一 | `placed()`、`refused()`、`site()`、`refusal()`；`tryBuild(Unit, Building)` 成功时 `site()` 是已存在的工地且本次不扣费 | [06](06-economy-logistics-and-production.md) |
 | `UnitDirector.UpgradeResult` | 一次升级请求的结果：替换建筑或拒绝原因，两者恰有其一 | `upgraded()`、`upgraded(Building)`、`refused(String)`、`replacement()`、`refusal()` | [02](02-content-and-items.md) / [06](06-economy-logistics-and-production.md) |
-| `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder`；建造与升级也在同一个世界线程事务里完成 | `DEFAULT_TICKS_PER_SECOND`、`planner()`、`moveGroup()`、`tryBuild()`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
+| `CommandService` | `UnitDirector` 的默认实现，把编队拆成每单位一条 `FormationMoveOrder`；建造、加入既有工地与升级也在同一个世界线程事务里完成 | `DEFAULT_TICKS_PER_SECOND`、`MAX_BUILD_PATH_TILES`、`OUT_OF_REACH`、`planner()`、`moveGroup()`、`tryBuild(Unit, BuildingType, GridPos)`、`tryBuild(Unit, Building)`、`upgradeBuilding(Building)`、`travel(Unit, DimensionId)`、`updateFormationAnchor()`、`activeFormationCount()`、`nextFormationId()` | [04](04-units-orders-and-movement.md) / [13](13-dimensions.md) |
 | `MoveOrder` | 把单个单位走到某个位置 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`destination()` | [04](04-units-orders-and-movement.md) |
 | `HoldOrder` | 让单位留在原地 | `name()`（返回 `"hold"`） | [04](04-units-orders-and-movement.md) |
 | `AttackOrder` | 追一个实体 id：走进射程、停下，由战斗系统开火；未知 id 或目标换图会失败 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`targetId()`、`name()`（返回 `"attack"`） | [14](14-combat.md) |
 | `AttackMoveOrder` | 走向一个点，路上遇到射程内敌人就停下打，打完继续走；也有接受实体 id（含建筑）的形态 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`AttackMoveOrder(EntityId)`、`destination()`、`targetId()`、`isTargeted()`、`isFighting()`、`name()`（返回 `"attack_move"`） | [14](14-combat.md) |
-| `BuildOrder` | 把建造者留在工地入口，直到建筑建成或工地被毁 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`BUILD_RANGE_TILES`（2f）、`site()`、`name()`（返回 `"build"`） | [06](06-economy-logistics-and-production.md) |
+| `BuildOrder` | 把一个建造者留在它自己的空闲相邻地块上，直到建筑建成或工地被毁；多个 `BuildOrder` 可附着同一工地 | `TIMEOUT_TICKS`（2000）、`STALLED_TICKS_BEFORE_FAILURE`（300）、`BUILD_RANGE_TILES`（0.75f）、`site()`（结束后为 `null`）、`standTile()`、`onFinish()`、`name()`（返回 `"build"`） | [06](06-economy-logistics-and-production.md) |
 | `FormationMoveOrder` | 让单个单位走到自己在移动队形中的槽位 | `TIMEOUT_TICKS`、`STALLED_TICKS_BEFORE_FAILURE`、`ANCHOR_EPSILON`、`formationId()`、`slotOffset()`、`goal()`、`updateAnchor()`、`isActive()` | [05](05-formations.md) |
 | `TransferOrder` | 让单位沿传送门链路走到另一张图（`name()` 返回 `"travel"`） | `GATEWAY_RADIUS = 1.5f`、`TIMEOUT_TICKS = 20 * 120`、`TransferOrder(DimensionId target)`、`target()` | [13](13-dimensions.md) |
 
@@ -258,7 +258,7 @@
 | `ProductionQueue` | 单个建筑的生产队列 | `enqueue()`、`jobs()`、`current()`、`cancel(index)`、`clear()` | [06](06-economy-logistics-and-production.md) |
 | `ProductionJob` | 一次配方执行的全部账目（含欠料与待产出） | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`stateTicks()`、`isFinished()` | [06](06-economy-logistics-and-production.md) |
 | `ProductionState` | 生产任务所处的阶段 | `WAITING_MATERIALS`/`DELIVERING`/`PRODUCING`/`WAITING_OUTPUT`/`COMPLETED`/`CANCELLED`、`isFinished()` | [06](06-economy-logistics-and-production.md) |
-| `ConstructionSystem` | 推进工地直到建筑可用 | `SYSTEM_ORDER` | [06](06-economy-logistics-and-production.md) |
+| `ConstructionSystem` | 推进有建造者附着的工地，直到建筑可用；完工 tick 同步结束所有附着命令 | `SYSTEM_ORDER`、`MAX_BUILDERS_PER_SITE`（4）、`progressPerTick(attachedBuilders)` | [06](06-economy-logistics-and-production.md) |
 
 ### `...oc.rts.sim`
 
@@ -347,11 +347,12 @@
 | `ProductionSystem.*` | `SYSTEM_ORDER=600`、`DEFAULT_DELIVERY_TIMEOUT_TICKS=3000` |
 | `CombatSystem.SYSTEM_ORDER` | `450`（移动 400 之后、建造 500 之前） |
 | `ConstructionSystem.SYSTEM_ORDER` | `500` |
+| `ConstructionSystem.*` | `MAX_BUILDERS_PER_SITE=4`；`progressPerTick(b)=0`（`b<=0`）或 `min(b, 4)` |
 | `FormationPlanner.*` | `MIN_SPACING=0.6f`、`DEFAULT_SPACING_SCALE=1.25f` |
 | `MoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300` |
 | `AttackOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`name()` 返回 `"attack"` |
 | `AttackMoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、到达容差 `1f + radius`、`name()` 返回 `"attack_move"` |
-| `BuildOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`BUILD_RANGE_TILES=2f`、`name()` 返回 `"build"` |
+| `BuildOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`BUILD_RANGE_TILES=0.75f`（相对自己的 `standTile()`）、`name()` 返回 `"build"` |
 | `FormationMoveOrder.*` | `TIMEOUT_TICKS=2000L`、`STALLED_TICKS_BEFORE_FAILURE=300`、`ANCHOR_EPSILON=0.25f` |
 | `TransferOrder.*` | `GATEWAY_RADIUS=1.5f`、`TIMEOUT_TICKS=20 * 120`（即 `2400`，**整段旅程**的预算）、`name()` 返回 `"travel"` |
 | `Gateway.of(from, at, to, arrival)` 的 `name` | `from.key() + "-to-" + to.key()`（例如 `overworld-to-moon`）；`reversed()` 给 `to + "-to-" + from` |

@@ -37,8 +37,11 @@ import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
+import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.CommandService;
+import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.order.OrderState;
+import io.github.sob1234509876.oc.rts.production.ConstructionSystem;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.rts.visual.AnimationClips;
@@ -97,6 +100,7 @@ public final class RtsScenario {
         checkBuildingCosts(check, content);
         checkBuildReach(check, content);
         checkBuildingUpgrades(check);
+        checkCooperativeConstruction(check);
 
         check.summary("RTS engine scenario");
     }
@@ -1790,6 +1794,374 @@ public final class RtsScenario {
                         && plain.building("hut").upgradeCost().isEmpty()
                         && !plain.building("hut").canUpgrade(),
                 "a building without upgradeTo() is not upgradable and has an empty upgrade cost");
+    }
+
+    // ------------------------------------------------------------------ 16) cooperative construction
+
+    private static final String COOP_BUILDER = "engineer";
+    private static final String COOP_DEPOT = "depot";
+    private static final String COOP_HUT = "hut";
+    /** Build time of the cooperative hut; divisible by 1, 2 and 4 so every expected tick is exact. */
+    private static final int COOP_BUILD_TIME = 40;
+
+    /**
+     * Several builders on one site: joining, the capped speed formula, same tick completion, cancelling
+     * one builder, destroying the site and determinism.
+     *
+     * <p>The catalogue is local so the numbers are exact: a 40 tick hut, a ten gold placement cost and
+     * builders fast enough to reach the approach ring before the site could finish. Every case starts
+     * from a fresh flat world with the same seed and command script, so the tick counts below are
+     * arithmetic rather than observations of terrain.
+     */
+    private static void checkCooperativeConstruction(Check check) {
+        check.section("16) several builders cooperate on one site");
+        ContentRegistry content = cooperativeContent();
+        BuildingType hut = content.building(COOP_HUT);
+
+        // --- the documented formula itself
+        check.equal(0, ConstructionSystem.progressPerTick(0),
+                "no attached builder means no progress: progressPerTick(0) is 0");
+        check.equal(1, ConstructionSystem.progressPerTick(1), "progressPerTick(1) is 1");
+        check.equal(2, ConstructionSystem.progressPerTick(2), "progressPerTick(2) is 2");
+        check.equal(3, ConstructionSystem.progressPerTick(3), "progressPerTick(3) is 3");
+        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(4),
+                "four builders reach the cap of " + ConstructionSystem.MAX_BUILDERS_PER_SITE);
+        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(5),
+                "a fifth builder is capped at " + ConstructionSystem.MAX_BUILDERS_PER_SITE);
+        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(9),
+                "progressPerTick depends only on min(builders, MAX_BUILDERS_PER_SITE)");
+
+        // --- one builder takes the full build time; two take half; four equal five
+        int[] builderCounts = {1, 2, 4, 5};
+        long[] expectedTicks = {COOP_BUILD_TIME, COOP_BUILD_TIME / 2,
+                COOP_BUILD_TIME / ConstructionSystem.MAX_BUILDERS_PER_SITE,
+                COOP_BUILD_TIME / ConstructionSystem.MAX_BUILDERS_PER_SITE};
+        long[] measuredTicks = new long[builderCounts.length];
+        for (int i = 0; i < builderCounts.length; i++) {
+            CoopSite run = beginCoop(check, content, builderCounts[i], 70L + i);
+            if (run == null) {
+                return;
+            }
+            long ticks = ticksToCompletion(run, 300);
+            measuredTicks[i] = ticks;
+            check.equal(expectedTicks[i], ticks, builderCounts[i] + " builder(s) finish the "
+                    + COOP_BUILD_TIME + " tick hut in " + expectedTicks[i] + " tick(s)");
+        }
+        check.equal(measuredTicks[0], measuredTicks[1] * 2,
+                "two builders finish in half the time of one (" + measuredTicks[0] + " vs " + measuredTicks[1] + ")");
+        check.equal(measuredTicks[2], measuredTicks[3],
+                "four and five builders behave the same because the cap is "
+                        + ConstructionSystem.MAX_BUILDERS_PER_SITE);
+
+        // --- issuing the same placement command again joins the unfinished site instead of failing
+        OcRtsEngine repeatEngine = flatEngine(content, VisualLibrary.empty(), 72L);
+        Player repeatPlayer = repeatEngine.players().get(0);
+        World repeatWorld = repeatEngine.world();
+        Building repeatDepot = repeatWorld.spawnBuilding(content.building(COOP_DEPOT), repeatPlayer,
+                new GridPos(10, 10));
+        check.that(repeatPlayer.logistics().deposit(
+                        ItemBundle.of(content.item("gold"), 100), repeatDepot.position()).isEmpty(),
+                "the repeated build check starts with 100 gold in the depot");
+        Unit repeatFirst = repeatWorld.spawnUnit(content.unit(COOP_BUILDER), repeatPlayer, new GridPos(14, 12));
+        Unit repeatSecond = repeatWorld.spawnUnit(content.unit(COOP_BUILDER), repeatPlayer, new GridPos(14, 13));
+        var repeatPlaced = repeatEngine.commands().tryBuild(repeatFirst, hut, new GridPos(16, 10));
+        check.that(repeatPlaced.placed(), "the first build command places the site: " + repeatPlaced.refusal());
+        var repeatAgain = repeatEngine.commands().tryBuild(repeatSecond, hut, new GridPos(16, 10));
+        check.that(repeatAgain.placed() && repeatAgain.site() == repeatPlaced.site(),
+                "the same build command on the unfinished site joins it instead of being refused");
+        check.equal(2, repeatWorld.buildingsOf(repeatPlayer).size(),
+                "the join path still leaves exactly one site (depot plus site)");
+        check.equal(Natural.of(90), repeatPlayer.logistics().amount(content.item("gold")),
+                "the join path charges nothing a second time (100 minus the 10 placement cost)");
+
+        // --- progress per tick with a known set of three attached builders
+        CoopSite three = beginCoop(check, content, 3, 73L);
+        if (three == null) {
+            return;
+        }
+        three.engine.tick();
+        check.equal(3, three.site.builderCount(), "all three builders attach on the first order tick");
+        check.equal(COOP_BUILD_TIME - 3, three.site.constructionRemaining(),
+                "three attached builders remove 3 construction points in one tick");
+        three.engine.tick();
+        check.equal(COOP_BUILD_TIME - 6, three.site.constructionRemaining(),
+                "and 3 more in the second tick");
+
+        // --- completion finishes every attached order in the same tick and leaves nobody holding the site
+        CoopSite pair = beginCoop(check, content, 2, 74L);
+        if (pair == null) {
+            return;
+        }
+        pair.engine.tick();
+        Order firstOrder = pair.builders.get(0).orders().current();
+        Order secondOrder = pair.builders.get(1).orders().current();
+        check.that(firstOrder instanceof BuildOrder && secondOrder instanceof BuildOrder,
+                "both builders are running a build order");
+        GridPos firstTile = pair.site.builderStandTile(pair.builders.get(0));
+        GridPos secondTile = pair.site.builderStandTile(pair.builders.get(1));
+        check.that(firstTile != null && secondTile != null && !firstTile.equals(secondTile),
+                "the two builders claim different standing tiles (" + firstTile + " and " + secondTile + ")");
+        TileRect footprint = pair.site.occupiedTiles();
+        boolean adjacent = true;
+        for (Unit builder : pair.builders) {
+            GridPos tile = pair.site.builderStandTile(builder);
+            adjacent &= tile != null && !footprint.contains(tile)
+                    && footprint.expanded(1).contains(tile) && pair.engine.map().isPassable(tile);
+        }
+        check.that(adjacent,
+                "each standing tile is a walkable tile of the footprint's one tile approach ring");
+        pair.engine.tick(10);
+        boolean working = true;
+        float farthest = 0f;
+        for (Unit builder : pair.builders) {
+            float distance = builder.position().distance(pair.site.builderStandTile(builder).center());
+            farthest = Math.max(farthest, distance);
+            working &= distance <= BuildOrder.BUILD_RANGE_TILES + builder.radius();
+        }
+        check.that(working, "after walking, both builders stand within building range of their own tile "
+                + "(farthest " + farthest + ")");
+        long completionTick = 11L;
+        while (!pair.site.isConstructed() && completionTick < 300L) {
+            pair.engine.tick();
+            completionTick++;
+        }
+        check.equal(COOP_BUILD_TIME / 2L, completionTick,
+                "the two builder site completes on tick " + (COOP_BUILD_TIME / 2));
+        check.that(pair.site.isConstructed(), "the site is operational");
+        check.equal(0, pair.site.builderCount(), "the completed site keeps no attached builder");
+        for (Unit builder : pair.builders) {
+            check.that(builder.orders().isEmpty() && builder.orders().current() == null,
+                    "builder " + builder.id().value() + " is idle after completion");
+            check.that(builder.motion().goalOrNull() == null,
+                    "builder " + builder.id().value() + " has no leftover movement goal");
+        }
+        check.that(((BuildOrder) firstOrder).site() == null
+                        && ((BuildOrder) secondOrder).site() == null,
+                "both finished orders dropped their site reference");
+        long finishedAt = completionTick;
+        long completedEvents = pair.buildEvents.stream()
+                .filter(event -> event.endsWith(":COMPLETED@" + finishedAt))
+                .count();
+        check.equal(2L, completedEvents,
+                "both attached orders report COMPLETED on the completion tick " + completionTick);
+
+        // --- cancelling one builder leaves the others attached and the site progressing
+        CoopSite leaving = beginCoop(check, content, 3, 75L);
+        if (leaving == null) {
+            return;
+        }
+        leaving.engine.tick();
+        Unit leavingBuilder = leaving.builders.get(1);
+        Order leavingOrder = leavingBuilder.orders().current();
+        leaving.engine.tick();
+        check.equal(COOP_BUILD_TIME - 6, leaving.site.constructionRemaining(),
+                "three builders made 6 points of progress before one of them leaves");
+        Natural goldBeforeCancel = leaving.player.logistics().amount(content.item("gold"));
+        leaving.engine.commands().stop(leavingBuilder);
+        check.that(!leaving.site.hasBuilder(leavingBuilder),
+                "the stopped builder is detached from the site immediately");
+        check.that(leavingBuilder.orders().isEmpty(),
+                "the stopped builder has no dangling build order");
+        check.that(((BuildOrder) leavingOrder).site() == null,
+                "the cancelled order dropped its site reference");
+        check.equal(2, leaving.site.builderCount(), "the other two builders stay attached");
+        int remainingBefore = leaving.site.constructionRemaining();
+        leaving.engine.tick();
+        check.equal(remainingBefore - 2, leaving.site.constructionRemaining(),
+                "the site keeps progressing with the remaining two builders (2 points per tick)");
+        boolean othersStillBuilding = true;
+        for (Unit builder : leaving.builders) {
+            if (builder.equals(leavingBuilder)) {
+                continue;
+            }
+            Order current = builder.orders().current();
+            othersStillBuilding &= current instanceof BuildOrder order && order.site() == leaving.site;
+        }
+        check.that(othersStillBuilding, "the remaining builders still hold their build orders");
+        check.equal(goldBeforeCancel, leaving.player.logistics().amount(content.item("gold")),
+                "cancelling one builder's order charges nothing");
+        long leavingCompletion = ticksToCompletion(leaving, 300);
+        check.that(leavingCompletion > 0 && leaving.site.isConstructed(),
+                "the site still completes after one builder was cancelled");
+        check.that(leaving.buildEvents.contains(leavingBuilder.id().value() + ":CANCELLED@2"),
+                "the stopped builder's order is reported CANCELLED on tick 2");
+        check.that(leaving.buildEvents.stream()
+                        .noneMatch(event -> event.startsWith(leavingBuilder.id().value() + ":COMPLETED")),
+                "the stopped builder never reports COMPLETED");
+
+        // --- destroying the site fails every attached order and charges nothing again
+        CoopSite doomed = beginCoop(check, content, 3, 76L);
+        if (doomed == null) {
+            return;
+        }
+        doomed.engine.tick();
+        List<Order> doomedOrders = new ArrayList<>();
+        for (Unit builder : doomed.builders) {
+            doomedOrders.add(builder.orders().current());
+        }
+        doomed.engine.tick();
+        Natural goldBeforeDestroy = doomed.player.logistics().amount(content.item("gold"));
+        doomed.world.destroy(doomed.site);
+        check.that(!doomed.site.isAlive(), "the site is marked dead");
+        check.equal(0, doomed.site.builderCount(),
+                "destroying the site detaches every builder immediately, without waiting for a tick");
+        doomed.engine.tick();
+        boolean allReleased = true;
+        for (Unit builder : doomed.builders) {
+            allReleased &= builder.orders().isEmpty() && builder.orders().current() == null
+                    && !doomed.site.hasBuilder(builder);
+        }
+        check.that(allReleased, "every attached builder's order failed and was detached immediately");
+        check.equal(0, doomed.site.builderCount(), "the destroyed site keeps no attached builder");
+        boolean refsDropped = true;
+        for (Order order : doomedOrders) {
+            refsDropped &= order instanceof BuildOrder build && build.site() == null;
+        }
+        check.that(refsDropped, "every failed build order dropped its reference to the destroyed site");
+        long failedEvents = doomed.buildEvents.stream()
+                .filter(event -> event.endsWith(":FAILED@2"))
+                .count();
+        check.equal(3L, failedEvents, "all three orders report FAILED on the destruction tick itself");
+        check.equal(goldBeforeDestroy, doomed.player.logistics().amount(content.item("gold")),
+                "a destroyed site charges nothing a second time");
+
+        // --- determinism: the same script twice gives identical ticks, progress and order events
+        CoopSite firstRun = beginCoop(check, content, 3, 77L);
+        CoopSite secondRun = beginCoop(check, content, 3, 77L);
+        if (firstRun == null || secondRun == null) {
+            return;
+        }
+        String firstFingerprint = coopFingerprint(firstRun);
+        String secondFingerprint = coopFingerprint(secondRun);
+        check.that(firstFingerprint.equals(secondFingerprint),
+                "the same three builder script twice gives identical ticks, progress and order events ("
+                        + firstFingerprint.length() + " characters)");
+        check.that(firstFingerprint.contains("completed=true"), "the deterministic run really completed");
+        check.note("cooperative determinism fingerprint starts with: "
+                + firstFingerprint.lines().findFirst().orElse("<empty>"));
+    }
+
+    /** The content of the cooperative check: a 40 tick hut, a depot and fast engineers. */
+    private static ContentRegistry cooperativeContent() {
+        return ContentRegistry.builder("coop")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .item("gold").name("Gold").maxStack(10_000)
+                .unit(COOP_BUILDER).name("Engineer").role(UnitRole.WORKER).health(80).speed(10f)
+                        .radius(0.3f).cargo(10).spriteSet("engineer").tag("builder")
+                .building(COOP_DEPOT).name("Depot").size(2, 2).health(500).storage(24).warehouse()
+                        .spriteSet("depot")
+                .building(COOP_HUT).name("Hut").size(2, 2).health(100).cost("gold", 10)
+                        .buildTime(COOP_BUILD_TIME).spriteSet("hut")
+                .build();
+    }
+
+    /**
+     * One cooperative scenario: a warehouse, {@code builderCount} engineers, a hut site placed by the
+     * first one and joined by the rest.
+     *
+     * <p>Nothing is ticked here, so every caller decides how far to advance and the assertions can
+     * observe the attachment state right after the first order tick. The placement and join results are
+     * asserted once, here, so the cost checks ("charged once when placed, never for a join, no second
+     * site") hold for every case rather than only for the one that happens to check them.
+     */
+    private static CoopSite beginCoop(Check check, ContentRegistry content, int builderCount, long seed) {
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), seed);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(content.building(COOP_DEPOT), player, new GridPos(10, 10));
+        ItemBundle leftover = player.logistics().deposit(
+                ItemBundle.of(content.item("gold"), 1000), warehouse.position());
+        check.that(leftover.isEmpty(), "the cooperative check starts with 1000 gold in the depot");
+
+        List<Unit> builders = new ArrayList<>();
+        for (int index = 0; index < builderCount; index++) {
+            builders.add(world.spawnUnit(content.unit(COOP_BUILDER), player, new GridPos(14, 12 + index)));
+        }
+        CoopSite run = new CoopSite(engine, player, world);
+        world.events().subscribe(Events.OrderFinished.class, event -> {
+            if ("build".equals(event.orderName())) {
+                run.buildEvents.add(event.unit().id().value() + ":" + event.state() + "@" + event.tick());
+            }
+        });
+
+        Natural goldBefore = player.logistics().amount(content.item("gold"));
+        var placed = engine.commands().tryBuild(builders.get(0), content.building(COOP_HUT),
+                new GridPos(16, 10));
+        check.that(placed.placed(), "the first builder places one hut site: " + placed.refusal());
+        if (!placed.placed()) {
+            return null;
+        }
+        run.site = placed.site();
+        Natural goldAfterPlacement = player.logistics().amount(content.item("gold"));
+        boolean joined = true;
+        for (int index = 1; index < builders.size(); index++) {
+            var join = engine.commands().tryBuild(builders.get(index), run.site);
+            joined &= join.placed();
+            check.that(join.placed(), "builder " + (index + 1)
+                    + " joins the existing site instead of placing another: " + join.refusal());
+        }
+        if (!joined) {
+            return null;
+        }
+        Natural goldAfterJoins = player.logistics().amount(content.item("gold"));
+        check.equal(Natural.of(10), goldBefore.subtractClamped(goldAfterPlacement),
+                "placing the hut charged its 10 gold cost exactly once");
+        check.equal(goldAfterPlacement, goldAfterJoins, "joining the site charged nothing");
+        check.equal(2, world.buildingsOf(player).size(),
+                "the joins created no second site (depot plus one hut site)");
+        run.builders.addAll(builders);
+        return run;
+    }
+
+    /** Ticks until the site is constructed and returns the tick it completed on, or {@code -1}. */
+    private static long ticksToCompletion(CoopSite run, int maxTicks) {
+        for (int tick = 1; tick <= maxTicks; tick++) {
+            run.engine.tick();
+            if (run.site.isConstructed()) {
+                return tick;
+            }
+        }
+        return -1L;
+    }
+
+    /**
+     * A text fingerprint of one cooperative run: per tick remaining construction, attached builder
+     * count, then the finished order events and every builder's tile and queue size. Two runs with the
+     * same seed and script must produce the same string.
+     */
+    private static String coopFingerprint(CoopSite run) {
+        StringBuilder text = new StringBuilder();
+        int tick = 0;
+        while (!run.site.isConstructed() && tick < 300) {
+            run.engine.tick();
+            tick++;
+            text.append("t").append(tick).append(" remaining=").append(run.site.constructionRemaining())
+                    .append(" builders=").append(run.site.builderCount()).append('\n');
+        }
+        text.append("completed=").append(run.site.isConstructed()).append(" at=").append(tick).append('\n');
+        text.append("orders=").append(String.join(",", run.buildEvents)).append('\n');
+        for (Unit builder : run.builders) {
+            text.append("unit ").append(builder.id().value()).append(" tile=").append(builder.tile())
+                    .append(" orders=").append(builder.orders().size()).append('\n');
+        }
+        return text.toString();
+    }
+
+    /** Mutable state of one cooperative scenario, filled by {@link #beginCoop}. */
+    private static final class CoopSite {
+
+        final OcRtsEngine engine;
+        final Player player;
+        final World world;
+        final List<Unit> builders = new ArrayList<>();
+        final List<String> buildEvents = new ArrayList<>();
+        Building site;
+
+        CoopSite(OcRtsEngine engine, Player player, World world) {
+            this.engine = engine;
+            this.player = player;
+            this.world = world;
+        }
     }
 
     /** A flat grass engine with direct delivery, used only by the building-cost assertions. */

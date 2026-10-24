@@ -4,7 +4,7 @@
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
- * `events.ts` and `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `events.ts`, `flash.ts` and `resources.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -50,6 +50,13 @@ import {
   TERRAIN_COLORS,
   terrainColor,
 } from "../src/render/fallback.ts";
+import {
+  FLASH_COLOR,
+  FLASH_MS,
+  flashIntensity,
+  pruneFlashes,
+  startFlash,
+} from "../src/render/flash.ts";
 import {
   formatProgressPercent,
   incomeSuffix,
@@ -3114,6 +3121,86 @@ check(
     healthBarRatio(healthEntity(2)) === 1 &&
     healthBarRatio(healthEntity(-1)) === 0,
   `${healthBarRatio(healthEntity(1))} / ${healthBarRatio(healthEntity(undefined))}`,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Selection flash: a quarter-second achromatic halo for player-driven selection changes
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "选中闪烁时长是 250ms：够感觉到，又短到不会让选择拖影",
+  FLASH_MS === 250,
+  String(FLASH_MS),
+);
+check(
+  "闪烁强度：开始时是 1，半程正好是 0.5",
+  flashIntensity(1_000, 1_000, FLASH_MS) === 1 &&
+    near(flashIntensity(1_000, 1_000 + FLASH_MS / 2, FLASH_MS), 0.5),
+  `${flashIntensity(1_000, 1_000, FLASH_MS)} / ` +
+    `${flashIntensity(1_000, 1_000 + FLASH_MS / 2, FLASH_MS)}`,
+);
+check(
+  "闪烁强度：结束前仍然大于 0，到达和超过时长都是 0（非正时长也为 0）",
+  flashIntensity(1_000, 1_000 + FLASH_MS - 1, FLASH_MS) > 0 &&
+    flashIntensity(1_000, 1_000 + FLASH_MS, FLASH_MS) === 0 &&
+    flashIntensity(1_000, 9_000, FLASH_MS) === 0 &&
+    flashIntensity(1_000, 1_000, 0) === 0 &&
+    flashIntensity(1_000, 1_000, -FLASH_MS) === 0,
+);
+check(
+  "闪烁强度：负的流逝时间夹到 1（时钟回退也不会变暗）",
+  flashIntensity(1_000, 900, FLASH_MS) === 1,
+  String(flashIntensity(1_000, 900, FLASH_MS)),
+);
+const flashSamples = [-10_000, -1, 0, 1, FLASH_MS / 2, FLASH_MS - 1, FLASH_MS, 10_000];
+check(
+  "闪烁强度：所有采样都在 0..1 之间",
+  flashSamples.every((elapsed) => {
+    const value = flashIntensity(1_000, 1_000 + elapsed, FLASH_MS);
+    return value >= 0 && value <= 1;
+  }),
+  flashSamples
+    .map((elapsed) => flashIntensity(1_000, 1_000 + elapsed, FLASH_MS).toFixed(2))
+    .join(","),
+);
+
+const flashMap = new Map<number, number>();
+startFlash(flashMap, [1, 2], 1_000);
+// 2 is passed again as newly selected (for example deselected and reselected quickly): it restarts,
+// while 1 keeps the start it already had and no other entry is removed.
+startFlash(flashMap, [2, 3], 1_200);
+check(
+  "startFlash：只写入传入的新选中 id，重启它们的时间，不动其它条目",
+  flashMap.size === 3 &&
+    flashMap.get(1) === 1_000 &&
+    flashMap.get(2) === 1_200 &&
+    flashMap.get(3) === 1_200,
+  [...flashMap.entries()].map(([id, startedAt]) => `${id}@${startedAt}`).join(","),
+);
+const flashBeforeEmpty = new Map(flashMap);
+startFlash(flashMap, [], 2_000);
+check(
+  "startFlash：空的新选中列表不改变已有条目（没有新增就不闪）",
+  flashMap.size === flashBeforeEmpty.size &&
+    [...flashBeforeEmpty].every(([id, startedAt]) => flashMap.get(id) === startedAt),
+  [...flashMap.entries()].map(([id, startedAt]) => `${id}@${startedAt}`).join(","),
+);
+
+const pruningMap = new Map<number, number>([
+  [1, 1_000], // exactly finished at now=1250
+  [2, 1_100], // still active
+  [3, 1_400], // future-dated by a clock step; keep until it has had its duration
+]);
+pruneFlashes(pruningMap, 1_250);
+check(
+  "pruneFlashes：删掉已经结束的条目，保留进行中与尚未到期的条目",
+  pruningMap.size === 2 && !pruningMap.has(1) && pruningMap.has(2) && pruningMap.has(3),
+  [...pruningMap.keys()].join(","),
+);
+check(
+  "闪烁颜色是无彩色（纯白），与灰阶外壳一致且不与金色选择环抢色",
+  isGreyscaleHex(FLASH_COLOR) && FLASH_COLOR === "#ffffff",
+  FLASH_COLOR,
 );
 
 // ---------------------------------------------------------------------------------------------

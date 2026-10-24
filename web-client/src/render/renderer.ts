@@ -6,15 +6,18 @@
  * pixels. It never assumes the two sizes are equal.
  *
  * Draw order is terrain, tile grid (fallback only), the hover tile or the build-placement ghost, ground
- * shadows, ownership rings, one gold selection ring per selected entity, then entities sorted by y so
- * lower entities overlap higher ones, then health bars, then the greyscale construction bar and
- * `生产中 ×N` marker above buildings, and finally the marquee rectangle. Ownership rings are thinner
- * than selection rings and are drawn first, so every gold selection ring always stays on top. The
- * construction chrome sits above the roof, never over the sprite.
+ * shadows, ownership rings, entities sorted by y so lower entities overlap higher ones, their health
+ * bars and the greyscale construction bar / `生产中 ×N` marker above buildings, the brief achromatic
+ * selection flash halo, one gold selection ring per selected entity, and finally the marquee rectangle.
+ * Ownership rings are thinner than selection rings and are drawn first, so every gold selection ring
+ * always stays on top. The flash halo is drawn over the sprite but under the gold ring, so the feedback
+ * never hides the selection colour. The construction chrome sits above the roof, never over the sprite.
  *
  * The placement ghost is the one deliberate exception to the greyscale chrome rule: it is canvas
  * content, like the ownership rings, so each footprint tile is painted green, red or amber by its
- * state. Everything in the HTML chrome around it stays grey.
+ * state. The selection flash stays achromatic on purpose: it is canvas content, but the UI around it is
+ * grey, and a white halo must not compete with the gold selection ring or the ownership colours.
+ * Everything in the HTML chrome around the canvas stays grey.
  *
  * Every tile and entity is drawn from the plugin image the composite atlas resolved it to, so one frame can
  * mix art from several plugins without any of them sharing a texture page. An entity's art scale comes from
@@ -27,6 +30,7 @@ import type { ScreenRect } from "./marquee";
 import {
   drawBuildingProgressBar,
   drawBuildingShape,
+  drawFlashHalo,
   drawGroundShadow,
   drawHealthBar,
   drawOwnershipRing,
@@ -37,6 +41,7 @@ import {
   drawUnitShape,
   playerColor,
 } from "./fallback";
+import { FLASH_COLOR, FLASH_MS, flashIntensity } from "./flash";
 import { queueMarkerText } from "./status";
 import {
   placementFillColor,
@@ -79,6 +84,15 @@ export interface RenderOptions {
    * With null every ownership ring is grey, which is the documented demo behaviour.
    */
   readonly myPlayerId: number | null;
+  /**
+   * Entity id -> `performance.now()` when that entity's selection flash started.
+   *
+   * Only entities a player action newly selected have an entry; the map is pruned once per frame, so
+   * it stays tiny. The renderer draws a halo only for an entry that is both active and selected.
+   */
+  readonly flashStarts: ReadonlyMap<number, number>;
+  /** Monotonic milliseconds on the same clock as the values in `flashStarts`. */
+  readonly nowMs: number;
 }
 
 interface Size {
@@ -303,8 +317,8 @@ export class WorldRenderer {
       return left.entity.id - right.entity.id;
     });
 
-    // Ground pass: every shadow first, then every ownership ring, then every selection ring, so a shadow
-    // never hides a ring and the gold selection ring is never hidden by an ownership ring.
+    // Ground pass: every shadow first, then every ownership ring. The gold selection ring is drawn
+    // after the flash halo below, so the flash can never hide it.
     const selectedIds = new Set(options.selectedIds);
     for (const item of prepared) {
       drawGroundShadow(
@@ -325,18 +339,6 @@ export class WorldRenderer {
         isBuildingEntityKind(item.entity.kind),
         ownershipColor(item.entity.playerId, options.myPlayerId),
       );
-    }
-    for (const item of prepared) {
-      const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
-      if (selected) {
-        drawSelectionRing(
-          context,
-          item.screenX,
-          item.screenY,
-          tileOnScreen,
-          isBuildingEntityKind(item.entity.kind),
-        );
-      }
     }
 
     // Entity pass, sorted by y: entities lower on the screen are drawn later and overlap higher ones.
@@ -407,6 +409,51 @@ export class WorldRenderer {
             tileOnScreen,
           );
         }
+      }
+    }
+
+    // Selection flash pass: one achromatic halo per entity that a player action just selected, drawn
+    // above its sprite. The intensity comes from the shared timer, so the halo fades out in place and
+    // adds no per-entity state to the renderer. A deselected entity may keep its map entry until the
+    // timer expires, but no halo is drawn unless it is currently selected.
+    if (options.flashStarts.size > 0) {
+      for (const item of prepared) {
+        const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
+        if (!selected) {
+          continue;
+        }
+        const startedAt = options.flashStarts.get(item.entity.id);
+        if (startedAt === undefined) {
+          continue;
+        }
+        const intensity = flashIntensity(startedAt, options.nowMs, FLASH_MS);
+        if (intensity <= 0) {
+          continue;
+        }
+        drawFlashHalo(
+          context,
+          item.screenX,
+          item.screenY,
+          tileOnScreen,
+          isBuildingEntityKind(item.entity.kind),
+          FLASH_COLOR,
+          intensity,
+        );
+      }
+    }
+
+    // Selection rings after the flash, so the gold ring is always the topmost selection mark. Each ring
+    // is a ground ellipse drawn for every selected entity, including a building.
+    for (const item of prepared) {
+      const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
+      if (selected) {
+        drawSelectionRing(
+          context,
+          item.screenX,
+          item.screenY,
+          tileOnScreen,
+          isBuildingEntityKind(item.entity.kind),
+        );
       }
     }
 

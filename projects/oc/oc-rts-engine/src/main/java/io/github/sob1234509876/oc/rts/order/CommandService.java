@@ -17,6 +17,7 @@ import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
 import io.github.sob1234509876.oc.rts.formation.FormationPlanner;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
@@ -91,6 +92,33 @@ public final class CommandService implements UnitDirector {
         }
         this.ticksPerSecond = ticksPerSecond;
         this.planner = new FormationPlanner();
+        // A site that is destroyed while builders work on it must lose them in the same tick, not one
+        // order tick later: the destroy event is the only notification the director gets, and it carries
+        // the tick the builder orders have to fail on.
+        world.events().subscribe(Events.EntityDestroyed.class, this::onEntityDestroyed);
+    }
+
+    /**
+     * Fails the build order of every builder attached to a destroyed site and detaches it.
+     *
+     * <p>This is the destruction half of the {@link BuildOrder} cleanup. The completion half belongs to
+     * {@code ConstructionSystem} (it knows the tick a site flips to constructed); destruction is known
+     * here because the director is the service that owns build orders and their tick rate. A builder
+     * whose current order is not a build order for this site is still detached, so a site never keeps a
+     * reference to a unit that is not building it.
+     */
+    private void onEntityDestroyed(Events.EntityDestroyed event) {
+        if (!(event.entity() instanceof Building building) || building.builderCount() == 0) {
+            return;
+        }
+        for (Unit builder : building.builders()) {
+            Order current = builder.orders().current();
+            if (current instanceof BuildOrder order && order.site() == building) {
+                builder.orders().finishCurrent(context(builder), OrderState.FAILED);
+            } else {
+                building.detachBuilder(builder);
+            }
+        }
     }
 
     /** Planner used to lay groups out; exposed so a scenario can lay out a formation of its own. */
@@ -202,6 +230,12 @@ public final class CommandService implements UnitDirector {
                     + " (no path of at most " + (int) MAX_BUILD_PATH_TILES
                     + " tiles from the builder to the site)");
         }
+        Building existing = unfinishedSiteAt(unit, type, origin);
+        if (existing != null) {
+            // A second engineer issued the same building on a site that is still being raised: join it
+            // instead of refusing an occupied tile or placing a duplicate site.
+            return tryBuild(unit, existing);
+        }
         if (!world.canPlace(dimension, type, origin)) {
             return BuildResult.refused("cannot place " + type.key().path() + " at "
                     + origin.x() + "," + origin.y());
@@ -235,6 +269,72 @@ public final class CommandService implements UnitDirector {
         }
         unit.orders().replace(context(unit), new BuildOrder(site));
         return BuildResult.placed(site);
+    }
+
+    /**
+     * Orders a builder to join an existing, unfinished site; places nothing and charges nothing.
+     *
+     * <p>The checks are ordered so every refusal is free: the builder has to be commandable, the site
+     * has to be alive, unfinished, owned by the same player, in the same dimension and within the
+     * builder's reach. Only then is the builder's current order replaced by a {@link BuildOrder} for the
+     * existing site. The site keeps its single placement charge; a join never reserves or commits
+     * materials, so sending four engineers to one site cannot buy it four times.
+     *
+     * <p>The reach test is the same path rule a placement uses, evaluated against the existing
+     * footprint. A builder too far away is refused with {@code out of reach} and keeps its old order.
+     */
+    @Override
+    public BuildResult tryBuild(Unit unit, Building site) {
+        Objects.requireNonNull(site, "site");
+        if (!isCommandable(unit)) {
+            return BuildResult.refused("the builder cannot be commanded");
+        }
+        if (!site.isAlive()) {
+            return BuildResult.refused("cannot join the site at " + site.origin() + ": it was destroyed");
+        }
+        if (site.isConstructed()) {
+            return BuildResult.refused("cannot join the site at " + site.origin()
+                    + ": it is already finished");
+        }
+        if (!site.owner().equals(unit.owner())) {
+            return BuildResult.refused("cannot join the site at " + site.origin()
+                    + ": it belongs to another player");
+        }
+        if (!site.dimensionId().equals(unit.dimensionId())) {
+            return BuildResult.refused("cannot join the site at " + site.origin()
+                    + ": it is in another dimension");
+        }
+        if (!isWithinBuildReach(world, unit, site.type(), site.origin())) {
+            return BuildResult.refused("cannot join the site at " + site.origin() + ": " + OUT_OF_REACH
+                    + " (no path of at most " + (int) MAX_BUILD_PATH_TILES
+                    + " tiles from the builder to the site)");
+        }
+        unit.orders().replace(context(unit), new BuildOrder(site));
+        return BuildResult.placed(site);
+    }
+
+    /**
+     * The owner's living, unfinished site of this type whose footprint overlaps the requested one, or
+     * {@code null}.
+     *
+     * <p>It is what turns a repeated build command into a join: the tile is occupied by a site that is
+     * already being raised, and the request is retargeted to that site instead of being refused or
+     * creating a second, overlapping construction.
+     */
+    private Building unfinishedSiteAt(Unit unit, BuildingType type, GridPos origin) {
+        TileRect requested = type.footprint(origin.x(), origin.y());
+        for (Building building : world.buildings(unit.dimensionId())) {
+            if (!building.isAlive() || building.isConstructed()) {
+                continue;
+            }
+            if (!building.owner().equals(unit.owner()) || !building.type().equals(type)) {
+                continue;
+            }
+            if (building.occupiedTiles().intersects(requested)) {
+                return building;
+            }
+        }
+        return null;
     }
 
     /**

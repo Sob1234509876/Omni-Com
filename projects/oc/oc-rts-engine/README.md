@@ -50,11 +50,11 @@ terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbou
 chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
 soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, buildings
 that take damage and die, a charged building site, an in-place building upgrade that keeps its footprint,
-owner and health fraction, and an ASCII picture of the world.
+owner and health fraction, several engineers raising one site faster, and an ASCII picture of the world.
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 392 checks passed.
+RTS engine scenario: all 515 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -81,6 +81,7 @@ What the scenario actually proves, section by section:
 | 13 building cost | placing a building site charges exactly the catalogue cost once; an unaffordable second build and an occupied-tile placement are both refused, and neither charges anything |
 | 14 build reach | a site beside the builder is accepted and charged, a site twenty tiles away and a site walled off by water are refused as `out of reach`, and both refusals place nothing and leave no reservation |
 | 15 building upgrades | an affordable upgrade replaces the type at the same origin with the same owner and health fraction, charges the cost once, cancels the old production queue, clears the old id from a unit's combat target and from the spatial index, and leaves the replacement finished; unaffordable, missing-target and footprint-mismatch upgrades are refused with a readable reason, charge nothing and leave the old building standing; a type without `upgradeTo()` is not upgradable |
+| 16 cooperative construction | one builder finishes a 40 tick hut on tick 40, two on tick 20, four and five on tick 10 because the speed is capped at `min(builders, 4)`; each builder claims its own free approach-ring tile; the placement is charged once and every join is free; all attached orders report `COMPLETED` on the completion tick and leave every builder idle with no site reference; stopping one builder detaches it and the site keeps progressing at two points per tick; destroying the site fails every attached order on the destruction tick and charges nothing again; the same three builder script twice gives identical ticks, progress and order events |
 
 A real preview of the generated world, terrain only, one character per tile
 (`~` water, `:` sand, `.` grass, `f` forest, `^` hill, `#` rock; units are drawn as `C`, `W`, `S`):
@@ -111,6 +112,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 6 | Several maps in one world (dimensions) | `dimension.DimensionId`, `dimension.DimensionProfile`, `dimension.Dimension`, `dimension.Gateway`, `World` dimension accessors, `map.ChunkStreamer` |
 | 7 | Travel between maps through gateways | `World.addGateway`, `World.route`, `order.TransferOrder`, `order.UnitDirector.travel`, `event.Events.EntityTransferred` |
 | 8 | Units that fight units and buildings | `combat.CombatSystem`, `combat.CombatStats`, `order.AttackOrder`, `order.AttackMoveOrder`, `event.Events.DamageDealt`, `event.Events.EntityKilled` |
+| 9 | Several builders raising one site faster | `order.BuildOrder`, `order.UnitDirector.tryBuild(Unit, Building)`, `production.ConstructionSystem.MAX_BUILDERS_PER_SITE`, `entity.Building.builders()` |
 
 ## Architecture
 

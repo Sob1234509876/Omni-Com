@@ -418,10 +418,10 @@ engine.events().subscribe(Events.ChunkUnloaded.class, event ->
   [ok] the traveller left the overworld, which keeps its original unit
 ```
 
-整份场景目前是 **355 项断言**（第 1b 节噪声地形 20 项；第 1c 节无界地形 46 项；引入维度前是 185 项；第 11 节维度本身 34 项，之后第 12 节战斗 59 项、第 12b 节建筑目标 31 项、第 13 节建造扣费 27 项、第 14 节建造可达 19 项）：
+整份场景目前是 **515 项断言**（其中第 11 节维度本身 34 项；第 1b 节噪声地形、1c 节无界地形、第 12/12b 节战斗、第 13-16 节的建造扣费、可达、升级与合作建造等其余小节也计入同一总数）：
 
 ```text
-RTS engine scenario: all 355 checks passed.
+RTS engine scenario: all 515 checks passed.
 ```
 
 断言覆盖五件事：三张图确实存在且档案正确；同一格上的两个单位互不干扰（id 不同、全世界 2 个、各自索引各 1 个、地球索引看不到月球单位）；`findEntity` 能跨维度按 id 找到实体；给月球单位下移动命令后它留在月球、地球单位没被拖走，销毁月球单位也不影响地球的那个；**两跳路线 + 单向性 + 踩门判定 + 旅行后 id 不变 + 两次转移各一条事件 + 出发图少一个、火星多一个**。

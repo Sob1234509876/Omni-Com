@@ -81,7 +81,7 @@
 | 300 | `paths`（`PathService`） | 路径请求队列 | 调用 `PathFinder` 并把结果写回 `Motion.setPath(...)` |
 | 400 | `movement`（`MovementSystem`） | `Motion` 的目标与路径、`SpatialIndex` 邻居 | 请求新路径、更新位置/速度/朝向、`spatial().update(...)`、`markArrived()` |
 | 450 | `combat`（`CombatSystem`） | 每个单位的 `CombatStats`、攻击冷却、本维度空间索引、生命 | 目标 id、朝向、冷却、伤害；发布 `Events.DamageDealt` / `EntityKilled`，标记死亡 |
-| 500 | `construction`（`ConstructionSystem`） | 未建成建筑 | 推进建造进度；发布 `Events.ConstructionCompleted` |
+| 500 | `construction`（`ConstructionSystem`） | 未建成建筑、`Building.builderCount()` | 按 `min(附着的建造者数, MAX_BUILDERS_PER_SITE=4)` 推进建造进度；完工 tick 结束所有附着 `BuildOrder`；发布 `Events.ConstructionCompleted` |
 | 600 | `production`（`ProductionSystem`） | 建筑、`ProductionQueue`、玩家 `Logistics` | 预订材料、消耗材料、生成单位/物品；发布 `Events.UnitProduced` / `ItemProduced` / `ProductionStateChanged` |
 | 700 | `hauling`（`HaulingSystem`） | `DeliveryJob`、空闲搬运工、`world.route(...)` | 给**同维度**的搬运工派单（把 `HaulOrder` 推入其订单队列）；跨维度的货先走 `tickShipped`（按门链路跳数计延迟）；发布交付相关事件 |
 | 800 | `animation`（`AnimationSystem`） | 单位/建筑状态、`Motion` | 切换动画片段、设置朝向、推进帧 |

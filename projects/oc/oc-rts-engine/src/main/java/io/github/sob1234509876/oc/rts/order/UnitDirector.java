@@ -112,6 +112,24 @@ public interface UnitDirector {
     }
 
     /**
+     * Orders the builder to join an existing, unfinished site and work on it.
+     *
+     * <p>This is the cooperative form of {@link #build(Unit, BuildingType, GridPos)}: it places nothing
+     * and charges nothing. The builder claims its own free adjacent tile, walks there and adds to the
+     * site's construction speed; several builders can be attached to one site at once, and the site
+     * completes for all of them in the same tick. A finished site, a dead site, another player's site or
+     * a site in another dimension is refused rather than silently accepted.
+     *
+     * @param unit the builder, normally a unit with the content's builder role
+     * @param site the existing site to join
+     * @return the site that was joined, or empty when the order was refused
+     */
+    default Optional<Building> build(Unit unit, Building site) {
+        BuildResult result = tryBuild(unit, site);
+        return result.placed() ? Optional.of(result.site()) : Optional.empty();
+    }
+
+    /**
      * Like {@link #build(Unit, BuildingType, GridPos)}, but says why nothing was placed.
      *
      * <p>This is the form a command channel uses: the answer to a player has to be a readable
@@ -124,6 +142,23 @@ public interface UnitDirector {
      * @return the placed site, or the refusal reason; never {@code null}
      */
     BuildResult tryBuild(Unit unit, BuildingType type, GridPos origin);
+
+    /**
+     * Like {@link #build(Unit, Building)}, but says why the builder could not join.
+     *
+     * <p>Joining is free: the site's cost was charged when it was placed, and a second builder must
+     * never charge it again. The refusal reasons are readable for a player - the site already finished,
+     * the site was destroyed, the site belongs to another player, the site is in another dimension, or
+     * the site is out of the builder's reach.
+     *
+     * <p>{@link BuildResult#site()} is the existing site on success. It was not placed by this call,
+     * which is why the result is documented as "a site to work on" rather than "a site that appeared".
+     *
+     * @param unit the builder
+     * @param site the existing, unfinished site to join
+     * @return the joined site, or the refusal reason; never {@code null}
+     */
+    BuildResult tryBuild(Unit unit, Building site);
 
     /**
      * Upgrades one finished building into the type its content names, paying the source type's
@@ -199,14 +234,16 @@ public interface UnitDirector {
     }
 
     /**
-     * Outcome of one build request: either a placed site or a refusal reason.
+     * Outcome of one build request: either a site to work on or a refusal reason.
      *
      * <p>At most one of the two fields is set. The reason is written for a player - it names the
      * building type and, for an unaffordable type, the exact cost - and never contains an exception
-     * stack trace.
+     * stack trace. For a join request ({@link #tryBuild(Unit, Building)}) the site is the existing one
+     * that was joined, not a newly placed site; the placement factories read that as "success", and the
+     * call charged nothing.
      *
-     * @param site    the placed site, or {@code null} when nothing was placed
-     * @param refusal why nothing was placed, or {@code null} when the site was placed
+     * @param site    the placed or joined site, or {@code null} when nothing happened
+     * @param refusal why nothing happened, or {@code null} on success
      */
     record BuildResult(Building site, String refusal) {
 

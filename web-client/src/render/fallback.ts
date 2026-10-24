@@ -553,6 +553,48 @@ export function drawOwnershipRing(
   context.restore();
 }
 
+/**
+ * The brief selection flash: a bright achromatic halo over the sprite, below the gold selection ring.
+ *
+ * `intensity` is 0..1 and scales the halo's alpha, so the same drawing fades as the timer runs out.
+ * There is no shadow blur and no per-frame allocation: two ellipses are enough to read as "these units
+ * were just selected" without tinting the scene.
+ */
+export function drawFlashHalo(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  tilePixels: number,
+  building: boolean,
+  color: string,
+  intensity: number,
+): void {
+  const alpha = clamp(intensity, 0, 1);
+  if (alpha <= 0) {
+    return;
+  }
+  // A unit's visual body sits above its ground point; the halo is centred on that body so it reads as
+  // an outline around the sprite rather than a second ring on the ground.
+  const radiusX = tilePixels * (building ? 1.0 : 0.52);
+  const radiusY = radiusX * (building ? 0.5 : 0.62);
+  const centreY = screenY - tilePixels * (building ? 0.55 : 0.3);
+  context.save();
+  context.strokeStyle = color;
+  // Wide translucent pass first, then a crisp inner outline: the pair reads as a soft halo without
+  // the cost of a shadow blur.
+  context.globalAlpha = alpha * 0.32;
+  context.lineWidth = Math.max(4, tilePixels * 0.16);
+  context.beginPath();
+  context.ellipse(screenX, centreY, radiusX * 1.12, radiusY * 1.12, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.globalAlpha = alpha * 0.95;
+  context.lineWidth = Math.max(1.5, tilePixels * 0.055);
+  context.beginPath();
+  context.ellipse(screenX, centreY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
 /** Selection ring drawn on the ground under an entity. */
 export function drawSelectionRing(
   context: CanvasRenderingContext2D,

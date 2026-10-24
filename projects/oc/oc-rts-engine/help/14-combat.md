@@ -232,4 +232,4 @@ int stalledTicksBeforeFailure = AttackOrder.STALLED_TICKS_BEFORE_FAILURE; // 300
 - 单位与生命：[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)、[Health.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)
 - 世界与事件：[World.java](../src/main/java/io/github/sob1234509876/oc/rts/World.java)、[Events.java](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 接线（相位 450 在此登记）：[OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)
-- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节 59 项 + 第 12b 节建筑目标 31 项；整份 355 项）
+- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节 59 项 + 第 12b 节建筑目标 31 项；整份 515 项）

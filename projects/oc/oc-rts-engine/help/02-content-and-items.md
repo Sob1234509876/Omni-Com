@@ -306,7 +306,10 @@ Building site = engine.world().placeBuilding(content.building("warehouse"), play
 site.inventory().insert(ironIngot, 7);
 site.isConstructed();                       // false
 player.logistics().amount(ironIngot);       // 仍是 100，工地仓库不参与
-engine.tick(200);                           // 建完（buildTime = 200）
+// 真实流程里由 UnitDirector.tryBuild(unit, type, origin) 放下工地并附着一名建造者，
+// ConstructionSystem 每 tick 按 min(附着的建造者数, 4) 推进；没有建造者附着的工地不会自己推进。
+// 这里直接完工，只为观察物流网络的变化。
+site.completeConstruction();
 site.isConstructed();                       // true
 player.logistics().amount(ironIngot);       // 107，7 个一到账就可用
 ```
