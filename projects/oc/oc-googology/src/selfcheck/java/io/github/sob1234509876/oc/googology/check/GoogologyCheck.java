@@ -21,7 +21,8 @@ import java.util.Random;
  * arithmetic closure, the hyperoperation levels, formatting, parsing, the semantics the engine relies on,
  * the ordinal layer that extends the hyperoperation to transfinite levels, the Bashicu matrix
  * standard forms with their lexicographic order, the register of abstract ordinals above the BMS
- * limit, and the stage-one ordinal ladder (BMS, TBMS/TTBMS and the named placeholders). Run with
+ * limit, and the ordinal ladder (stage one: BMS, TBMS/TTBMS and the named placeholders; stage two: the
+ * NRBMS/TNRBMS segment, the argument/value separation and the boundary analysis). Run with
  * {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
  */
 public final class GoogologyCheck {

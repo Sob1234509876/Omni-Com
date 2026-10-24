@@ -17,9 +17,13 @@ import java.util.Objects;
  *       BmsOrdinal};</li>
  *   <li>two {@code f(alpha)} values: {@code left == right == SEGMENT_TWO}, and the order is the order of
  *       the arguments, because {@code f} is assumed strictly increasing;</li>
+ *   <li>two TNRBMS values: {@code left == right == SEGMENT_THREE}, and the order is the order of their
+ *       {@link LadderArgument}s;</li>
+ *   <li>an NRBMS value against a TNRBMS value: both are {@code SEGMENT_THREE}; their tiers still order
+ *       them, so the comparison is a same-segment comparison inside the segment's two layers;</li>
  *   <li>a BMS value against an {@code f(alpha)}: {@code left == SEGMENT_ONE} and {@code right ==
  *       SEGMENT_TWO}; segment one is below segment two by the register's declared order;</li>
- *   <li>a segment-two value against {@code LRPO}: {@code left == SEGMENT_TWO} and {@code right ==
+ *   <li>a segment-three value against {@code X}: {@code left == SEGMENT_THREE} and {@code right ==
  *       PLACEHOLDER}.</li>
  * </ul>
  *
