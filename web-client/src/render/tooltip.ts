@@ -7,6 +7,10 @@
  * - {@link tooltipContent} composes the manifest display name, the ownership tag, the health
  *   percentage, the footprint of a building and the production-queue summary, omitting every optional
  *   field the snapshot does not carry;
+ * - {@link tooltipThumbnail} chooses the fixed 48×48 thumbnail: the entity's atlas frame when the
+ *   renderer has one, otherwise the neutral grey placeholder carrying the kind's first character;
+ * - {@link tooltipIdleExpired} is the no-flicker rule: one unchanged hover suppresses the box after
+ *   {@link TOOLTIP_IDLE_HIDE_MS} and the next entity re-arms it;
  * - {@link clampTooltipPosition} keeps the box inside the browser window, flipping it to the other
  *   side of the cursor when it would cross the right or bottom edge.
  *
@@ -27,6 +31,23 @@ export const TOOLTIP_GAP_PX = 14;
 
 /** Minimum distance in CSS pixels between the tooltip and the window edge. */
 export const TOOLTIP_MARGIN_PX = 8;
+
+/** The fixed square thumbnail at the left of the tooltip, in CSS pixels. */
+export const TOOLTIP_THUMBNAIL_SIZE_PX = 48;
+
+/**
+ * How long one unchanged hover may keep the tooltip on screen before it suppresses itself.
+ *
+ * The entity under the cursor has not changed, so the box is no longer telling the operator anything
+ * new and would only cover the map. Changing the hovered entity re-arms it; jitter inside the same
+ * entity never re-shows it, which is what keeps the box from flickering.
+ */
+export const TOOLTIP_IDLE_HIDE_MS = 6_000;
+
+/** The tooltip's fixed-size thumbnail: a real atlas frame, or the greyscale placeholder. */
+export type TooltipThumbnail =
+  | { readonly kind: "atlas"; readonly size: number }
+  | { readonly kind: "placeholder"; readonly size: number; readonly label: string };
 
 /** The two halves of a tooltip: a stronger name line plus the detail lines under it. */
 export interface TooltipContent {
@@ -54,6 +75,58 @@ export interface TooltipViewport {
 export interface TooltipPoint {
   readonly x: number;
   readonly y: number;
+}
+
+/**
+ * Chooses what the thumbnail shows.
+ *
+ * The caller has already resolved the entity's kind through the renderer's shared atlas lookup
+ * (`lookupAtlasEntity`), so `hasSprite` means the exact frame the world draws exists. When it does, the
+ * thumbnail is the atlas frame at {@link TOOLTIP_THUMBNAIL_SIZE_PX}; otherwise it is a neutral grey
+ * square carrying the **first character of the kind** as its only label. The size is always fixed, so
+ * the thumbnail never changes the tooltip's layout when the text lines grow or shrink.
+ */
+export function tooltipThumbnail(
+  hasSprite: boolean,
+  kind: string,
+  size: number = TOOLTIP_THUMBNAIL_SIZE_PX,
+): TooltipThumbnail {
+  const square = Number.isFinite(size) ? Math.max(1, Math.round(size)) : TOOLTIP_THUMBNAIL_SIZE_PX;
+  if (hasSprite) {
+    return { kind: "atlas", size: square };
+  }
+  return { kind: "placeholder", size: square, label: kindFirstCharacter(kind) };
+}
+
+/**
+ * The first Unicode code point of the kind, or `?` for an empty/blank kind.
+ *
+ * `Array.from` is used rather than `charAt(0)` so an astral character (a surrogate pair) is never cut
+ * in half in the placeholder.
+ */
+export function kindFirstCharacter(kind: string): string {
+  const trimmed = kind.trim();
+  if (trimmed === "") {
+    return "?";
+  }
+  return Array.from(trimmed)[0] ?? "?";
+}
+
+/**
+ * Whether an unchanged hover has stayed long enough for the tooltip to suppress itself.
+ *
+ * A non-finite timestamp or a non-positive timeout simply keeps the tooltip visible; the caller still
+ * re-arms the timer whenever the entity under the cursor changes.
+ */
+export function tooltipIdleExpired(
+  shownSince: number,
+  now: number,
+  timeout: number = TOOLTIP_IDLE_HIDE_MS,
+): boolean {
+  if (!Number.isFinite(shownSince) || !Number.isFinite(now) || !Number.isFinite(timeout) || timeout <= 0) {
+    return false;
+  }
+  return now - shownSince >= timeout;
 }
 
 /**

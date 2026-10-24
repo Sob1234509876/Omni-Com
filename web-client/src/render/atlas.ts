@@ -58,6 +58,15 @@ export interface AtlasData {
   readonly tilePixels: number;
   readonly tiles: ReadonlyMap<string, TileFrame>;
   readonly entities: ReadonlyMap<string, EntitySprite>;
+  /**
+   * Optional item definitions published by the plugin: item content path to display name.
+   *
+   * Items are not sprite frames; they name resources the plugin defines (before this field existed the
+   * client only knew `gold` / `wood`). The resource page uses the keys as the manifest half of its
+   * "every resource that exists" list. An item may omit its name, in which case the map value is `""`
+   * and the caller falls back to the path.
+   */
+  readonly items: ReadonlyMap<string, string>;
 }
 
 /** One plugin's parsed atlas with its decoded image. */
@@ -85,6 +94,8 @@ export interface AtlasNames {
   readonly tiles: ReadonlyMap<string, string>;
   /** Entity kind to its display name; a nameless entry maps to its own kind. */
   readonly entities: ReadonlyMap<string, string>;
+  /** Item path to its display name; a nameless definition maps to its own path. */
+  readonly items: ReadonlyMap<string, string>;
 }
 
 /** The composite of every plugin atlas: last wins per tile path and entity kind. */
@@ -123,6 +134,8 @@ export interface MergedLayers {
   readonly tiles: ReadonlyMap<string, number>;
   /** Entity kind to the index of the entry that owns it; the last entry that defines it wins. */
   readonly entities: ReadonlyMap<string, number>;
+  /** Item path to the index of the entry that owns it; the last entry that defines it wins. */
+  readonly items: ReadonlyMap<string, number>;
   /** The contributing plugin ids, in entry order, without duplicates or blank ids. */
   readonly plugins: readonly string[];
 }
@@ -337,8 +350,42 @@ export function parseAtlas(
     warnings.push("entities 必须是对象，已忽略整个 entities 字段");
   }
 
-  if (tiles.size === 0 && entities.size === 0) {
-    return { ok: false, reason: "图集清单里没有任何可用的地形帧或实体帧", warnings };
+  // Optional item definitions (`items: { "<path>": "<name>" | { "name": "..." } }`, or an array of
+  // paths). They carry no art, so an item-only manifest is still a valid (if invisible) entry; the main
+  // client uses the names to label resources the plugin defines.
+  const items = new Map<string, string>();
+  const itemsValue = source["items"];
+  if (isRecord(itemsValue)) {
+    for (const [rawPath, rawEntry] of Object.entries(itemsValue)) {
+      const path = rawPath.trim();
+      if (path === "") {
+        warnings.push("items 里有空名字，已忽略");
+        continue;
+      }
+      if (typeof rawEntry === "string") {
+        items.set(path, rawEntry.trim());
+        continue;
+      }
+      if (isRecord(rawEntry)) {
+        items.set(path, readName(rawEntry["name"]));
+        continue;
+      }
+      warnings.push(`items.${path} 必须是名称字符串或 { name } 对象`);
+    }
+  } else if (Array.isArray(itemsValue)) {
+    for (const rawPath of itemsValue) {
+      if (typeof rawPath !== "string" || rawPath.trim() === "") {
+        warnings.push("items 数组里只能放非空物品路径");
+        continue;
+      }
+      items.set(rawPath.trim(), "");
+    }
+  } else if (itemsValue !== undefined) {
+    warnings.push("items 必须是对象或字符串数组，已忽略整个 items 字段");
+  }
+
+  if (tiles.size === 0 && entities.size === 0 && items.size === 0) {
+    return { ok: false, reason: "图集清单里没有任何可用的地形帧、实体帧或物品定义", warnings };
   }
 
   return {
@@ -350,6 +397,7 @@ export function parseAtlas(
       tilePixels,
       tiles,
       entities,
+      items,
     },
     warnings,
   };
@@ -391,6 +439,7 @@ export function readManifestEntry(value: unknown): ManifestEntryResult {
 export function mergeLayers(entries: readonly AtlasData[]): MergedLayers {
   const tiles = new Map<string, number>();
   const entities = new Map<string, number>();
+  const items = new Map<string, number>();
   const plugins: string[] = [];
   for (let layer = 0; layer < entries.length; layer += 1) {
     const data = entries[layer];
@@ -406,8 +455,11 @@ export function mergeLayers(entries: readonly AtlasData[]): MergedLayers {
     for (const name of data.entities.keys()) {
       entities.set(name, layer);
     }
+    for (const name of data.items.keys()) {
+      items.set(name, layer);
+    }
   }
-  return { tiles, entities, plugins };
+  return { tiles, entities, items, plugins };
 }
 
 /**
@@ -438,7 +490,15 @@ export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
       entities.set(name, { sprite, source });
     }
   }
-  if (tiles.size === 0 && entities.size === 0) {
+  const items = new Map<string, string>();
+  for (const [name, layer] of layers.items) {
+    const source = sources[layer];
+    if (source === undefined || !source.items.has(name)) {
+      continue;
+    }
+    items.set(name, labelOrId(source.items.get(name) ?? "", name));
+  }
+  if (tiles.size === 0 && entities.size === 0 && items.size === 0) {
     return null;
   }
   const tileNames = new Map<string, string>();
@@ -449,7 +509,12 @@ export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
   for (const [name, entity] of entities) {
     entityNames.set(name, labelOrId(entity.sprite.name, name));
   }
-  return { tiles, entities, names: { tiles: tileNames, entities: entityNames }, sources };
+  return {
+    tiles,
+    entities,
+    names: { tiles: tileNames, entities: entityNames, items },
+    sources,
+  };
 }
 
 /** The display label for a name, or the id itself when the entry carries no usable name. */
@@ -462,6 +527,36 @@ function labelOrId(name: string, id: string): string {
 function bareKind(kind: string): string {
   const separator = kind.lastIndexOf(":");
   return separator >= 0 ? kind.slice(separator + 1) : kind;
+}
+
+/**
+ * The atlas entry for one entity kind, or `undefined` when the atlas has no sprite for it.
+ *
+ * This is the one lookup the world renderer and the tooltip thumbnail share, so the small thumbnail
+ * can never show a different plant than the map does. A namespaced path falls back to its bare path,
+ * exactly like {@link entityDisplayName}.
+ */
+export function lookupAtlasEntity(atlas: Atlas, kind: string): AtlasEntity | undefined {
+  return atlas.entities.get(kind) ?? atlas.entities.get(bareKind(kind));
+}
+
+/** The atlas entry for one terrain path; the renderer's shared lookup for tiles. */
+export function lookupAtlasTile(atlas: Atlas, terrain: string): AtlasTile | undefined {
+  return atlas.tiles.get(terrain) ?? atlas.tiles.get(bareKind(terrain));
+}
+
+/**
+ * The item label a plugin manifest defines, with the raw path as fallback.
+ *
+ * The manifest's optional `items` table wins; a namespaced path falls back to its bare path. The main
+ * client adds the classic `金` / `木` mapping after this, so an item the manifest names is never
+ * renamed by the built-in fallback table.
+ */
+export function itemDisplayLabel(atlas: Atlas | null, path: string): string {
+  if (atlas === null) {
+    return path;
+  }
+  return atlas.names.items.get(path) ?? atlas.names.items.get(bareKind(path)) ?? path;
 }
 
 /**

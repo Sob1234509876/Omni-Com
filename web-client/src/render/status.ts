@@ -104,7 +104,12 @@ function itemRank(path: string): number {
   return index < 0 ? ITEM_ORDER.length : index;
 }
 
-function compareItemPaths(left: string, right: string): number {
+/**
+ * The stable order of item paths: the two classic items first (`gold`, `wood`), then every other path
+ * lexicographically. The HUD chips, the warehouse rows and the marked-resource line all use it, so the
+ * same two resources never swap places between two surfaces.
+ */
+export function compareItemPaths(left: string, right: string): number {
   const byRank = itemRank(left) - itemRank(right);
   if (byRank !== 0) {
     return byRank;

@@ -48,6 +48,7 @@ import {
   atlasLabel,
   compositeAtlas,
   entityDisplayName,
+  itemDisplayLabel,
   mergeLayers,
   parseAtlas,
   readManifestEntry,
@@ -208,9 +209,14 @@ import {
 } from "../src/render/commandbar.ts";
 import {
   TOOLTIP_GAP_PX,
+  TOOLTIP_IDLE_HIDE_MS,
   TOOLTIP_MARGIN_PX,
+  TOOLTIP_THUMBNAIL_SIZE_PX,
   clampTooltipPosition,
+  kindFirstCharacter,
   tooltipContent,
+  tooltipIdleExpired,
+  tooltipThumbnail,
 } from "../src/render/tooltip.ts";
 import {
   ATTACKER_DETECTION_TILES,
@@ -222,7 +228,16 @@ import {
   meleeTierOf,
 } from "../src/render/events.ts";
 import {
+  CURRENCY_PATHS,
+  EMPTY_RESOURCE_MARKS,
+  clearResourceMarks,
+  fullResourceList,
+  inventoryTotals,
   isWarehouseKind,
+  markAllResources,
+  markedResourceItems,
+  markedSummaryLabel,
+  toggleResourceMark,
   warehouseResourceTotals,
 } from "../src/render/resources.ts";
 import {
@@ -1594,6 +1609,45 @@ if (namedFixture.ok) {
   );
 }
 
+// A plugin may define items (not art) in the manifest's optional `items` table; the full resource page
+// treats those paths as "every resource that exists" even when the player owns none.
+const itemFixture = parseAtlas(
+  {
+    image: "atlas.png",
+    tiles: { grass: [0, 0, 8, 8] },
+    items: {
+      gold: "金币",
+      wood: { name: "木材" },
+      "oc:ore": "矿石",
+      blank: "",
+    },
+  },
+  8,
+  8,
+);
+check(
+  "清单的物品定义支持字符串与 { name } 两种写法，空名称回退到路径",
+  itemFixture.ok &&
+    itemFixture.data.items.get("gold") === "金币" &&
+    itemFixture.data.items.get("wood") === "木材" &&
+    itemFixture.data.items.get("oc:ore") === "矿石" &&
+    itemFixture.data.items.get("blank") === "",
+  itemFixture.ok ? JSON.stringify([...itemFixture.data.items]) : itemFixture.reason,
+);
+if (itemFixture.ok) {
+  const itemImage = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
+  const itemAtlas = compositeAtlas([{ ...itemFixture.data, image: itemImage }]);
+  check(
+    "物品标签按清单名称解析，未定义名称时回退到路径（带命名空间也能命中）",
+    itemAtlas !== null &&
+      itemAtlas.names.items.get("blank") === "blank" &&
+      itemDisplayLabel(itemAtlas, "gold") === "金币" &&
+      itemDisplayLabel(itemAtlas, "oc:ore") === "矿石" &&
+      itemDisplayLabel(itemAtlas, "unknown") === "unknown" &&
+      itemDisplayLabel(null, "gold") === "gold",
+  );
+}
+
 check("非对象图集被拒绝", parseAtlas(null, 64, 64).ok === false);
 check(
   "缺少 image 的图集被拒绝",
@@ -2752,6 +2806,42 @@ check(
   JSON.stringify(tinyViewportTooltip),
 );
 
+// The thumbnail half of the hover tooltip: a fixed 48×48 square whose source is chosen by the same
+// atlas lookup as the world renderer, with a neutral grey placeholder carrying the kind's first
+// character when that lookup has no sprite.
+const atlasThumbnail = tooltipThumbnail(true, "unit.melee.t1");
+const placeholderThumbnail = tooltipThumbnail(false, "unit.melee.t1");
+const blankThumbnail = tooltipThumbnail(false, "  ");
+check(
+  "缩略图：有图集帧时用图集，无图集帧时用占位符，两者都是固定 48×48",
+  TOOLTIP_THUMBNAIL_SIZE_PX === 48 &&
+    atlasThumbnail.kind === "atlas" &&
+    atlasThumbnail.size === 48 &&
+    placeholderThumbnail.kind === "placeholder" &&
+    placeholderThumbnail.size === 48 &&
+    placeholderThumbnail.label === "u",
+  `${atlasThumbnail.kind}/${atlasThumbnail.size} / ${placeholderThumbnail.kind}/${placeholderThumbnail.size}`,
+);
+check(
+  "缩略图占位符取 kind 的首个 Unicode 字符：空 kind 是 ?，代理对不会被截断",
+  kindFirstCharacter("building.warehouse") === "b" &&
+    kindFirstCharacter("  ") === "?" &&
+    kindFirstCharacter("\u{1F600}unit") === "\u{1F600}" &&
+    tooltipThumbnail(false, "").kind === "placeholder" &&
+    blankThumbnail.kind === "placeholder" &&
+    blankThumbnail.label === "?",
+  `${kindFirstCharacter("building.warehouse")} / ${kindFirstCharacter("  ")}`,
+);
+check(
+  "悬停提示在同一实体上停留过久会自行隐藏，换实体重新计时",
+  TOOLTIP_IDLE_HIDE_MS === 6_000 &&
+    !tooltipIdleExpired(1_000, 6_999) &&
+    tooltipIdleExpired(1_000, 7_000) &&
+    !tooltipIdleExpired(1_000, 20_000, 0) &&
+    !tooltipIdleExpired(Number.NaN, 20_000),
+  String(TOOLTIP_IDLE_HIDE_MS),
+);
+
 // ---------------------------------------------------------------------------------------------
 // Snapshot diff events: building completion, 10% health drop, five-second de-duplication
 // ---------------------------------------------------------------------------------------------
@@ -2946,6 +3036,189 @@ check(
   "没有玩家 id 时仓库合计为空（不把无主建筑当成自己的）",
   warehouseResourceTotals(warehouseWorld, null).warehouseCount === 0 &&
     warehouseResourceTotals(warehouseWorld, null).items.length === 0,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Marks, the marked HUD line, the inventory panel and the full resource page
+// ---------------------------------------------------------------------------------------------
+
+const goldMarked = toggleResourceMark(EMPTY_RESOURCE_MARKS, "gold");
+const bothMarked = toggleResourceMark(goldMarked, "wood");
+const goldUnmarked = toggleResourceMark(bothMarked, "gold");
+check(
+  "标记规则：添加、移除与重复切换互不影响，空白路径不写入，原集合不被修改",
+  goldMarked.has("gold") &&
+    goldMarked.size === 1 &&
+    !goldUnmarked.has("gold") &&
+    goldUnmarked.has("wood") &&
+    goldUnmarked.size === 1 &&
+    toggleResourceMark(goldMarked, "gold").size === 0 &&
+    toggleResourceMark(EMPTY_RESOURCE_MARKS, "  ").size === 0 &&
+    EMPTY_RESOURCE_MARKS.size === 0 &&
+    bothMarked.size === 2,
+  `${[...goldUnmarked].join(",")} / ${[...bothMarked].join(",")}`,
+);
+const allMarked = markAllResources(bothMarked, ["gold", "ore", "  "]);
+check(
+  "标记全部取并集并忽略空白，清除返回空集合",
+  allMarked.size === 3 &&
+    allMarked.has("gold") &&
+    allMarked.has("wood") &&
+    allMarked.has("ore") &&
+    clearResourceMarks().size === 0 &&
+    bothMarked.size === 2,
+  `${[...allMarked].join(",")}`,
+);
+
+const markedRows = markedResourceItems(bothMarked, warehouseTotals);
+check(
+  "已标记总量使用仓库合计，并按固定物品顺序排列",
+  markedRows.map((row) => `${row.name}=${row.amount}`).join(",") === "金=200,木=50",
+  markedRows.map((row) => `${row.name}=${row.amount}`).join(","),
+);
+check(
+  "已标记 HUD 行格式为 已标记：金 120 · 木 40；无标记时是 已标记：—",
+  markedSummaryLabel(bothMarked, warehouseTotals) === "已标记：金 200 · 木 50" &&
+    markedSummaryLabel(EMPTY_RESOURCE_MARKS, warehouseTotals) === "已标记：—",
+  markedSummaryLabel(bothMarked, warehouseTotals),
+);
+const missingMarked = toggleResourceMark(bothMarked, "silver");
+const missingRows = markedResourceItems(missingMarked, warehouseTotals);
+check(
+  "已标记但仓库里没有的物品保留 0 行，而不是消失",
+  missingRows.length === 3 &&
+    missingRows[2]?.path === "silver" &&
+    missingRows[2]?.amount === 0 &&
+    markedSummaryLabel(missingMarked, warehouseTotals) ===
+      "已标记：金 200 · 木 50 · silver 0",
+  markedSummaryLabel(missingMarked, warehouseTotals),
+);
+
+const inventoryLabels: Readonly<Record<string, string>> = { gold: "金", wood: "木" };
+const inventoryLabel = (path: string): string => inventoryLabels[path] ?? path;
+const cargoEngineer: EntityView = {
+  id: 71,
+  kind: "unit.engineer",
+  x: 0,
+  y: 0,
+  playerId: 1,
+  contents: { gold: 7 },
+};
+const oneUnitInventory = inventoryTotals([cargoEngineer], inventoryLabel);
+check(
+  "单个单位库存：货物列表带名称与数量，合计正确",
+  oneUnitInventory.unitCount === 1 &&
+    oneUnitInventory.carryingCount === 1 &&
+    oneUnitInventory.items.map((item) => `${item.name}=${item.amount}`).join(",") === "金=7" &&
+    oneUnitInventory.total === 7,
+  JSON.stringify(oneUnitInventory),
+);
+const twoUnitInventory = inventoryTotals(
+  [
+    { ...cargoEngineer, id: 72, contents: { gold: 2, wood: 3 } },
+    { ...cargoEngineer, id: 73, contents: { gold: 4 } },
+  ],
+  inventoryLabel,
+);
+check(
+  "多个单位库存：货物聚合并显示数量行，合计是所有单位之和",
+  twoUnitInventory.unitCount === 2 &&
+    twoUnitInventory.carryingCount === 2 &&
+    twoUnitInventory.items.map((item) => `${item.name}=${item.amount}`).join(",") ===
+      "木=3,金=6" &&
+    twoUnitInventory.total === 9,
+  twoUnitInventory.items.map((item) => `${item.name}=${item.amount}`).join(","),
+);
+const emptyInventory = inventoryTotals([], inventoryLabel);
+const emptyCargoInventory = inventoryTotals(
+  [{ ...cargoEngineer, contents: undefined }],
+  inventoryLabel,
+);
+const buildingInventory = inventoryTotals(
+  [{ id: 74, kind: "building.warehouse", x: 0, y: 0, playerId: 1, contents: { gold: 99 } }],
+  inventoryLabel,
+);
+check(
+  "没有选中单位时库存为空；单位没有货物时为 0；建筑不当作单位库存",
+  emptyInventory.unitCount === 0 &&
+    emptyInventory.items.length === 0 &&
+    emptyInventory.total === 0 &&
+    emptyCargoInventory.unitCount === 1 &&
+    emptyCargoInventory.carryingCount === 0 &&
+    emptyCargoInventory.items.length === 0 &&
+    emptyCargoInventory.total === 0 &&
+    buildingInventory.unitCount === 0 &&
+    buildingInventory.items.length === 0,
+  `${emptyInventory.unitCount}/${emptyCargoInventory.unitCount}/${buildingInventory.unitCount}`,
+);
+
+const fullLabels: Readonly<Record<string, string>> = {
+  gold: "金",
+  wood: "木",
+  silver: "银",
+  crystal: "水晶",
+  ore: "矿石",
+};
+const fullLabel = (path: string): string => fullLabels[path] ?? path;
+const fullResourceWorld: WorldView = {
+  ...eventWorld([
+    {
+      id: 1,
+      kind: "building.warehouse",
+      x: 0,
+      y: 0,
+      playerId: 1,
+      contents: { gold: 120, wood: 40, ore: 5 },
+    },
+    {
+      id: 2,
+      kind: "unit.engineer",
+      x: 1,
+      y: 1,
+      playerId: 1,
+      contents: { gold: 7, crystal: 2 },
+    },
+    {
+      id: 3,
+      kind: "building.warehouse",
+      x: 2,
+      y: 2,
+      playerId: 2,
+      contents: { gold: 9_999 },
+    },
+    { id: 4, kind: "unit.melee.t1", x: 3, y: 3, playerId: 2, contents: { gold: 1 } },
+    { id: 5, kind: "building.armory.t1", x: 4, y: 4, playerId: 1 },
+  ]),
+  players: [{ id: 1, name: "alice", gold: 300, wood: 60 }],
+};
+const fullRows = fullResourceList(fullResourceWorld, 1, ["silver", "gold"], fullLabel);
+check(
+  "完整资源清单：清单物品 + 仓库物品 + 单位携带 + 两种货币，按路径去重并按名称排序，0 保留",
+  JSON.stringify(CURRENCY_PATHS) === JSON.stringify(["gold", "wood"]) &&
+    fullRows.map((row) => `${row.name}=${row.amount}`).join(",") ===
+      "木=100,水晶=2,矿石=5,金=427,银=0",
+  fullRows.map((row) => `${row.name}=${row.amount}`).join(","),
+);
+const fullGoldRow = fullRows.find((row) => row.path === "gold");
+const fullOreRow = fullRows.find((row) => row.path === "ore");
+const fullSilverRow = fullRows.find((row) => row.path === "silver");
+check(
+  "完整资源清单：货币用玩家余额并加上自己的仓库存货，敌方仓库与敌方携带不计入",
+  fullGoldRow?.amount === 427 &&
+    JSON.stringify(fullGoldRow.buildingIds) === JSON.stringify([1]) &&
+    JSON.stringify(fullGoldRow.unitIds) === JSON.stringify([2]) &&
+    JSON.stringify(fullOreRow?.buildingIds) === JSON.stringify([1]) &&
+    fullOreRow?.unitIds.length === 0 &&
+    fullSilverRow?.amount === 0 &&
+    fullSilverRow?.buildingIds.length === 0 &&
+    fullSilverRow?.unitIds.length === 0,
+  JSON.stringify(fullGoldRow),
+);
+const anonymousRows = fullResourceList(fullResourceWorld, null, ["silver"], fullLabel);
+check(
+  "未登录时完整资源页仍保留清单物品与两种货币，数量显式为 0",
+  anonymousRows.map((row) => `${row.name}=${row.amount}`).join(",") === "木=0,金=0,银=0",
+  anonymousRows.map((row) => `${row.name}=${row.amount}`).join(","),
 );
 
 // ---------------------------------------------------------------------------------------------

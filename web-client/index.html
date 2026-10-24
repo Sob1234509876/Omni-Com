@@ -220,9 +220,9 @@
         font-size: 12px;
       }
 
-      /* The warehouse panel is a read-only total in the top-right column, under the
-         chrome. Same greyscale, translucent chrome as the HUD chips; the panel itself
-         takes no pointer input. */
+      /* The warehouse panel is the local player's stock plus the client-side marking controls. Same
+         greyscale, translucent chrome as the HUD chips; it takes pointer input only for its own
+         checkboxes and buttons, so the canvas stays clickable everywhere around it. */
       .warehouse-panel {
         width: max-content;
         min-width: 148px;
@@ -234,16 +234,36 @@
         box-shadow: none;
         color: #e6e6e6;
         font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
-        pointer-events: none;
+        pointer-events: auto;
         backdrop-filter: none;
       }
 
-      .warehouse-panel h2 {
+      .warehouse-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
         margin: 0 0 5px;
+      }
+
+      .warehouse-panel h2 {
+        margin: 0;
         color: #c8c8c8;
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.08em;
+      }
+
+      .warehouse-actions {
+        display: inline-flex;
+        gap: 4px;
+      }
+
+      .warehouse-actions button {
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 10px;
+        line-height: 1.4;
       }
 
       .warehouse-summary {
@@ -266,11 +286,39 @@
 
       .warehouse-item {
         display: flex;
+        align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 8px;
+        cursor: pointer;
+      }
+
+      .warehouse-item input[type="checkbox"] {
+        flex: 0 0 auto;
+        width: 13px;
+        height: 13px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        accent-color: #e6e6e6;
+      }
+
+      .warehouse-item-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .warehouse-item.marked .warehouse-item-name {
+        color: #ffffff;
+        font-weight: 600;
       }
 
       .warehouse-amount {
+        flex: 0 0 auto;
         color: #ffffff;
         font-variant-numeric: tabular-nums;
       }
@@ -528,16 +576,37 @@
       }
 
       /* ---------------------------------------------------------------------
-         HUD chips (top-left) and the selected-building construction bar.
+         HUD chips (top-left), the inventory panel under them, and the selected-building
+         construction bar. The wrapper owns the corner and the maximum width, so the chips and
+         the panel always share the same column and can never overlap.
          --------------------------------------------------------------------- */
-      .hud {
+      .top-left {
         position: absolute;
         top: 14px;
         left: 14px;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        max-width: calc(100% - 340px);
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: none;
+        backdrop-filter: none;
+      }
+
+      .hud {
         display: flex;
         flex-wrap: wrap;
         gap: 6px 8px;
-        max-width: calc(100% - 340px);
+        width: 100%;
+        max-width: 100%;
         padding: 0;
         border: 0;
         border-radius: 0;
@@ -569,6 +638,7 @@
       #hud-window,
       #hud-player,
       #hud-resources,
+      #hud-marked,
       #hud-tile,
       #hud-zoom,
       #hud-fps,
@@ -580,6 +650,101 @@
       /* An unavailable resource row stays fully readable; italic marks it as "no data". */
       #hud-resources.unavailable {
         color: #e6e6e6;
+        font-style: italic;
+      }
+
+      /* The marked-resource line: the same grey chip as the HUD, showing the warehouse totals of the
+         items ticked in the warehouse panel. It starts as `已标记：—`. */
+      #hud-marked {
+        color: #e6e6e6;
+      }
+
+      #hud-marked.has-marks {
+        color: #ffffff;
+        font-weight: 600;
+      }
+
+      /* The dedicated inventory HUD, directly under the chips. Read-only and pointer-transparent like
+         the chips, so it never blocks the canvas; it is always reachable without hovering. */
+      .inventory-panel {
+        width: max-content;
+        min-width: 148px;
+        max-width: min(240px, 100%);
+        padding: 6px 9px;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: none;
+        backdrop-filter: none;
+      }
+
+      .inventory-panel h2 {
+        margin: 0 0 4px;
+        color: #c8c8c8;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      .inventory-summary {
+        margin: 0;
+        max-width: 100%;
+        overflow: hidden;
+        color: #c8c8c8;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .inventory-items {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 3px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .inventory-items[hidden] {
+        display: none;
+      }
+
+      .inventory-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .inventory-item-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .inventory-amount {
+        color: #ffffff;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .inventory-total {
+        margin: 3px 0 0;
+        padding-top: 3px;
+        border-top: 1px solid #4a4a4a;
+        color: #e6e6e6;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .inventory-total[hidden],
+      .inventory-empty[hidden] {
+        display: none;
+      }
+
+      .inventory-empty {
+        margin: 3px 0 0;
+        color: #b0b0b0;
         font-style: italic;
       }
 
@@ -686,8 +851,9 @@
         left: 0;
         z-index: 30;
         display: flex;
-        flex-direction: column;
-        gap: 2px;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 8px;
         max-width: min(280px, calc(100vw - 16px));
         padding: 5px 8px;
         border: 1px solid #5a5a5a;
@@ -703,6 +869,28 @@
 
       .entity-tooltip[hidden] {
         display: none;
+      }
+
+      /* The thumbnail is a fixed 48×48 square so a tooltip whose text lines grow or shrink never
+         reflows it. It is canvas content in a DOM box, drawn from the same atlas lookup as the world
+         renderer; the grey placeholder is used when that lookup has no sprite. */
+      .entity-tooltip-thumb {
+        display: block;
+        flex: 0 0 auto;
+        width: 48px;
+        height: 48px;
+        border: 1px solid #4a4a4a;
+        border-radius: 3px;
+        background: #2a2a2a;
+        pointer-events: none;
+      }
+
+      .entity-tooltip-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        max-width: 100%;
       }
 
       .entity-tooltip-name {
@@ -1105,11 +1293,124 @@
         }
       }
 
+      /* The full resource page: one translucent panel over the game view. Its container is fully
+         transparent and takes no pointer input, so it never adds a scrim and clicks outside the panel
+         still reach the canvas; only the panel itself is darkened and interactive. */
+      .resources-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 45;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      .resources-overlay[hidden] {
+        display: none;
+      }
+
+      .resources-panel {
+        display: flex;
+        flex-direction: column;
+        width: min(560px, 100%);
+        max-height: min(82vh, 760px);
+        overflow: hidden;
+        padding: 0;
+        border: 1px solid #6b6b6b;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: auto;
+        backdrop-filter: none;
+      }
+
+      .resources-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid #5a5a5a;
+      }
+
+      .resources-head h2 {
+        margin: 0;
+        color: #e6e6e6;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+      }
+
+      .resources-head button {
+        padding: 3px 9px;
+        border-radius: 4px;
+        font-size: 11px;
+      }
+
+      .resources-note {
+        margin: 0;
+        padding: 8px 14px;
+        border-bottom: 1px solid #3a3a3a;
+        color: #b0b0b0;
+        font-size: 11px;
+      }
+
+      .resources-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        margin: 0;
+        padding: 6px 14px 10px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        list-style: none;
+      }
+
+      .resources-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(4ch, auto) minmax(0, auto);
+        align-items: baseline;
+        gap: 10px;
+        padding: 3px 0;
+        border-bottom: 1px solid #2a2a2a;
+      }
+
+      .resources-row:last-child {
+        border-bottom: 0;
+      }
+
+      .resources-name {
+        min-width: 0;
+        overflow: hidden;
+        color: #e6e6e6;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .resources-amount {
+        color: #ffffff;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .resources-where {
+        min-width: 0;
+        overflow: hidden;
+        color: #b0b0b0;
+        font-size: 11px;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       /* Hide game view: the permanent chrome disappears, the top-right toggle stays
          reachable, and main.ts opens the connection panel so the form can still be
          used. The stage itself stays in the layout, so the toggle never disappears. */
       body.view-hidden #world-canvas,
-      body.view-hidden .hud,
+      body.view-hidden .top-left,
       body.view-hidden .bottom-bar,
       body.view-hidden .warehouse-panel,
       body.view-hidden #entity-tooltip {
@@ -1156,7 +1457,7 @@
       /* The top-right column can be two rows tall on smaller windows, so the HUD
          moves below it instead of sharing the first row. */
       @media (max-width: 900px) {
-        .hud {
+        .top-left {
           top: 104px;
         }
       }
@@ -1188,12 +1489,8 @@
       }
 
       @media (max-width: 520px) {
-        .warehouse-panel {
-          display: none;
-        }
-
-        .hud {
-          top: 152px;
+        .top-left {
+          top: 230px;
           max-width: calc(100% - 28px);
         }
 
@@ -1216,25 +1513,36 @@
       <section id="game-view" class="stage" aria-label="游戏画面">
         <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面"></canvas>
 
-        <div class="hud" aria-live="off">
-          <span id="hud-atlas">procedural</span>
-          <span id="hud-world">世界：demo</span>
-          <span id="hud-window">坐标：22,16 · 窗口：0,0</span>
-          <span id="hud-player">玩家：—</span>
-          <span id="hud-resources">资源：金 — · 木 —</span>
-          <span id="hud-tile">瓦片：—</span>
-          <span id="hud-zoom">缩放：1.00×</span>
-          <span id="hud-fps">FPS：—</span>
-          <span id="hud-selected">选中：无</span>
-          <span id="hud-building">
-            <span id="hud-building-text">建筑：—</span>
-            <span id="hud-building-progress" class="hud-bar-wrap" hidden>
-              <span id="hud-building-bar" class="hud-bar" aria-hidden="true">
-                <span id="hud-building-fill"></span>
+        <div class="top-left">
+          <div class="hud" aria-live="off">
+            <span id="hud-atlas">procedural</span>
+            <span id="hud-world">世界：demo</span>
+            <span id="hud-window">坐标：22,16 · 窗口：0,0</span>
+            <span id="hud-player">玩家：—</span>
+            <span id="hud-resources">资源：金 — · 木 —</span>
+            <span id="hud-marked">已标记：—</span>
+            <span id="hud-tile">瓦片：—</span>
+            <span id="hud-zoom">缩放：1.00×</span>
+            <span id="hud-fps">FPS：—</span>
+            <span id="hud-selected">选中：无</span>
+            <span id="hud-building">
+              <span id="hud-building-text">建筑：—</span>
+              <span id="hud-building-progress" class="hud-bar-wrap" hidden>
+                <span id="hud-building-bar" class="hud-bar" aria-hidden="true">
+                  <span id="hud-building-fill"></span>
+                </span>
+                <span id="hud-building-percent">0%</span>
               </span>
-              <span id="hud-building-percent">0%</span>
             </span>
-          </span>
+          </div>
+
+          <aside id="inventory-panel" class="inventory-panel" aria-label="选中单位的库存">
+            <h2>单位库存</h2>
+            <p id="inventory-summary" class="inventory-summary">未选中单位</p>
+            <ul id="inventory-items" class="inventory-items" hidden></ul>
+            <p id="inventory-total" class="inventory-total" hidden></p>
+            <p id="inventory-empty" class="inventory-empty" hidden>未携带任何物品</p>
+          </aside>
         </div>
 
         <div class="top-right">
@@ -1247,6 +1555,13 @@
               title="选中已载入窗口内自己的全部工兵；快照没有订单状态，无法只选空闲工兵"
             >工兵</button>
             <button id="open-log" type="button">日志</button>
+            <button
+              id="open-resources"
+              type="button"
+              aria-expanded="false"
+              aria-controls="resources-overlay"
+              title="查看世界里的全部资源：清单物品 + 仓库库存 + 单位携带 + 金/木（Esc 关闭）"
+            >资源</button>
             <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
             <button
               id="connection-toggle"
@@ -1258,7 +1573,13 @@
           </div>
 
           <aside id="warehouse-panel" class="warehouse-panel" aria-label="我的仓库库存">
-            <h2>仓库库存</h2>
+            <div class="warehouse-head">
+              <h2>仓库库存</h2>
+              <span class="warehouse-actions">
+                <button id="warehouse-mark-all" type="button" title="标记下面列出的全部物品">标记全部</button>
+                <button id="warehouse-clear-marks" type="button" title="清除全部标记">清除</button>
+              </span>
+            </div>
             <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
             <ul id="warehouse-items" class="warehouse-items" hidden></ul>
           </aside>
@@ -1452,6 +1773,24 @@
           </div>
         </header>
         <pre id="log" class="log" aria-live="polite"></pre>
+      </section>
+    </div>
+
+    <div id="resources-overlay" class="resources-overlay" hidden>
+      <section
+        class="resources-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="resources-title"
+      >
+        <header class="resources-head">
+          <h2 id="resources-title">资源</h2>
+          <button id="resources-close" type="button">关闭</button>
+        </header>
+        <p class="resources-note">
+          清单物品 + 我的仓库库存 + 我的单位携带 + 金/木货币；按名称排序，数量为 0 也保留。
+        </p>
+        <ul id="resources-list" class="resources-list" aria-live="polite"></ul>
       </section>
     </div>
 

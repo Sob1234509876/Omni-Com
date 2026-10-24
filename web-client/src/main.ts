@@ -45,7 +45,9 @@ import {
 import {
   atlasLabel,
   entityDisplayName,
+  itemDisplayLabel,
   loadPluginAtlas,
+  lookupAtlasEntity,
   type Atlas,
 } from "./render/atlas";
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
@@ -73,7 +75,18 @@ import {
   selectionChipList,
   type CommandBarModel,
 } from "./render/commandbar";
-import { warehouseResourceTotals } from "./render/resources";
+import {
+  EMPTY_RESOURCE_MARKS,
+  clearResourceMarks,
+  fullResourceList,
+  inventoryTotals,
+  markAllResources,
+  markedSummaryLabel,
+  toggleResourceMark,
+  warehouseResourceTotals,
+  type ResourceMarks,
+  type WarehouseTotals,
+} from "./render/resources";
 import {
   doubleClickSelection,
   engineerForPlacement,
@@ -97,7 +110,12 @@ import {
   shouldRequestWindow,
   windowCentre,
 } from "./render/stream";
-import { clampTooltipPosition, tooltipContent } from "./render/tooltip";
+import {
+  clampTooltipPosition,
+  tooltipContent,
+  tooltipIdleExpired,
+  tooltipThumbnail,
+} from "./render/tooltip";
 import { upgradeEntry } from "./render/upgrade";
 import {
   demoWorld,
@@ -157,6 +175,7 @@ const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudWindow = required<HTMLSpanElement>("#hud-window");
 const hudPlayer = required<HTMLSpanElement>("#hud-player");
 const hudResources = required<HTMLSpanElement>("#hud-resources");
+const hudMarked = required<HTMLSpanElement>("#hud-marked");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
@@ -168,6 +187,16 @@ const hudBuildingPercent = required<HTMLSpanElement>("#hud-building-percent");
 const hudQueue = required<HTMLDivElement>("#hud-queue");
 const warehouseSummary = required<HTMLParagraphElement>("#warehouse-summary");
 const warehouseItems = required<HTMLUListElement>("#warehouse-items");
+const warehouseMarkAllButton = required<HTMLButtonElement>("#warehouse-mark-all");
+const warehouseClearMarksButton = required<HTMLButtonElement>("#warehouse-clear-marks");
+const inventorySummary = required<HTMLParagraphElement>("#inventory-summary");
+const inventoryItems = required<HTMLUListElement>("#inventory-items");
+const inventoryTotal = required<HTMLParagraphElement>("#inventory-total");
+const inventoryEmpty = required<HTMLParagraphElement>("#inventory-empty");
+const openResourcesButton = required<HTMLButtonElement>("#open-resources");
+const resourcesOverlay = required<HTMLDivElement>("#resources-overlay");
+const resourcesCloseButton = required<HTMLButtonElement>("#resources-close");
+const resourcesList = required<HTMLUListElement>("#resources-list");
 const tooltipElement = required<HTMLDivElement>("#entity-tooltip");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const connectionToggle = required<HTMLButtonElement>("#connection-toggle");
@@ -383,6 +412,10 @@ function clearGameplayIdentity(): void {
   // later world could resolve to a different entity.
   controlGroups = EMPTY_CONTROL_GROUPS;
   selectedGroup = null;
+  // Marks belong to the previous world's item set; a fresh connection starts unmarked and the panel is
+  // rebuilt so no stale checkbox stays ticked.
+  resourceMarks = EMPTY_RESOURCE_MARKS;
+  warehousePanelSignature = "";
   updateHud(true);
   updateGameplayPanel();
 }
@@ -971,6 +1004,14 @@ const renderer = new WorldRenderer(gameCanvas);
 const minimapRenderer = new MinimapRenderer(minimapCanvas);
 
 let atlas: Atlas | null = null;
+/**
+ * Client-side resource marks: the item paths ticked in the warehouse panel.
+ *
+ * This is view state only; no command is sent and the server has no marking concept. Marks survive
+ * snapshots (an item may temporarily read 0) and are cleared on disconnect with the rest of the gameplay
+ * identity, because a new world may not define the same items.
+ */
+let resourceMarks: ResourceMarks = EMPTY_RESOURCE_MARKS;
 /** Every selected entity id, in selection order. A plain click replaces it; Shift+click toggles. */
 let selectedIds: number[] = [];
 /**
@@ -1162,12 +1203,13 @@ function labelledContent(path: string): string {
 }
 
 /**
- * The display name of an item: the manifest name when one exists, otherwise the classic `金` / `木`
- * mapping with the raw path as the final fallback. This is the resolver the warehouse panel and the
- * unit cargo line share, so both rows label the same item the same way.
+ * The display name of an item: the manifest item definition or entity name when one exists, otherwise
+ * the classic `金` / `木` mapping with the raw path as the final fallback. This is the resolver the
+ * warehouse panel, the marked line, the inventory panel, the resource page and the unit cargo line all
+ * share, so no two resource surfaces disagree about an item's label.
  */
 function itemLabel(path: string): string {
-  const fromManifest = entityDisplayName(atlas, path);
+  const fromManifest = itemDisplayLabel(atlas, path);
   return fromManifest === path ? itemDisplayName(path) : fromManifest;
 }
 
@@ -1191,15 +1233,15 @@ function myPlayerRow(): PlayerView | undefined {
 let warehousePanelSignature = "";
 
 /**
- * Rebuilds the read-only warehouse total in the top-right corner.
+ * Rebuilds the warehouse total plus its client-side marking controls in the top-right corner.
  *
  * The pure aggregation lives in `resources.ts`: every own building's `contents` is summed, items are
  * labelled from the manifest first and the classic `金` / `木` table second, and rows are sorted by
- * display name. The panel only reads the snapshot; there is no marked-resource feature because the
- * server has none. With no own warehouse the summary says so instead of showing an empty list.
+ * display name. Each row carries a checkbox that writes the client mark set (no command is sent), and
+ * the header has the "mark all" / "clear" pair. With no own warehouse the summary says so instead of
+ * showing an empty list.
  */
-function updateWarehousePanel(): void {
-  const totals = warehouseResourceTotals(world, myPlayerId, itemLabel);
+function updateWarehousePanel(totals: WarehouseTotals): void {
   const signature =
     `${totals.warehouseCount}|` +
     totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
@@ -1227,18 +1269,216 @@ function updateWarehousePanel(): void {
   const rows = totals.items.map((item) => {
     const row = document.createElement("li");
     row.className = "warehouse-item";
+    row.dataset["path"] = item.path;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset["path"] = item.path;
+    box.checked = resourceMarks.has(item.path);
+    box.title = `标记 ${item.name}：只在客户端记住，用来在 HUD 上显示总量`;
+    box.setAttribute("aria-label", `标记 ${item.name}`);
+    box.addEventListener("change", () => {
+      resourceMarks = toggleResourceMark(resourceMarks, item.path);
+      refreshMarkViews(totals);
+    });
     const name = document.createElement("span");
     name.className = "warehouse-item-name";
     void renderLatexInto(name, item.name);
     const amount = document.createElement("span");
     amount.className = "warehouse-amount";
     amount.textContent = String(item.amount);
-    row.append(name, amount);
+    row.append(box, name, amount);
     return row;
   });
   warehouseItems.replaceChildren(...rows);
   warehouseItems.hidden = false;
+  syncWarehouseMarkBoxes();
 }
+
+/** Paints the current mark set onto the checkbox rows that already exist. */
+function syncWarehouseMarkBoxes(): void {
+  for (const box of warehouseItems.querySelectorAll<HTMLInputElement>("input[data-path]")) {
+    const path = box.dataset["path"];
+    if (path === undefined) {
+      continue;
+    }
+    const marked = resourceMarks.has(path);
+    box.checked = marked;
+    box.closest(".warehouse-item")?.classList.toggle("marked", marked);
+  }
+}
+
+/** The compact marked-resource HUD line, always derived from the same warehouse totals. */
+function updateMarkedHud(totals: WarehouseTotals): void {
+  void renderLatexInto(hudMarked, markedSummaryLabel(resourceMarks, totals, itemLabel));
+  hudMarked.classList.toggle("has-marks", resourceMarks.size > 0);
+}
+
+/** Refreshes every surface that shows the marks after one checkbox / button action. */
+function refreshMarkViews(totals: WarehouseTotals): void {
+  updateMarkedHud(totals);
+  syncWarehouseMarkBoxes();
+  warehouseMarkAllButton.disabled = totals.items.length === 0;
+  warehouseClearMarksButton.disabled = resourceMarks.size === 0;
+  if (!resourcesOverlay.hidden) {
+    updateResourcePage();
+  }
+}
+
+/** Last rendered inventory list; the panel is rebuilt only when its rows or selection count change. */
+let inventorySignature = "";
+
+/**
+ * Rebuilds the dedicated inventory HUD under the top-left chips.
+ *
+ * The selected units' cargo is aggregated by the same `resources.ts` helper as the warehouse total;
+ * one unit shows its own rows, several units show the aggregate plus a count line, and a selection with
+ * no cargo says so explicitly instead of looking empty. Buildings do not contribute cargo.
+ */
+function updateInventoryPanel(): void {
+  const selection = selectedEntities();
+  const totals = inventoryTotals(selection, itemLabel);
+  const signature =
+    `${totals.unitCount}|${totals.carryingCount}|${totals.total}|` +
+    totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
+  if (signature === inventorySignature) {
+    return;
+  }
+  inventorySignature = signature;
+
+  const units = selection.filter((entity) => !isBuildingEntity(entity));
+  if (totals.unitCount === 0) {
+    inventorySummary.textContent = "未选中单位";
+  } else if (totals.unitCount === 1) {
+    const unit = units[0];
+    inventorySummary.textContent =
+      unit === undefined ? "1 个单位" : `e${unit.id} ${contentLabel(unit.kind)}`;
+  } else {
+    inventorySummary.textContent =
+      `${totals.unitCount} 个单位 · ${totals.carryingCount} 个携带货物`;
+  }
+
+  const rows = totals.items.map((item) => {
+    const row = document.createElement("li");
+    row.className = "inventory-item";
+    const name = document.createElement("span");
+    name.className = "inventory-item-name";
+    void renderLatexInto(name, item.name);
+    const amount = document.createElement("span");
+    amount.className = "inventory-amount";
+    amount.textContent = String(item.amount);
+    row.append(name, amount);
+    return row;
+  });
+  inventoryItems.replaceChildren(...rows);
+  inventoryItems.hidden = rows.length === 0;
+  void renderLatexInto(inventoryTotal, `合计：${totals.total}`);
+  inventoryTotal.hidden = rows.length === 0;
+  inventoryEmpty.hidden = !(totals.unitCount > 0 && rows.length === 0);
+}
+
+/** Last rendered full-resource list; the page is rebuilt only when its rows actually change. */
+let resourcePageSignature = "";
+
+/**
+ * Rebuilds the full resource page.
+ *
+ * `fullResourceList` merges the manifest's item definitions, every item in the local player's buildings
+ * and units' cargo, and the two currencies; it de-duplicates by path, sorts by display name and keeps
+ * explicit zeros. The page therefore lists a resource the player does not own instead of hiding it.
+ * The location column names the own buildings that hold an item, which is the "where it sits" answer
+ * for a building-only item.
+ */
+function updateResourcePage(): void {
+  const manifestItems = atlas === null ? [] : [...atlas.names.items.keys()];
+  const rows = fullResourceList(world, myPlayerId, manifestItems, itemLabel);
+  const signature = rows
+    .map(
+      (row) =>
+        `${row.path}:${row.name}:${row.amount}:` +
+        `${row.buildingIds.join(",")}:${row.unitIds.join(",")}`,
+    )
+    .join("|");
+  if (signature === resourcePageSignature) {
+    return;
+  }
+  resourcePageSignature = signature;
+
+  const nodes = rows.map((row) => {
+    const item = document.createElement("li");
+    item.className = "resources-row";
+    item.dataset["path"] = row.path;
+    const name = document.createElement("span");
+    name.className = "resources-name";
+    void renderLatexInto(name, row.name);
+    const amount = document.createElement("span");
+    amount.className = "resources-amount";
+    amount.textContent = String(row.amount);
+    const where = document.createElement("span");
+    where.className = "resources-where";
+    if (row.buildingIds.length > 0) {
+      where.textContent = `位置：建筑 ${row.buildingIds.map((id) => `#${id}`).join(" · ")}`;
+    } else if (row.unitIds.length > 0) {
+      where.textContent = `携带：单位 ${row.unitIds.map((id) => `#${id}`).join(" · ")}`;
+    }
+    item.append(name, amount, where);
+    return item;
+  });
+  resourcesList.replaceChildren(...nodes);
+}
+
+/**
+ * Opens or closes the full resource page.
+ *
+ * The container is transparent and takes no pointer input, so opening the page never dims the canvas;
+ * only the panel itself is darkened. The 资源 button, the panel's 关闭 button and Escape all close it.
+ */
+function setResourcesOpen(open: boolean, moveFocus = true): void {
+  resourcesOverlay.hidden = !open;
+  openResourcesButton.setAttribute("aria-expanded", open ? "true" : "false");
+  openResourcesButton.classList.toggle("armed", open);
+  if (open) {
+    updateResourcePage();
+    resourcesCloseButton.focus({ preventScroll: true });
+  } else if (moveFocus) {
+    openResourcesButton.focus({ preventScroll: true });
+  }
+}
+
+openResourcesButton.addEventListener("click", () => {
+  setResourcesOpen(resourcesOverlay.hidden === true);
+});
+
+resourcesCloseButton.addEventListener("click", () => {
+  setResourcesOpen(false);
+});
+
+// Capture phase so Escape closes the resource page before the canvas turns it into "cancel"; the log
+// overlay keeps its own priority, so an Escape with the log open only closes that overlay.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Escape" && logOverlay.hidden && !resourcesOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setResourcesOpen(false);
+    }
+  },
+  true,
+);
+
+warehouseMarkAllButton.addEventListener("click", () => {
+  const totals = warehouseResourceTotals(world, myPlayerId, itemLabel);
+  resourceMarks = markAllResources(
+    resourceMarks,
+    totals.items.map((item) => item.path),
+  );
+  refreshMarkViews(totals);
+});
+
+warehouseClearMarksButton.addEventListener("click", () => {
+  resourceMarks = clearResourceMarks();
+  refreshMarkViews(warehouseResourceTotals(world, myPlayerId, itemLabel));
+});
 
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
@@ -1336,7 +1576,17 @@ function updateHud(force = false, now = performance.now()): void {
   renderQueueList(selectedBuilding);
   // The context zone has a panel background only while it has a TRAIN/BUILD section or queue rows.
   updateCommandContextVisibility();
-  updateWarehousePanel();
+  // One warehouse aggregation per HUD tick feeds the item rows, the marked line and the resource page,
+  // so those surfaces cannot disagree about an amount.
+  const warehouseTotals = warehouseResourceTotals(world, myPlayerId, itemLabel);
+  updateWarehousePanel(warehouseTotals);
+  updateMarkedHud(warehouseTotals);
+  warehouseMarkAllButton.disabled = warehouseTotals.items.length === 0;
+  warehouseClearMarksButton.disabled = resourceMarks.size === 0;
+  updateInventoryPanel();
+  if (!resourcesOverlay.hidden) {
+    updateResourcePage();
+  }
   // While a BUILD is armed the status line belongs to the placement ghost: it names the reason for the
   // tile under the cursor (可建造 / 地形不可建 / ...). Without a hovered tile it restores the reminder.
   updatePlacementStatus();
@@ -2158,6 +2408,13 @@ const input = new InputController(gameCanvas, camera, inputHooks);
 /** Last rendered tooltip content; a moving cursor only repositions the same DOM. */
 let tooltipSignature = "";
 
+/** The entity the current tooltip describes, for the no-flicker dwell rule. */
+let tooltipEntityId: number | null = null;
+/** `performance.now()` when the pointer entered the current tooltip entity. */
+let tooltipShownAt = 0;
+/** The entity whose tooltip has suppressed itself; reset by moving to another entity. */
+let tooltipSuppressedEntityId: number | null = null;
+
 /** Places the visible tooltip at its clamped position beside the cursor. */
 function positionTooltip(): void {
   const box = tooltipElement.getBoundingClientRect();
@@ -2171,12 +2428,96 @@ function positionTooltip(): void {
   tooltipElement.style.top = `${position.y}px`;
 }
 
-/** Hides the tooltip and forgets its content, so the next show rebuilds the text. */
-function hideTooltip(): void {
+// Async content can still change the box after `renderLatexInto` resolves: KaTeX swaps its nodes and
+// the web fonts load afterwards. Observing the box is the one hook that re-measures whenever that
+// happens, so the clamped position never goes stale while the tooltip is visible.
+const tooltipResizeObserver = new ResizeObserver(() => {
+  if (!tooltipElement.hidden) {
+    positionTooltip();
+  }
+});
+tooltipResizeObserver.observe(tooltipElement);
+
+/**
+ * Hides the tooltip and forgets its content, so the next show rebuilds the text.
+ *
+ * `resetDwell` is false only for the self-suppression path: the same unchanged entity must stay
+ * suppressed instead of reappearing on the next animation frame, which is the no-flicker rule. Every
+ * other hide (pointer left the entity, marquee, placement, hidden view) resets the dwell timer.
+ */
+function hideTooltip(resetDwell = true): void {
   tooltipSignature = "";
   if (!tooltipElement.hidden) {
     tooltipElement.hidden = true;
   }
+  if (resetDwell) {
+    tooltipEntityId = null;
+    tooltipSuppressedEntityId = null;
+  }
+}
+
+/**
+ * Draws the fixed 48×48 thumbnail for one entity.
+ *
+ * The atlas frame comes from the same `lookupAtlasEntity` the world renderer uses, so the small square
+ * shows the plant the map shows; the first animation frame is chosen deliberately, because a static
+ * square should not change while the tooltip stays open. Without a sprite, `tooltipThumbnail` answers a
+ * neutral grey placeholder with the kind's first character, painted on the same square. The canvas is
+ * `aria-hidden` and pointer-transparent; its CSS size never changes, so the tooltip does not reflow
+ * when its text lines grow or shrink.
+ */
+function drawTooltipThumbnail(entity: EntityView): HTMLCanvasElement {
+  const entry = atlas === null ? undefined : lookupAtlasEntity(atlas, entity.kind);
+  const thumbnail = tooltipThumbnail(entry !== undefined, entity.kind);
+  const size = thumbnail.size;
+  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  const canvas = document.createElement("canvas");
+  canvas.className = "entity-tooltip-thumb";
+  canvas.width = Math.round(size * pixelRatio);
+  canvas.height = Math.round(size * pixelRatio);
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  canvas.setAttribute("aria-hidden", "true");
+  const context = canvas.getContext("2d");
+  if (context === null) {
+    return canvas;
+  }
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.clearRect(0, 0, size, size);
+  if (thumbnail.kind === "atlas" && entry !== undefined) {
+    const frame = entry.sprite.frames[0];
+    if (frame !== undefined) {
+      const inset = 2;
+      const scale = Math.min(
+        (size - inset * 2) / frame.width,
+        (size - inset * 2) / frame.height,
+      );
+      const width = frame.width * scale;
+      const height = frame.height * scale;
+      context.imageSmoothingEnabled = true;
+      context.drawImage(
+        entry.source.image,
+        frame.x,
+        frame.y,
+        frame.width,
+        frame.height,
+        (size - width) / 2,
+        (size - height) / 2,
+        width,
+        height,
+      );
+    }
+    return canvas;
+  }
+  context.fillStyle = "#2a2a2a";
+  context.fillRect(0, 0, size, size);
+  context.fillStyle = "#e6e6e6";
+  context.font =
+    `600 ${Math.round(size * 0.42)}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(thumbnail.kind === "placeholder" ? thumbnail.label : "?", size / 2, size / 2 + 1);
+  return canvas;
 }
 
 /**
@@ -2184,12 +2525,16 @@ function hideTooltip(): void {
  *
  * It is suppressed while the game view is hidden, while a BUILD is armed and while a marquee drag is
  * drawing, then it names the entity, its owner tag and health and appends a building's footprint and
- * queue summary. The box is measured after its text is set and clamped to the browser window by
- * `clampTooltipPosition`, flipping to the other side of the cursor where necessary.
+ * queue summary. A fixed thumbnail on the left shows the entity's atlas frame (or the grey placeholder
+ * with the kind's first character when there is no atlas). The box is measured after its text is set and
+ * clamped to the browser window by `clampTooltipPosition`, flipping to the other side of the cursor
+ * where necessary.
  *
- * Label and detail lines may carry `$...$` like every other server/manifest string. They are painted
- * as their source immediately and upgraded to KaTeX when the lazy chunk resolves; the box is then
- * measured and placed a second time, because a formula is not the same width as its source.
+ * The same entity under the cursor for longer than `TOOLTIP_IDLE_HIDE_MS` suppresses the box so it stops
+ * covering the map; moving to another entity re-arms it, and jitter inside one entity never makes it
+ * flicker back. Label and detail lines may carry `$...$` like every other server/manifest string: they
+ * are painted as their source immediately and upgraded to KaTeX when the lazy chunk resolves, after
+ * which the box is measured and placed again, because a formula is not the same width as its source.
  */
 function updateTooltip(): void {
   const entity = entityById(world, input.hoverEntityId);
@@ -2203,17 +2548,40 @@ function updateTooltip(): void {
     return;
   }
 
+  const now = performance.now();
+  if (tooltipEntityId !== entity.id) {
+    tooltipEntityId = entity.id;
+    tooltipShownAt = now;
+    tooltipSuppressedEntityId = null;
+  }
+  if (tooltipSuppressedEntityId === entity.id) {
+    hideTooltip(false);
+    return;
+  }
+  if (tooltipIdleExpired(tooltipShownAt, now)) {
+    tooltipSuppressedEntityId = entity.id;
+    hideTooltip(false);
+    return;
+  }
+
   const content = tooltipContent(
     contentLabel(entity.kind),
     entity,
     ownershipOf(entity.playerId, myPlayerId),
     ownershipTagFor(entity.playerId, myPlayerId),
   );
+  const hasSprite = atlas !== null && lookupAtlasEntity(atlas, entity.kind) !== undefined;
+  const thumbnail = tooltipThumbnail(hasSprite, entity.kind);
   const signature =
     `${entity.id}\u0000${myPlayerId ?? "none"}\u0000${content.name}\u0000` +
-    `${content.ownerTag}\u0000${content.lines.join("\u0001")}`;
+    `${content.ownerTag}\u0000${thumbnail.kind}\u0000` +
+    `${thumbnail.kind === "placeholder" ? thumbnail.label : ""}\u0000` +
+    `${content.lines.join("\u0001")}`;
   if (signature !== tooltipSignature) {
     tooltipSignature = signature;
+    const thumb = drawTooltipThumbnail(entity);
+    const body = document.createElement("div");
+    body.className = "entity-tooltip-body";
     const name = document.createElement("div");
     name.className = "entity-tooltip-name";
     const owner = document.createElement("div");
@@ -2223,7 +2591,8 @@ function updateTooltip(): void {
       row.className = "entity-tooltip-line";
       return row;
     });
-    tooltipElement.replaceChildren(name, owner, ...rows);
+    body.append(name, owner, ...rows);
+    tooltipElement.replaceChildren(thumb, body);
 
     const renders: Promise<void>[] = [
       renderLatexInto(name, content.name),
@@ -2233,7 +2602,7 @@ function updateTooltip(): void {
         return row === undefined ? Promise.resolve() : renderLatexInto(row, line);
       }),
     ];
-    // Re-place once the formulas have replaced their source text; a newer hover invalidates this.
+    // Re-measure once the formulas have replaced their source text; a newer hover invalidates this.
     void Promise.all(renders).then(() => {
       if (tooltipSignature === signature && !tooltipElement.hidden) {
         positionTooltip();
@@ -2587,6 +2956,7 @@ function setViewVisible(visible: boolean): void {
   toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
   if (viewHidden) {
     hideTooltip();
+    setResourcesOpen(false, false);
     stopGameLoop();
     stopWorldPolling();
   } else {

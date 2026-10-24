@@ -27,7 +27,16 @@
  * the winning plugin's `tilePixels`, which keeps a 16, 32 and 64 pixel plugin aligned on the same world.
  */
 
-import type { Atlas, AtlasEntity, AtlasSource, AtlasTile, EntitySprite, SpriteRect } from "./atlas";
+import {
+  lookupAtlasEntity,
+  lookupAtlasTile,
+  type Atlas,
+  type AtlasEntity,
+  type AtlasSource,
+  type AtlasTile,
+  type EntitySprite,
+  type SpriteRect,
+} from "./atlas";
 import type { Camera, TileCoord } from "./camera";
 import type { ScreenRect } from "./marquee";
 import {
@@ -58,7 +67,6 @@ import {
   OWN_UNIT_OUTLINE_COLOR,
   entityInWindow,
   isBuildingEntityKind,
-  kindName,
   ownerBadge,
   ownershipColor,
   terrainAt,
@@ -116,11 +124,11 @@ interface PreparedEntity {
 }
 
 function lookupTile(atlas: Atlas, terrain: string): AtlasTile | undefined {
-  return atlas.tiles.get(terrain) ?? atlas.tiles.get(kindName(terrain));
+  return lookupAtlasTile(atlas, terrain);
 }
 
 function lookupEntity(atlas: Atlas, kind: string): AtlasEntity | undefined {
-  return atlas.entities.get(kind) ?? atlas.entities.get(kindName(kind));
+  return lookupAtlasEntity(atlas, kind);
 }
 
 /** Picks the current frame, honouring an optional per-entity frame-index sequence. */
