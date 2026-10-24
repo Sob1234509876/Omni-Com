@@ -7,7 +7,7 @@ import java.util.Optional;
  * the same honesty: a constant is a <strong>name with a declared position</strong>, not a notation, an
  * {@code Ordinal}, a {@code Natural} or a computed value.
  *
- * <p>The ladder of {@code documents/Human/Ordinals.md} needs six names up to the end of stage two:
+ * <p>The ladder of {@code documents/Human/Ordinals.md} needs seven names up to the end of stage three:
  *
  * <ul>
  *   <li>{@link #PSI} - the OCF {@code psi}. An OCF is a function, not an ordinal value. The register keeps
@@ -36,23 +36,30 @@ import java.util.Optional;
  *       can be written and {@code TNRBMS(X) = X} can be the fixed-point equation) but not produced by
  *       the step at any smaller argument. See {@link LadderArgument} for which names are shared between
  *       the argument side and the value side.</li>
+ *   <li>{@link #PSI_I_I} - {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, the top of segment 4 and
+ *       the fixed point the owner states for the {@code omega_alpha} rungs. It is a shared boundary name:
+ *       accepted as an argument (so {@code omegaAlpha(psi_I(I)) = psi_I(I)} is the fixed-point equation)
+ *       and printed as {@code psi_I(I)}, but not produced by the step at any smaller argument. The owner
+ *       writes the same name as {@code psi_{double-struck I}(double-struck I)}; the register uses the
+ *       plain text {@code psi_I(I)}.</li>
  * </ul>
  *
  * <p><b>The declared position.</b> The ladder's value order is
  * {@code psi < every BMS value < SHO < every segment-2 value < LRPO < omega_1^CK < every NRBMS value <
- * lim(NRBMS) < every TNRBMS value < X}. The integers below are the tiers of that order and are
- * deliberately not ordinal values: {@link #PSI} has tier 0, {@link #SHO} tier 2, {@link #LRPO} tier 4,
- * {@link #OMEGA_ONE_CK} tier 5, {@link #LIM_NRBMS} tier 7 and {@link #TNRBMS_FIXPOINT} tier 9. Tiers 1, 3,
- * 6 and 8 are left free for {@link LadderSegment#SEGMENT_ONE} (all BMS values),
- * {@link LadderSegment#SEGMENT_TWO} (all {@code f(alpha)} values), the NRBMS values and the TNRBMS values,
- * so a placeholder can never compare equal to a produced value by accident. The enum order is kept equal
- * to the tier order by a static initialiser, and {@link LadderOrdinal} uses these tiers in its
- * cross-layer comparison.
+ * lim(NRBMS) < every TNRBMS value < X < every omega_alpha value < psi_I(I)}. The integers below are the
+ * tiers of that order and are deliberately not ordinal values: {@link #PSI} has tier 0, {@link #SHO}
+ * tier 2, {@link #LRPO} tier 4, {@link #OMEGA_ONE_CK} tier 5, {@link #LIM_NRBMS} tier 7,
+ * {@link #TNRBMS_FIXPOINT} tier 9 and {@link #PSI_I_I} tier 11. Tiers 1, 3, 6, 8 and 10 are left free for
+ * {@link LadderSegment#SEGMENT_ONE} (all BMS values), {@link LadderSegment#SEGMENT_TWO} (all
+ * {@code f(alpha)} values), the NRBMS values, the TNRBMS values and the {@code omega_alpha} values, so a
+ * placeholder can never compare equal to a produced value by accident. The enum order is kept equal to
+ * the tier order by a static initialiser, and {@link LadderOrdinal} uses these tiers in its cross-layer
+ * comparison.
  *
  * <p><b>What is not here.</b> There is no {@code OMEGA_SSO} / {@code GHO} / {@code SYO} / {@code MHO} in
  * this enum. Those names belong to {@link AbstractOrdinal}'s older register above BMS and are not rungs of
  * the ladder; they are left where they are, and the ladder only reuses {@link AbstractOrdinal#SHO} at its
- * lower end. There is also no {@code omega_alpha} rung and no cardinal: those are stages three and four.
+ * lower end. There is also no cardinal name: the cardinal register is stage four.
  *
  * <p><b>Axioms, not proofs.</b> Nothing here is a theorem. The positions are the declared order the
  * implementation needs; the reasons for the boundary positions are the owner's statements
@@ -119,7 +126,17 @@ public enum LadderPlaceholder {
     TNRBMS_FIXPOINT(9, "X",
             "X = min{alpha | alpha = TNRBMS(0)(1^alpha)}, the least fixed point of the TNRBMS step and the"
                     + " top of segment 3; accepted as the boundary argument, so f(X) = LRPO and"
-                    + " TNRBMS(X) = X, but not produced at any smaller argument");
+                    + " TNRBMS(X) = X, but not produced at any smaller argument"),
+
+    /**
+     * The fixed point {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, the top of segment 4. A boundary
+     * name, accepted as an argument but not produced by the step at any smaller argument.
+     */
+    PSI_I_I(11, "ψ_𝕀(𝕀)",
+            "psi_I(I) = min{alpha | alpha = omega_alpha}, the least fixed point of the omega_alpha step and"
+                    + " the top of segment 4; accepted as the boundary argument, so omegaAlpha(psi_I(I)) ="
+                    + " psi_I(I), but not produced at any smaller argument; the owner writes it with the"
+                    + " double-struck I, the register with plain text");
 
     private final int tier;
     private final String text;
@@ -144,8 +161,8 @@ public enum LadderPlaceholder {
 
     /**
      * The tier of this name in the ladder's value order. The tiers are not ordinal values: they are the
-     * cross-layer keys used by {@link LadderOrdinal}, with tiers 1, 3, 6 and 8 reserved for segment 1, the
-     * segment-2 values, the NRBMS values and the TNRBMS values.
+     * cross-layer keys used by {@link LadderOrdinal}, with tiers 1, 3, 6, 8 and 10 reserved for segment 1,
+     * the segment-2 values, the NRBMS values, the TNRBMS values and the {@code omega_alpha} values.
      */
     public int tier() {
         return tier;
@@ -166,7 +183,8 @@ public enum LadderPlaceholder {
 
     /**
      * The text used by {@link LadderOrdinal#toString()}. It is deliberately a name, not a numerical
-     * rendering: {@code ψ}, {@code SHO}, {@code LRPO}, {@code ω₁^CK}, {@code lim(NRBMS)} and {@code X}.
+     * rendering: {@code ψ}, {@code SHO}, {@code LRPO}, {@code ω₁^CK}, {@code lim(NRBMS)}, {@code X} and
+     * {@code ψ_𝕀(𝕀)}.
      */
     public String text() {
         return text;

@@ -16,11 +16,11 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (506 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (532 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
-| Ordinal ladder | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one and two of the 21-rung ladder: the BMS segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to the fixed point `X`, the argument/value separation and the named boundaries |
+| Ordinal ladder | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α` segment up to `ψ_𝕀(𝕀)`, the argument/value separation and the named boundaries |
 
 ## What it gives you
 
@@ -302,10 +302,10 @@ The Chinese guide has the full table, the sources (the Chinese Googology Wiki's 
 `SHO`, `ΩSSO` and `GHO` pages), the declared-unknown pair, the API and the common pitfalls.
 
 
-## Ordinal ladder (stages one and two)
+## Ordinal ladder (stages one to three)
 
-`documents/Human/Ordinals.md` is a 21-rung ladder from `0` to `Ω_Absolute`. Stages one and two implement
-the first three segments and the abstract register the later stages reuse. `LadderOrdinal` holds both the
+`documents/Human/Ordinals.md` is a 21-rung ladder from `0` to `Ω_Absolute`. Stages one to three implement
+the first four segments and the abstract register the last stage reuses. `LadderOrdinal` holds both the
 boundaries and every value; `LadderArgument` is the separate subscript register of the step functions, so a
 value produced by a step is never accepted as an argument. The comparison is a declared total order that
 reports which segment it compared within:
@@ -315,7 +315,8 @@ reports which segment it compared within:
 | segment 1, `0 ~ SHO` | a delegated `BmsOrdinal` | `0`, `BMS(0)(1)`, `BMS(0)(1)(2)`, … |
 | segment 2, `SHO ~ LRPO` | `f(α) = TTBMS(0)(1^α)`, abstract | `TBMS(0)(1^α)` if `α < ω₁^CK`, otherwise `TTBMS(0)(1^α)` |
 | segment 3, `ω₁^CK ~ X` | an NRBMS expression below `lim(NRBMS)`, then `g(α) = TNRBMS(0)(1^α)` | `NRBMS(…)` below the switch, `TNRBMS(0)(1^α)` above it |
-| named boundaries | `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)`, `X` | the same names |
+| segment 4, `X ~ ψ_𝕀(𝕀)` | `h(α) = ω_α`, abstract | `ω_α`, with the subscript an argument |
+| named boundaries | `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)`, `X`, `ψ_𝕀(𝕀)` | the same names |
 
 ```java
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
@@ -354,24 +355,47 @@ LadderOrdinal.tnrbms(LadderArgument.omega()) == LadderOrdinal.limNrbms(); // tru
 LadderOrdinal.tnrbms(LadderArgument.tnrbmsFixpoint()); // X, the fixed point g(X) = X
 LadderOrdinal.f(LadderArgument.tnrbmsFixpoint());      // LRPO, i.e. the owner's f(X)
 
+// Stage three: the ω_α segment above X.
+LadderOrdinal h = LadderOrdinal.omegaAlpha(LadderArgument.sho());
+h.toString();                                       // "ω_SHO"
+h.segment();                                        // LadderSegment.SEGMENT_FOUR
+LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).toString(); // "ω_X"
+LadderOrdinal.psiII().toString();                   // "ψ_𝕀(𝕀)"
+LadderOrdinal.omegaAlpha(LadderArgument.psiII()) == LadderOrdinal.psiII(); // true: h(Y) = Y
+// LadderOrdinal.omegaAlpha(h);                     // does not compile: a value is never a subscript
+
 LadderOrdinal.ofArgument(omegaArg);                 // one-way embedding into the value order
 LadderPlaceholder.SHO.abstractOrdinal().orElseThrow(); // AbstractOrdinal.SHO: the ladder reuses it
 // LadderOrdinal.f(fValue);                          // does not compile: a value is never an argument
 ```
 
 The declared order is `ψ < every BMS value < SHO ≤ every materialised f(α) < LRPO < ω₁^CK < every NRBMS
-value < lim(NRBMS) < every TNRBMS value < X`. Segment 1 is below segment 2, both are below `ω₁^CK`, and the
-NRBMS/TNRBMS segment is above it; `LRPO < ω₁^CK` is the owner's statement. `compareWithin` returns a
-`LadderComparison` carrying the two `LadderSegment`s, so a cross-segment comparison is never mistaken for a
-same-segment one; `compareMagnitude` is always a proof, because this register has no declared-unknown pair
-and no lean.
+value < lim(NRBMS) < every TNRBMS value < X < every ω_α value < ψ_𝕀(𝕀)`. Segment 1 is below segment 2,
+both are below `ω₁^CK`, the NRBMS/TNRBMS segment is above it, and the `ω_α` segment is above `X`;
+`LRPO < ω₁^CK` is the owner's statement. `compareWithin` returns a `LadderComparison` carrying the two
+`LadderSegment`s, so a cross-segment comparison is never mistaken for a same-segment one;
+`compareMagnitude` is always a proof, because this register has no declared-unknown pair and no lean.
+
+**Stage three and the notation switch.** The `ω_α` segment is the abstract step `h(α) = ω_α`; it stores its
+subscript and compares by it, exactly like `f` and `g`. The switch from `TNRBMS(0)(1^α)` to `ω_α` is
+implemented at `X`: every proper TNRBMS value is below `X`, every `ω_α` value above it. That placement is
+the documented default of `OPEN QUESTIONS.md` Q7, not a settled reading of the owner's text (the
+alternatives are `lim(NRBMS)` and a further fixed point). The top is the shared boundary name
+`ψ_𝕀(𝕀) = min{α | α = ω_α}`, with `h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)` and `h(a) ≠ a` for every smaller argument.
+
+**An `ω_α` value is not a subscript.** The stage-three decision is the same separation as stage two: the
+step accepts a `LadderArgument` only. A subscript may be a previous-stage argument (`BMS` at or above `ω`,
+`NRBMS`, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or the new fixed-point boundary `ψ_𝕀(𝕀)`, but not an `ω_α`
+value. This is enough for every rung the owner lists and excludes only iterated subscripts such as
+`ω_{ω_X}`. The smallest relaxation — a dedicated stage-four subscript type accepted only by the `ω` step —
+is described in the guide and Q7 and deliberately not implemented.
 
 **The argument/value separation.** `LadderOrdinal` is the value side; `LadderArgument` is the argument
 side. The step functions take a `LadderArgument` only, there is no conversion from a value to an argument,
 and `LadderOrdinal.ofArgument` embeds an argument into the value order without a way back. `f(f(ω₁^CK))`,
-`TNRBMS(TNRBMS(…))` and every similar term are therefore compile errors, not run-time mistakes. The four
-boundary names `SHO`, `ω₁^CK`, `lim(NRBMS)` and `X` are deliberately shared by both sides; every proper
-step value is never an argument.
+`TNRBMS(TNRBMS(…))`, `omegaAlpha(omegaAlpha(…))` and every similar term are therefore compile errors, not
+run-time mistakes. The five boundary names `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X` and `ψ_𝕀(𝕀)` are deliberately
+shared by both sides; every proper step value is never an argument.
 
 **What is assumed.** The owner's two inequalities are taken as **assumptions**, re-stated on the separated
 argument side:
@@ -390,18 +414,18 @@ of shape**, not a proof of the owner's arithmetic: the ordinal denoted by `f(ω�
 `ω₁^CK`, so the owner's literal A1 ("for any ordinal `α < ω₁^CK`") still contains it. The separation forces
 A1 (and, for the same reason, A2) to be **restricted to the argument side**; if the owner keeps the literal
 unrestricted quantifier, the contradiction survives for the denotation of `f(ω₁^CK)`. The guide records this
-as the residual, together with the one forced boundary exception: `X` is the value-side limit of the TNRBMS
-step but is admitted as an argument name so that the owner's `f(X) = LRPO` and `TNRBMS(X) = X` can be
-written. `SHO` is the lower boundary and a valid argument (`f(SHO)` is the first `f` value above it);
-`LRPO` and `ψ` are value names, not arguments of `f`.
+as the residual, together with the two forced boundary exceptions: `X` is the value-side limit of the
+TNRBMS step and `ψ_𝕀(𝕀)` the value-side limit of the `ω_α` step, but both are admitted as argument names so
+that `f(X) = LRPO`, `TNRBMS(X) = X` and `omegaAlpha(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)` can be written. `SHO` is the lower
+boundary and a valid argument (`f(SHO)` is the first `f` value above it); `LRPO` and `ψ` are value names,
+not arguments of `f`.
 
 **What is deliberately not here.** TBMS, TTBMS and TNRBMS are **not** implemented as matrix systems; the
-NRBMS segment reuses `NonRecursiveBms` and its expansion rules, and the TNRBMS step is abstract in the same
-sense as `f`. The `ω_α` rungs and the cardinal register are not started. `LadderOrdinal` is not an
+NRBMS segment reuses `NonRecursiveBms` and its expansion rules, and the TNRBMS and `ω_α` steps are abstract
+in the same sense as `f`. The cardinal register (stage four) is not started. `LadderOrdinal` is not an
 `Ordinal`: it has no successor, addition, `ω^` or fundamental sequence, and it is not plugged into
-`OrdinalNotation`. Its `f` and `g` are abstract strictly increasing functions, not computations. See
-[`help/ordinal-ladder.md`](help/ordinal-ladder.md) for the boundary results and the roadmap of stages three
-and four.
+`OrdinalNotation`. Its `f`, `g` and `h` are abstract strictly increasing functions, not computations. See
+[`help/ordinal-ladder.md`](help/ordinal-ladder.md) for the boundary results and the roadmap of stage four.
 
 
 ## What it deliberately does not do
@@ -423,13 +447,14 @@ and four.
   them a declared order; it is not a notation, has no fundamental sequence, arithmetic or value, and its
   "greater than every BMS value" comparison is an explicit axiom. It does not say how far above BMS a name
   lies, and the below-limit reference nodes are deliberately not part of it.
-- **A TBMS/TTBMS/TNRBMS matrix system, or the later rungs of the ladder.** `LadderOrdinal` implements
-  stages one and two of `Ordinals.md`: segment 1 delegates to BMS, segment 2 is the **abstract** function
-  `f(α) = TTBMS(0)(1^α)`, segment 3 is the NRBMS/TNRBMS segment up to the fixed point `X`, and the named
-  layer is `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)` and `X`. It does not build a TBMS, TTBMS or TNRBMS
-  matrix, does not compute an OCF, does not prove the two owner assumptions (A1 and A2), and does not
-  implement the `ω_α` rungs or the cardinal register. Its `f` and `g` values compare by argument, which is
-  the order-isomorphism the owner asked for, not a matrix expansion.
+- **A TBMS/TTBMS/TNRBMS matrix system, or the cardinal register.** `LadderOrdinal` implements stages one to
+  three of `Ordinals.md`: segment 1 delegates to BMS, segment 2 is the **abstract** function
+  `f(α) = TTBMS(0)(1^α)`, segment 3 is the NRBMS/TNRBMS segment up to the fixed point `X`, segment 4 is
+  the **abstract** `ω_α` segment up to `ψ_𝕀(𝕀)`, and the named layer is `ψ`, `SHO`, `LRPO`, `ω₁^CK`,
+  `lim(NRBMS)`, `X` and `ψ_𝕀(𝕀)`. It does not build a TBMS, TTBMS or TNRBMS matrix, does not compute an
+  OCF or a cardinal, does not prove the two owner assumptions (A1 and A2), and does not implement the
+  cardinal register. Its `f`, `g` and `h` values compare by argument, which is the order-isomorphism the
+  owner asked for, not a matrix expansion.
 - **BMS as a full `Ordinal`, and a proof of its strength.** The BMS layer expands a matrix, but it is not
   an `Ordinal`: it has no addition, no multiplication by a finite coefficient and no `ω^`, and it is not
   plugged into `OrdinalNotation`. The expansion's consistency (`S > S[n]`, strictly increasing sequences)
@@ -474,20 +499,20 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveExpansion.java  the infinite-column description of the non-recursive expansion
     bms/package-info.java         BMS package documentation
     abstractordinal/AbstractOrdinal.java      the register of names above the BMS limit, with declared ranks
-    abstractordinal/LadderOrdinal.java        the value side: BMS, f(alpha)=TTBMS(0)(1^alpha), NRBMS/TNRBMS, the named boundaries
-    abstractordinal/LadderArgument.java       the argument side: BMS, NRBMS and the shared boundary names; never built from a value
-    abstractordinal/LadderPlaceholder.java    psi, SHO, LRPO, omega_1^CK, lim(NRBMS) and X, with declared tiers
-    abstractordinal/LadderSegment.java        segment 1 / segment 2 / segment 3 / named abstract layer
+    abstractordinal/LadderOrdinal.java        the value side: BMS, f(alpha), NRBMS/TNRBMS, omega_alpha, the named boundaries
+    abstractordinal/LadderArgument.java       the argument side: BMS, NRBMS and the five shared boundary names; never built from a value
+    abstractordinal/LadderPlaceholder.java    psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X and psi_I(I), with declared tiers
+    abstractordinal/LadderSegment.java        segment 1 / segment 2 / segment 3 / segment 4 / named abstract layer
     abstractordinal/LadderComparison.java     a comparison plus the segments it took place in
     abstractordinal/package-info.java         abstract-ordinal package documentation
 help/ordinals.md                  the Chinese guide to the ordinal layer
 help/bms.md                       the Chinese guide to the BMS layer
 help/abstract-ordinals.md         the Chinese guide to the register above BMS
-help/ordinal-ladder.md            the Chinese guide to stages one and two of the ordinal ladder
-src/selfcheck/java/.../check/GoogologyCheck.java    the 506 check self check program
+help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
+src/selfcheck/java/.../check/GoogologyCheck.java    the 532 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
-src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-28)
+src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)
 ```
 
 ## Related
@@ -498,9 +523,10 @@ src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections
   rules and the non-recursive variant, in Chinese.
 - [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the
   BMS limit, the declared-unknown pair and the "above BMS" axiom, in Chinese.
-- [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one and two of the 21-rung ladder: the BMS
-  segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the
-  argument/value separation, the boundary result and the roadmap for stages three and four, in Chinese.
+- [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS
+  segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α`
+  segment up to `ψ_𝕀(𝕀)`, the argument/value separation, the boundary result and the roadmap for stage
+  four, in Chinese.
 - Used by the RTS engine for item amounts, capacities, health and damage; see
   [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md) and, in Chinese, the engine's
   [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md).

@@ -13,11 +13,11 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（506 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（532 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
-| 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一与阶段二：BMS 段、抽象 `f(α) = TTBMS(0)(1^α)` 段、直到不动点 `X` 的 NRBMS/TNRBMS 段、实参/值分离与具名边界 |
+| 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、抽象 `f(α) = TTBMS(0)(1^α)` 段、直到 `X` 的 NRBMS/TNRBMS 段、直到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、实参/值分离与具名边界 |
 
 ## 它提供什么
 
@@ -224,9 +224,9 @@ AbstractOrdinal.SHO.compareWithBms(tsso);                    // ComparisonResult
 API 和常见坑。
 
 
-## 序数阶梯（阶段一与阶段二）
+## 序数阶梯（阶段一至阶段三）
 
-`documents/Human/Ordinals.md` 是从 `0` 到 `Ω_Absolute` 的 21 级阶梯。阶段一与阶段二实现前三段和后面阶段要
+`documents/Human/Ordinals.md` 是从 `0` 到 `Ω_Absolute` 的 21 级阶梯。阶段一至阶段三实现前四段和最后阶段要
 复用的抽象层。`LadderOrdinal` 装下所有边界与值；`LadderArgument` 是独立的实参/下标寄存器，步进函数只接受
 实参，所以由步进产生的值永远不会被当成实参。比较是带段信息的声明全序：
 
@@ -235,7 +235,8 @@ API 和常见坑。
 | 段一，`0 ~ SHO` | 委托的 `BmsOrdinal` | `0`、`BMS(0)(1)`、`BMS(0)(1)(2)`…… |
 | 段二，`SHO ~ LRPO` | 抽象函数 `f(α) = TTBMS(0)(1^α)` | `α < ω₁^CK` 时 `TBMS(0)(1^α)`，否则 `TTBMS(0)(1^α)` |
 | 段三，`ω₁^CK ~ X` | `lim(NRBMS)` 以下是 NRBMS 表达式，以上是 `g(α) = TNRBMS(0)(1^α)` | 切换点以下 `NRBMS(…)`，以上 `TNRBMS(0)(1^α)` |
-| 具名边界 | `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X` | 同名文本 |
+| 段四，`X ~ ψ_𝕀(𝕀)` | 抽象函数 `h(α) = ω_α` | `ω_α`，下标是实参 |
+| 具名边界 | `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)` | 同名文本 |
 
 ```java
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
@@ -274,20 +275,41 @@ LadderOrdinal.tnrbms(LadderArgument.omega()) == LadderOrdinal.limNrbms(); // tru
 LadderOrdinal.tnrbms(LadderArgument.tnrbmsFixpoint()); // X，不动点 g(X) = X
 LadderOrdinal.f(LadderArgument.tnrbmsFixpoint());      // LRPO，即所有者的 f(X)
 
+// 阶段三：X 之上的 ω_α 段
+LadderOrdinal h = LadderOrdinal.omegaAlpha(LadderArgument.sho());
+h.toString();                                       // "ω_SHO"
+h.segment();                                        // LadderSegment.SEGMENT_FOUR
+LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).toString(); // "ω_X"
+LadderOrdinal.psiII().toString();                   // "ψ_𝕀(𝕀)"
+LadderOrdinal.omegaAlpha(LadderArgument.psiII()) == LadderOrdinal.psiII(); // true：h(Y) = Y
+// LadderOrdinal.omegaAlpha(h);                     // 编译不过：值永远不是下标
+
 LadderOrdinal.ofArgument(omegaArg);                 // 单向嵌入值序，没有反向转换
 LadderPlaceholder.SHO.abstractOrdinal().orElseThrow(); // AbstractOrdinal.SHO：阶梯复用它
 // LadderOrdinal.f(fValue);                          // 编译不过：值永远不是实参
 ```
 
 声明顺序是 `ψ < 每个 BMS 值 < SHO ≤ 每个物化的 f(α) < LRPO < ω₁^CK < 每个 NRBMS 值 < lim(NRBMS) <
-每个 TNRBMS 值 < X`。段一在段二之下，两者都在 `ω₁^CK` 之下，NRBMS/TNRBMS 段在其上；`LRPO < ω₁^CK` 是
-所有者的说明。`compareWithin` 返回带两个 `LadderSegment` 的 `LadderComparison`，跨段比较不会被误当成
-同段比较；`compareMagnitude` 永远是证明，因为这个寄存器没有声明未知对，也没有倾向。
+每个 TNRBMS 值 < X < 每个 ω_α 值 < ψ_𝕀(𝕀)`。段一在段二之下，两者都在 `ω₁^CK` 之下，NRBMS/TNRBMS 段在
+其上，`ω_α` 段在 `X` 之上；`LRPO < ω₁^CK` 是所有者的说明。`compareWithin` 返回带两个 `LadderSegment`
+的 `LadderComparison`，跨段比较不会被误当成同段比较；`compareMagnitude` 永远是证明，因为这个寄存器没有
+声明未知对，也没有倾向。
+
+**阶段三与记法切换。** `ω_α` 段是抽象步进 `h(α) = ω_α`：它只保存下标并按下标比较，和 `f`、`g` 一样。
+`TNRBMS(0)(1^α) → ω_α` 的切换按 `X` 实现：每个真正的 TNRBMS 值都在 `X` 以下，每个 `ω_α` 值都在 `X`
+以上。这个位置是 `OPEN QUESTIONS.md` Q7 的**已记录默认**，不是对所有者原文的定论（另外两种候选是
+`lim(NRBMS)` 和更后面的不动点）。顶端是共享边界名 `ψ_𝕀(𝕀) = min{α | α = ω_α}`，有
+`h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`，且对所有更小的下标 `h(a) ≠ a`。
+
+**`ω_α` 值不是下标。** 阶段三的决定和阶段二一样：步进函数只接受 `LadderArgument`。下标可以是前几段的
+实参（`≥ ω` 的 `BMS`、`NRBMS`、`SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`）或新的不动点边界 `ψ_𝕀(𝕀)`，但不能是
+`ω_α` 值。这足以表达所有者列出的每个梯级，只排除了 `ω_{ω_X}` 这类迭代下标。最小放宽——一个只被 `ω`
+步接受、包装段四值的专用下标类型——写在指南与 Q7 里，**有意不实现**。
 
 **实参/值分离。** `LadderOrdinal` 是值侧，`LadderArgument` 是实参侧。步进函数只接受 `LadderArgument`，
 值到实参没有任何转换路径，`LadderOrdinal.ofArgument` 只把实参单向嵌入值序。因此 `f(f(ω₁^CK))`、
-`TNRBMS(TNRBMS(…))` 之类的项是编译错误，不是运行时检查。四个边界名 `SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`
-被两侧共享；任何真正的步进值都永远不会是实参。
+`TNRBMS(TNRBMS(…))`、`omegaAlpha(omegaAlpha(…))` 之类的项是编译错误，不是运行时检查。五个边界名
+`SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)` 被两侧共享；任何真正的步进值都永远不会是实参。
 
 **哪些是假设。** 所有者的两条不等式是**假设**，现在重新表述在分离后的实参侧：
 
@@ -302,15 +324,15 @@ A1 要求 `f(α) > α`，严格递增又给出 `f(α) < f(β) = α`，矛盾。�
 `LadderOrdinal`，而 `f` 只接受 `LadderArgument`，所以第二步不可表达，A1/A2 在寄存器里分别成立、彼此
 一致。这是**形状改变**，不是对所有者的算术给出证明：`f(ω₁^CK)` 表示的那个序数仍然 `< ω₁^CK`，所以
 所有者字面上的 A1（“任何 `α < ω₁^CK`”）仍然包含它。分离**迫使** A1（同理 A2）限定到实参侧；如果所有者
-坚持不加限定的字面量词，旧矛盾对该表示仍然成立。中文指南把这个遗留条件记为 `[BOUNDARY]`，并记录唯一
-被迫的边界例外：`X` 是 TNRBMS 步的值侧极限，但为了写出所有者的 `f(X) = LRPO` 与 `TNRBMS(X) = X`，
-它同时被当作实参名。`SHO` 是下边界，也是合法实参（`f(SHO)` 是它上面第一个 `f` 值）；`LRPO` 与 `ψ`
-是**值名**，不是 `f` 的实参。
+坚持不加限定的字面量词，旧矛盾对该表示仍然成立。中文指南把这个遗留条件记为 `[BOUNDARY]`，并记录两个
+被迫的边界例外：`X` 是 TNRBMS 步的值侧极限，`ψ_𝕀(𝕀)` 是 `ω_α` 步的值侧极限；为了写出所有者的
+`f(X) = LRPO`、`TNRBMS(X) = X` 与 `omegaAlpha(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`，它们同时被当作实参名。`SHO` 是下
+边界，也是合法实参（`f(SHO)` 是它上面第一个 `f` 值）；`LRPO` 与 `ψ` 是**值名**，不是 `f` 的实参。
 
 **哪些有意不做。** 不把 TBMS、TTBMS 或 TNRBMS 实现成矩阵系统；NRBMS 段复用 `NonRecursiveBms` 及其展开
-规则，TNRBMS 步和 `f` 一样是抽象函数。`ω_α` 梯级与基数寄存器都还没开始。`LadderOrdinal` 不是
-`Ordinal`：没有后继、加法、`ω^` 或基本列，也没有接上 `OrdinalNotation`。它的 `f` 与 `g` 是抽象严格
-递增函数，不是计算。边界结果与阶段三、四的路线图见
+规则，TNRBMS 步与 `ω_α` 步和 `f` 一样是抽象函数。基数寄存器（阶段四）还没开始。`LadderOrdinal` 不是
+`Ordinal`：没有后继、加法、`ω^` 或基本列，也没有接上 `OrdinalNotation`。它的 `f`、`g` 与 `h` 是抽象严格
+递增函数，不是计算。边界结果与阶段四的路线图见
 [`help/ordinal-ladder.md`](help/ordinal-ladder.md)。
 
 
@@ -321,7 +343,7 @@ A1 要求 `f(α) > α`，严格递增又给出 `f(α) < f(β) = α`，矛盾。�
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
 - **BMS 之上的记法。** `AbstractOrdinal` 只**命名** BMS 极限及其之上的阶段，并给它们一个声明顺序；它不是记法，没有基本列、算术或值，它的"高于一切 BMS 值"比较是一条显式公理。它不说明一个名字比 BMS 高多少，低于极限的参考节点也被有意排除在名册之外。
-- **TBMS/TTBMS/TNRBMS 矩阵系统，或阶梯的后续段。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一与阶段二：段一委托 BMS，段二是**抽象**函数 `f(α) = TTBMS(0)(1^α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF，不证明所有者的两条假设（A1 与 A2），也不实现 `ω_α` 梯级或基数寄存器。它的 `f` 与 `g` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。
+- **TBMS/TTBMS/TNRBMS 矩阵系统，或基数寄存器。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一至阶段三：段一委托 BMS，段二是**抽象**函数 `f(α) = TTBMS(0)(1^α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，段四是直到 `ψ_𝕀(𝕀)` 的**抽象** `ω_α` 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF 或基数，不证明所有者的两条假设（A1 与 A2），也不实现基数寄存器。它的 `f`、`g` 与 `h` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。
 - **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
@@ -359,20 +381,20 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveExpansion.java  非递归展开的无限列描述
     bms/package-info.java        BMS 包文档
     abstractordinal/AbstractOrdinal.java   BMS 极限之上的名册，带声明秩
-    abstractordinal/LadderOrdinal.java     值侧：BMS、f(alpha)=TTBMS(0)(1^alpha)、NRBMS/TNRBMS 与具名边界
-    abstractordinal/LadderArgument.java    实参侧：BMS、NRBMS 与共享边界名；永远不能由值构造
-    abstractordinal/LadderPlaceholder.java psi、SHO、LRPO、omega_1^CK、lim(NRBMS)、X 及声明 tier
-    abstractordinal/LadderSegment.java     段一 / 段二 / 段三 / 具名抽象层
+    abstractordinal/LadderOrdinal.java     值侧：BMS、f(alpha)、NRBMS/TNRBMS、omega_alpha 与具名边界
+    abstractordinal/LadderArgument.java    实参侧：BMS、NRBMS 与五个共享边界名；永远不能由值构造
+    abstractordinal/LadderPlaceholder.java psi、SHO、LRPO、omega_1^CK、lim(NRBMS)、X、psi_I(I) 及声明 tier
+    abstractordinal/LadderSegment.java     段一 / 段二 / 段三 / 段四 / 具名抽象层
     abstractordinal/LadderComparison.java  比较及其所属的两个段
     abstractordinal/package-info.java      抽象序数包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
 help/abstract-ordinals.md        BMS 之上名册的中文指南
-help/ordinal-ladder.md           阶段一与阶段二序数阶梯的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    506 项检查的自检程序
+help/ordinal-ladder.md           阶段一至阶段三序数阶梯的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    532 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
-src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯八节（第 21–28 节）
+src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）
 ```
 
 ## 相关
@@ -380,7 +402,7 @@ src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯八节（第 
 - [`help/ordinals.md`](help/ordinals.md) —— 序数、基本列和超限超运算，中文。
 - [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体，中文。
 - [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上名册、声明未知对与"高于 BMS"公理，中文。
-- [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一与阶段二：BMS 段、抽象
-  `f(α) = TTBMS(0)(1^α)` 段、直到 `X` 的 NRBMS/TNRBMS 段、实参/值分离、边界结果，以及阶段三、四的
-  路线图，中文。
+- [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、抽象
+  `f(α) = TTBMS(0)(1^α)` 段、直到 `X` 的 NRBMS/TNRBMS 段、直到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、实参/值分离、
+  边界结果，以及阶段四的路线图，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。

@@ -39,25 +39,29 @@ import java.util.Optional;
  *       above {@code omega_1^CK} and below {@code lim(NRBMS)} by the ladder's declared order; the
  *       ladder does not claim which ordinal a given small matrix denotes, and the internal order of two
  *       NRBMS arguments is exactly {@link NonRecursiveBms#compareTo(NonRecursiveBms)};</li>
- *   <li>a <strong>boundary name</strong>: {@code SHO}, {@code omega_1^CK}, {@code lim(NRBMS)} or {@code X}.
- *       These are boundary names rather than proper step nodes; the steps return them at the boundary
- *       arguments ({@code f(omega) = SHO}, {@code g(omega) = lim(NRBMS)}, {@code f(X) = LRPO},
- *       {@code g(X) = X}), and those collapses are the only places where the two sides name the same
- *       ordinal. A <em>produced</em> step value is never accepted here.</li>
+ *   <li>a <strong>boundary name</strong>: {@code SHO}, {@code omega_1^CK}, {@code lim(NRBMS)},
+ *       {@code X} or {@code psi_I(I)}. These are boundary names rather than proper step nodes; the steps
+ *       return them at the boundary arguments ({@code f(omega) = SHO}, {@code g(omega) = lim(NRBMS)},
+ *       {@code f(X) = LRPO}, {@code g(X) = X}, {@code h(psi_I(I)) = psi_I(I)}), and those collapses are
+ *       the only places where the two sides name the same ordinal. A <em>produced</em> step value is never
+ *       accepted here. In particular the stage-three {@code omega_alpha} values are <strong>not</strong>
+ *       arguments: see {@link LadderOrdinal#omegaAlpha(LadderArgument)} for that decision and its
+ *       smallest relaxation.</li>
  * </ul>
  *
  * <p><b>The declared argument order.</b> Every pair of arguments is comparable:
  *
  * <pre>
- *   every BMS argument  &lt;  SHO  &lt;  omega_1^CK  &lt;  every NRBMS argument  &lt;  lim(NRBMS)  &lt;  X
+ *   every BMS argument  &lt;  SHO  &lt;  omega_1^CK  &lt;  every NRBMS argument  &lt;  lim(NRBMS)
+ *       &lt;  X  &lt;  psi_I(I)
  * </pre>
  *
  * <p>The order is by a declared tier ({@code BMS = 0, SHO = 1, omega_1^CK = 2, NRBMS = 3,
- * lim(NRBMS) = 4, X = 5}) and then by the exact order of the layer: {@link BmsOrdinal#compareTo} for BMS,
- * {@link NonRecursiveBms#compareTo} for NRBMS, and the enum order of {@link Boundary}. It is total,
- * transitive, antisymmetric and consistent with {@link #equals(Object)}. {@link LadderOrdinal#ofArgument}
- * embeds an argument into the value order without a way back, so the embedding is order-preserving and
- * one-way.
+ * lim(NRBMS) = 4, X = 5, psi_I(I) = 6}) and then by the exact order of the layer: {@link BmsOrdinal#compareTo}
+ * for BMS, {@link NonRecursiveBms#compareTo} for NRBMS, and the enum order of {@link Boundary}. It is
+ * total, transitive, antisymmetric and consistent with {@link #equals(Object)}.
+ * {@link LadderOrdinal#ofArgument} embeds an argument into the value order without a way back, so the
+ * embedding is order-preserving and one-way.
  *
  * <p><b>The domains of A1 and A2.</b> {@link #isA1Domain()} is the part below {@code omega_1^CK} (BMS and
  * {@code SHO}); {@link #isA2Domain()} is the part from {@code omega_1^CK} up to but excluding {@code X}
@@ -92,7 +96,15 @@ public final class LadderArgument implements Comparable<LadderArgument> {
                 "psi_H(epsilon_{H+1}) = lim(NRBMS) = TNRBMS(0)(1^omega), the TNRBMS notation switch"),
 
         /** {@code X = min{alpha | alpha = TNRBMS(0)(1^alpha)}}, the top of segment 3. */
-        TNRBMS_FIXPOINT("X", "X = min{alpha | alpha = TNRBMS(0)(1^alpha)}, the top of segment 3");
+        TNRBMS_FIXPOINT("X", "X = min{alpha | alpha = TNRBMS(0)(1^alpha)}, the top of segment 3"),
+
+        /**
+         * {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, the top of segment 4 and the fixed point of
+         * the stage-three step.
+         */
+        PSI_I_I("ψ_𝕀(𝕀)",
+                "psi_I(I) = min{alpha | alpha = omega_alpha}, the top of segment 4 and the fixed point of"
+                        + " the omega_alpha step");
 
         private final String text;
         private final String description;
@@ -206,7 +218,7 @@ public final class LadderArgument implements Comparable<LadderArgument> {
     }
 
     /**
-     * One of the shared boundary names. The four boundaries are the only names that both sides may use;
+     * One of the shared boundary names. The five boundaries are the only names that both sides may use;
      * see the class documentation.
      *
      * @throws NullPointerException if {@code boundary} is {@code null}
@@ -233,6 +245,11 @@ public final class LadderArgument implements Comparable<LadderArgument> {
     /** The boundary argument {@code X}, the least fixed point of the TNRBMS step. */
     public static LadderArgument tnrbmsFixpoint() {
         return of(Boundary.TNRBMS_FIXPOINT);
+    }
+
+    /** The boundary argument {@code psi_I(I)}, the least fixed point of the {@code omega_alpha} step. */
+    public static LadderArgument psiII() {
+        return of(Boundary.PSI_I_I);
     }
 
     /** {@code omega}, written {@code BMS(0)(1)}: the first argument the ladder step accepts. */
@@ -274,7 +291,7 @@ public final class LadderArgument implements Comparable<LadderArgument> {
 
     /**
      * Whether the ladder step accepts this argument: a BMS value at or above {@code omega}, an NRBMS
-     * expression, or any of the four boundary names. A BMS value below {@code omega} is a segment-one value
+     * expression, or any of the five boundary names. A BMS value below {@code omega} is a segment-one value
      * (including zero, one and every finite ordinal) and is not materialised by the step.
      */
     public boolean isFunctionArgument() {
@@ -295,7 +312,8 @@ public final class LadderArgument implements Comparable<LadderArgument> {
     /**
      * Whether this argument belongs to the domain of the owner's assumption A2: an argument at or above
      * {@code omega_1^CK} and strictly below {@code X}, i.e. {@code omega_1^CK}, an NRBMS expression or
-     * {@code lim(NRBMS)}. {@code X} itself is excluded by the strict upper bound.
+     * {@code lim(NRBMS)}. {@code X} itself is excluded by the strict upper bound, and so is the later
+     * boundary {@code psi_I(I)}.
      */
     public boolean isA2Domain() {
         int tier = tier();
@@ -304,7 +322,7 @@ public final class LadderArgument implements Comparable<LadderArgument> {
 
     /**
      * The declared tier of this argument, a cross-layer key and not an ordinal value:
-     * {@code BMS = 0, SHO = 1, omega_1^CK = 2, NRBMS = 3, lim(NRBMS) = 4, X = 5}.
+     * {@code BMS = 0, SHO = 1, omega_1^CK = 2, NRBMS = 3, lim(NRBMS) = 4, X = 5, psi_I(I) = 6}.
      */
     public int tier() {
         return switch (kind) {
@@ -320,6 +338,7 @@ public final class LadderArgument implements Comparable<LadderArgument> {
             case OMEGA_ONE_CK -> 2;
             case LIM_NRBMS -> 4;
             case TNRBMS_FIXPOINT -> 5;
+            case PSI_I_I -> 6;
         };
     }
 

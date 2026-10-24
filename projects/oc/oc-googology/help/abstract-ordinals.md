@@ -170,8 +170,8 @@ limit.compareWithBms(tsso);                     // ComparisonResult.GREATER，�
 
 ## 六、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **506 项**，其中第 19–20 节是抽象序数
-（`AbstractOrdinalCheck`，27 项），第 21–28 节是阶段一、二序数阶梯（`LadderCheck`，128 项，见
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **532 项**，其中第 19–20 节是抽象序数
+（`AbstractOrdinalCheck`，27 项），第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，154 项，见
 [`ordinal-ladder.md`](ordinal-ladder.md)）：
 
 - **第 19 节（名册，10 项）**：5 个条目；枚举顺序就是声明梯子；`rank()` 与枚举位置严格同步；
@@ -193,9 +193,9 @@ wiki 的分析本身。
 - [`../README.md`](../README.md) —— 库总览，抽象序数在其中的位置
 - [`bms.md`](bms.md) —— BMS 标准式、比较、展开与非递归 BMS，以及极限之前的节点表
 - [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
-- [`ordinal-ladder.md`](ordinal-ladder.md) —— 阶段一、二序数阶梯：段一委托本页的 `SHO`，段二、段三
-  是抽象 `f(α) = TTBMS(0)(1^α)` 与 NRBMS/TNRBMS 段，并带 `ω₁^CK`、`ψ`、`LRPO`、`lim(NRBMS)`、`X`
-  边界
+- [`ordinal-ladder.md`](ordinal-ladder.md) —— 阶段一至阶段三序数阶梯：段一委托本页的 `SHO`，段二、段三
+  是抽象 `f(α) = TTBMS(0)(1^α)` 与 NRBMS/TNRBMS 段，段四是 `ω_α` 段，并带 `ω₁^CK`、`ψ`、`LRPO`、
+  `lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)` 边界
 - [`../../../../documents/Human/Ordinals.md`](../../../../documents/Human/Ordinals.md) —— 序数路线图
   （BMS、NRBMS 与更高记号；SHO 之上、LRPO 之下的 TBMS 路线）
 - [`../../../../documents/AI/bms/bms-zh.raw.wiki`](../../../../documents/AI/bms/bms-zh.raw.wiki) ——

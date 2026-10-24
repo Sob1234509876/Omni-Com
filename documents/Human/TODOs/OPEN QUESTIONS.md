@@ -19,6 +19,29 @@ So at least one of the following must be changed: drop monotonicity of `f`, weak
 
 **Default while unanswered:** stage one implements `f` strictly increasing, checks A1 and A2 each on their own domain and **records the boundary at `ω₁^CK` as a failing-consistent condition** rather than pretending it holds; both are labelled as assumptions. Stage two will separate the "argument register" from the "value register", which is where the resolution most likely lives, and the agent will not silently pick a repair for the owner's specification.
 
+**Outcome of stage two (recorded; the question is still open for the owner):** the separation **does** dissolve the contradiction inside the model — `f` accepts only arguments, `f(ω₁^CK)` is a value, so the step that fed that value back into `f` cannot be written, and A1 and A2 end up on disjoint domains where they are jointly consistent. But that is a **change of shape, not a proof**: your literal quantifier says "for every `α < ω₁^CK`", and the ordinal **denoted** by `f(ω₁^CK)` is such an ordinal, so under the unrestricted reading the contradiction survives for the denotation. The remaining decision is therefore narrow:
+- keep the quantifier over **argument-side ordinals only** (current implementation, consistent), or
+- keep the unrestricted quantifier and accept that `f` cannot be both increasing and satisfy A1 at that denotation (then one of the five repairs above is needed).
+Three residuals are also recorded: A2 is not asserted at proper `TNRBMS` values because they are values; the fixed point `X` is a shared boundary name because two axioms could not otherwise be written; and "least fixed point" is only checkable over the argument register.
+
+## Q7. Stage three: where does `TNRBMS(0)(1^α)` become `ω_α`, and may an `ω_α` value be a subscript?
+
+`Ordinals.md` item 5 changes the notation "from `TBMS(0)(1^α)` and `TTBMS(0)(1^α)` to `ω_α`" and gives the segment as `ω₁ ~ min{α | α = ω_α} = ψ_𝕀(𝕀)`. It does not say where in the ladder the `TNRBMS(0)(1^α)` notation stops and `ω_α` starts, and it does not say whether the subscript of `ω_α` may itself be an `ω_α` value. Stage three has to pick a default.
+
+**The switch point.** Candidate readings:
+
+1. **At `X`** (implemented). The stage-two fixed point `X = min{α | α = TNRBMS(0)(1^α)}` is the switch: every proper TNRBMS value is below `X`, every `ω_α` value above it. `X` is also the new segment's lower input, so the ladder stays contiguous at `X`.
+2. **At `lim(NRBMS)`.** The switch would happen one boundary earlier, so the whole TNRBMS range above `lim(NRBMS)` would already be written `ω_α`; the `TNRBMS` notation would cover only the boundary itself.
+3. **Only after some further fixed point.** Neither `X` nor `lim(NRBMS)`; the `ω_α` rungs would start only after another fixed point above `X`, leaving a gap the register cannot name today.
+
+**May an `ω_α` value be a subscript?** Candidate readings:
+
+- **No** (implemented). A subscript is a previous-stage argument (`BMS` at or above `ω`, an `NRBMS` expression, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or the new shared boundary `ψ_𝕀(𝕀)`. This keeps the stage-two argument/value separation and the reflection invariant that no `LadderOrdinal` occurs in `LadderArgument`.
+- **Yes, for the `ω` step only** (the smallest relaxation, described but not implemented). A dedicated stage-four subscript type wraps an `ω_α` value, is accepted only by the `ω` step through a second overload, and has no conversion back to a value. This would make `ω_{ω_X}` and longer chains writable while keeping `f` and the TNRBMS step unable to take a stage-four value.
+- **Yes, generally.** An `ω_α` value becomes an ordinary `LadderArgument`. Rejected: it would put `LadderOrdinal` inside `LadderArgument` and reopen exactly the value-to-argument feedback the separation exists to prevent.
+
+**Default while unanswered:** the switch is at `X`, and an `ω_α` value is **not** a subscript. This is implemented as `LadderOrdinal.omegaAlpha(...)`, `LadderOrdinal.psiII()` and `LadderSegment.SEGMENT_FOUR`; the self check asserts the switch, the strict increase in the subscript and the fixed point. Answering Q7 changes the switch point or enables the relaxation; it does not change the four-stage schedule.
+
 ## Q1. Item 3, the 21-rung ladder: what counts as "done" per stage?
 
 `Ordinals.md` describes a ladder from `0` to `Ω_Absolute`. It is being built in four stages, and each stage ships a compiling, checked milestone rather than waiting for the whole ladder:

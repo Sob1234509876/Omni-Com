@@ -3,8 +3,8 @@ package io.github.sob1234509876.oc.googology.abstractordinal;
 /**
  * The layer of the ordinal ladder that a {@link LadderOrdinal} belongs to.
  *
- * <p>The ladder of {@code documents/Human/Ordinals.md} has twenty-one rungs, grouped into segments. Two
- * implementation stages are present; stage three, the {@code omega_alpha} rungs, is not:
+ * <p>The ladder of {@code documents/Human/Ordinals.md} has twenty-one rungs, grouped into segments. Three
+ * implementation stages are present; stage four, the cardinal register, is not:
  *
  * <ul>
  *   <li>{@link #SEGMENT_ONE} - {@code 0 ~ SHO}, the part that BMS already names. It is not reimplemented
@@ -20,10 +20,18 @@ package io.github.sob1234509876.oc.googology.abstractordinal;
  *       {@code TNRBMS(0)(1^alpha)}. The two-notation switch of this segment is at
  *       {@code lim(NRBMS) = TNRBMS(0)(1^omega)}, which is an argument-side boundary, not a produced
  *       value.</li>
+ *   <li>{@link #SEGMENT_FOUR} - the stage-three {@code omega_alpha} segment, {@code X ~ psi_I(I)}. A value
+ *       is the abstract function {@link LadderOrdinal#omegaAlpha(LadderArgument) omegaAlpha(alpha) =
+ *       omega_alpha}; the notation is {@code omega_alpha} (the subscript is an argument). The segment's
+ *       switch is the boundary {@code X}, above which every value of the ladder is printed {@code
+ *       omega_alpha}; the top is the shared boundary name {@code psi_I(I) = min{alpha | alpha =
+ *       omega_alpha}}. Whether the switch belongs exactly at {@code X} is the open question Q7, and
+ *       {@code X} is implemented as the documented default.</li>
  *   <li>{@link #PLACEHOLDER} - the named layer: {@code psi}, {@code SHO}, {@code LRPO},
- *       {@code omega_1^CK}, {@code lim(NRBMS)} and {@code X}. These are names kept by the register, not
- *       values with a fundamental sequence or an arithmetic. They are boundaries that both the argument
- *       side and the value side may name; every <em>produced</em> step value belongs to its own segment.</li>
+ *       {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X} and {@code psi_I(I)}. These are names kept by
+ *       the register, not values with a fundamental sequence or an arithmetic. They are boundaries that
+ *       both the argument side and the value side may name; every <em>produced</em> step value belongs to
+ *       its own segment.</li>
  * </ul>
  *
  * <p>The segment of a value is a classification, not a comparison: a comparison that crosses segments
@@ -50,10 +58,17 @@ public enum LadderSegment {
     SEGMENT_THREE("segment 3 (omega_1^CK ~ X, NRBMS/TNRBMS)"),
 
     /**
-     * The named layer: {@code psi}, {@code SHO}, {@code LRPO}, {@code omega_1^CK}, {@code lim(NRBMS)} and
-     * {@code X}.
+     * Segment 4, {@code X ~ psi_I(I)}: the stage-three {@code omega_alpha} values, the abstract function
+     * {@code omegaAlpha(alpha) = omega_alpha}. The switch into this segment is the boundary {@code X}; the
+     * top is {@code psi_I(I) = min{alpha | alpha = omega_alpha}}.
      */
-    PLACEHOLDER("named abstract layer (psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X)");
+    SEGMENT_FOUR("segment 4 (X ~ psi_I(I), omega_alpha)"),
+
+    /**
+     * The named layer: {@code psi}, {@code SHO}, {@code LRPO}, {@code omega_1^CK}, {@code lim(NRBMS)},
+     * {@code X} and {@code psi_I(I)}.
+     */
+    PLACEHOLDER("named abstract layer (psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X, psi_I(I))");
 
     private final String description;
 

@@ -22,12 +22,13 @@ import java.util.List;
 /**
  * The ordinal-ladder section of the self check: the register of {@link LadderOrdinal}s (segment 1
  * delegated to BMS, segment 2 as the abstract function {@code f(alpha) = TTBMS(0)(1^alpha)}, segment 3 as
- * the NRBMS/TNRBMS segment, and the named placeholders), the separated argument register
- * {@link LadderArgument}, the functions' strict monotonicity and order isomorphism, the notation switches
- * at {@code omega_1^CK} and {@code lim(NRBMS)}, the owner's assumptions re-stated on the argument side,
- * the argument/value separation (enforced by the types and checked by reflection), the boundary analysis
- * at {@code omega_1^CK}, and the totality/transitivity of the declared order over a sample that covers all
- * three segments.
+ * the NRBMS/TNRBMS segment, segment 4 as the stage-three {@code omega_alpha} segment, and the named
+ * placeholders), the separated argument register {@link LadderArgument}, the functions' strict monotonicity
+ * and order isomorphism, the notation switches at {@code omega_1^CK}, {@code lim(NRBMS)} and {@code X}, the
+ * owner's assumptions re-stated on the argument side, the argument/value separation (enforced by the types
+ * and checked by reflection), the boundary analysis at {@code omega_1^CK}, the stage-three decision that an
+ * {@code omega_alpha} value is never an argument, and the totality/transitivity of the declared order over a
+ * sample that covers all four segments.
  *
  * <p>The checks report into the same counters as {@link GoogologyCheck} through their {@link Result}, so
  * the one printed total still counts every check. The two inequalities that are the owner's assumptions,
@@ -72,8 +73,17 @@ public final class LadderCheck {
         section("27) ω₁^CK 边界分析：A1/A2 重新表述、旧矛盾不可表达与遗留条件");
         boundaryAnalysis();
 
-        section("28) 三段合一：全序、反对称、传递性与跨段报告");
-        threeSegments();
+        section("28) 四段合一：全序、反对称、传递性与跨段报告");
+        fourSegments();
+
+        section("29) 段四寄存器：ω_α 值、ψ_𝕀(𝕀) 边界与 X 处的记号切换");
+        omegaAlphaRegister();
+
+        section("30) ω_α 步：下标严格递增、X 下界与不动点 ψ_𝕀(𝕀)");
+        omegaAlphaStep();
+
+        section("31) 阶段三的实参/值决定：ω_α 值永不当实参，最小放宽只记录未实现");
+        omegaAlphaDecision();
 
         return new Result(passed, List.copyOf(FAILURES));
     }
@@ -127,17 +137,18 @@ public final class LadderCheck {
         check("函数值归入段二", fOmegaOmega.segment() == LadderSegment.SEGMENT_TWO);
         check("NRBMS 值与 TNRBMS 值都归入段三", nrbmsValue.segment() == LadderSegment.SEGMENT_THREE
                 && tnrbmsValue.segment() == LadderSegment.SEGMENT_THREE);
-        check("六个具名边界归入具名抽象层",
+        check("七个具名边界归入具名抽象层",
                 LadderOrdinal.sho().segment() == LadderSegment.PLACEHOLDER
                         && LadderOrdinal.lrpo().segment() == LadderSegment.PLACEHOLDER
                         && LadderOrdinal.omegaOneCk().segment() == LadderSegment.PLACEHOLDER
                         && LadderOrdinal.limNrbms().segment() == LadderSegment.PLACEHOLDER
                         && LadderOrdinal.tnrbmsFixpoint().segment() == LadderSegment.PLACEHOLDER
+                        && LadderOrdinal.psiII().segment() == LadderSegment.PLACEHOLDER
                         && LadderOrdinal.psi().segment() == LadderSegment.PLACEHOLDER);
 
-        equal("具名占位符恰好六个", 6, LadderPlaceholder.values().length);
+        equal("具名占位符恰好七个", 7, LadderPlaceholder.values().length);
         equal("占位符按声明顺序列出",
-                List.of("PSI", "SHO", "LRPO", "OMEGA_ONE_CK", "LIM_NRBMS", "TNRBMS_FIXPOINT"),
+                List.of("PSI", "SHO", "LRPO", "OMEGA_ONE_CK", "LIM_NRBMS", "TNRBMS_FIXPOINT", "PSI_I_I"),
                 placeholderNames());
         check("SHO 复用 AbstractOrdinal.SHO（阶梯下端指回旧名册）",
                 LadderPlaceholder.SHO.abstractOrdinal().orElseThrow() == AbstractOrdinal.SHO
@@ -147,20 +158,23 @@ public final class LadderCheck {
                         && LadderPlaceholder.LRPO.abstractOrdinal().isEmpty()
                         && LadderPlaceholder.OMEGA_ONE_CK.abstractOrdinal().isEmpty()
                         && LadderPlaceholder.LIM_NRBMS.abstractOrdinal().isEmpty()
-                        && LadderPlaceholder.TNRBMS_FIXPOINT.abstractOrdinal().isEmpty());
-        check("占位符文本分别是 ψ、SHO、LRPO、ω_1^CK、lim(NRBMS)、X",
+                        && LadderPlaceholder.TNRBMS_FIXPOINT.abstractOrdinal().isEmpty()
+                        && LadderPlaceholder.PSI_I_I.abstractOrdinal().isEmpty());
+        check("占位符文本分别是 ψ、SHO、LRPO、ω₁^CK、lim(NRBMS)、X、ψ_𝕀(𝕀)",
                 LadderOrdinal.psi().toString().equals("ψ")
                         && LadderOrdinal.sho().toString().equals("SHO")
                         && LadderOrdinal.lrpo().toString().equals("LRPO")
                         && LadderOrdinal.omegaOneCk().toString().equals("ω₁^CK")
                         && LadderOrdinal.limNrbms().toString().equals("lim(NRBMS)")
-                        && LadderOrdinal.tnrbmsFixpoint().toString().equals("X"));
-        check("占位符的声明 tier 严格递增（ψ < SHO < LRPO < ω₁^CK < lim(NRBMS) < X）",
+                        && LadderOrdinal.tnrbmsFixpoint().toString().equals("X")
+                        && LadderOrdinal.psiII().toString().equals("ψ_𝕀(𝕀)"));
+        check("占位符的声明 tier 严格递增（ψ < SHO < LRPO < ω₁^CK < lim(NRBMS) < X < ψ_𝕀(𝕀)）",
                 LadderPlaceholder.PSI.tier() < LadderPlaceholder.SHO.tier()
                         && LadderPlaceholder.SHO.tier() < LadderPlaceholder.LRPO.tier()
                         && LadderPlaceholder.LRPO.tier() < LadderPlaceholder.OMEGA_ONE_CK.tier()
                         && LadderPlaceholder.OMEGA_ONE_CK.tier() < LadderPlaceholder.LIM_NRBMS.tier()
-                        && LadderPlaceholder.LIM_NRBMS.tier() < LadderPlaceholder.TNRBMS_FIXPOINT.tier());
+                        && LadderPlaceholder.LIM_NRBMS.tier() < LadderPlaceholder.TNRBMS_FIXPOINT.tier()
+                        && LadderPlaceholder.TNRBMS_FIXPOINT.tier() < LadderPlaceholder.PSI_I_I.tier());
         check("每个占位符都有非空描述", allDescriptionsPresent());
 
         check("f 接受 ω、ω^ω、ε₀、SHO、ω_1^CK、lim(NRBMS)、NRBMS 与 X",
@@ -643,14 +657,16 @@ public final class LadderCheck {
                         && LadderOrdinal.tnrbms(nrbms).tnrbmsArgument().orElseThrow().equals(nrbms)
                         && LadderOrdinal.tnrbms(LadderArgument.limNrbms()).tnrbmsArgument().orElseThrow()
                                 .equals(LadderArgument.limNrbms()));
-        check("只有 TBMS/TTBMS/TNRBMS 结点是 isStepValue；边界名与 NRBMS/BMS 值不是",
+        check("只有 TBMS/TTBMS/TNRBMS/ω_α 结点是 isStepValue；边界名与 NRBMS/BMS 值不是",
                 LadderOrdinal.f(omegaOmega).isStepValue()
                         && LadderOrdinal.tnrbms(nrbms).isStepValue()
+                        && LadderOrdinal.omegaAlpha(omegaOmega).isStepValue()
                         && !LadderOrdinal.sho().isStepValue()
                         && !LadderOrdinal.lrpo().isStepValue()
                         && !LadderOrdinal.omegaOneCk().isStepValue()
                         && !LadderOrdinal.limNrbms().isStepValue()
                         && !LadderOrdinal.tnrbmsFixpoint().isStepValue()
+                        && !LadderOrdinal.psiII().isStepValue()
                         && !LadderOrdinal.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)")).isStepValue()
                         && !LadderOrdinal.omega().isStepValue());
         check("实参的一元嵌入 LadderOrdinal.ofArgument 保序且不提供反向转换",
@@ -669,13 +685,14 @@ public final class LadderCheck {
                                 == LadderArgument.Boundary.SHO
                         && omega.isBms() && omega.bms().isPresent() && omega.boundary().isEmpty()
                         && nrbms.isNrbms() && nrbms.nrbms().isPresent() && nrbms.bms().isEmpty());
-        check("Boundary 恰好四个，按声明顺序是 SHO、ω_1^CK、lim(NRBMS)、X",
-                LadderArgument.Boundary.values().length == 4
+        check("Boundary 恰好五个，按声明顺序是 SHO、ω_1^CK、lim(NRBMS)、X、ψ_𝕀(𝕀)",
+                LadderArgument.Boundary.values().length == 5
                         && List.of(LadderArgument.Boundary.values()).equals(List.of(
                                 LadderArgument.Boundary.SHO,
                                 LadderArgument.Boundary.OMEGA_ONE_CK,
                                 LadderArgument.Boundary.LIM_NRBMS,
-                                LadderArgument.Boundary.TNRBMS_FIXPOINT)));
+                                LadderArgument.Boundary.TNRBMS_FIXPOINT,
+                                LadderArgument.Boundary.PSI_I_I)));
         check("实参工厂拒绝 null",
                 throwsNullPointer(() -> LadderArgument.ofBms((BmsOrdinal) null))
                         && throwsNullPointer(() -> LadderArgument.ofNrbms((NonRecursiveBms) null))
@@ -731,9 +748,9 @@ public final class LadderCheck {
         check("[BOUNDARY] X 是实参名但不是在更小实参处产生的值：所有 a < X 的样本都有 TNRBMS(a) ≠ a，"
                         + "所以在寄存器里 X 是最小不动点；跨全体序数的最小性无法在分离后表达",
                 noSmallerTnrbmsFixedPoint());
-        check("[BOUNDARY] 分离的唯一“例外”是四个边界名（SHO、ω_1^CK、lim(NRBMS)、X），"
-                        + "它们不是步进值；任何 TBMS/TTBMS/TNRBMS 结点都没有进入实参类型的路径",
-                LadderArgument.Boundary.values().length == 4
+        check("[BOUNDARY] 分离的唯一“例外”是五个边界名（SHO、ω_1^CK、lim(NRBMS)、X、ψ_𝕀(𝕀)），"
+                        + "它们不是步进值；任何 TBMS/TTBMS/TNRBMS/ω_α 结点都没有进入实参类型的路径",
+                LadderArgument.Boundary.values().length == 5
                         && LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}})).isStepValue()
                         && noValueToArgumentPath());
 
@@ -820,9 +837,9 @@ public final class LadderCheck {
         return true;
     }
 
-    // ------------------------------------------------------------------ 28 all three segments
+    // ------------------------------------------------------------------ 28 all four segments
 
-    private static void threeSegments() {
+    private static void fourSegments() {
         LadderOrdinal zero = LadderOrdinal.zero();
         LadderOrdinal one = LadderOrdinal.ofBms(new int[][]{{0}});
         LadderOrdinal omega = LadderOrdinal.omega();
@@ -840,13 +857,24 @@ public final class LadderCheck {
         LadderOrdinal gNrbms = LadderOrdinal.tnrbms(LadderArgument.ofNrbms(
                 NonRecursiveBms.parse("(1,1,1)(2,2)")));
         LadderOrdinal gLimNrbms = LadderOrdinal.tnrbms(LadderArgument.limNrbms());
+        LadderOrdinal x = LadderOrdinal.tnrbmsFixpoint();
+        LadderOrdinal hOmega = LadderOrdinal.omegaAlpha(LadderArgument.omega());
+        LadderOrdinal hOmegaOmega = LadderOrdinal.omegaAlpha(LadderArgument.ofBms(
+                new int[][]{{0}, {1}, {2}}));
+        LadderOrdinal hSho = LadderOrdinal.omegaAlpha(LadderArgument.sho());
+        LadderOrdinal hOmegaOne = LadderOrdinal.omegaAlpha(LadderArgument.omegaOneCk());
+        LadderOrdinal hNrbms = LadderOrdinal.omegaAlpha(LadderArgument.ofNrbms(
+                NonRecursiveBms.parse("(1,1,1)(2,2)")));
+        LadderOrdinal hLim = LadderOrdinal.omegaAlpha(LadderArgument.limNrbms());
+        LadderOrdinal hX = LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint());
+        LadderOrdinal psiII = LadderOrdinal.psiII();
 
         List<LadderOrdinal> sample = List.of(
                 LadderOrdinal.psi(), zero, one, omega, omegaOmega, epsilon, LadderOrdinal.sho(),
                 fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()), fOmegaOne, fLimNrbms,
                 LadderOrdinal.lrpo(), LadderOrdinal.omegaOneCk(),
-                nrbmsOne, nrbmsThree, limNrbms, gOmegaOmega, gOmegaOne, gNrbms, gLimNrbms,
-                LadderOrdinal.tnrbmsFixpoint());
+                nrbmsOne, nrbmsThree, limNrbms, gOmegaOmega, gOmegaOne, gNrbms, gLimNrbms, x,
+                hOmega, hOmegaOmega, hSho, hOmegaOne, hNrbms, hLim, hX, psiII);
 
         boolean increasing = true;
         for (int index = 1; index < sample.size(); index++) {
@@ -854,8 +882,9 @@ public final class LadderCheck {
                 increasing = false;
             }
         }
-        check("三段样本严格递增：ψ < 0 < 1 < ω < ω^ω < ε₀ < SHO < f(ω^ω) < f(ε₀) < f(SHO)"
-                + " < f(ω_1^CK) < f(lim(NRBMS)) < LRPO < ω_1^CK < NRBMS < lim(NRBMS) < TNRBMS < X",
+        check("四段样本严格递增：ψ < 0 < 1 < ω < ω^ω < ε₀ < SHO < f(ω^ω) < f(ε₀) < f(SHO)"
+                + " < f(ω_1^CK) < f(lim(NRBMS)) < LRPO < ω_1^CK < NRBMS < lim(NRBMS) < TNRBMS < X"
+                + " < ω_ω < ω_ω^ω < ω_SHO < ω_ω₁^CK < ω_NRBMS < ω_lim(NRBMS) < ω_X < ψ_𝕀(𝕀)",
                 increasing);
 
         int pairs = 0;
@@ -879,8 +908,8 @@ public final class LadderCheck {
                 }
             }
         }
-        check("三段样本全部 " + pairs + " 对反对称，compareMagnitude 全是同向证明", antisymmetric && proofs);
-        check("三段样本 compareTo == 0 与 equals/hashCode 一致", equalConsistent);
+        check("四段样本全部 " + pairs + " 对反对称，compareMagnitude 全是同向证明", antisymmetric && proofs);
+        check("四段样本 compareTo == 0 与 equals/hashCode 一致", equalConsistent);
 
         int triples = 0;
         boolean transitive = true;
@@ -895,56 +924,255 @@ public final class LadderCheck {
                 }
             }
         }
-        check("三段样本全部 " + triples + " 个三元组满足传递性", transitive);
+        check("四段样本全部 " + triples + " 个三元组满足传递性", transitive);
 
-        boolean allSegments = false;
         boolean hasOne = false;
         boolean hasTwo = false;
         boolean hasThree = false;
+        boolean hasFour = false;
         for (LadderOrdinal value : sample) {
             hasOne |= value.segment() == LadderSegment.SEGMENT_ONE;
             hasTwo |= value.segment() == LadderSegment.SEGMENT_TWO;
             hasThree |= value.segment() == LadderSegment.SEGMENT_THREE;
+            hasFour |= value.segment() == LadderSegment.SEGMENT_FOUR;
         }
-        allSegments = hasOne && hasTwo && hasThree;
-        check("样本覆盖段一、段二、段三", allSegments);
+        check("样本覆盖段一、段二、段三、段四", hasOne && hasTwo && hasThree && hasFour);
 
-        check("段一 < 段二 < LRPO < ω_1^CK < 段三 < X：每个段一值都低于每个段三值，每个段二值也低于每个段三值",
+        check("段一 < 段二 < LRPO < ω_1^CK < 段三 < X < 段四 < ψ_𝕀(𝕀)：每个早段值都低于每个段四值",
                 zero.compareTo(nrbmsOne) < 0 && epsilon.compareTo(limNrbms) < 0
                         && fOmegaOmega.compareTo(nrbmsOne) < 0 && fOmegaOne.compareTo(limNrbms) < 0
                         && LadderOrdinal.lrpo().compareTo(nrbmsOne) < 0
                         && nrbmsThree.compareTo(gOmegaOmega) < 0
-                        && gLimNrbms.compareTo(LadderOrdinal.tnrbmsFixpoint()) < 0);
+                        && gLimNrbms.compareTo(x) < 0
+                        && x.compareTo(hOmega) < 0 && hX.compareTo(psiII) < 0
+                        && epsilon.compareTo(psiII) < 0 && gOmegaOne.compareTo(hOmega) < 0);
 
-        LadderComparison stageOneStageThree = nrbmsOne.compareWithin(zero);
-        check("段三对段一：报告跨段且段三在上",
-                stageOneStageThree.left() == LadderSegment.SEGMENT_THREE
-                        && stageOneStageThree.right() == LadderSegment.SEGMENT_ONE
-                        && stageOneStageThree.isCrossSegment() && stageOneStageThree.signum() > 0);
-        LadderComparison stageTwoStageThree = fOmegaOne.compareWithin(gOmegaOne);
-        check("段二对段三：报告跨段且段二在下",
-                stageTwoStageThree.left() == LadderSegment.SEGMENT_TWO
-                        && stageTwoStageThree.right() == LadderSegment.SEGMENT_THREE
-                        && stageTwoStageThree.isCrossSegment() && stageTwoStageThree.signum() < 0);
-        LadderComparison stageThreeName = gNrbms.compareWithin(LadderOrdinal.tnrbmsFixpoint());
-        check("段三对 X：报告段三 vs 具名层",
-                stageThreeName.left() == LadderSegment.SEGMENT_THREE
-                        && stageThreeName.right() == LadderSegment.PLACEHOLDER
-                        && stageThreeName.isCrossSegment() && stageThreeName.signum() < 0);
-        LadderComparison withinThree = nrbmsThree.compareWithin(gNrbms);
-        check("段三内部：NRBMS 值对 TNRBMS 值仍报告段三在两侧，但顺序由层号决定",
-                withinThree.left() == LadderSegment.SEGMENT_THREE
-                        && withinThree.right() == LadderSegment.SEGMENT_THREE
-                        && withinThree.isWithinOneSegment() && withinThree.signum() < 0);
+        LadderComparison stageFourStageOne = hNrbms.compareWithin(zero);
+        check("段四对段一：报告跨段且段四在上",
+                stageFourStageOne.left() == LadderSegment.SEGMENT_FOUR
+                        && stageFourStageOne.right() == LadderSegment.SEGMENT_ONE
+                        && stageFourStageOne.isCrossSegment() && stageFourStageOne.signum() > 0);
+        LadderComparison stageTwoStageFour = fOmegaOne.compareWithin(hOmegaOne);
+        check("段二对段四：报告跨段且段二在下",
+                stageTwoStageFour.left() == LadderSegment.SEGMENT_TWO
+                        && stageTwoStageFour.right() == LadderSegment.SEGMENT_FOUR
+                        && stageTwoStageFour.isCrossSegment() && stageTwoStageFour.signum() < 0);
+        LadderComparison stageThreeStageFour = gOmegaOne.compareWithin(hOmegaOne);
+        check("段三对段四：报告跨段且段三在下",
+                stageThreeStageFour.left() == LadderSegment.SEGMENT_THREE
+                        && stageThreeStageFour.right() == LadderSegment.SEGMENT_FOUR
+                        && stageThreeStageFour.isCrossSegment() && stageThreeStageFour.signum() < 0);
+        LadderComparison stageFourName = hX.compareWithin(x);
+        check("段四对 X：报告段四 vs 具名层且段四在上",
+                stageFourName.left() == LadderSegment.SEGMENT_FOUR
+                        && stageFourName.right() == LadderSegment.PLACEHOLDER
+                        && stageFourName.isCrossSegment() && stageFourName.signum() > 0);
+        LadderComparison withinFour = hOmega.compareWithin(hX);
+        check("段四内部：两个 ω_α 值仍报告段四在两侧，顺序由下标决定",
+                withinFour.left() == LadderSegment.SEGMENT_FOUR
+                        && withinFour.right() == LadderSegment.SEGMENT_FOUR
+                        && withinFour.isWithinOneSegment() && withinFour.signum() < 0);
 
         List<LadderOrdinal> sorted = new ArrayList<>(sample);
         Collections.sort(sorted);
-        check("Collections.sort 能把三段样本排成声明的全序", sorted.equals(sample));
-        check("三段比较入口都拒绝 null 并始终给证明",
+        check("Collections.sort 能把四段样本排成声明的全序", sorted.equals(sample));
+        check("四段比较入口都拒绝 null 并始终给证明",
                 throwsNullPointer(() -> nrbmsOne.compareTo(null))
-                        && throwsNullPointer(() -> gNrbms.compareWithin(null))
+                        && throwsNullPointer(() -> hNrbms.compareWithin(null))
                         && nrbmsOne.compareMagnitude(limNrbms).isProof()
-                        && gNrbms.compareMagnitude(LadderOrdinal.tnrbmsFixpoint()).isProof());
+                        && hNrbms.compareMagnitude(psiII).isProof());
+    }
+
+    // ------------------------------------------------------------------ 29 segment four register
+
+    private static void omegaAlphaRegister() {
+        LadderOrdinal hOmega = LadderOrdinal.omegaAlpha(LadderArgument.omega());
+        LadderOrdinal hOmegaOmega = LadderOrdinal.omegaAlpha(LadderArgument.ofBms(
+                new int[][]{{0}, {1}, {2}}));
+        LadderOrdinal hSho = LadderOrdinal.omegaAlpha(LadderArgument.sho());
+        LadderOrdinal hOmegaOne = LadderOrdinal.omegaAlpha(LadderArgument.omegaOneCk());
+        LadderOrdinal hNrbms = LadderOrdinal.omegaAlpha(LadderArgument.ofNrbms(
+                NonRecursiveBms.parse("(1,1,1)(2,2)")));
+        LadderOrdinal hLim = LadderOrdinal.omegaAlpha(LadderArgument.limNrbms());
+        LadderOrdinal hX = LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint());
+        LadderOrdinal psiII = LadderOrdinal.psiII();
+        LadderOrdinal x = LadderOrdinal.tnrbmsFixpoint();
+
+        check("ω_α 值保存下标、归入段四，且访问器互不串台",
+                hX.isOmegaAlpha()
+                        && !hX.isTnrbms() && !hX.isFunctionValue() && !hX.isNrbms() && !hX.isBms()
+                        && hX.segment() == LadderSegment.SEGMENT_FOUR
+                        && hX.omegaAlphaArgument().orElseThrow().equals(
+                                LadderArgument.tnrbmsFixpoint())
+                        && hX.bms().isEmpty() && hX.nrbms().isEmpty()
+                        && hX.functionArgument().isEmpty() && hX.tnrbmsArgument().isEmpty()
+                        && hX.placeholder().isEmpty());
+        check("ω_α 的文本是 ω_ 加下标：ω_X、ω_SHO、ω_ω₁^CK、ω_lim(NRBMS)、ω_{(0)(1)(2)}、"
+                        + "ω_{(1,1,1)(2,2)}",
+                hX.toString().equals("ω_X")
+                        && hSho.toString().equals("ω_SHO")
+                        && hOmegaOne.toString().equals("ω_ω₁^CK")
+                        && hLim.toString().equals("ω_lim(NRBMS)")
+                        && hOmegaOmega.toString().equals("ω_{(0)(1)(2)}")
+                        && hNrbms.toString().equals("ω_{(1,1,1)(2,2)}"));
+        check("ω_α 的 notationName 是 ω，且每个 ω_α 值都以 ω_ 开头",
+                "ω".equals(hOmega.notationName())
+                        && "ω".equals(hX.notationName())
+                        && hOmega.toString().startsWith("ω_")
+                        && hX.toString().startsWith("ω_"));
+        check("ψ_𝕀(𝕀) 的文本、描述与具名层归属",
+                psiII.toString().equals("ψ_𝕀(𝕀)")
+                        && psiII.isPlaceholder() && !psiII.isStepValue()
+                        && psiII.segment() == LadderSegment.PLACEHOLDER
+                        && psiII.placeholder().orElseThrow() == LadderPlaceholder.PSI_I_I
+                        && !LadderPlaceholder.PSI_I_I.description().isBlank());
+        check("ψ_𝕀(𝕀) 是 h 的不动点塌缩：h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)，返回同一个具名单例",
+                LadderOrdinal.omegaAlpha(LadderArgument.psiII()) == psiII
+                        && LadderOrdinal.omegaAlpha(LadderArgument.psiII()).toString()
+                                .equals("ψ_𝕀(𝕀)"));
+        check("ψ_𝕀(𝕀) 是共享边界实参：isBoundary、isFunctionArgument 与 ofArgument 往返",
+                LadderArgument.psiII().isBoundary()
+                        && LadderArgument.psiII().isFunctionArgument()
+                        && LadderArgument.psiII().boundary().orElseThrow()
+                                == LadderArgument.Boundary.PSI_I_I
+                        && LadderOrdinal.ofArgument(LadderArgument.psiII()).equals(psiII));
+        check("段四的声明位置：X < 每个 ω_α 值 < ψ_𝕀(𝕀)",
+                x.compareTo(hOmega) < 0 && x.compareTo(hX) < 0
+                        && hOmega.compareTo(psiII) < 0 && hX.compareTo(psiII) < 0
+                        && hSho.compareTo(psiII) < 0);
+        check("段四的记号切换：所有 TNRBMS 值都低于 X，所有 ω_α 值都高于 X，没有反过来的结点",
+                LadderOrdinal.tnrbms(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}))
+                                .compareTo(x) < 0
+                        && LadderOrdinal.tnrbms(LadderArgument.omegaOneCk()).compareTo(x) < 0
+                        && LadderOrdinal.tnrbms(LadderArgument.limNrbms()).compareTo(x) < 0
+                        && hOmega.compareTo(x) > 0 && hX.compareTo(x) > 0
+                        && !hOmega.isTnrbms() && !hX.isPlaceholder());
+        check("LadderSegment 有四段与具名层，SEGMENT_FOUR 的描述带 X 与 omega_alpha",
+                LadderSegment.values().length == 5
+                        && LadderSegment.SEGMENT_FOUR.description().contains("X")
+                        && LadderSegment.SEGMENT_FOUR.description().contains("omega_alpha"));
+        check("ω_α 工厂拒绝 0、1 与 null（与 f、g 同一个下标定义域）",
+                throwsIllegalArgument(() -> LadderOrdinal.omegaAlpha(
+                                LadderArgument.ofBms(new int[][]{})))
+                        && throwsIllegalArgument(() -> LadderOrdinal.omegaAlpha(
+                                LadderArgument.ofBms(new int[][]{{0}})))
+                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha(null)));
+        check("段四的 tier 顺序：X(9) < ω_α 值(10) < ψ_𝕀(𝕀)(11)",
+                LadderPlaceholder.TNRBMS_FIXPOINT.tier() == 9
+                        && LadderPlaceholder.PSI_I_I.tier() == 11
+                        && x.compareTo(hOmega) < 0 && hOmega.compareTo(psiII) < 0);
+        check("ψ_𝕀(𝕀) 的描述带 omega_alpha 不动点等式 min{alpha | alpha = omega_alpha}",
+                LadderPlaceholder.PSI_I_I.description()
+                        .contains("min{alpha | alpha = omega_alpha}")
+                        && LadderPlaceholder.PSI_I_I.description().contains("omega_alpha"));
+    }
+
+    // ------------------------------------------------------------------ 30 the omega_alpha step
+
+    private static void omegaAlphaStep() {
+        List<LadderArgument> arguments = List.of(
+                LadderArgument.omega(),
+                LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}),
+                LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}),
+                LadderArgument.sho(),
+                LadderArgument.omegaOneCk(),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1)")),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1)")),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)")),
+                LadderArgument.limNrbms(),
+                LadderArgument.tnrbmsFixpoint(),
+                LadderArgument.psiII());
+
+        List<LadderOrdinal> values = new ArrayList<>();
+        for (LadderArgument argument : arguments) {
+            values.add(LadderOrdinal.omegaAlpha(argument));
+        }
+
+        boolean increasing = true;
+        for (int index = 1; index < values.size(); index++) {
+            if (values.get(index - 1).compareTo(values.get(index)) >= 0) {
+                increasing = false;
+            }
+        }
+        check("ω_α 步在 " + arguments.size() + " 个下标的样本上严格递增", increasing);
+
+        int pairs = 0;
+        boolean isomorphic = true;
+        for (LadderArgument left : arguments) {
+            for (LadderArgument right : arguments) {
+                pairs++;
+                if (Integer.signum(LadderOrdinal.omegaAlpha(left).compareTo(
+                        LadderOrdinal.omegaAlpha(right)))
+                        != Integer.signum(left.compareTo(right))) {
+                    isomorphic = false;
+                }
+            }
+        }
+        check("ω_α 步在样本上与下标同序：ω_a < ω_b 当且仅当 a < b（" + pairs + " 对）", isomorphic);
+
+        boolean aboveArgument = true;
+        for (int index = 0; index < arguments.size() - 1; index++) {
+            if (values.get(index).compareTo(LadderOrdinal.ofArgument(arguments.get(index))) <= 0) {
+                aboveArgument = false;
+            }
+        }
+        check("ω_α 步对每个下标 a < ψ_𝕀(𝕀) 都高于该下标（寄存器的声明，不是所有者的 A1）",
+                aboveArgument);
+
+        LadderOrdinal x = LadderOrdinal.tnrbmsFixpoint();
+        LadderOrdinal psiII = LadderOrdinal.psiII();
+        boolean between = true;
+        for (int index = 0; index < values.size() - 1; index++) {
+            if (values.get(index).compareTo(x) <= 0 || values.get(index).compareTo(psiII) >= 0) {
+                between = false;
+            }
+        }
+        check("每个 ω_α 值（含 h(ω)）都严格高于 X 且低于 ψ_𝕀(𝕀)", between);
+
+        boolean noSmallerFixedPoint = true;
+        for (int index = 0; index < arguments.size() - 1; index++) {
+            if (values.get(index).equals(LadderOrdinal.ofArgument(arguments.get(index)))) {
+                noSmallerFixedPoint = false;
+            }
+        }
+        check("ψ_𝕀(𝕀) 是寄存器里的最小不动点：所有下标 a < ψ_𝕀(𝕀) 都没有 ω_a = a"
+                        + "，只有 h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)",
+                noSmallerFixedPoint && values.get(values.size() - 1) == psiII);
+        check("X 不是 ω_α 的不动点：h(X) = ω_X 严格大于 X（切换点上的值仍严格上升）",
+                LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).toString().equals("ω_X")
+                        && LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint())
+                                .compareTo(x) > 0);
+        check("ψ_𝕀(𝕀) 的 h 值不带 ω_ 文本，而是具名边界 ψ_𝕀(𝕀)",
+                values.get(values.size() - 1).toString().equals("ψ_𝕀(𝕀)")
+                        && !values.get(values.size() - 1).toString().startsWith("ω_"));
+        check("重复的 ω_X 相等且哈希一致，不同下标不相等",
+                LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).equals(
+                        LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()))
+                        && LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).hashCode()
+                                == LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).hashCode()
+                        && !LadderOrdinal.omegaAlpha(LadderArgument.omega()).equals(
+                                LadderOrdinal.omegaAlpha(LadderArgument.sho()))
+                        && !LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).equals(x));
+        check("ω_α 的记号只切换一次：X 以下全是 TNRBMS(0)(1^ 文本，X 以上全是 ω_ 文本",
+                LadderOrdinal.tnrbms(LadderArgument.limNrbms()).toString()
+                                .startsWith("TNRBMS(0)(1^")
+                        && LadderOrdinal.tnrbms(LadderArgument.limNrbms()).compareTo(x) < 0
+                        && LadderOrdinal.omegaAlpha(LadderArgument.limNrbms()).toString()
+                                .startsWith("ω_")
+                        && LadderOrdinal.omegaAlpha(LadderArgument.limNrbms()).compareTo(x) > 0);
+    }
+
+    // ------------------------------------------------------------------ 31 the stage-three decision
+
+    private static void omegaAlphaDecision() {
+        check("omegaAlpha 只有一个重载且只接受 LadderArgument（没有接受 LadderOrdinal 的重载）",
+                omegaAlphaTakesOnlyArgument());
+        check("LadderArgument 中没有任何成员接受或返回 LadderOrdinal：阶段三没有放宽类型分离",
+                noValueToArgumentPath());
+        check("没有 asArgument/toArgument 之类的转换，也没有把 ω_α 值转成下标的公开方法",
+                noArgumentConversionMethod());
+        check("Boundary 恰好五个，没有把任何 ω_α 值注册成边界名",
+                LadderArgument.Boundary.values().length == 5 && noOmegaAlphaBoundary());
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1016,24 +1244,26 @@ public final class LadderCheck {
     private static boolean ladderStepsTakeOnlyArguments() {
         boolean foundF = false;
         boolean foundTnrbms = false;
+        boolean foundOmegaAlpha = false;
         for (Method method : LadderOrdinal.class.getMethods()) {
             if (method.getDeclaringClass() != LadderOrdinal.class) {
                 continue;
             }
-            if (!method.getName().equals("f") && !method.getName().equals("tnrbms")) {
+            if (!method.getName().equals("f") && !method.getName().equals("tnrbms")
+                    && !method.getName().equals("omegaAlpha")) {
                 continue;
             }
             Class<?>[] parameters = method.getParameterTypes();
             if (parameters.length != 1 || parameters[0] != LadderArgument.class) {
                 return false;
             }
-            if (method.getName().equals("f")) {
-                foundF = true;
-            } else {
-                foundTnrbms = true;
+            switch (method.getName()) {
+                case "f" -> foundF = true;
+                case "tnrbms" -> foundTnrbms = true;
+                default -> foundOmegaAlpha = true;
             }
         }
-        return foundF && foundTnrbms;
+        return foundF && foundTnrbms && foundOmegaAlpha;
     }
 
     private static boolean noArgumentConversionMethod() {
@@ -1048,6 +1278,33 @@ public final class LadderCheck {
                 if (parameter == LadderOrdinal.class && method.getReturnType() == LadderArgument.class) {
                     return false;
                 }
+            }
+        }
+        return true;
+    }
+
+    /** The stage-three step must have exactly one overload, taking the argument type. */
+    private static boolean omegaAlphaTakesOnlyArgument() {
+        int count = 0;
+        for (Method method : LadderOrdinal.class.getMethods()) {
+            if (method.getDeclaringClass() != LadderOrdinal.class
+                    || !method.getName().equals("omegaAlpha")) {
+                continue;
+            }
+            count++;
+            Class<?>[] parameters = method.getParameterTypes();
+            if (parameters.length != 1 || parameters[0] != LadderArgument.class) {
+                return false;
+            }
+        }
+        return count == 1;
+    }
+
+    /** No boundary name may stand for an {@code omega_alpha} value. */
+    private static boolean noOmegaAlphaBoundary() {
+        for (LadderArgument.Boundary boundary : LadderArgument.Boundary.values()) {
+            if (boundary.text().contains("ω_") || boundary.name().contains("OMEGA_ALPHA")) {
+                return false;
             }
         }
         return true;
