@@ -32,7 +32,13 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The classic game's enemy: a deterministic state machine that plays player 2.
+ * One classic bot: a deterministic state machine that plays a single bot player.
+ *
+ * <p><strong>One controller per bot.</strong> The historical class played player 2 only. It now takes a
+ * {@link BotFaction} (player id, faction seed, {@link BotStrategy}, spawn anchor) and reads that faction
+ * instead of the old constants, while the no-argument constructor still builds exactly the historical
+ * single enemy - player 2, the legacy style, the fixed {@code (192, 192)} anchor. {@link ClassicBots} owns
+ * one controller per bot and calls each of them once per tick; nothing else in the engine changed.
  *
  * <h2>The states</h2>
  *
@@ -208,7 +214,7 @@ public final class ClassicAi implements WorldTickHook {
      * {@link #findOpenOrigin} searches rings of buildable tiles around it, because the terrain is noise and
      * the exact tile may be water or rock.
      */
-    private static final GridPos BASE_ANCHOR = new GridPos(192, 192);
+    static final GridPos BASE_ANCHOR = new GridPos(192, 192);
 
     /** Preferred offset of the armory from the opening warehouse, in tiles (one tile of clearance). */
     private static final GridPos OFFSET_ARMORY = new GridPos(0, 4);
@@ -222,13 +228,55 @@ public final class ClassicAi implements WorldTickHook {
     /** Near ring the opening base search walks before the bounded wider fallback. */
     private static final int OPENING_SEARCH_RADIUS = 24;
 
+    private final int playerId;
+    private final BotStrategy strategy;
+    private final GridPos baseAnchor;
+    private final String playerName;
+    private final int playerColor;
+
     private Mode mode = Mode.ECON;
 
     /** Whether the one-time enemy bootstrap was attempted, successfully or not. */
     private boolean bootstrapped;
 
-    /** Creates the AI; a plugin owns one instance for the world it is loaded into. */
+    /**
+     * Creates the historical single enemy: player 2, the legacy style and the fixed anchor.
+     *
+     * <p>Kept for the direct controller tests and for any caller written before the bot system existed;
+     * {@link ClassicBots} with the default count builds exactly this behaviour through the faction form.
+     */
     public ClassicAi() {
+        this(PLAYER_ID, BotStrategy.LEGACY, BASE_ANCHOR, ENEMY_NAME, ENEMY_COLOR);
+    }
+
+    /**
+     * Creates the controller of one bot faction.
+     *
+     * @param faction the player id, style and anchor this controller plays
+     * @throws NullPointerException when the faction is {@code null}
+     */
+    public ClassicAi(BotFaction faction) {
+        this(Objects.requireNonNull(faction, "faction").playerId(), faction.strategy(),
+                faction.spawnAnchor(), faction.name(), faction.color());
+    }
+
+    private ClassicAi(int playerId, BotStrategy strategy, GridPos baseAnchor, String playerName,
+            int playerColor) {
+        this.playerId = playerId;
+        this.strategy = Objects.requireNonNull(strategy, "strategy");
+        this.baseAnchor = Objects.requireNonNull(baseAnchor, "baseAnchor");
+        this.playerName = Objects.requireNonNull(playerName, "playerName");
+        this.playerColor = playerColor;
+    }
+
+    /** The player id this controller plays; player 2 for the historical single enemy. */
+    public int playerId() {
+        return playerId;
+    }
+
+    /** The style this controller was built with. */
+    public BotStrategy strategy() {
+        return strategy;
     }
 
     @Override
@@ -268,7 +316,7 @@ public final class ClassicAi implements WorldTickHook {
         // new tier rather than a queue that the upgrade would cancel.
         upkeepBuildings(world, ai, units, buildings);
         upkeepEngineers(world, ai, units, buildings);
-        if (countArmy(units) < ARMY_TARGET) {
+        if (countArmy(units) < strategy.armyTarget()) {
             trainArmy(world, ai, buildings);
         }
         if (mode == Mode.ATTACK) {
@@ -277,24 +325,24 @@ public final class ClassicAi implements WorldTickHook {
     }
 
     /** The state for this decision; the precedence is the class documentation's list. */
-    private static Mode modeFor(List<Unit> units, List<Building> buildings, List<Unit> intruders) {
+    private Mode modeFor(List<Unit> units, List<Building> buildings, List<Unit> intruders) {
         if (!intruders.isEmpty()) {
             return Mode.DEFEND;
         }
-        if (countArmy(units) >= ATTACK_ARMY_SIZE) {
+        if (countArmy(units) >= strategy.attackArmySize()) {
             return Mode.ATTACK;
         }
-        boolean staffed = countUnitType(units, ClassicContent.ENGINEER) >= ENGINEER_TARGET
+        boolean staffed = countUnitType(units, ClassicContent.ENGINEER) >= strategy.engineerTarget()
                 && countTag(buildings, ClassicContent.ARMORY_TAG) >= ARMORY_TARGET
-                && countTag(buildings, ClassicContent.MINE_TAG) >= MINE_TARGET;
+                && countTag(buildings, ClassicContent.MINE_TAG) >= strategy.mineTarget();
         return staffed ? Mode.ARMY : Mode.ECON;
     }
 
     // ------------------------------------------------------------------ economy rules
 
-    /** Trains an engineer when fewer than {@link #ENGINEER_TARGET} are alive. */
-    private static void upkeepEngineers(World world, Player ai, List<Unit> units, List<Building> buildings) {
-        if (countUnitType(units, ClassicContent.ENGINEER) >= ENGINEER_TARGET) {
+    /** Trains an engineer when fewer than the style's engineer target are alive. */
+    private void upkeepEngineers(World world, Player ai, List<Unit> units, List<Building> buildings) {
+        if (countUnitType(units, ClassicContent.ENGINEER) >= strategy.engineerTarget()) {
             return;
         }
         train(world, ai, buildings, recipe(world, ClassicContent.TRAIN_ENGINEER));
@@ -344,33 +392,37 @@ public final class ClassicAi implements WorldTickHook {
         return false;
     }
 
-    /** Places one missing armory, mine or lumber camp with an idle builder, if there is one. */
-    private static void upkeepBuildings(World world, Player ai, List<Unit> units, List<Building> buildings) {
-        // An upgrade replaces a building rather than adding one, so it is considered before the count
-        // based site search: with the one-armory target, a t1 armory is upgraded instead of a second t1.
-        if (upgradeArmory(world, ai, buildings)) {
+    /** Places the missing armory, mine or lumber camp with an idle builder, and upgrades when due. */
+    private void upkeepBuildings(World world, Player ai, List<Unit> units, List<Building> buildings) {
+        // The legacy style (and therefore the default one-bot world) upgrades first: an affordable, idle
+        // armory is turned into t2 before any site is considered. The other style fills a missing economy
+        // building first and keeps the upgrade for a decision where nothing is missing.
+        if (strategy.upgradeArmoryFirst() && upgradeArmory(world, ai, buildings)) {
             return;
         }
         BuildingType type = null;
         if (countTag(buildings, ClassicContent.ARMORY_TAG) < ARMORY_TARGET) {
             type = buildingType(world, ClassicContent.ARMORY_T1);
-        } else if (countTag(buildings, ClassicContent.MINE_TAG) < MINE_TARGET) {
+        } else if (countTag(buildings, ClassicContent.MINE_TAG) < strategy.mineTarget()) {
             type = buildingType(world, ClassicContent.MINE_T1);
         } else if (countTag(buildings, ClassicContent.LUMBER_TAG) < LUMBER_TARGET) {
             type = buildingType(world, ClassicContent.LUMBERCAMP_T1);
         }
-        if (type == null) {
+        if (type != null) {
+            Unit builder = idleBuilder(units);
+            if (builder == null) {
+                return;
+            }
+            GridPos origin = findSite(world, builder, buildings, type);
+            if (origin == null) {
+                return;
+            }
+            director(world).build(builder, type, origin);
             return;
         }
-        Unit builder = idleBuilder(units);
-        if (builder == null) {
-            return;
+        if (!strategy.upgradeArmoryFirst()) {
+            upgradeArmory(world, ai, buildings);
         }
-        GridPos origin = findSite(world, builder, buildings, type);
-        if (origin == null) {
-            return;
-        }
-        director(world).build(builder, type, origin);
     }
 
     /** Trains the strongest affordable melee tier the best idle armory allows. */
@@ -536,8 +588,8 @@ public final class ClassicAi implements WorldTickHook {
     // ------------------------------------------------------------------ the enemy player
 
     /** The AI's player when the world already has one, or {@code null}. */
-    private static Player playerOf(World world) {
-        PlayerId id = PlayerId.of(PLAYER_ID);
+    private Player playerOf(World world) {
+        PlayerId id = PlayerId.of(playerId);
         for (Player player : world.players()) {
             if (player.id().equals(id)) {
                 return player;
@@ -573,7 +625,7 @@ public final class ClassicAi implements WorldTickHook {
         if (warehouse == null || armory == null || mine == null || engineer == null) {
             return null;
         }
-        GridPos warehouseOrigin = findOpenOrigin(world, warehouse, BASE_ANCHOR, List.of());
+        GridPos warehouseOrigin = findOpenOrigin(world, warehouse, baseAnchor, List.of());
         if (warehouseOrigin == null) {
             return null;
         }
@@ -596,7 +648,7 @@ public final class ClassicAi implements WorldTickHook {
         if (engineerTile == null) {
             return null;
         }
-        Player enemy = new Player(PlayerId.of(PLAYER_ID), ENEMY_NAME, ENEMY_COLOR, PLAYER_ID, false);
+        Player enemy = new Player(PlayerId.of(playerId), playerName, playerColor, playerId, false);
         world.addPlayer(enemy);
         enemy.attachLogistics(new WarehouseLogistics(world, enemy));
         joinHauling(world, enemy);

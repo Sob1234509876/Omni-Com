@@ -4,9 +4,9 @@ English | [简体中文](README_zh_CN.md)
 
 `projects:oc:oc-game-server-classic` — the world content plugin `oc-classic`. A server picks plugins up from its
 `plugins/` folder; this jar registers one game: five melee tiers, an engineer, two armory levels, three mine
-levels, three lumber camp tiers and a warehouse, together with the income hook and the enemy AI that play it. It registers no
-request, opens no file and starts no thread. With the jar in the folder the server serves this world instead of
-the engine's sample catalogue; remove it and the server falls back.
+levels, three lumber camp tiers and a warehouse, together with the income hook and the seeded bot player
+system that play it. It registers no request, opens no file and starts no thread. With the jar in the folder
+the server serves this world instead of the engine's sample catalogue; remove it and the server falls back.
 
 ## Coordinates
 
@@ -18,7 +18,7 @@ the engine's sample catalogue; remove it and the server falls back.
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (368 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (445 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x96 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -148,7 +148,7 @@ That leaves 80 gold and 40 wood of slack for a first engineer (10 gold) or a sec
 
 ## The AI
 
-`ClassicAi` plays **player 2**, named `Enemy`, in red. It takes a decision every **20 ticks** — one simulated
+`ClassicAi` plays one bot, and in the default one-bot world that bot is **player 2**, named `Enemy`, in red. It takes a decision every **20 ticks** — one simulated
 second — and falls into one mode, chosen in this fixed precedence:
 
 | Mode | When | What it does |
@@ -180,6 +180,70 @@ its own buildings. There is no randomness anywhere: units, buildings
 and intruders are sorted by entity id and every distance tie is broken by id, so the same world state and tick
 always produce the same orders.
 
+## Bots
+
+The enemy above is one bot, and the game is now a **bot player system** rather than one hard-coded controller.
+`ClassicBots` implements the world tick hook and owns one `ClassicAi` per bot; `--bots N` (default **1**,
+allowed **0..6**) decides how many. `0` is a valid world with no bot player and no bot entity, `1` is the
+historical player 2 `Enemy`, and every extra bot is a full AI with its own base and its own style. Bot 0 plays
+player 2; the extra bots play players **9, 10, ...**, above the human id range 3..8, so a bot never takes a
+human slot and a human join can never collide with a bot.
+
+The plugin reads the count from `PluginContext.options()` under the key `bots`; the server publishes its
+`--bots` value there, and the plugin has the same default when the option is absent. There is no configuration
+file and no plugin-to-server class reference in either direction.
+
+### The spawn rule
+
+Bot `i` gets the faction seed
+
+```text
+factionSeed = splitmix64(worldSeed * 31 + i)
+```
+
+(SplitMix64's finalizer; `BotStrategy.mix64`). That one seed deterministically selects:
+
+- one of **16 compass sectors**, from an integer unit-vector table scaled by 256;
+- one of **five distance rings**: **96, 120, 144, 168 or 192 tiles** from the world origin.
+
+The anchor is integer arithmetic only - no `Random`, no clock, no floating point trigonometry - and the AI
+still searches rings of buildable ground around it (24 tiles first, then the 64 tile bound) because the
+terrain is noise and a fixed tile can be water or rock. The opening placement uses the engine's `canPlace`
+rule, so a bot never overlaps another bot's base or the human scene even when water pushes its search towards
+them.
+
+**Replay compatibility:** for the historical pair (bot 0 and the default seed `1`) the anchor is the old
+fixed `(192, 192)` and the style is the legacy one. That is the one deliberate exception; any other seed and
+every extra bot use the derived anchor and style. The same seed and index always select the same branch, so
+the rule stays a pure function.
+
+### The strategy record
+
+Each bot carries a `BotStrategy` derived from its own faction seed. The fields, their closed ranges and the
+legacy values are:
+
+| Field | Range | Legacy (bot 0, default seed) | Effect |
+| --- | --- | --- | --- |
+| `mineTarget` | **2..4** | 3 | mines the bot keeps standing |
+| `engineerTarget` | **2..4** | 3 | engineers the bot keeps alive |
+| `armyTarget` | **6..10** | 8 | army size it grows towards |
+| `attackArmySize` (the aggression threshold) | **4..8**, never above `armyTarget` | 6 | army size at which it enters `ATTACK` and marches |
+| `upgradeArmoryFirst` | `true` or `false` | `true` | `true`: an affordable armory upgrade wins the decision before a missing mine/camp; `false`: fill the missing economy building first, upgrade afterwards |
+
+Two bots in one world therefore do not behave identically, and a derived style that would equal the legacy
+one exactly is nudged deterministically away from it. The rest of the AI (one armory, the upgrade ladder, the
+engineer/mine/camp upkeep, the strongest affordable tier, nearest-target ties by entity id) is unchanged.
+Bots are not allied: each treats every other bot and the human player as an enemy, exactly as the old single
+enemy treated everyone but itself.
+
+### Determinism
+
+The bot system adds no `java.util.Random` and no clock. The seed mixing is integer only, the faction list is
+built in index order, and every entity list the AI reads is sorted by entity id, so the same world seed and
+bot count reproduce the same anchors, the same styles, the same bases and the same 600 tick snapshot byte for
+byte. A different seed moves the bases; this is asserted in the self check for two bots. `--bots 1` on the
+default world seed is additionally asserted to be byte-for-byte identical to the old single-enemy run.
+
 ## Install
 
 Build the plugin jar together with the two jars it needs at run time:
@@ -210,18 +274,20 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 403 checks passed.
+classic plugin self check: all 445 checks passed.
 ```
 
-403 is the sum of fifteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
+445 is the sum of sixteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
 the mine income ladder 20, the lumber camp ladder 35, the three upgrade ladders 30, the economy payout 33
 (18 gold + 15 wood), the buildable warehouse 11, the starting stock 10, the manifest and atlas 17, the host and
 snapshot 35 (including the compact warehouse `contents` row), the enemy AI 36 (including the armory upgrade and
-the lumber camp upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the plugin
-seam 17 and the plugin loader 12. The gate section is the strict part: it proves against a real
-`ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue says so; the
-upgrade section proves the same ladders are executable in a real engine, and the AI section proves the enemy
-really reaches tier 2 through the command.
+the lumber camp upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the bot
+players 38 (zero bots, the byte-identical one-bot world, two differing bots, and the seed rules), the plugin
+seam 21 (including the `bots` option) and the plugin loader 12. The gate section is the strict part: it proves
+against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
+says so; the upgrade section proves the same ladders are executable in a real engine, the AI section proves
+the enemy really reaches tier 2 through the command, and the bots section proves the default one-bot world is
+byte-for-byte the old one while two bots differ and a different seed moves their bases.
 
 ## Module layout
 
@@ -229,12 +295,15 @@ really reaches tier 2 through the command.
 | --- | --- |
 | `src/main/java/.../classic/ClassicContent.java` | the catalogue: terrain, items, six units, nine buildings, six recipes |
 | `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine and lumber camp income once per 60 ticks |
-| `src/main/java/.../classic/ClassicAi.java` | the deterministic enemy that plays player 2 |
-| `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the two hooks |
+| `src/main/java/.../classic/ClassicAi.java` | the deterministic controller of one bot player (the no-argument form is the historical single enemy) |
+| `src/main/java/.../classic/ClassicBots.java` | the bot player system: count, faction seeds, spawn anchors and one controller per bot |
+| `src/main/java/.../classic/BotFaction.java` | one bot's player id, faction seed, style and spawn anchor |
+| `src/main/java/.../classic/BotStrategy.java` | the per-bot strategy record, its ranges and the deterministic deriver |
+| `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the two hooks, reads `--bots` from the plugin options |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 403 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 445 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

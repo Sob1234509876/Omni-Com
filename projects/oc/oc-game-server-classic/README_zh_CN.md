@@ -2,7 +2,7 @@
 
 # Omni Com Classic 世界插件
 
-`projects:oc:oc-game-server-classic` —— 世界内容插件 `oc-classic`。服务器从自己的 `plugins/` 目录里捡插件；这个 jar 注册一场游戏：五级近战、一个工程师、两级兵营、三级矿场、三级伐木场和一座仓库，外加替它运转的收益钩子与敌人 AI。它不注册请求、不打开文件、不起线程。jar 在目录里，服务器就服务这个世界而不是引擎的示例目录；拿走它，服务器就回退到示例。
+`projects:oc:oc-game-server-classic` —— 世界内容插件 `oc-classic`。服务器从自己的 `plugins/` 目录里捡插件；这个 jar 注册一场游戏：五级近战、一个工程师、两级兵营、三级矿场、三级伐木场和一座仓库，外加替它运转的收益钩子与按种子生成的机器人玩家系统。它不注册请求、不打开文件、不起线程。jar 在目录里，服务器就服务这个世界而不是引擎的示例目录；拿走它，服务器就回退到示例。
 
 ## 坐标
 
@@ -14,7 +14,7 @@
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS |
 | 依赖 | `oc-game-server`（插件 API）与 `oc-rts-engine`（目录类型）；引擎会带上 `oc-googology` |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（403 项检查） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（445 项检查） |
 | 世界内容 | `oc-classic` |
 | 素材 | `assets/manifest.json` 与 96x96 的 `assets/atlas.png` |
 | 帮助 | [03 插件](../oc-game-server/help/03-plugins.md) 与 [05 浏览器端点](../oc-game-server/help/05-browser-endpoint.md)，中文 |
@@ -107,7 +107,7 @@
 
 ## AI
 
-`ClassicAi` 扮演**玩家 2**，名字是 `Enemy`，红色。它每 **20 tick** —— 模拟的一秒 —— 做一次决定，并按下面这个固定优先级落入一种模式：
+`ClassicAi` 扮演一个机器人；在默认的单机器人世界里，它就是**玩家 2**，名字是 `Enemy`，红色。它每 **20 tick** —— 模拟的一秒 —— 做一次决定，并按下面这个固定优先级落入一种模式：
 
 | 模式 | 何时 | 做什么 |
 | --- | --- | --- |
@@ -121,6 +121,47 @@
 军队训练看的是**最好的空闲兵营** —— 等级最高，平局按实体 id —— 从最高级往下走五级，取第一个兵营等级允许、仓库又还付得起的等级。所以二级兵营只要金币够，就会训练 `unit.melee.t5`。它只给空闲单位下 attack-move，所以从不重发订单，也从不替换一次还在走的行军。
 
 在它的第一个 tick，AI 自己创建玩家 2，接上引擎的仓库后勤，放下仓库、一级兵营和一级矿场作为开局基地，生成一个工程师，并存入同样的 300 金币 + 60 木材。它的兵营在下一次决定（tick 20）升到二级，自检在固定种子上锁定了这一点。它的第一座伐木场来自常驻维护，而不是开局基地。它在自己建筑的八格内防守。这里没有任何随机：单位、建筑与入侵者都按实体 id 排序，所有距离平局都按 id 打破，所以同样的世界状态与 tick 永远产生同样的命令。
+
+## 机器人玩家
+
+上面那个敌人现在只是**一个**机器人；游戏本身已经是一个**机器人玩家系统**，而不是写死的单个控制器。`ClassicBots` 是世界 tick 钩子，内部按机器人各持一个 `ClassicAi`；`--bots N`（默认 **1**，允许 **0..6**）决定数量。`0` 是合法世界：没有任何机器人玩家与机器人实体；`1` 就是历史上的玩家 2 `Enemy`；每多一个机器人，都是一个有自己基地、自己策略的完整 AI。0 号机器人玩玩家 2；额外的机器人玩玩家 **9、10、……**，在真人槽位 3..8 之外，所以机器人不会占掉真人的位置，真人也永远不会与机器人撞 id。
+
+插件从 `PluginContext.options()` 的 `bots` 键读取数量；服务器把自己的 `--bots` 值放在那里，插件在缺省时使用同样的默认值。两个方向都不需要配置文件，也不需要插件与服务器互相引用对方的类。
+
+### 出生规则
+
+机器人 `i` 的阵营种子是
+
+```text
+factionSeed = splitmix64(worldSeed * 31 + i)
+```
+
+（SplitMix64 的 finalizer，即 `BotStrategy.mix64`）。这一个种子确定性地选出：
+
+- **16 个罗盘方向**之一（整数单位向量表，按 256 缩放）；
+- **5 个距离环**之一：离世界原点 **96、120、144、168 或 192 格**。
+
+锚点只做整数运算——没有 `Random`、没有时钟、没有浮点三角函数——然后 AI 仍然在锚点周围按环搜索可建造地面（先 24 格，再用 64 格的有界回退），因为地形是噪声，固定格子可能是水或岩石。开局放置走引擎的 `canPlace` 规则，所以即使水域把搜索推向人类场景，机器人也不会与另一个机器人的基地或人类场景重叠。
+
+**回放兼容：** 对历史组合（0 号机器人 + 默认种子 `1`），锚点仍是旧的固定 `(192, 192)`，策略仍是旧版。这是唯一一处刻意的例外；其它种子和每个额外的机器人都用派生锚点与派生策略。同一个种子与编号永远走同一条分支，所以规则仍是纯函数。
+
+### 策略记录
+
+每个机器人带一个由自己的阵营种子派生出的 `BotStrategy`。字段、闭区间与旧版取值如下：
+
+| 字段 | 范围 | 旧版（0 号机器人，默认种子） | 作用 |
+| --- | --- | --- | --- |
+| `mineTarget` | **2..4** | 3 | 维持多少座矿场 |
+| `engineerTarget` | **2..4** | 3 | 维持多少工程师 |
+| `armyTarget` | **6..10** | 8 | 军队养到多大 |
+| `attackArmySize`（进攻阈值） | **4..8**，且不超过 `armyTarget` | 6 | 军队达到多少时进入 `ATTACK` 并出征 |
+| `upgradeArmoryFirst` | `true` / `false` | `true` | `true`：付得起的兵营升级优先于缺的矿场/伐木场；`false`：先补经济建筑，再升级 |
+
+所以同一世界的两个机器人不会表现得一模一样；如果派生结果恰好与旧版完全相同，会再确定性地挪开一格。AI 的其余部分（只维持一座兵营、升级阶梯、工程师/矿场/伐木场维护、最强的可负担等级、按实体 id 打破的最近目标平局）都不变。机器人之间不结盟：每个机器人都把其他机器人和真人当成敌人，和旧版单个敌人对待除自己以外所有人的方式一致。
+
+### 确定性
+
+机器人系统没有引入 `java.util.Random`，也没有时钟。种子混合只用整数，阵营列表按编号顺序构建，AI 读取的每个实体列表都按实体 id 排序，所以同样的世界种子与机器人数量会复现同样的锚点、策略、基地，以及逐字节相同的 600 tick 快照。不同种子会移动基地；自检对两个机器人断言了这一点。自检还断言：默认世界种子上的 `--bots 1` 与旧的单敌人运行逐字节相同。
 
 ## 安装
 
@@ -149,10 +190,10 @@ projects/oc/oc-googology/build/libs/oc-googology-2.0a.jar
 自检末尾打印一行：
 
 ```text
-classic plugin self check: all 403 checks passed.
+classic plugin self check: all 445 checks passed.
 ```
 
-403 条来自十五节：内容目录 84、五级数值阶梯 40、兵营等级门槛 14、矿场收益阶梯 20、伐木场阶梯 35、三条升级阶梯 30、经济发放 33（金币 18 + 木材 15）、可建造仓库 11、开局资源 10、素材清单与图集 17、世界主机与快照 35（含仓库 `contents` 行）、敌人 AI 36（含兵营升级与伐木场维护）、确定性 9（含 600 tick 内 AI 实体不超出 64 格半径）、插件接口 17、插件加载器 12。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级。
+445 条来自十六节：内容目录 84、五级数值阶梯 40、兵营等级门槛 14、矿场收益阶梯 20、伐木场阶梯 35、三条升级阶梯 30、经济发放 33（金币 18 + 木材 15）、可建造仓库 11、开局资源 10、素材清单与图集 17、世界主机与快照 35（含仓库 `contents` 行）、敌人 AI 36（含兵营升级与伐木场维护）、确定性 9（含 600 tick 内 AI 实体不超出 64 格半径）、机器人玩家 38（0 个机器人、与旧版逐字节相同的单机器人世界、两个不同的机器人，以及种子规则）、插件接口 21（含 `bots` 选项）、插件加载器 12。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级，机器人那一节则证明默认单机器人世界与旧版逐字节相同，而两个机器人彼此不同、换种子会移动基地。
 
 ## 模块布局
 
@@ -160,12 +201,15 @@ classic plugin self check: all 403 checks passed.
 | --- | --- |
 | `src/main/java/.../classic/ClassicContent.java` | 目录：地形、物品、六个单位、九座建筑、六条配方 |
 | `src/main/java/.../classic/ClassicEconomy.java` | 每 60 tick 支付矿场与伐木场收益的世界 tick 钩子 |
-| `src/main/java/.../classic/ClassicAi.java` | 扮演玩家 2 的确定性敌人 |
-| `src/main/java/.../classic/ClassicPlugin.java` | 插件本体：注册目录与两个钩子 |
+| `src/main/java/.../classic/ClassicAi.java` | 单个机器人玩家的确定性控制器（无参形式就是旧版的单个敌人） |
+| `src/main/java/.../classic/ClassicBots.java` | 机器人玩家系统：数量、阵营种子、出生锚点与每个机器人一个控制器 |
+| `src/main/java/.../classic/BotFaction.java` | 一个机器人的玩家 id、阵营种子、策略与出生锚点 |
+| `src/main/java/.../classic/BotStrategy.java` | 每个机器人的策略记录、取值范围与确定性派生 |
+| `src/main/java/.../classic/ClassicPlugin.java` | 插件本体：注册目录与两个钩子，从插件选项读取 `--bots` |
 | `src/main/resources/omnicom-plugin.properties` | 描述文件：`id=oc-classic`、`version=1.0`、`main`、`description` |
 | `src/main/resources/assets/manifest.json` | 服务器要合并的图集清单 |
 | `src/main/resources/assets/atlas.png` | 96x96 的单位与建筑图集 |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 403 条检查的自检程序 |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 445 条检查的自检程序 |
 | `build.gradle` | `selfcheck` 任务，以及挂在它类路径上的服务器检查报告器 |
 
 ## 相关

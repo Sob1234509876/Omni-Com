@@ -14,9 +14,14 @@ import java.util.Objects;
  * <p><strong>What it does.</strong> Two things, in {@link #onLoad(PluginContext)}: it hands its catalogue to
  * the server through {@link PluginContext#registerWorldContent}, and it attaches the game's two
  * {@link io.github.sob1234509876.oc.server.world.WorldTickHook}s through
- * {@link PluginContext#registerWorldTickHook} - {@link ClassicEconomy} first, then {@link ClassicAi}. That
+ * {@link PluginContext#registerWorldTickHook} - {@link ClassicEconomy} first, then {@link ClassicBots}. That
  * is the whole plugin. It registers no request, opens no file, starts no thread and keeps no reference to
  * the server.
+ *
+ * <p><strong>How many bots.</strong> {@link ClassicBots} reads the server's {@code --bots} option from
+ * {@link PluginContext#options()} (key {@value ClassicBots#OPTION_BOTS}). Absent means
+ * {@value ClassicBots#DEFAULT_BOTS}, the historical single enemy; {@code 0}..{@value ClassicBots#MAX_BOTS} is
+ * accepted and anything else refuses the plugin load instead of silently playing the wrong world.
  *
  * <p><strong>Why the order matters.</strong> The hooks run in registration order after every fixed world
  * step, so the economy pays a player's mines before the AI takes its decision for the same tick. Both hooks
@@ -49,8 +54,8 @@ public final class ClassicPlugin implements Plugin {
     /** The gold and wood income hook, one per loaded plugin (and therefore one per world). */
     private final ClassicEconomy economy = new ClassicEconomy();
 
-    /** The enemy AI hook, one per loaded plugin (and therefore one per world). */
-    private final ClassicAi ai = new ClassicAi();
+    /** The bot player system, one per loaded plugin (and therefore one per world). */
+    private ClassicBots bots = new ClassicBots(ClassicBots.DEFAULT_BOTS);
 
     /** Creates the plugin; the loader uses the implicit public no-argument constructor it sees here. */
     public ClassicPlugin() {
@@ -69,22 +74,28 @@ public final class ClassicPlugin implements Plugin {
     @Override
     public String description() {
         return "Classic game content: five melee tiers, an engineer, two armory levels, three mines, three "
-                + "lumber camps and a warehouse, with gold and wood income and an enemy AI";
+                + "lumber camps and a warehouse, with gold and wood income and seeded bot players";
     }
 
     /**
      * Registers the catalogue and the two world tick hooks with the server.
      *
      * <p>Registration happens at load time, before any socket opens and before the world is built, which is
-     * why a catalogue that cannot be built fails startup instead of serving half a game.
+     * why a catalogue that cannot be built fails startup instead of serving half a game. The bot count comes
+     * from {@link PluginContext#options()} so the server's {@code --bots} decision reaches the system that
+     * owns the controllers without either module naming the other's classes.
      *
-     * @param context the plugin's folder, data root, logger, request registry, content seam and tick seam
+     * @param context the plugin's folder, data root, logger, request registry, content seam, tick seam and
+     *     server options
      */
     @Override
     public void onLoad(PluginContext context) {
         Objects.requireNonNull(context, "context").registerWorldContent(content);
+        int count = ClassicBots.parseCount(context.options().getOrDefault(ClassicBots.OPTION_BOTS,
+                Integer.toString(ClassicBots.DEFAULT_BOTS)));
+        bots = new ClassicBots(count);
         context.registerWorldTickHook(economy);
-        context.registerWorldTickHook(ai);
+        context.registerWorldTickHook(bots);
     }
 
     /** The catalogue this plugin registered; exposed so the self check can assert it is the same object. */
@@ -97,13 +108,13 @@ public final class ClassicPlugin implements Plugin {
         return economy;
     }
 
-    /** The enemy AI hook this plugin registered, in registration order after the economy. */
-    public ClassicAi ai() {
-        return ai;
+    /** The bot system this plugin registered, in registration order after the economy. */
+    public ClassicBots bots() {
+        return bots;
     }
 
     /** The hooks this plugin registers, in registration order; the same list {@link #onLoad} adds. */
     public List<WorldTickHook> worldTickHooks() {
-        return List.of(economy, ai);
+        return List.of(economy, bots);
     }
 }

@@ -13,7 +13,7 @@
 | 基础包 | `io.github.sob1234509876.oc.server`，其下是 `.auth`、`.net`、`.plugin`、`.ws`、`.world` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖**（托管的 RTS 世界来自仓库内的引擎模块） |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（938 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server:selfcheck`（1014 项检查，无测试框架，无网络） |
 | TCP 信道 | 加密，默认 `25566`（`--port`） |
 | 浏览器端点 | HTTP/WebSocket，默认 `25567`（`--http-port`；`0` 关闭它） |
 | 帮助 | [`help/README.md`](help/README.md) —— 五章，中文 |
@@ -28,10 +28,10 @@
 自检末尾打印一行：
 
 ```text
-game server self check: all 938 checks passed.
+game server self check: all 1014 checks passed.
 ```
 
-938 条是 `ServerCheck` 依次调用的十一个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（升级、版本握手、帧规则、来源规则、可配置的空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 306 条（daemon tick 线程、无界 `InfiniteTerrainMap` 及 4096 区块预算、从 `(0,0)` 起 64 格内找到的出生锚点、无地图边缘的启动、带 `cx` / `cy` / `r` 参数（含负数与极大原点）的窗口快照、种子确定性、`/world/snapshot` 的 200/503/405，以及快照行的收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 93 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛与建造可达）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
+1014 条是 `ServerCheck` 依次调用的十二个检查类之和：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发与恶意客户端）、`PluginCheck` 76 条（运行时编译并真正加载插件 jar）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（升级、版本握手、帧规则、来源规则、可配置的空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、路径穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 338 条（daemon tick 线程、无界 `InfiniteTerrainMap` 及 4096 区块预算、从 `(0,0)` 起 64 格内找到的出生锚点、无地图边缘的启动、带 `cx` / `cy` / `r` 参数（含负数与极大原点）的窗口快照、种子确定性、`/world/snapshot` 的 200/503/405，以及快照行的收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 117 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）、`BotsOptionCheck` 20 条（`--bots` 解析、插件选项缝，以及一个真实插件 jar 在 `onLoad` 里读到 `bots=3`）。自检是独立 `selfCheck` 源集（`src/selfcheck/java`）里的普通程序，所以标准 `test` 任务保持没有源码。
 
 `server` 任务用 `JavaExec` 运行 `OcGameServer`，标准输入接到进程，工作目录是仓库根，所以 `Ctrl+C` 能走到 shutdown hook，默认的 `--static-root web-client/dist` 也能解析到构建好的浏览器客户端。
 
@@ -50,6 +50,7 @@ game server self check: all 938 checks passed.
 | `--world on\|off` | `on` | 是否启动服务器世界；`off` 让 `/world/snapshot` 回答 503；`--http-port 0` 时强制关闭 |
 | `--seed N` | `1` | 服务器世界的种子；同一种子复现同一份地形与起始布局 |
 | `--chunks N` | `4096` | 无界世界的已加载区块预算（内存上限，不是地图大小）；必须是正数 |
+| `--bots N` | `1` | 加载的世界插件启动多少个经典机器人；`0`..`6`，`0` 表示没有机器人的世界；以 `bots` 选项发布给插件 |
 | `--help` | — | 打印帮助后退出 |
 
 除此之外没有别的开关：没有配置文件，也没有环境变量。
@@ -64,9 +65,11 @@ game server self check: all 938 checks passed.
 
 **插件加载器。** `PluginLoader` 按文件名顺序扫描 `plugins/*.jar`，给每个 jar 一个自己的 `URLClassLoader`。URL 列表先是这个 jar 自己，然后是目录里其他所有 jar（按文件名排序），所以把依赖 jar 丢进同一目录就算装好依赖，而插件自带的库副本又赢过目录里的那份。类加载器有意**永不关闭**：关掉的 `URLClassLoader` 再也不能定义它此前没碰过的类、也读不出没读过的资源，那正是按需加载的插件以后会撞上的 `NoClassDefFoundError`。插件由 `omnicom-plugin.properties`（`id`、`version`、`main`、`description`）描述，生命周期是 `onLoad` → `onEnable` → `onDisable`。
 
+**插件选项缝。** 插件还通过 `PluginContext.options()` 拿到服务器的插件选项：一个由命令行构建的只读 `Map<String,String>`。今天它只有一项 `bots`，即校验后的 `--bots` 值（默认 `1`，范围 `0..6`）；经典插件读它来决定机器人数量，没有那个插件的服务器只是有一个忽略该项的插件。这里没有配置文件、没有环境变量，服务器也不需要引用任何插件类：服务器发布数据，插件解释数据。
+
 **只读请求缝。** 插件用匹配 `[a-z0-9-]{1,32}` 的名字把 `RequestHandler` 发布进 `RequestRegistry`；`byte[] handle(byte[] request)` 就是全部合同。客户端发 `REQ <名字> <base64 载荷>`，服务器 base64 解码、把确切字节交给处理器、再把答复 base64 编码，两边都不解析。`REQ` 和游戏命令都要求同一条连接上成功 `LOGIN` 过：没登录时直接回 `ERR login first`，处理器根本不会被调用。名字没注册、名字过长或载荷不是合法 base64 都是 `ERR unknown request`，处理器抛异常是 `ERR request failed`。
 
-**游戏命令。** `WHOAMI`、`ORDER`、`BUILD`、`TRAIN` 与浏览器端点共用同一个 `CommandDispatcher`，但由 `WorldHost` 在下一个固定步的起点、在世界线程上应用。成功 `LOGIN` 的账号名就是身份：第一条游戏命令为该账号创建玩家（第一个真人是玩家 3；玩家 1 是样例场景，玩家 2 留给经典 AI），之后每一条命令——包括断开重连之后的命令——都复用同一个玩家、同一座基地、同一批实体与同一份资源；新的账号名取 3 到 8 中下一个空位，第七个名字得到 `ERR world full`，空闲账号不会被回收。`ORDER` 校验所有权与存在性，`BUILD` 在放置时从玩家仓库一次性扣除建筑成本，`TRAIN` 让引擎的 `ProductionSystem` 决定等级门槛。线上语法见 `protocol/oc-protocol_zh_CN.md`。
+**游戏命令。** `WHOAMI`、`ORDER`、`BUILD`、`TRAIN` 与浏览器端点共用同一个 `CommandDispatcher`，但由 `WorldHost` 在下一个固定步的起点、在世界线程上应用。成功 `LOGIN` 的账号名就是身份：第一条游戏命令为该账号创建玩家（第一个真人是玩家 3；玩家 1 是样例场景，玩家 2 是经典机器人系统的第一个机器人），之后每一条命令——包括断开重连之后的命令——都复用同一个玩家、同一座基地、同一批实体与同一份资源；新的账号名取 3 到 8 中下一个空位，第七个名字得到 `ERR world full`，空闲账号不会被回收。`--bots 2..6` 的额外经典机器人使用玩家 9 及之后的 id，在真人范围之外，所以机器人不会占掉真人的位置；`onlinePlayers()` 与账号映射只报告真人。`ORDER` 校验所有权与存在性，`BUILD` 在放置时从玩家仓库一次性扣除建筑成本，`TRAIN` 让引擎的 `ProductionSystem` 决定等级门槛。线上语法见 `protocol/oc-protocol_zh_CN.md`。
 
 **定时保存与关闭顺序。** 名为 `oc-autosave` 的 daemon 定时器每 `--save-seconds` 秒（默认 60）把用户记录写盘一次，没有改动时是空操作。`stop()` 随后按固定顺序执行：先停定时器，在 socket 还开着时调每个插件的 `onDisable()`，关掉 TCP 监听与它的客户端，关掉浏览器端点（给活着的 WebSocket 发关闭码 `1001`），在没有任何请求能再读世界之后停掉 tick 线程，最后再写一次用户记录。
 
@@ -86,7 +89,7 @@ game server self check: all 938 checks passed.
 ```text
 src/main/java/module-info.java          导出六个包，requires RTS 引擎
 src/main/java/.../server/               上面那六个包
-src/selfcheck/java/.../server/check/    938 条检查的自检程序
+src/selfcheck/java/.../server/check/    1014 条检查的自检程序
 help/                                   五章中文文档
 ```
 

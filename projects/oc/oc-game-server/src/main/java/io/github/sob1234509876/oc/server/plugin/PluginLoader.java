@@ -101,6 +101,14 @@ public final class PluginLoader {
      */
     private final RequestRegistry requests;
 
+    /**
+     * The server options handed to every plugin through {@link PluginContext#options()}.
+     *
+     * <p>Today this is the parsed {@code --bots} value; keeping it a map instead of a bot-specific field
+     * means adding a future plugin option does not change this class's shape again.
+     */
+    private final Map<String, String> options;
+
     private final System.Logger logger;
 
     /**
@@ -202,12 +210,32 @@ public final class PluginLoader {
      */
     public PluginLoader(Path pluginsDirectory, String serverVersion, Path dataDirectory,
             RequestRegistry requests) {
+        this(pluginsDirectory, serverVersion, dataDirectory, requests, Map.of());
+    }
+
+    /**
+     * Creates a loader that also publishes server options to its plugins.
+     *
+     * <p>The options reach every {@link Plugin#onLoad(PluginContext)} through
+     * {@link PluginContext#options()}; the map is copied, so a plugin cannot observe a later change and the
+     * caller cannot change a loaded plugin's view. This is the constructor {@code OcGameServer} uses for
+     * {@code --bots}.
+     *
+     * @param pluginsDirectory where the plugin jars live, together with the dependency jars they need
+     * @param serverVersion the version reported to plugins through {@link PluginContext#serverVersion()}
+     * @param dataDirectory the root of the per plugin data directories
+     * @param requests the registry {@link PluginContext#requests()} exposes to every plugin
+     * @param options the immutable map {@link PluginContext#options()} reports; never {@code null}
+     */
+    public PluginLoader(Path pluginsDirectory, String serverVersion, Path dataDirectory,
+            RequestRegistry requests, Map<String, String> options) {
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory")
                 .toAbsolutePath().normalize();
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
         this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory")
                 .toAbsolutePath().normalize();
         this.requests = Objects.requireNonNull(requests, "requests");
+        this.options = Map.copyOf(Objects.requireNonNull(options, "options"));
         this.logger = System.getLogger(PluginLoader.class.getName());
     }
 
@@ -241,7 +269,7 @@ public final class PluginLoader {
     public List<Plugin> loadAll() {
         List<Path> jars = pluginJars();
         PluginContext context = new PluginContext(pluginsDirectory, dataDirectory, serverVersion, logger,
-                requests, worldContents, worldTickHooks);
+                requests, worldContents, worldTickHooks, options);
         for (Path jar : jars) {
             DiscoveryResult result = loadJar(jar, jars, context);
             discoveries.add(result);
@@ -601,6 +629,15 @@ public final class PluginLoader {
      */
     public RequestRegistry requests() {
         return requests;
+    }
+
+    /**
+     * The server options every plugin of this loader received through {@link PluginContext#options()}.
+     *
+     * @return the immutable option map; empty when the loader was built without options
+     */
+    public Map<String, String> options() {
+        return options;
     }
 
     /**

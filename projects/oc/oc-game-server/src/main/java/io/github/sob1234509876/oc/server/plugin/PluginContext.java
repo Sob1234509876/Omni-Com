@@ -9,13 +9,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
  * What the server hands to a plugin while it is loaded: where the plugins live, where this plugin may keep
  * its own files, the server version it was built against, the server's logger, the request surface the
- * plugin may publish into, the content seam it may claim the world with and the tick hook it may attach
- * to that world.
+ * plugin may publish into, the content seam it may claim the world with, the tick hook it may attach
+ * to that world, and the immutable server {@link #options() options} map (today the {@code --bots} value).
  *
  * <p>The context is deliberately small. A plugin gets no reference to the server object graph, so the server
  * stays free to change internals without breaking plugins, and an unloaded plugin cannot keep the server
@@ -25,6 +26,8 @@ import java.util.Objects;
  * catalogue to serve, which is data the engine already knows how to run, not a way into the running world.
  * {@link #registerWorldTickHook(WorldTickHook)} is the third and the narrowest reading of the world: a
  * callback that runs after each fixed step, with the world the server is already simulating.
+ * {@link #options()} is not a way into anything at all: it is a small immutable map of configuration values
+ * the server chose to publish.
  *
  * <p>A plugin <em>receives</em> a context and never builds one itself; the constructors exist for the loader
  * and for the self check, which assembles a context to drive a plugin directly over no socket at all.
@@ -60,6 +63,16 @@ public final class PluginContext {
      * {@code OcGameServer#selectWorldTickHooks(java.util.List)}.
      */
     private final List<WorldTickHook> worldTickHooks;
+
+    /**
+     * The server options a plugin may read, keyed by option name.
+     *
+     * <p>This is the narrow configuration seam: the server passes the values an operator put on its command
+     * line (today only {@code bots}) without handing a plugin the server object graph, a file or a system
+     * property. The map is immutable and may be empty; a plugin must have a documented default for every
+     * option it reads, which is what {@code ClassicPlugin} does for {@code bots}.
+     */
+    private final Map<String, String> options;
 
     /**
      * Creates a context for a server that publishes no requests and serves no registered content.
@@ -137,6 +150,28 @@ public final class PluginContext {
     public PluginContext(Path pluginsDirectory, Path dataDirectory, String serverVersion,
             System.Logger logger, RequestRegistry requests, List<WorldContent> worldContents,
             List<WorldTickHook> worldTickHooks) {
+        this(pluginsDirectory, dataDirectory, serverVersion, logger, requests, worldContents,
+                worldTickHooks, Map.of());
+    }
+
+    /**
+     * Creates a context that also carries the server's options.
+     *
+     * <p>This is the form the {@link PluginLoader} uses when the server has command line options for its
+     * plugins; the map is copied, so neither side can change the other's view afterwards.
+     *
+     * @param pluginsDirectory the folder the jars were read from
+     * @param dataDirectory the root of the per plugin data directories
+     * @param serverVersion the version of the running server
+     * @param logger the logger to use
+     * @param requests the registry a plugin publishes its read-only request handlers into
+     * @param worldContents the live list content registrations are appended to
+     * @param worldTickHooks the live list tick hook registrations are appended to
+     * @param options the server options a plugin may read; copied and never {@code null}
+     */
+    public PluginContext(Path pluginsDirectory, Path dataDirectory, String serverVersion,
+            System.Logger logger, RequestRegistry requests, List<WorldContent> worldContents,
+            List<WorldTickHook> worldTickHooks, Map<String, String> options) {
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory");
         this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory");
         this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
@@ -144,6 +179,7 @@ public final class PluginContext {
         this.requests = Objects.requireNonNull(requests, "requests");
         this.worldContents = Objects.requireNonNull(worldContents, "worldContents");
         this.worldTickHooks = Objects.requireNonNull(worldTickHooks, "worldTickHooks");
+        this.options = Map.copyOf(Objects.requireNonNull(options, "options"));
     }
 
     /**
@@ -265,6 +301,22 @@ public final class PluginContext {
      */
     public List<WorldTickHook> worldTickHooks() {
         return List.copyOf(worldTickHooks);
+    }
+
+    /**
+     * The server options this plugin may read, keyed by option name.
+     *
+     * <p>Today the server publishes one entry: {@code bots}, the value of its {@code --bots} option, so the
+     * classic plugin can size its bot system without the server importing a plugin class or the plugin
+     * reading a system property. The map is immutable and never {@code null}; a context built without
+     * options reports an empty map, and a plugin must therefore have a documented default. This seam is
+     * deliberately additive: an option a plugin does not know is simply ignored, and a server that publishes
+     * nothing behaves exactly like the old contexts.
+     *
+     * @return the immutable option map; empty when the server passed none
+     */
+    public Map<String, String> options() {
+        return options;
     }
 
     /**

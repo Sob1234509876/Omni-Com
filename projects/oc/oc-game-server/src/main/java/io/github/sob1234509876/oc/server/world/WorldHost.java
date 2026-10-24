@@ -169,19 +169,21 @@ public final class WorldHost {
     /**
      * First player id a human connection can be assigned.
      *
-     * <p>Player {@code 1} owns the sample scene the host builds and player {@code 2} is reserved for the
-     * classic plugin's enemy AI (its bootstrap hard codes that id). Human players therefore start at
-     * {@code 3}; see {@link #joinPlayer(String)} for the exact assignment rule.
+     * <p>Player {@code 1} owns the sample scene the host builds. The classic plugin's first bot owns player
+     * {@code 2}, and its extra bots use ids above the human range (9 and up), so the two populations cannot
+     * collide. Human players therefore start at {@code 3}; see {@link #joinPlayer(String)} for the exact
+     * assignment rule.
      */
     public static final int FIRST_HUMAN_PLAYER_ID = 3;
 
     /**
-     * Maximum number of players one world holds, counting the scene player and the classic AI.
+     * Maximum number of players one world holds, counting the scene player and the classic bots.
      *
      * <p>This is the "room" of {@link #joinPlayer(String)}: ids {@code 3} through {@code MAX_PLAYERS}
-     * are the human slots, so a default world admits six distinct account names. An id is bound to a name
-     * for the life of the world and is not reused for a different name, which keeps an entity's owner
-     * stable for a replay and lets a reconnecting account find its own base again.
+     * are the human slots, so a default world admits six distinct account names. The classic plugin's first
+     * bot owns player {@code 2} and its extra bots use ids above this range, so bots never reduce the human
+     * room. An id is bound to a name for the life of the world and is not reused for a different name, which
+     * keeps an entity's owner stable for a replay and lets a reconnecting account find its own base again.
      */
     public static final int MAX_PLAYERS = 8;
 
@@ -1341,18 +1343,18 @@ public final class WorldHost {
      * Every human player currently admitted to the world, in id order.
      *
      * <p>"Online" is the wrong word for this host: there is no session object here, so a player whose
-     * connection closed is still admitted and still appears. The method is the cheap diagnostic view of the
-     * human slots; use {@link #accounts()} when the names are what matters.
+     * connection closed is still admitted and still appears. The list is the account-bound players - the
+     * identities {@link #joinPlayer(String)} created - not simply "every player with a human id": a world
+     * plugin may own bot players in the same id range, and those are not humans. Use {@link #accounts()} when
+     * the names are what matters, and {@link #findPlayer(int)} to inspect a specific id (including a bot).
      *
-     * @return the human players (ids {@value #FIRST_HUMAN_PLAYER_ID} and above), in id order
+     * @return the account-bound players, in id order
      */
     public List<Player> onlinePlayers() {
         synchronized (stateLock) {
             List<Player> players = new ArrayList<>();
-            for (Player player : engine.world().players()) {
-                if (player.id().value() >= FIRST_HUMAN_PLAYER_ID) {
-                    players.add(player);
-                }
+            for (int id : accountIds.values()) {
+                engine.world().findPlayer(PlayerId.of(id)).ifPresent(players::add);
             }
             players.sort(Comparator.comparingInt((Player human) -> human.id().value()));
             return players;

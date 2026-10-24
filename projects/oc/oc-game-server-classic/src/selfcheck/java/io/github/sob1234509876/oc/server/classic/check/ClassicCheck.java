@@ -30,7 +30,10 @@ import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.server.OcGameServer;
 import io.github.sob1234509876.oc.server.check.Check;
+import io.github.sob1234509876.oc.server.classic.BotFaction;
+import io.github.sob1234509876.oc.server.classic.BotStrategy;
 import io.github.sob1234509876.oc.server.classic.ClassicAi;
+import io.github.sob1234509876.oc.server.classic.ClassicBots;
 import io.github.sob1234509876.oc.server.classic.ClassicContent;
 import io.github.sob1234509876.oc.server.classic.ClassicEconomy;
 import io.github.sob1234509876.oc.server.classic.ClassicPlugin;
@@ -38,7 +41,9 @@ import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
 import io.github.sob1234509876.oc.server.plugin.PluginDescriptor;
 import io.github.sob1234509876.oc.server.plugin.PluginLoader;
+import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
 import io.github.sob1234509876.oc.server.world.WorldHost;
+import io.github.sob1234509876.oc.server.world.WorldTickHook;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -59,6 +64,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -133,6 +139,7 @@ public final class ClassicCheck {
         worldHost(check, classic, registry, manifest);
         enemyAi(check, classic, registry);
         deterministicWorld(check);
+        bots(check);
         pluginSeam(check, classic, registry);
         loaderSeam(check);
         check.summary("classic plugin self check");
@@ -1288,8 +1295,13 @@ public final class ClassicCheck {
 
     /** One scripted run: 600 synchronous steps of a host with the classic content, its economy and AI. */
     private static ClassicRun runClassicWorld(int ticks) {
+        return runClassicWorld(ticks, new ClassicAi());
+    }
+
+    /** The same scripted run with an arbitrary enemy hook: the legacy controller or a bot system. */
+    private static ClassicRun runClassicWorld(int ticks, WorldTickHook enemyHook) {
         WorldHost host = new WorldHost(1L, new ClassicContent(),
-                List.of(new ClassicEconomy(), new ClassicAi()));
+                List.of(new ClassicEconomy(), enemyHook));
         try {
             for (int tick = 0; tick < ticks; tick++) {
                 host.step();
@@ -1328,6 +1340,239 @@ public final class ClassicCheck {
             boolean entitiesWithinRadius) {
     }
 
+    // ------------------------------------------------------------------ 7d) the bot players
+
+    /**
+     * The bot player system: zero bots, the historical one-bot world, two bots that differ, and the two
+     * determinism properties (the same seed reproduces everything, a different seed moves the bases).
+     *
+     * <p>The one-bot assertion is the strongest one this module can make about compatibility: a real
+     * {@link WorldHost} with {@link ClassicBots} of count one and a real host with the no-argument
+     * {@link ClassicAi} are advanced 600 ticks and their snapshots are compared byte for byte. The bot system
+     * therefore does not merely "behave similarly" to the old enemy; on the default seed it <em>is</em> the
+     * old enemy.
+     */
+    private static void bots(Check check) {
+        check.section("机器人玩家");
+        botRules(check);
+        zeroBots(check);
+        oneBotReproducesTheOldEnemy(check);
+        twoBots(check);
+        botDeterminismAndSeeds(check);
+    }
+
+    /** The spawn and strategy rules: the legacy pair, a moving seed and the documented ranges. */
+    private static void botRules(Check check) {
+        check.equal(new GridPos(192, 192), ClassicBots.spawnAnchor(1L, 0),
+                "默认种子上的 0 号机器人保留历史出生锚点 (192,192)");
+        check.equal(ClassicBots.spawnAnchor(7L, 2), ClassicBots.spawnAnchor(7L, 2),
+                "同一种子与编号永远得到同一个出生锚点");
+        check.that(!ClassicBots.spawnAnchor(2L, 0).equals(ClassicBots.spawnAnchor(1L, 0)),
+                "换一个种子，0 号机器人的出生锚点就移动");
+        GridPos firstAnchor = ClassicBots.spawnAnchor(1L, 1);
+        check.that(!firstAnchor.equals(ClassicBots.spawnAnchor(1L, 0)),
+                "同一世界里的 1 号机器人锚点与 0 号不同");
+        check.that(Math.max(Math.abs(firstAnchor.x()), Math.abs(firstAnchor.y())) >= 64,
+                "派生锚点位于人类出生区（约 64 格）之外: " + firstAnchor);
+
+        check.equal(ClassicBots.factionSeed(3L, 1), ClassicBots.factionSeed(3L, 1),
+                "阵营种子是纯函数");
+        check.that(ClassicBots.factionSeed(3L, 1) != ClassicBots.factionSeed(3L, 2),
+                "相邻编号的阵营种子不同");
+
+        check.that(BotStrategy.LEGACY.mineTarget() == ClassicAi.MINE_TARGET
+                        && BotStrategy.LEGACY.engineerTarget() == ClassicAi.ENGINEER_TARGET
+                        && BotStrategy.LEGACY.armyTarget() == ClassicAi.ARMY_TARGET
+                        && BotStrategy.LEGACY.attackArmySize() == ClassicAi.ATTACK_ARMY_SIZE
+                        && BotStrategy.LEGACY.upgradeArmoryFirst(),
+                "LEGACY 策略与旧版 AI 的常量完全一致");
+
+        boolean inRange = true;
+        boolean deterministic = true;
+        BotStrategy previous = null;
+        for (int index = 0; index < ClassicBots.MAX_BOTS; index++) {
+            BotStrategy derived = BotStrategy.derive(ClassicBots.factionSeed(1L, index));
+            inRange &= derived.mineTarget() >= BotStrategy.MIN_MINE_TARGET
+                    && derived.mineTarget() <= BotStrategy.MAX_MINE_TARGET
+                    && derived.engineerTarget() >= BotStrategy.MIN_ENGINEER_TARGET
+                    && derived.engineerTarget() <= BotStrategy.MAX_ENGINEER_TARGET
+                    && derived.armyTarget() >= BotStrategy.MIN_ARMY_TARGET
+                    && derived.armyTarget() <= BotStrategy.MAX_ARMY_TARGET
+                    && derived.attackArmySize() >= BotStrategy.MIN_ATTACK_ARMY_SIZE
+                    && derived.attackArmySize() <= BotStrategy.MAX_ATTACK_ARMY_SIZE
+                    && derived.attackArmySize() <= derived.armyTarget();
+            deterministic &= derived.equals(BotStrategy.derive(ClassicBots.factionSeed(1L, index)));
+            if (previous != null) {
+                inRange &= !derived.equals(BotStrategy.LEGACY);
+            }
+            previous = derived;
+        }
+        check.that(inRange, "派生策略的每个字段都在文档范围内，且攻击阈值不超过军队目标");
+        check.that(deterministic, "同一个阵营种子两次派生的策略相同");
+        check.that(!BotStrategy.derive(ClassicBots.factionSeed(1L, 1))
+                        .equals(BotStrategy.derive(ClassicBots.factionSeed(1L, 2))),
+                "同一世界的两个机器人策略记录不同");
+        check.that(!BotStrategy.derive(ClassicBots.factionSeed(1L, 1)).equals(BotStrategy.LEGACY),
+                "派生策略不会恰好等于 LEGACY（否则两个机器人行为会完全相同）");
+
+        check.equal(3, ClassicBots.parseCount(" 3 "), "插件接受带空白的 --bots 3");
+        check.that(throwsIllegalArgument(() -> ClassicBots.parseCount("7"))
+                        && throwsIllegalArgument(() -> ClassicBots.parseCount("-1"))
+                        && throwsIllegalArgument(() -> ClassicBots.parseCount("many")),
+                "插件拒绝 0..6 之外的 --bots 值");
+    }
+
+    /** Zero bots: the world still runs, with no bot player and no bot entity. */
+    private static void zeroBots(Check check) {
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), new ClassicBots(0)));
+        try {
+            for (int tick = 0; tick < 60; tick++) {
+                host.step();
+            }
+            check.equal(1, host.engine().world().players().size(), "0 个机器人时世界只有玩家 1");
+            check.equal(0, botPlayers(host).size(), "0 个机器人不会创建任何机器人玩家");
+            check.equal(0, botEntityCount(host), "0 个机器人不会创建任何机器人实体");
+            check.that(host.snapshotJson().contains("\"tick\":60"), "0 个机器人的世界照常运行到 tick 60");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** One bot, 600 ticks, compared byte for byte with the historical no-argument controller. */
+    private static void oneBotReproducesTheOldEnemy(Check check) {
+        ClassicRun legacyRun = runClassicWorld(600);
+        ClassicBots bots = new ClassicBots(1);
+        ClassicRun botRun = runClassicWorld(600, bots);
+        check.equal(1, bots.factions().size(), "1 个机器人建立了一个阵营记录");
+        BotFaction faction = bots.factions().get(0);
+        check.equal(ClassicAi.PLAYER_ID, faction.playerId(), "0 号机器人仍然控制玩家 2");
+        check.that(faction.strategy().equals(BotStrategy.LEGACY), "1 个机器人的默认世界使用 LEGACY 策略");
+        check.equal(legacyRun.base(), botRun.base(), "1 个机器人的基地与旧版 AI 的基地完全相同");
+        check.that(legacyRun.snapshot().equals(botRun.snapshot()),
+                "1 个机器人的 600 tick 快照与旧版 AI 逐字节相同");
+        check.equal(legacyRun.snapshot().length(), botRun.snapshot().length(), "两份 600 tick 快照长度相同");
+    }
+
+    /** Two bots own two different bases, differ in style, and both work inside 600 ticks. */
+    private static void twoBots(Check check) {
+        ClassicBots bots = new ClassicBots(2);
+        BotRun run = runBots(1L, 600, bots);
+        check.equal(2, bots.factions().size(), "2 个机器人建立了两份阵营记录");
+        check.equal(2, bots.controllers().size(), "2 个机器人对应两个控制器");
+        check.equal(2, bots.factions().get(0).playerId(), "0 号机器人是玩家 2");
+        check.equal(9, bots.factions().get(1).playerId(),
+                "1 号机器人是玩家 9（真人槽位 3..8 之外，不会与真人冲突）");
+        check.that(run.bases().get(0) != null && run.bases().get(1) != null, "2 个机器人各自拥有一座基地");
+        check.that(run.bases().get(0) != null && run.bases().get(1) != null
+                        && !run.bases().get(0).equals(run.bases().get(1)), "2 个机器人的基地位置不同");
+        check.that(!bots.factions().get(0).strategy().equals(bots.factions().get(1).strategy()),
+                "2 个机器人的策略记录不同");
+        check.that(run.entityCounts().get(0) > 4 && run.entityCounts().get(1) > 4,
+                "600 tick 内两个机器人都行动了（实体数超过开局的 4 个）");
+    }
+
+    /** The same seed reproduces bases, factions and the 600 tick fingerprint; another seed moves the bases. */
+    private static void botDeterminismAndSeeds(Check check) {
+        ClassicBots firstBots = new ClassicBots(2);
+        BotRun first = runBots(1L, 600, firstBots);
+        ClassicBots secondBots = new ClassicBots(2);
+        BotRun second = runBots(1L, 600, secondBots);
+        check.equal(first.bases(), second.bases(), "同一种子两次运行得到相同的机器人基地坐标");
+        check.equal(firstBots.factions(), secondBots.factions(), "同一种子两次运行得到相同的阵营记录");
+        check.that(first.snapshot().equals(second.snapshot()), "同一种子两次 600 tick 的快照指纹完全相同");
+        check.equal(first.snapshot().length(), second.snapshot().length(), "两次 600 tick 快照长度相同");
+
+        ClassicBots otherBots = new ClassicBots(2);
+        BotRun other = runBots(2L, 60, otherBots);
+        check.that(!Objects.equals(first.bases().get(0), other.bases().get(0))
+                        && !Objects.equals(first.bases().get(1), other.bases().get(1)),
+                "换一个世界种子后两个机器人的基地都移动了");
+        check.that(!firstBots.factions().get(0).spawnAnchor()
+                        .equals(otherBots.factions().get(0).spawnAnchor()),
+                "换一个世界种子后出生锚点不同");
+    }
+
+    /** One scripted bot run: the snapshot plus each bot's base and living entity count. */
+    private record BotRun(String snapshot, List<GridPos> bases, List<Integer> entityCounts) {
+    }
+
+    /** Advances a host with the classic content, its economy and a bot system, then reports the bots. */
+    private static BotRun runBots(long seed, int ticks, ClassicBots bots) {
+        WorldHost host = new WorldHost(seed, new ClassicContent(),
+                List.of(new ClassicEconomy(), bots));
+        try {
+            for (int tick = 0; tick < ticks; tick++) {
+                host.step();
+            }
+            World world = host.engine().world();
+            List<GridPos> bases = new ArrayList<>();
+            List<Integer> counts = new ArrayList<>();
+            for (BotFaction faction : bots.factions()) {
+                Player player = host.findPlayer(faction.playerId()).orElse(null);
+                bases.add(player == null ? null : oldestBuildingOrigin(world, player));
+                int entities = 0;
+                if (player != null) {
+                    for (Building building : world.buildingsOf(player)) {
+                        if (building.isAlive()) {
+                            entities++;
+                        }
+                    }
+                    for (Unit unit : world.unitsOf(player)) {
+                        if (unit.isAlive()) {
+                            entities++;
+                        }
+                    }
+                }
+                counts.add(entities);
+            }
+            return new BotRun(host.snapshotJson(), List.copyOf(bases), List.copyOf(counts));
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** The origin of a player's oldest living building, the anchor the AI itself uses, or {@code null}. */
+    private static GridPos oldestBuildingOrigin(World world, Player player) {
+        List<Building> buildings = new ArrayList<>(world.buildingsOf(player));
+        buildings.sort(Comparator.comparing(Building::id));
+        for (Building building : buildings) {
+            if (building.isAlive()) {
+                return building.origin();
+            }
+        }
+        return null;
+    }
+
+    /** Players the bots created: every player of id 2 and above. */
+    private static List<Player> botPlayers(WorldHost host) {
+        List<Player> bots = new ArrayList<>();
+        for (Player player : host.engine().world().players()) {
+            if (player.id().value() >= ClassicAi.PLAYER_ID) {
+                bots.add(player);
+            }
+        }
+        return bots;
+    }
+
+    /** Every living entity owned by a bot player. */
+    private static int botEntityCount(WorldHost host) {
+        int count = 0;
+        for (Player player : botPlayers(host)) {
+            for (Building building : host.engine().world().buildingsOf(player)) {
+                if (building.isAlive()) {
+                    count++;
+                }
+            }
+            for (Unit unit : host.engine().world().unitsOf(player)) {
+                if (unit.isAlive()) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     // ------------------------------------------------------------------ 8) the plugin seam
 
     private static void pluginSeam(Check check, ClassicContent classic, ContentRegistry registry) {
@@ -1349,7 +1594,20 @@ public final class ClassicCheck {
             check.equal(2, context.worldTickHooks().size(), "onLoad 同时注册了两个世界 tick 钩子");
             check.that(context.worldTickHooks().get(0) == plugin.economy(),
                     "第一个钩子是矿场收益（先发钱，后做决策）");
-            check.that(context.worldTickHooks().get(1) == plugin.ai(), "第二个钩子是敌人 AI，按注册顺序");
+            check.that(context.worldTickHooks().get(1) == plugin.bots(), "第二个钩子是机器人系统，按注册顺序");
+            check.equal(ClassicBots.DEFAULT_BOTS, plugin.bots().botCount(),
+                    "上下文没有 --bots 时插件默认一个机器人");
+            check.that(context.options().isEmpty(), "四参数上下文没有服务器选项");
+
+            PluginContext configured = new PluginContext(root.resolve("plugins"), root.resolve("data"),
+                    "9.9-classiccheck", System.getLogger("classic-check"), new RequestRegistry(),
+                    new ArrayList<>(), new ArrayList<>(),
+                    Map.of(ClassicBots.OPTION_BOTS, Integer.toString(2)));
+            ClassicPlugin configuredPlugin = new ClassicPlugin();
+            configuredPlugin.onLoad(configured);
+            check.equal(2, configuredPlugin.bots().botCount(), "--bots 2 通过插件选项到达机器人系统");
+            check.that(configured.worldTickHooks().get(1) == configuredPlugin.bots(),
+                    "带机器人数量的插件仍按 收益→机器人 的顺序注册两个钩子");
 
             WorldContent registered = context.worldContents().get(0);
             ContentRegistry throughSeam = registryOf(registered);
@@ -1413,6 +1671,9 @@ public final class ClassicCheck {
                     entry(ClassicEconomy.class),
                     entry(ClassicAi.class),
                     entry(ClassicAi.Mode.class),
+                    entry(ClassicBots.class),
+                    entry(BotFaction.class),
+                    entry(BotStrategy.class),
                     text(PluginDescriptor.RESOURCE, descriptorText(ClassicPlugin.NAME, ClassicPlugin.VERSION,
                             ClassicPlugin.class.getName()))));
 

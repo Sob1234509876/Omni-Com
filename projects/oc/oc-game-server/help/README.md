@@ -40,7 +40,7 @@
 | [02-accounts-and-encryption.md](02-accounts-and-encryption.md) | `UserStore` / `LocalUserStore`、PBKDF2、`AuthService` 的锁、`AuthResult` 的文案、握手与帧格式、命令表、加固 | 想知道账号存在哪，或要看懂线上的字节 |
 | [03-plugins.md](03-plugins.md) | `Plugin` 生命周期、`PluginContext`、描述文件、发现顺序、依赖规则、为什么不关类加载器、请求缝、最小插件 | 想写插件，或插件加载行为不符合预期 |
 | [04-debug-plugin-and-cli.md](04-debug-plugin-and-cli.md) | `oc-debug` 注册的请求、两层加密、`debug.key`、报告字段、CLI 的全部开关与失败退出、只读的安全属性 | 想远程看一眼服务器 |
-| [05-browser-endpoint.md](05-browser-endpoint.md) | `--http-port` / `--static-root` / `--ws-idle` / `--world` / `--seed`、两套版本机制、同一套命令语法、来源规则、静态路由、插件资源路由、世界快照路由、WebSocket 帧规则与心跳 | 想用浏览器打开，或排查静态文件/来源/帧/快照问题 |
+| [05-browser-endpoint.md](05-browser-endpoint.md) | `--http-port` / `--static-root` / `--ws-idle` / `--world` / `--seed` / `--chunks` / `--bots`、两套版本机制、同一套命令语法、来源规则、静态路由、插件资源路由、世界快照路由、WebSocket 帧规则与心跳 | 想用浏览器打开，或排查静态文件/来源/帧/快照问题 |
 
 ## 30 秒了解这个服务器
 
@@ -68,11 +68,11 @@ QUIT                            -> OK bye（随后服务器关掉这条连接）
 ## 自校验
 
 ```shell
-./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 938 checks passed.
+./gradlew :projects:oc:oc-game-server:selfcheck          # game server self check: all 1014 checks passed.
 ./gradlew :projects:oc:oc-game-server-debug:selfcheck    # debug plugin self check: all 85 checks passed.
 ```
 
-两个自校验都不需要网络、不需要测试框架。服务器那一个 938 条断言分十一组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 88 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 306 条、插件 tick 钩子 23 条、游戏命令 93 条、玩家基地 60 条；调试插件那一个 85 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
+两个自校验都不需要网络、不需要测试框架。服务器那一个 1014 条断言分十二组：账号与本地存储 65 条、加密信道与 TCP 协议 57 条、插件加载器 76 条、`REQ` 命令 43 条、WebSocket 端点 88 条、HTTP 静态路由 47 条、插件资源路由 80 条、世界主机与快照路由 338 条、插件 tick 钩子 23 条、游戏命令 117 条、玩家基地 60 条、机器人选项 20 条；调试插件那一个 85 条分四组：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。插件那一组会在运行时用 JDK 自带的编译器真的生成插件 jar，落到同一个临时目录里再加载它，所以它测的是真实的类加载器行为，不是替身。
 
 自校验不是框架测试，所以它放在独立的 `selfCheck` 源集（`src/selfcheck/java`），由上面的任务以普通程序运行；`src/test/java` 留给以后的单元测试。调试插件的自校验复用服务器那一个的断言记录器，只在自己的 `build.gradle` 里把服务器的 selfCheck 输出挂上类路径。
 

@@ -25,6 +25,7 @@ public final class ServerCheck {
         WorldTickHookCheck.run(check);
         PlayerCommandCheck.run(check);
         JoinBaseCheck.run(check);
+        BotsOptionCheck.run(check);
         check.summary("game server self check");
     }
 

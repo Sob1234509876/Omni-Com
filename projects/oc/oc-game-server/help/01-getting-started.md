@@ -4,7 +4,7 @@
 
 ## 这一篇讲什么
 
-- 怎么构建、怎么跑自校验，以及 938 条断言分别落在哪十一组。
+- 怎么构建、怎么跑自校验，以及 1014 条断言分别落在哪十二组。
 - 启动器的全部命令行选项、默认值，以及解析器的脾气。
 - 插件目录、数据目录与浏览器静态根的默认位置，谁往里写什么。
 - 一次启动打印什么、一次关闭按什么顺序发生。
@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 962 checks passed.
+game server self check: all 1014 checks passed.
 debug plugin self check: all 85 checks passed.
 ```
 
-962 条来自 `ServerCheck` 依次调用的十一个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 306 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 117 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
+1014 条来自 `ServerCheck` 依次调用的十二个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 338 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率与逐任务 `queueItems`）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 117 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）、`BotsOptionCheck` 20 条（`--bots` 解析、插件选项缝，以及真实插件 jar 在 `onLoad` 里读到 `bots=3`）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 
@@ -60,6 +60,7 @@ debug plugin self check: all 85 checks passed.
 | `--world on\|off` | `on` | 是否启动服务器世界；`off` 让 `/world/snapshot` 回答 503；`--http-port 0` 时强制关闭 |
 | `--seed N` | `1` | 服务器世界的种子；同一种子生成同一份地形与同一套起始布局 |
 | `--chunks N` | `4096` | 无界世界的已加载区块预算（内存上限，不是地图大小）；必须是正数 |
+| `--bots N` | `1` | 加载的世界插件启动多少个经典机器人；`0`..`6`，`0` 是没有机器人的世界；以 `bots` 选项发布给插件 |
 | `--help` | — | 打印帮助后退出 |
 
 `--help` 打印的就是下面这段（取自源码里的文本块，原文如此）：
@@ -78,12 +79,13 @@ Omni Com game server
   --world on|off      start the server side world (default on; off answers 503)
   --seed N            seed of the server side world (default 1)
   --chunks N          loaded chunk budget of the unbounded world (default 4096)
+  --bots N            classic bot players the world plugin starts (default 1, 0..6)
   --help              this text
 ```
 
 解析器的规则来自 `OcGameServer` 的 `parseArguments`：参数必须以 `--` 开头，后面可以跟一个不以 `--` 开头的值；**不跟值就是 `true`**。所以 `--save-seconds` 后面忘了写数字时，值会变成 `true`，`Integer.parseInt` 抛 `NumberFormatException`；`--http-port` 也走同样的 `Integer.parseInt`。`--ws-idle` 走 `OcGameServer.parseWsIdleMillis`：它要求正整数秒，`0`、负数、非数字都会抛 `IllegalArgumentException`，再把秒换算成毫秒交给 `WebSocketConfig`。一个不认识的裸参数（比如 `plugins`）会抛 `IllegalArgumentException`。
 
-`--port`、`--bind`、`--plugins`、`--data`、`--save-seconds`、`--http-port`、`--static-root`、`--ws-idle`、`--world`、`--seed`、`--chunks` 之外没有别的开关：没有配置文件，没有环境变量。`--world` 只接受 `on` / `off`（也接受 `true` / `false`），写别的值会直接抛异常。
+`--port`、`--bind`、`--plugins`、`--data`、`--save-seconds`、`--http-port`、`--static-root`、`--ws-idle`、`--world`、`--seed`、`--chunks`、`--bots` 之外没有别的开关：没有配置文件，没有环境变量。`--world` 只接受 `on` / `off`（也接受 `true` / `false`），写别的值会直接抛异常。`--bots` 走 `OcGameServer.parseBotsOption`：只接受 `0`..`6` 的整数（前后空白可以），`0` 是合法值，负数、`7` 与非数字都抛 `IllegalArgumentException`。
 
 ## 目录与文件
 

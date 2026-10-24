@@ -5,7 +5,7 @@
 ## 这一篇讲什么
 
 - `Plugin` 的三个生命周期回调、构造要求与线程约定。
-- `PluginContext` 交给插件的六样东西，以及它**不**给什么。
+- `PluginContext` 交给插件的七样东西，以及它**不**给什么。
 - `omnicom-plugin.properties` 的四个键、`PluginDescriptor` 与 `DiscoveryResult`。
 - 发现顺序（服务文件 → 描述文件 → 全类扫描）、确定性排序、坏 jar 只算它自己。
 - **依赖规则**：每个 jar 一个 `URLClassLoader`，自己的 jar 排第一，同目录其他 jar 排在后面。
@@ -43,6 +43,7 @@
 | `serverVersion()` | 运行中的服务器版本（例如 `2.0a`） |
 | `logger()` | 服务器的 logger；插件的消息只有走这里才能到达操作员 |
 | `requests()` | 只读请求面：把名字与 `RequestHandler` 发布进去 |
+| `options()` | 服务器发布的插件选项（只读 `Map<String,String>`）；今天是 `--bots` 的 `bots` 项 |
 | `dataDirectoryOf(String)` | 返回 `dataDirectory/<插件名>/`，不存在就创建（连同父目录） |
 
 `dataDirectoryOf(String)` 会校验名字，因为它会变成一个路径元素：空名字、含 `/`、含 `\`、含 `..`、含 `:` 全部拒绝。冒号不是理论问题：Windows 上 `resolve("C:evil")` 得到的是**驱动器相对路径** `C:evil`，直接跑出数据目录；校验之后再 `startsWith(root)` 复核一次，作为"平台分隔符不一致"的第二道意见。
@@ -50,6 +51,8 @@
 关键限制：**context 里没有服务器对象图**。没有 `World`、没有引擎、没有 `UserRecord`、没有 socket。所以插件改不了它拿不到的东西，服务器也能自由改内部实现而不破坏插件。唯一的例外是 `requests()`，而它是一张"字节进、字节出"的表，从请求走不到 socket、用户记录或一局游戏。
 
 还有一个容易忽略的细节：`PluginContext` 自己也能被构造，而**四参数构造会给它一个私有的、空的注册表**。也就是说，只有服务器用四参数 `PluginLoader` 建出来的那份注册表才连到 socket；用两参数或三参数 `PluginLoader` 加载的插件拿到的是一个"能注册但没人转达"的表面（自校验就是靠这一点在进程内直接驱动插件的）。
+
+`options()` 是服务器给插件的小配置缝：`OcGameServer` 把命令行上的 `--bots` 校验后放进一个只读的 `Map`，`PluginLoader` 再把它交给每个插件的 context。经典插件读 `bots` 决定机器人数量；没有这个选项时插件必须使用自己的默认值（经典插件默认 1），没有经典插件的世界则完全忽略它。它不是文件、不是环境变量，也不让服务器引用任何插件类。
 
 ## `PluginDescriptor`
 

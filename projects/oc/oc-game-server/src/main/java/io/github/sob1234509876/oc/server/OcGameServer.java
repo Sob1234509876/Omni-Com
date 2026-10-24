@@ -81,6 +81,18 @@ public final class OcGameServer {
      */
     public static final int DEFAULT_WS_IDLE_SECONDS = 300;
 
+    /** Plugin context option that carries the classic bot count; see {@link #parseBotsOption(String)}. */
+    public static final String OPTION_BOTS = "bots";
+
+    /** Bot count the server uses when {@code --bots} is not given, matching the classic plugin's default. */
+    public static final int DEFAULT_BOTS = 1;
+
+    /** Smallest accepted {@code --bots} value: zero starts a world with no bot players. */
+    public static final int MIN_BOTS = 0;
+
+    /** Largest accepted {@code --bots} value. */
+    public static final int MAX_BOTS = 6;
+
     private static final System.Logger LOG = System.getLogger("oc.server");
 
     /** Plugins live here by default; the user drops their jars (and their dependencies) into it. */
@@ -121,11 +133,30 @@ public final class OcGameServer {
         return worldChunks;
     }
 
+    /**
+     * The classic bot count this server publishes to its plugins.
+     *
+     * @return the configured count, {@value #MIN_BOTS}..{@value #MAX_BOTS}, whether or not a plugin reads it
+     */
+    public int bots() {
+        return botCount;
+    }
+
     /** Seed of the hosted world. It is ignored when {@link #worldEnabled} is false. */
     private final long worldSeed;
 
     /** Least-recently-used chunk budget of the hosted world; a memory ceiling, not a world size. */
     private final int worldChunks;
+
+    /**
+     * Number of classic bot players the loaded world plugin is asked to create, exposed as {@code --bots}.
+     *
+     * <p>The server does not create bots itself and does not import a plugin class: it hands the value to
+     * every plugin through {@link io.github.sob1234509876.oc.server.plugin.PluginContext#options()}, and the
+     * classic plugin sizes its own {@code ClassicBots} from it. A world without that plugin simply ignores
+     * the option.
+     */
+    private final int botCount;
 
     /** The running world, or {@code null} when it is disabled or not started. */
     private volatile WorldHost worldHost;
@@ -219,8 +250,38 @@ public final class OcGameServer {
     public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
             int saveIntervalSeconds, WebSocketConfig webSocketConfig, boolean worldEnabled, long worldSeed,
             int worldChunks) {
+        this(config, pluginsDirectory, dataDirectory, saveIntervalSeconds, webSocketConfig, worldEnabled,
+                worldSeed, worldChunks, DEFAULT_BOTS);
+    }
+
+    /**
+     * Creates a server with explicit world settings, the terrain chunk budget and the classic bot count.
+     *
+     * <p>{@code bots} is the {@code --bots} option: how many bot players the loaded world plugin should
+     * create. The server validates it and publishes it to every plugin as the {@code bots} entry of
+     * {@link io.github.sob1234509876.oc.server.plugin.PluginContext#options()}. It is ignored by a plugin
+     * that does not read that option, so the server stays independent of the classic module.
+     *
+     * @param config              the game socket and framing limits
+     * @param pluginsDirectory    where plugin jars live
+     * @param dataDirectory       server owned state, user records today
+     * @param saveIntervalSeconds how often user records are written
+     * @param webSocketConfig     the browser endpoint settings; a port of {@code 0} disables the endpoint
+     * @param worldEnabled        whether to host a world (ignored when the endpoint port is {@code 0})
+     * @param worldSeed           seed of the hosted world
+     * @param worldChunks         positive chunk budget of the hosted world
+     * @param bots                classic bot count, {@value #MIN_BOTS}..{@value #MAX_BOTS}
+     * @throws IllegalArgumentException when {@code worldChunks} is not positive, or {@code bots} is outside
+     *     {@value #MIN_BOTS}..{@value #MAX_BOTS}
+     */
+    public OcGameServer(ServerConfig config, Path pluginsDirectory, Path dataDirectory,
+            int saveIntervalSeconds, WebSocketConfig webSocketConfig, boolean worldEnabled, long worldSeed,
+            int worldChunks, int bots) {
         if (worldChunks <= 0) {
             throw new IllegalArgumentException("world chunks must be positive, was " + worldChunks);
+        }
+        if (bots < MIN_BOTS || bots > MAX_BOTS) {
+            throw new IllegalArgumentException("bots must be " + MIN_BOTS + ".." + MAX_BOTS + ", was " + bots);
         }
         this.config = Objects.requireNonNull(config, "config");
         this.pluginsDirectory = Objects.requireNonNull(pluginsDirectory, "pluginsDirectory")
@@ -235,12 +296,14 @@ public final class OcGameServer {
         this.worldEnabled = worldEnabled;
         this.worldSeed = worldSeed;
         this.worldChunks = worldChunks;
+        this.botCount = bots;
         this.auth = new AuthService(LocalUserStore.inDirectory(this.dataDirectory));
         // One registry, two owners: the loader hands it to every plugin through the PluginContext, and the
         // socket consults it for REQ. A plugin loaded here is therefore reachable the moment a client logs
         // in, without the server needing to know which plugin registered what.
         this.requests = new RequestRegistry();
-        this.pluginLoader = new PluginLoader(this.pluginsDirectory, VERSION, this.dataDirectory, this.requests);
+        this.pluginLoader = new PluginLoader(this.pluginsDirectory, VERSION, this.dataDirectory, this.requests,
+                Map.of(OPTION_BOTS, Integer.toString(bots)));
         // The world is built in start(), after this constructor, so the dispatcher gets a supplier that
         // reads the volatile field per command rather than a host instance captured too early.
         this.server = new GameServer(config, auth, this.requests, () -> this.worldHost);
@@ -537,6 +600,35 @@ public final class OcGameServer {
         return (int) (parsed * 1_000L);
     }
 
+    /**
+     * Parses and validates a {@code --bots} value: a whole number in
+     * {@value #MIN_BOTS}..{@value #MAX_BOTS}.
+     *
+     * <p>Zero is meaningful - a world with no bot players - so it is accepted, unlike a zero timeout. The
+     * range is closed at {@value #MAX_BOTS} because a classic world holds at most six bot players; the
+     * classic plugin repeats the same rule, since a plugin may also be loaded without this server. Leading
+     * and trailing whitespace is accepted, matching {@link #parseWsIdleMillis(String)}.
+     *
+     * @param value the raw option value
+     * @return the count, {@value #MIN_BOTS}..{@value #MAX_BOTS}
+     * @throws IllegalArgumentException when the value is not a whole number in that range
+     */
+    public static int parseBotsOption(String value) {
+        Objects.requireNonNull(value, "value");
+        int parsed;
+        try {
+            parsed = Integer.parseInt(value.strip());
+        } catch (NumberFormatException malformed) {
+            throw new IllegalArgumentException("--bots must be a whole number " + MIN_BOTS + ".." + MAX_BOTS
+                    + ", was '" + value + "'", malformed);
+        }
+        if (parsed < MIN_BOTS || parsed > MAX_BOTS) {
+            throw new IllegalArgumentException("--bots must be " + MIN_BOTS + ".." + MAX_BOTS
+                    + ", was " + parsed);
+        }
+        return parsed;
+    }
+
     public static void main(String[] args) throws Exception {
         Map<String, String> options = parseArguments(args);
         if (options.containsKey("help")) {
@@ -554,6 +646,7 @@ public final class OcGameServer {
                       --world on|off      start the server side world (default on; off answers 503)
                       --seed N            seed of the server side world (default 1)
                       --chunks N          loaded chunk budget of the unbounded world (default 4096)
+                      --bots N            classic bot players the world plugin starts (default 1, 0..6)
                       --help              this text
                     """);
             return;
@@ -572,6 +665,7 @@ public final class OcGameServer {
                 Long.toString(WorldHost.DEFAULT_SEED)));
         int worldChunks = Integer.parseInt(options.getOrDefault("chunks",
                 Integer.toString(WorldHost.DEFAULT_CHUNK_BUDGET)));
+        int bots = parseBotsOption(options.getOrDefault("bots", Integer.toString(DEFAULT_BOTS)));
         ServerConfig config = ServerConfig.defaults().withPort(port);
         WebSocketConfig webConfig = WebSocketConfig.defaults()
                 .withPort(httpPort)
@@ -584,7 +678,7 @@ public final class OcGameServer {
         }
 
         OcGameServer server = new OcGameServer(config, plugins, data, saveSeconds, webConfig,
-                worldEnabled, worldSeed, worldChunks);
+                worldEnabled, worldSeed, worldChunks, bots);
         server.start();
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop, "oc-shutdown"));
         System.out.println("Omni Com " + VERSION + " listening on " + config.bindAddress() + ":" + server.port());
