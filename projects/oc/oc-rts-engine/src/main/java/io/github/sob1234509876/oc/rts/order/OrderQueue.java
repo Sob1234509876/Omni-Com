@@ -39,7 +39,17 @@ public final class OrderQueue {
         pending.addAll(orders);
     }
 
-    /** Cancels the active order and drops everything queued. */
+    /**
+     * Cancels the active order and drops everything queued.
+     *
+     * <p>Queued orders are cancelled through {@link Order#onCancel(OrderContext)} exactly like the
+     * active one. That matters for orders that own a world resource before they start: a pending
+     * {@link BuildOrder} still holds its construction site and a pending
+     * {@link io.github.sob1234509876.oc.rts.logistics.HaulOrder} still owns a delivery reservation. Simply
+     * dropping them left the site attached to a builder that was no longer building it, or a delivery
+     * job assigned to a hauler that would never carry it; a later STOP could therefore look as if it did
+     * nothing. Every cancelled order reports {@link OrderState#CANCELLED}, whether it had started or not.
+     */
     public void clear(OrderContext context) {
         if (current != null) {
             current.onCancel(context);
@@ -47,7 +57,12 @@ public final class OrderQueue {
                     new Events.OrderFinished(context.unit(), current.name(), OrderState.CANCELLED, context.tick().number()));
             current = null;
         }
-        pending.clear();
+        Order queued;
+        while ((queued = pending.pollFirst()) != null) {
+            queued.onCancel(context);
+            context.world().events().publish(
+                    new Events.OrderFinished(context.unit(), queued.name(), OrderState.CANCELLED, context.tick().number()));
+        }
     }
 
     public Order current() {

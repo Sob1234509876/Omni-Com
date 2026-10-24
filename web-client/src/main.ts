@@ -71,7 +71,11 @@ import {
   type CommandBarModel,
 } from "./render/commandbar";
 import { warehouseResourceTotals } from "./render/resources";
-import { doubleClickSelection, engineerSelection, isEngineerKind } from "./render/selection";
+import {
+  doubleClickSelection,
+  engineerForPlacement,
+  engineerSelection,
+} from "./render/selection";
 import {
   formatProgressPercent,
   incomeSuffix,
@@ -98,9 +102,11 @@ import {
   fetchWorldSnapshot,
   isBuildingEntityKind,
   isOwnUnit,
+  localPlayerIdFromRoster,
   marqueeSelection,
   ownershipOf,
   ownershipTag,
+  ownershipTagFor,
   underConstruction,
   type EntityView,
   type PlayerView,
@@ -276,6 +282,8 @@ let loggedIn = false;
 let connectionSeq = 0;
 /** Engine player id answered by WHOAMI; null before LOGIN and after every reconnect. */
 let myPlayerId: number | null = null;
+/** Account name of the successful LOGIN; used to recover the id from the snapshot's `players` rows. */
+let loginName: string | null = null;
 /** Building path armed for placement, or null when the canvas is not in placement mode. */
 let placementPath: string | null = null;
 /** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
@@ -353,6 +361,7 @@ function isErrorAnswer(answer: string): boolean {
 /** Forgets the connection's engine identity, including any armed build placement. */
 function clearGameplayIdentity(): void {
   myPlayerId = null;
+  loginName = null;
   placementPath = null;
   attackMoveArmed = false;
   // Group ids belong to one world's entity id space; a disconnect must not leave a binding that a
@@ -673,6 +682,7 @@ async function doLogin(): Promise<void> {
   }
   if (isOkAnswer(answer)) {
     loggedIn = true;
+    loginName = user;
     myPlayerId = null;
     placementPath = null;
     updateGameplayPanel();
@@ -684,6 +694,27 @@ async function doLogin(): Promise<void> {
     clearGameplayIdentity();
     setStatus(`登录失败：${answer}`, "error");
   }
+}
+
+/**
+ * Recovers the local player id from the snapshot's `players` rows when WHOAMI has not answered (or its
+ * answer was unusable).
+ *
+ * The account name is the identity on the server, and a snapshot row carries that same name next to its
+ * id, so the roster is an independent way to learn the id. WHOAMI stays authoritative; this only fills
+ * the gap that used to leave every own unit looking like somebody else's: a lost WHOAMI answer left
+ * `myPlayerId` null until reconnect even though the roster already named the player.
+ */
+function reconcileLocalPlayerId(): void {
+  if (myPlayerId !== null || loginName === null) {
+    return;
+  }
+  const rowId = localPlayerIdFromRoster(world.players, loginName);
+  if (rowId === null) {
+    return;
+  }
+  myPlayerId = rowId;
+  updateGameplayPanel();
 }
 
 /** Asks WHOAMI after a successful LOGIN and stores the engine player id for ownership checks. */
@@ -698,7 +729,11 @@ async function fetchWhoAmI(): Promise<void> {
   }
   const playerId = parseWhoAmI(answer);
   if (playerId === null) {
-    refuse(`WHOAMI 收到意外回答：${answer}`);
+    // A roster row may already carry the id; prefer that over leaving ownership unknown forever.
+    reconcileLocalPlayerId();
+    if (myPlayerId === null) {
+      refuse(`WHOAMI 收到意外回答：${answer}（可先用快照 players 里的账号名恢复）`);
+    }
     return;
   }
   myPlayerId = playerId;
@@ -972,11 +1007,6 @@ function isBuildingEntity(entity: EntityView): boolean {
   return isBuildingEntityKind(entity.kind);
 }
 
-/** The engineer is `unit.engineer` in the classic catalogue; the demo/legacy name is `engineer`. */
-function isEngineerEntity(entity: EntityView): boolean {
-  return isEngineerKind(entity.kind);
-}
-
 /** Every selected entity that still exists, in selection order. */
 function selectedEntities(): EntityView[] {
   const found: EntityView[] = [];
@@ -1002,12 +1032,9 @@ function selectedOwnUnits(): EntityView[] {
   return selectedEntities().filter((entity) => isMine(entity) && !isBuildingEntity(entity));
 }
 
-/** The selected entity when it is exactly one own engineer, otherwise undefined. */
+/** The selected engineer group's first engineer when the whole selection is own engineers. */
 function placementEngineer(): EntityView | undefined {
-  const selected = singleSelectedEntity();
-  return selected !== undefined && isMine(selected) && isEngineerEntity(selected)
-    ? selected
-    : undefined;
+  return engineerForPlacement(selectedEntities(), myPlayerId);
 }
 
 /**
@@ -1075,8 +1102,7 @@ function pruneSelection(): void {
     selectedGroup = null;
   }
   if (placementPath !== null) {
-    const single = singleSelectedEntity();
-    if (single === undefined || !isMine(single) || !isEngineerEntity(single)) {
+    if (placementEngineer() === undefined) {
       cancelPlacement(false);
     }
   }
@@ -1204,6 +1230,7 @@ function updateHud(force = false, now = performance.now()): void {
     return;
   }
   lastHudUpdate = now;
+  reconcileLocalPlayerId();
   hudAtlas.textContent =
     atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin));
   hudWorld.textContent =
@@ -1212,7 +1239,11 @@ function updateHud(force = false, now = performance.now()): void {
   // may be negative and keep counting as the owner pans in any direction.
   const focus = camera.centerTile();
   hudWindow.textContent = `坐标：${focus.x},${focus.y} · 窗口：${world.originX},${world.originY}`;
-  hudPlayer.textContent = myPlayerId === null ? "玩家：—" : `玩家：${myPlayerId}`;
+  hudPlayer.textContent = !loggedIn
+    ? "玩家：未登录"
+    : myPlayerId === null
+      ? "玩家：获取 id 中…"
+      : `玩家：${myPlayerId}`;
   const resources = myPlayerRow();
   hudResources.textContent =
     resources === undefined
@@ -1240,7 +1271,7 @@ function updateHud(force = false, now = performance.now()): void {
       : only === undefined
         ? `已选：${selection.length} 个实体`
         : `选中：e${only.id} ${contentLabel(only.kind)} ` +
-          `[${ownershipTag(ownershipOf(only.playerId, myPlayerId))}] ` +
+          `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
           `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
           (cargo === null ? "" : ` · ${cargo}`));
   hudBuildingText.textContent =
@@ -1526,7 +1557,7 @@ function commandBarNote(model: CommandBarModel): string {
     return `${model.hint} · 先连接并 LOGIN`;
   }
   if (myPlayerId === null && model.selectedCount > 0) {
-    return `${model.hint} · 等待 WHOAMI 回答玩家 id…`;
+    return loggedIn ? `${model.hint} · 正在从 WHOAMI / players 恢复玩家 id…` : model.hint;
   }
   return model.hint;
 }
@@ -1546,7 +1577,7 @@ function updateGameplayPanel(): void {
   const ownUnits = resolved.filter((entity) => isOwnUnit(entity, myPlayerId));
   const single = singleSelectedEntity();
   const ownBuilding = single !== undefined && isMine(single) && isBuildingEntity(single);
-  const ownEngineer = single !== undefined && isMine(single) && isEngineerEntity(single);
+  const ownEngineer = placementEngineer() !== undefined;
 
   // The selection can lose its last own unit between snapshots; an armed attack move then has no
   // legal target and must not wait forever for a click that would send nothing.
@@ -1575,7 +1606,11 @@ function updateGameplayPanel(): void {
   const showBuild = model.actions.some((action) => action.kind === "build");
   buildSection.hidden = !showBuild;
   buildTarget.textContent =
-    showBuild && single !== undefined ? `· e${single.id} ${contentLabel(single.kind)}` : "";
+    showBuild && single !== undefined
+      ? `· e${single.id} ${contentLabel(single.kind)}`
+      : showBuild
+        ? `· ${model.unitCount} 个工兵`
+        : "";
   for (const button of buildButtons) {
     button.disabled = !(gameplayReady && ownEngineer);
     const armed =
@@ -1610,6 +1645,15 @@ function updateGameplayPanel(): void {
 }
 
 function doOrderStop(): void {
+  // An armed BUILD or attack-move owns the next left click. STOP is the operator's "do nothing" command,
+  // so it must also leave those modes; otherwise the next right click is swallowed by the ghost and the
+  // owner sees STOP as the reason their following order did not happen.
+  if (placementPath !== null) {
+    cancelPlacement(false);
+  }
+  if (attackMoveArmed) {
+    cancelAttackMove(false);
+  }
   const units = selectedOwnUnits();
   if (units.length === 0) {
     const selected = selectedEntities();
@@ -1738,8 +1782,8 @@ function armBuild(buildingPath: string): void {
   if (!requireLoggedInForGameplay()) {
     return;
   }
-  const selected = singleSelectedEntity();
-  if (selected === undefined || !isMine(selected) || !isEngineerEntity(selected)) {
+  const engineer = placementEngineer();
+  if (engineer === undefined) {
     refuse("先选中自己的工程师，再点 BUILD");
     return;
   }
@@ -1879,8 +1923,7 @@ function applySelection(id: number | null, mode: SelectionMode): void {
   }
   pruneSelection();
   if (placementPath !== null) {
-    const single = singleSelectedEntity();
-    if (single === undefined || !isMine(single) || !isEngineerEntity(single)) {
+    if (placementEngineer() === undefined) {
       cancelPlacement(false);
     }
   }
@@ -2075,6 +2118,7 @@ function updateTooltip(): void {
     contentLabel(entity.kind),
     entity,
     ownershipOf(entity.playerId, myPlayerId),
+    ownershipTagFor(entity.playerId, myPlayerId),
   );
   const signature =
     `${entity.id}\u0000${myPlayerId ?? "none"}\u0000${content.name}\u0000` +

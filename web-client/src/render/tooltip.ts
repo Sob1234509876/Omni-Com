@@ -57,7 +57,8 @@ export interface TooltipPoint {
 /**
  * The text of one entity's tooltip.
  *
- * The first line always carries the ownership tag (`我` / `敌` / `中立`). A health ratio the snapshot
+ * The first line always carries the ownership tag (`我` / `敌` / `中立`, or `未登录` when the page has no
+ * local player id and the caller passes that label). A health ratio the snapshot
  * reports becomes `生命 72%`; an old snapshot without `health` omits the health part rather than
  * inventing a full bar. A building appends its reported footprint (`尺寸：3×3`) and a non-empty
  * production queue appends the same summary the canvas marker uses (`生产中 ×2`). Buildings and units
@@ -68,8 +69,9 @@ export function tooltipContent(
   name: string,
   entity: EntityView,
   ownership: Ownership,
+  ownershipLabel: string = ownershipTag(ownership),
 ): TooltipContent {
-  const detail: string[] = [ownershipTag(ownership)];
+  const detail: string[] = [ownershipLabel];
   if (entity.healthRatio !== undefined && Number.isFinite(entity.healthRatio)) {
     detail.push(`生命 ${formatProgressPercent(entity.healthRatio)}`);
   }

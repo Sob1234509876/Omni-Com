@@ -35,7 +35,7 @@ import java.util.Objects;
  * therefore makes the server run {@code oc-classic}, and removing it makes the server fall back - no
  * configuration file, and no way for a plugin to take over a world it did not claim.
  *
- * <p>The jar carries the content's art as well: {@code assets/atlas.png} (96 x 96) and
+ * <p>The jar carries the content's art as well: {@code assets/atlas.png} (96 x 128) and
  * {@code assets/manifest.json}, published by the server's {@code /plugin-assets} route. The atlas was drawn
  * for this module; the manifest merges the terrain tile table of the hello plugin with the entity frames of
  * that art, because the drawn sheet contains units and buildings but no new terrain.

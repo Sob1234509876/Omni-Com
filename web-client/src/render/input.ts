@@ -18,7 +18,8 @@
 
 import type { Camera, TileCoord, TileRange } from "./camera";
 import { marqueeTileRange, screenRectBetween, type ScreenRect } from "./marquee";
-import { entityInWindow, isBuildingEntityKind, isWorldTile, type WorldView } from "./view";
+import { pickEntityAt } from "./picking";
+import { isWorldTile, type WorldView } from "./view";
 
 const DRAG_THRESHOLD_PX = 4;
 /** Two clicks on the same target within this window count as a double click. */
@@ -279,37 +280,9 @@ export class InputController {
     }
   }
 
-  /** Picks the entity whose body is under the cursor; the frontmost (largest y) wins ties. */
+  /** Picks the entity whose drawn body is under the cursor; see `render/picking.ts`. */
   private pickEntity(screenX: number, screenY: number): number | null {
-    const world = this.hooks.getWorld();
-    const tilePixels = this.camera.effectiveTileSize;
-    let bestId: number | null = null;
-    let bestY = Number.NEGATIVE_INFINITY;
-    let bestDistance = Number.POSITIVE_INFINITY;
-
-    for (const entity of world.entities) {
-      // An entity outside the loaded window is not drawn, so it must not be pickable either.
-      if (!entityInWindow(world, entity)) {
-        continue;
-      }
-      const building = isBuildingEntityKind(entity.kind);
-      const point = this.camera.worldToScreen(
-        entity.x * this.camera.tileSize,
-        entity.y * this.camera.tileSize,
-      );
-      const bodyY = point.y - tilePixels * (building ? 0.55 : 0.3);
-      const radius = Math.max(7, tilePixels * (building ? 0.85 : 0.42));
-      const distance = Math.hypot(point.x - screenX, bodyY - screenY);
-      if (distance > radius) {
-        continue;
-      }
-      if (entity.y > bestY || (entity.y === bestY && distance < bestDistance)) {
-        bestId = entity.id;
-        bestY = entity.y;
-        bestDistance = distance;
-      }
-    }
-    return bestId;
+    return pickEntityAt(this.hooks.getWorld(), this.camera, screenX, screenY);
   }
 
   private zoomAtCenter(factor: number): void {

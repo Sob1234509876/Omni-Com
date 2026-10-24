@@ -22,6 +22,9 @@
 
 import type { TileCoord } from "./camera.ts";
 import {
+  entityCoversTile,
+  entityFootprintHeight,
+  entityFootprintWidth,
   kindName,
   terrainAt,
   tileInWindow,
@@ -121,25 +124,17 @@ export function footprintTiles(origin: TileCoord, footprint: Footprint): TileCoo
  * tile, so that single tile is used - it never invents a building-sized obstruction.
  */
 export function entityFootprint(entity: EntityView): Footprint {
-  return entity.footprint ?? { width: 1, height: 1 };
+  return { width: entityFootprintWidth(entity), height: entityFootprintHeight(entity) };
 }
 
-/** The whole tile an entity stands on; floors fractional positions so negative coordinates stay right. */
+/** The whole tile an entity's centre stands on; floors fractional positions so negatives stay right. */
 export function entityTile(entity: EntityView): TileCoord {
   return { x: Math.floor(entity.x), y: Math.floor(entity.y) };
 }
 
 /** Whether one existing entity's footprint covers a whole world tile. */
 export function entityFootprintCovers(entity: EntityView, x: number, y: number): boolean {
-  const footprint = entityFootprint(entity);
-  const originX = Math.floor(entity.x);
-  const originY = Math.floor(entity.y);
-  return (
-    x >= originX &&
-    y >= originY &&
-    x < originX + footprint.width &&
-    y < originY + footprint.height
-  );
+  return entityCoversTile(entity, x, y);
 }
 
 /**

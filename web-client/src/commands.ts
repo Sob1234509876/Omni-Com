@@ -36,6 +36,85 @@ export const UNIT_PATHS = [
   "unit.engineer",
 ] as const;
 
+/**
+ * Every building kind the classic catalogue ships, in upgrade-ladder order.
+ *
+ * <p>`BUILDING_PATHS` is what the engineer can place; this wider list also contains the upgraded tiers
+ * that only appear through `UPGRADE`. The client uses it to give every kind its own content entry and to
+ * prove that no two kinds share an atlas cell.
+ */
+export const CLASSIC_BUILDING_KINDS = [
+  "building.armory.t1",
+  "building.armory.t2",
+  "building.mine.t1",
+  "building.mine.t2",
+  "building.mine.t3",
+  "building.lumbercamp.t1",
+  "building.lumbercamp.t2",
+  "building.lumbercamp.t3",
+  "building.warehouse",
+] as const;
+
+/** One building kind's client-side content: what it is called and what it may train. */
+export interface BuildingContent {
+  /** Content path, exactly as the server sends it. */
+  readonly path: string;
+  /**
+   * Unit paths this kind's TRAIN panel offers.
+   *
+   * Only a producer has entries. A mine, a lumber camp and a warehouse have none: showing the armory's
+   * unit list on them was the reported bug, because the panel used one global list for every building.
+   */
+  readonly trainableUnits: readonly string[];
+}
+
+/**
+ * The trainable units of one classic building kind.
+ *
+ * <p>The armory is the only producer in this catalogue. Both tiers offer the full melee ladder and the
+ * engineer; the engine's level gate refuses the two top tiers from a t1 armory, which is deliberate (the
+ * panel lets the server give the readable refusal). Every other building answers an empty list, so a
+ * selected mine, lumber camp or warehouse never paints a TRAIN section it cannot honour.
+ */
+const NO_UNITS: readonly string[] = [];
+
+export const BUILDING_CONTENT: ReadonlyMap<string, BuildingContent> = new Map<
+  string,
+  BuildingContent
+>([
+  ["building.armory.t1", { path: "building.armory.t1", trainableUnits: UNIT_PATHS }],
+  ["building.armory.t2", { path: "building.armory.t2", trainableUnits: UNIT_PATHS }],
+  ["building.mine.t1", { path: "building.mine.t1", trainableUnits: NO_UNITS }],
+  ["building.mine.t2", { path: "building.mine.t2", trainableUnits: NO_UNITS }],
+  ["building.mine.t3", { path: "building.mine.t3", trainableUnits: NO_UNITS }],
+  ["building.lumbercamp.t1", { path: "building.lumbercamp.t1", trainableUnits: NO_UNITS }],
+  ["building.lumbercamp.t2", { path: "building.lumbercamp.t2", trainableUnits: NO_UNITS }],
+  ["building.lumbercamp.t3", { path: "building.lumbercamp.t3", trainableUnits: NO_UNITS }],
+  ["building.warehouse", { path: "building.warehouse", trainableUnits: NO_UNITS }],
+]);
+
+/** Strips a namespace such as `oc:` from a content path; the atlas resolves names the same way. */
+function bareContentPath(path: string): string {
+  const separator = path.lastIndexOf(":");
+  return separator >= 0 ? path.slice(separator + 1) : path;
+}
+
+/** The content entry of one building kind, or `undefined` for a kind this catalogue does not know. */
+export function buildingContent(kind: string): BuildingContent | undefined {
+  return BUILDING_CONTENT.get(kind) ?? BUILDING_CONTENT.get(bareContentPath(kind));
+}
+
+/**
+ * Unit paths one building kind may offer, or an empty list for a kind that is not a producer.
+ *
+ * <p>An unknown building answers no entries rather than the whole unit catalogue: a TRAIN button that
+ * the server is guaranteed to refuse is worse than no button, and a plugin building with its own recipes
+ * is not something this classic catalogue can describe.
+ */
+export function trainableUnitsForBuilding(kind: string): readonly string[] {
+  return buildingContent(kind)?.trainableUnits ?? NO_UNITS;
+}
+
 /** Rejects anything that is not a positive, safely representable integer id. */
 function requirePositiveInteger(value: number, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {

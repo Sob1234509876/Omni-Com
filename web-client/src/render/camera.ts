@@ -47,6 +47,21 @@ export interface TileRange {
   readonly maxY: number;
 }
 
+/** Top-left world pixel of one whole tile. */
+export function tileToWorld(tile: TileCoord, tileSize: number): Point {
+  return { x: tile.x * tileSize, y: tile.y * tileSize };
+}
+
+/**
+ * The whole tile containing a world position.
+ *
+ * The inverse of {@link tileToWorld} up to the tile area: `floor` (not truncation) keeps coordinates west
+ * and north of the origin on the correct tile, and a fractional centre such as `5.5` maps to tile `5`.
+ */
+export function worldToTile(worldX: number, worldY: number, tileSize: number): TileCoord {
+  return { x: Math.floor(worldX / tileSize), y: Math.floor(worldY / tileSize) };
+}
+
 function clampNumber(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -161,10 +176,7 @@ export class Camera {
   /** Tile under a screen point; the caller decides whether it has a loaded window. */
   tileAtScreen(screenX: number, screenY: number): TileCoord {
     const world = this.screenToWorld(screenX, screenY);
-    return {
-      x: Math.floor(world.x / this.tileSize),
-      y: Math.floor(world.y / this.tileSize),
-    };
+    return worldToTile(world.x, world.y, this.tileSize);
   }
 
   /**
@@ -175,10 +187,7 @@ export class Camera {
    * on the correct tile.
    */
   centerTile(): TileCoord {
-    return {
-      x: Math.floor(this.centerXValue / this.tileSize),
-      y: Math.floor(this.centerYValue / this.tileSize),
-    };
+    return worldToTile(this.centerXValue, this.centerYValue, this.tileSize);
   }
 
   /**

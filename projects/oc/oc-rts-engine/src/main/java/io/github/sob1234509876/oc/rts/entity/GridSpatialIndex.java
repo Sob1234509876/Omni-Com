@@ -4,6 +4,7 @@ import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -19,7 +20,7 @@ public final class GridSpatialIndex implements SpatialIndex {
 
     private final float cellSize;
     private final Map<Long, List<Entity>> cells = new HashMap<>();
-    private final Map<Entity, Long> entityCells = new IdentityHashMap<>();
+    private final Map<Entity, long[]> entityCells = new IdentityHashMap<>();
     private int size;
 
     public GridSpatialIndex(float cellSize) {
@@ -36,23 +37,27 @@ public final class GridSpatialIndex implements SpatialIndex {
 
     @Override
     public void insert(Entity entity) {
-        long cell = cellOf(entity.position());
-        entityCells.put(entity, cell);
-        cells.computeIfAbsent(cell, key -> new ArrayList<>()).add(entity);
+        long[] entityCellList = cellsOf(entity);
+        entityCells.put(entity, entityCellList);
+        for (long cell : entityCellList) {
+            cells.computeIfAbsent(cell, key -> new ArrayList<>()).add(entity);
+        }
         size++;
     }
 
     @Override
     public void remove(Entity entity) {
-        Long cell = entityCells.remove(entity);
-        if (cell == null) {
+        long[] entityCellList = entityCells.remove(entity);
+        if (entityCellList == null) {
             return;
         }
-        List<Entity> bucket = cells.get(cell);
-        if (bucket != null) {
-            bucket.remove(entity);
-            if (bucket.isEmpty()) {
-                cells.remove(cell);
+        for (long cell : entityCellList) {
+            List<Entity> bucket = cells.get(cell);
+            if (bucket != null) {
+                bucket.remove(entity);
+                if (bucket.isEmpty()) {
+                    cells.remove(cell);
+                }
             }
         }
         size--;
@@ -60,23 +65,28 @@ public final class GridSpatialIndex implements SpatialIndex {
 
     @Override
     public void update(Entity entity) {
-        Long current = entityCells.get(entity);
+        long[] current = entityCells.get(entity);
         if (current == null) {
             insert(entity);
             return;
         }
-        long updated = cellOf(entity.position());
-        if (updated != current) {
-            List<Entity> bucket = cells.get(current);
+        long[] updated = cellsOf(entity);
+        if (Arrays.equals(updated, current)) {
+            return;
+        }
+        for (long cell : current) {
+            List<Entity> bucket = cells.get(cell);
             if (bucket != null) {
                 bucket.remove(entity);
                 if (bucket.isEmpty()) {
-                    cells.remove(current);
+                    cells.remove(cell);
                 }
             }
-            entityCells.put(entity, updated);
-            cells.computeIfAbsent(updated, key -> new ArrayList<>()).add(entity);
         }
+        for (long cell : updated) {
+            cells.computeIfAbsent(cell, key -> new ArrayList<>()).add(entity);
+        }
+        entityCells.put(entity, updated);
     }
 
     @Override
@@ -97,6 +107,7 @@ public final class GridSpatialIndex implements SpatialIndex {
     @Override
     public List<Entity> inRect(TileRect rect) {
         List<Entity> found = new ArrayList<>();
+        Map<Entity, Boolean> seen = new IdentityHashMap<>();
         int minCellX = cellIndex(rect.minX());
         int maxCellX = cellIndex(rect.maxX());
         int minCellY = cellIndex(rect.minY());
@@ -108,7 +119,7 @@ public final class GridSpatialIndex implements SpatialIndex {
                     continue;
                 }
                 for (Entity entity : bucket) {
-                    if (entity.occupiedTiles().intersects(rect)) {
+                    if (seen.put(entity, Boolean.TRUE) == null && entity.occupiedTiles().intersects(rect)) {
                         found.add(entity);
                     }
                 }
@@ -153,6 +164,7 @@ public final class GridSpatialIndex implements SpatialIndex {
 
     private List<Entity> collect(Vec2 center, float radius, Class<? extends Entity> type) {
         List<Entity> found = new ArrayList<>();
+        Map<Entity, Boolean> seen = new IdentityHashMap<>();
         float radiusSquared = radius * radius;
         int minCellX = cellIndex(center.x() - radius);
         int maxCellX = cellIndex(center.x() + radius);
@@ -165,6 +177,9 @@ public final class GridSpatialIndex implements SpatialIndex {
                     continue;
                 }
                 for (Entity entity : bucket) {
+                    if (seen.put(entity, Boolean.TRUE) != null) {
+                        continue;
+                    }
                     if (type != null && !type.isInstance(entity)) {
                         continue;
                     }
@@ -177,8 +192,28 @@ public final class GridSpatialIndex implements SpatialIndex {
         return found;
     }
 
-    private long cellOf(Vec2 position) {
-        return cellKey(cellIndex(position.x()), cellIndex(position.y()));
+    /**
+     * Every cell an entity can be found in.
+     *
+     * <p>A multi-tile building is bucketed into every cell its footprint touches, not only the cell of
+     * its centre. Otherwise a rectangle query for a footprint that overlaps a building but not its
+     * centre misses that building, which is exactly how two three-by-three buildings used to be placed
+     * on top of each other: the second {@code canPlace} never saw the first one.
+     */
+    private long[] cellsOf(Entity entity) {
+        TileRect area = entity.occupiedTiles();
+        int minCellX = cellIndex(area.minX());
+        int maxCellX = cellIndex(area.maxX());
+        int minCellY = cellIndex(area.minY());
+        int maxCellY = cellIndex(area.maxY());
+        long[] found = new long[(maxCellX - minCellX + 1) * (maxCellY - minCellY + 1)];
+        int index = 0;
+        for (int cellY = minCellY; cellY <= maxCellY; cellY++) {
+            for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+                found[index++] = cellKey(cellX, cellY);
+            }
+        }
+        return found;
     }
 
     private int cellIndex(float coordinate) {

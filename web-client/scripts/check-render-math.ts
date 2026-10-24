@@ -12,20 +12,31 @@
 
 import { readFileSync } from "node:fs";
 import {
+  BUILDING_CONTENT,
   BUILDING_PATHS,
+  CLASSIC_BUILDING_KINDS,
   UNIT_PATHS,
   build,
+  buildingContent,
   orderAttack,
   orderAttackMove,
   orderMove,
   orderStop,
   parseWhoAmI,
   train,
+  trainableUnitsForBuilding,
   upgrade,
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
-import { CAMERA_SAFETY_BOUND_TILES, Camera, MAX_ZOOM, MIN_ZOOM } from "../src/render/camera.ts";
+import {
+  CAMERA_SAFETY_BOUND_TILES,
+  Camera,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  tileToWorld,
+  worldToTile,
+} from "../src/render/camera.ts";
 import {
   MAX_INTERPOLATION_DISTANCE_TILES,
   alphaFor,
@@ -95,17 +106,24 @@ import {
 } from "../src/toast.ts";
 import {
   demoWorld,
+  entityCoversTile,
+  entityFootprintHeight,
+  entityFootprintOrigin,
+  entityFootprintWidth,
   entityInMarquee,
   entityInWindow,
   isBuildingKind,
   isWorldTile,
+  localPlayerIdFromRoster,
   marqueeSelection,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
   OWNERSHIP_NEUTRAL_COLOR,
   ownershipColor,
+  ownershipDecision,
   ownershipOf,
   ownershipTag,
+  ownershipTagFor,
   snapshotOrDemo,
   snapshotUrl,
   TERRAIN_IDS,
@@ -168,10 +186,12 @@ import {
 } from "../src/render/minimap.ts";
 import {
   doubleClickSelection,
+  engineerForPlacement,
   engineerSelection,
   isEngineerKind,
   selectByPriority,
 } from "../src/render/selection.ts";
+import { pickEntityAt } from "../src/render/picking.ts";
 import {
   ATTACK_MOVE_ACTION_LABEL,
   EMPTY_SELECTION_HINT,
@@ -1683,7 +1703,7 @@ try {
     `经典插件清单不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
   );
 }
-const classicAtlas = parseAtlas(classicManifest, 96, 96);
+const classicAtlas = parseAtlas(classicManifest, 96, 128);
 check("经典插件的 manifest.json 可以被解析", classicAtlas.ok);
 const classicRoot = recordTable(classicManifest);
 const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
@@ -2037,12 +2057,12 @@ check(
 
 const ONE_TILE_FOOTPRINT: Footprint = { width: 1, height: 1 };
 
-/** A 3x3 classic warehouse standing at (5,5), used by the occupancy checks. */
+/** A 3x3 classic warehouse whose footprint starts at (5,5), so its centre is (6.5,6.5). */
 const PLACEMENT_BUILDING: EntityView = {
   id: 1,
   kind: "building.warehouse",
-  x: 5,
-  y: 5,
+  x: 6.5,
+  y: 6.5,
   playerId: 1,
   footprint: { width: 3, height: 3 },
 };
@@ -3201,6 +3221,261 @@ check(
   "闪烁颜色是无彩色（纯白），与灰阶外壳一致且不与金色选择环抢色",
   isGreyscaleHex(FLASH_COLOR) && FLASH_COLOR === "#ffffff",
   FLASH_COLOR,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Selection ownership, classic building content, grid anchoring and click picking
+// ---------------------------------------------------------------------------------------------
+
+// BUG A: one verdict decides the tag, the actions and the message. A known id with an own unit is
+// "own"; another player's unit is "other"; an unknown id is explicitly "not logged in" rather than
+// "not yours", which is what the owner saw before the id was known.
+const ownDecision = ownershipDecision(3, 3);
+const otherDecision = ownershipDecision(2, 3);
+const unknownDecision = ownershipDecision(3, null);
+check(
+  "归属判定：已知 id + 自己的单位 -> own，标签 我",
+  ownDecision.kind === "own" && ownDecision.tag === "我" && ownDecision.ownership === "mine",
+  `${ownDecision.kind} / ${ownDecision.tag}`,
+);
+check(
+  "归属判定：已知 id + 别人的单位 -> other，标签 敌",
+  otherDecision.kind === "other" && otherDecision.tag === "敌" && otherDecision.ownership === "enemy",
+  `${otherDecision.kind} / ${otherDecision.tag}`,
+);
+check(
+  "归属判定：未知 id -> logged-out，标签 未登录",
+  unknownDecision.kind === "logged-out" &&
+    unknownDecision.tag === "未登录" &&
+    ownershipTagFor(3, null) === "未登录",
+  `${unknownDecision.kind} / ${unknownDecision.tag}`,
+);
+check(
+  "WHOAMI 丢失时用 players 里的账号名恢复玩家 id；名字不匹配则不猜",
+  localPlayerIdFromRoster(
+    [
+      { id: 1, name: "Player 1", gold: 0, wood: 0 },
+      { id: 3, name: "owner1", gold: 300, wood: 60 },
+    ],
+    "owner1",
+  ) === 3 &&
+    localPlayerIdFromRoster(
+      [
+        { id: 1, name: "Player 1", gold: 0, wood: 0 },
+        { id: 3, name: "owner1", gold: 300, wood: 60 },
+      ],
+      "someone-else",
+    ) === null &&
+    localPlayerIdFromRoster(undefined, "owner1") === null &&
+    localPlayerIdFromRoster([{ id: 3, name: "owner1", gold: 0, wood: 0 }], null) === null,
+);
+const ownUnitFixture: EntityView = { id: 31, kind: "unit.melee.t1", x: 5.5, y: 5.5, playerId: 3 };
+const otherUnitFixture: EntityView = { id: 32, kind: "unit.melee.t1", x: 6.5, y: 6.5, playerId: 2 };
+const ownUnitCommand = commandBarModel([ownUnitFixture], 3);
+const otherUnitCommand = commandBarModel([otherUnitFixture], 3);
+const loggedOutCommand = commandBarModel([ownUnitFixture], null);
+check(
+  "自己的单位：标签 我、提供停止/攻击移动，提示里没有“不属于你”",
+  ownUnitCommand.ownershipTag === "我" &&
+    ownUnitCommand.ownership === "own" &&
+    ownUnitCommand.actions.map((action) => action.kind).join(",") === "stop,attack-move" &&
+    !ownUnitCommand.hint.includes("不属于你"),
+  ownUnitCommand.hint,
+);
+check(
+  "别人的单位：标签 敌、没有单位动作、提示明确说“不属于你”",
+  otherUnitCommand.ownershipTag === "敌" &&
+    otherUnitCommand.ownership === "other" &&
+    otherUnitCommand.actions.length === 0 &&
+    otherUnitCommand.hint.includes("不属于你"),
+  otherUnitCommand.hint,
+);
+check(
+  "未知玩家 id：标签 未登录、没有动作、提示要求先 LOGIN（不是“不属于你”）",
+  loggedOutCommand.ownershipTag === "未登录" &&
+    loggedOutCommand.ownership === "logged-out" &&
+    loggedOutCommand.actions.length === 0 &&
+    loggedOutCommand.hint.includes("尚未登录") &&
+    !loggedOutCommand.hint.includes("不属于你"),
+  loggedOutCommand.hint,
+);
+
+// BUG E: one or several own engineers offer all four BUILD entries, and the first engineer is the
+// placement engineer. A mixed engineer + combat group must not silently pick one.
+const engineerA: EntityView = { id: 41, kind: "unit.engineer", x: 5.5, y: 5.5, playerId: 3 };
+const engineerB: EntityView = { id: 42, kind: "unit.engineer", x: 6.5, y: 5.5, playerId: 3 };
+const engineerC: EntityView = { id: 43, kind: "unit.engineer", x: 7.5, y: 5.5, playerId: 3 };
+const multiEngineerCommand = commandBarModel([engineerA, engineerB, engineerC], 3);
+const engineerBuildActions = multiEngineerCommand.actions.filter((action) => action.kind === "build");
+check(
+  "选中多个工兵时仍显示全部四个 BUILD 条目（兵工厂/矿井/伐木场/仓库）",
+  multiEngineerCommand.kind === "engineer" &&
+    engineerBuildActions.length === BUILDING_PATHS.length &&
+    engineerBuildActions.map((action) => action.path).join(",") === BUILDING_PATHS.join(",") &&
+    engineerBuildActions.every((action) => action.zone === "context"),
+  `${multiEngineerCommand.kind} / ${engineerBuildActions.map((action) => action.path).join(",")}`,
+);
+check(
+  "多个工兵时用选中的第一个工兵放置，混合单位组不选工兵",
+  engineerForPlacement([engineerA, engineerB, engineerC], 3)?.id === engineerA.id &&
+    engineerForPlacement([engineerA, ownUnitFixture], 3) === undefined,
+  String(engineerForPlacement([engineerA, engineerB], 3)?.id),
+);
+check(
+  "工程师的 BUILD 目录与面板一致，四个路径都可以生成 BUILD 命令",
+  BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
+  BUILDING_PATHS.join(","),
+);
+
+// BUG B: every classic building kind has its own content entry, its own train list and its own atlas
+// cell. The old manifest pointed lumber camp t1/t2/t3 and the warehouse at the armory/mine cells, and the
+// panel reused the armory's unit list for every building.
+const classicBuildingSprites =
+  classicAtlas.ok ? classicAtlas.data.entities : new Map<string, never>();
+const buildingFrameSignatures = CLASSIC_BUILDING_KINDS.map((kind) => {
+  const sprite = classicBuildingSprites.get(kind);
+  return sprite === undefined
+    ? ""
+    : sprite.frames.map((frame) => `${frame.x},${frame.y},${frame.width},${frame.height}`).join(";");
+});
+check(
+  "每个经典建筑 kind 都在图集里有自己的实体帧",
+  buildingFrameSignatures.every((signature) => signature !== ""),
+  buildingFrameSignatures.join(" | "),
+);
+check(
+  "没有两个经典建筑共用同一个纹理格",
+  new Set(buildingFrameSignatures).size === CLASSIC_BUILDING_KINDS.length,
+  buildingFrameSignatures.join(" | "),
+);
+check(
+  "每个经典建筑都有自己的内容条目，且 train 列表只属于正确 kind",
+  CLASSIC_BUILDING_KINDS.every((kind) => {
+    const entry = buildingContent(kind);
+    const trainable = trainableUnitsForBuilding(kind);
+    const producer = kind.startsWith("building.armory.");
+    return (
+      entry !== undefined &&
+      entry.path === kind &&
+      (producer ? trainable.join(",") === UNIT_PATHS.join(",") : trainable.length === 0)
+    );
+  }),
+  CLASSIC_BUILDING_KINDS.map((kind) => `${kind}:${trainableUnitsForBuilding(kind).length}`).join(", "),
+);
+check(
+  "伐木场、矿井和仓库不再显示 TRAIN 条目；兵工厂仍显示单位列表",
+  trainableUnitsForBuilding("building.lumbercamp.t1").length === 0 &&
+    trainableUnitsForBuilding("building.mine.t1").length === 0 &&
+    trainableUnitsForBuilding("building.warehouse").length === 0 &&
+    trainableUnitsForBuilding("building.armory.t1").join(",") === UNIT_PATHS.join(","),
+);
+check(
+  "BUILDING_CONTENT 覆盖全部九个经典建筑",
+  BUILDING_CONTENT.size === CLASSIC_BUILDING_KINDS.length &&
+    CLASSIC_BUILDING_KINDS.every((kind) => BUILDING_CONTENT.has(kind)),
+  String(BUILDING_CONTENT.size),
+);
+
+// BUG C: centre coordinates -> footprint origin is exactly one conversion, and the BUILD ghost and a
+// click use it. A 3x3 building at 6.5 owns tiles 5..7, a unit at 5.5 owns tile 5.
+const tileRoundTrip = worldToTile(tileToWorld({ x: -3, y: 4 }, 32).x, tileToWorld({ x: -3, y: 4 }, 32).y, 32);
+check(
+  "tileToWorld / worldToTile 往返：整数与负坐标保持不变",
+  tileRoundTrip.x === -3 && tileRoundTrip.y === 4,
+  `${tileRoundTrip.x},${tileRoundTrip.y}`,
+);
+check(
+  "单位中心 5.5 落在 tile 5，3x3 建筑中心 6.5 的左上角是 tile 5",
+  worldToTile(5.5 * 32, 5.5 * 32, 32).x === 5 &&
+    entityFootprintOrigin({ id: 1, kind: "building.armory.t1", x: 6.5, y: 6.5, footprint: { width: 3, height: 3 } }).x === 5 &&
+    entityFootprintWidth({ id: 1, kind: "building.armory.t1", x: 6.5, y: 6.5, footprint: { width: 3, height: 3 } }) === 3 &&
+    entityFootprintHeight({ id: 1, kind: "unit.engineer", x: 5.5, y: 5.5 }) === 1,
+);
+const footprintThreeByThree = footprintTiles({ x: 5, y: 5 }, { width: 3, height: 3 });
+check(
+  "3x3 足迹锚在整数 tile (5,5) 时恰好覆盖 5..7 两轴的全部九格",
+  footprintThreeByThree.length === 9 &&
+    footprintThreeByThree.every((tile) => tile.x >= 5 && tile.x <= 7 && tile.y >= 5 && tile.y <= 7) &&
+    JSON.stringify(footprintThreeByThree) ===
+      JSON.stringify(
+        [5, 6, 7].flatMap((y) => [5, 6, 7].map((x) => ({ x, y }))),
+      ),
+  JSON.stringify(footprintThreeByThree),
+);
+const threeByThreeBuilding: EntityView = {
+  id: 51,
+  kind: "building.armory.t1",
+  x: 6.5,
+  y: 6.5,
+  playerId: 3,
+  footprint: { width: 3, height: 3 },
+};
+check(
+  "占用判定用足迹左上角：3x3 建筑覆盖 5..7，不覆盖 4 或 8",
+  entityFootprintCovers(threeByThreeBuilding, 5, 5) &&
+    entityFootprintCovers(threeByThreeBuilding, 7, 7) &&
+    !entityFootprintCovers(threeByThreeBuilding, 4, 5) &&
+    !entityFootprintCovers(threeByThreeBuilding, 8, 8) &&
+    entityCoversTile(threeByThreeBuilding, 6, 6) &&
+    !entityCoversTile(threeByThreeBuilding, 8, 6),
+);
+
+// Click picking: a unit's visible body (not only its feet) selects it, and any tile of a 3x3 footprint
+// selects that building while an outside tile does not.
+function pickWorldOf(entities: readonly EntityView[]): WorldView {
+  return {
+    originX: 0,
+    originY: 0,
+    width: 24,
+    height: 24,
+    tiles: Array.from({ length: 24 }, () =>
+      Array.from({ length: 24 }, () => "grass" as TerrainId),
+    ),
+    entities,
+  };
+}
+const pickCamera = new Camera(32, 1, 10.5 * 32, 10.5 * 32);
+pickCamera.setViewport(800, 600);
+const unitPickWorld = pickWorldOf([{ id: 61, kind: "unit.melee.t1", x: 10.5, y: 10.5, playerId: 3 }]);
+const unitBodyPoint = pickCamera.worldToScreen(10.5 * 32, 10.1 * 32);
+const unitFootPoint = pickCamera.worldToScreen(10.5 * 32, 10.05 * 32);
+const unitMissPoint = pickCamera.worldToScreen(13.5 * 32, 13.5 * 32);
+check(
+  "点击单位可见身体选中该单位；点空地不选中",
+  pickEntityAt(unitPickWorld, pickCamera, unitBodyPoint.x, unitBodyPoint.y) === 61 &&
+    pickEntityAt(unitPickWorld, pickCamera, unitFootPoint.x, unitFootPoint.y) === 61 &&
+    pickEntityAt(unitPickWorld, pickCamera, unitMissPoint.x, unitMissPoint.y) === null,
+  `${pickEntityAt(unitPickWorld, pickCamera, unitBodyPoint.x, unitBodyPoint.y)}`,
+);
+const buildingPickWorld = pickWorldOf([threeByThreeBuilding]);
+const buildingCornerPoint = pickCamera.worldToScreen(5.2 * 32, 5.2 * 32);
+const buildingCentrePoint = pickCamera.worldToScreen(6.5 * 32, 6.5 * 32);
+const buildingOutsidePoint = pickCamera.worldToScreen(9.2 * 32, 9.2 * 32);
+check(
+  "3x3 建筑的任意足迹 tile 都能点中，足迹外点不中",
+  pickEntityAt(buildingPickWorld, pickCamera, buildingCornerPoint.x, buildingCornerPoint.y) === 51 &&
+    pickEntityAt(buildingPickWorld, pickCamera, buildingCentrePoint.x, buildingCentrePoint.y) === 51 &&
+    pickEntityAt(buildingPickWorld, pickCamera, buildingOutsidePoint.x, buildingOutsidePoint.y) === null,
+  `${pickEntityAt(buildingPickWorld, pickCamera, buildingCornerPoint.x, buildingCornerPoint.y)}`,
+);
+const mixedPickWorld = pickWorldOf([
+  threeByThreeBuilding,
+  { id: 62, kind: "unit.melee.t1", x: 6.5, y: 6.5, playerId: 3 },
+]);
+const unitOverBuildingPoint = pickCamera.worldToScreen(6.5 * 32, 6.1 * 32);
+check(
+  "单位与建筑足迹重叠时优先选中单位（可见身体优先）",
+  pickEntityAt(mixedPickWorld, pickCamera, unitOverBuildingPoint.x, unitOverBuildingPoint.y) === 62,
+  String(pickEntityAt(mixedPickWorld, pickCamera, unitOverBuildingPoint.x, unitOverBuildingPoint.y)),
+);
+
+// BUG D client half: STOP and the following move/build builders stay valid. The actual "a stop then a
+// move/build applies" assertion lives in ClassicCheck against a real CommandService.
+check(
+  "STOP 之后仍能生成合法的 MOVE 与 BUILD 命令",
+  orderStop(7) === "ORDER STOP 7" &&
+    orderMove(7, 8, 9) === "ORDER MOVE 7 8 9" &&
+    build(7, "building.lumbercamp.t1", 10, 11) === "BUILD 7 building.lumbercamp.t1 10 11",
 );
 
 // ---------------------------------------------------------------------------------------------

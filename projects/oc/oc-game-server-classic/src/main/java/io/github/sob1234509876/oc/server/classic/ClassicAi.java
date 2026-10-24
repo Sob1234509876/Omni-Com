@@ -83,14 +83,24 @@ import java.util.Objects;
  * which the 300 gold / 60 wood opening covers immediately; the t1 bootstraps therefore reach t2 on the
  * second decision at the latest, which {@code ClassicCheck} pins on a fixed seed.
  *
- * <h2>What "strongest tier" means</h2>
+ * <h2>What the army trains</h2>
  *
- * <p>Army training looks at the best idle armory - highest {@link BuildingType#level()}, ties by entity id -
- * and walks {@link ClassicContent#meleeTiers()} from the top down, taking the first tier whose recipe the
- * armory's level allows and whose inputs the warehouses can still cover. A tier two armory therefore trains
- * {@code unit.melee.t5} whenever the gold is there, and falls back to the highest affordable tier otherwise.
- * Engineers are trained on the same armory, but only when the queue is empty, so a busy armory is never
- * spammed with jobs.
+ * <p>Army training looks at the best idle armory - highest {@link BuildingType#level()}, ties by entity id.
+ * While the combat army is below the strategy's aggression threshold it walks
+ * {@link ClassicContent#meleeTiers()} from the cheapest tier upwards, so one armory reaches that threshold
+ * in bounded time instead of spending the whole opening on expensive units. Once the army can march it
+ * reverses the walk and takes the strongest tier the armory's level and the warehouse stock allow; a tier
+ * two armory then trains {@code unit.melee.t5} whenever the gold is there.
+ * Engineers are trained on the same armory when no army job is waiting, so a busy armory is never spammed
+ * with jobs.
+ *
+ * <p><strong>Production inputs.</strong> An engineer is also the bot's builder, so waiting for one to walk
+ * a production delivery across the base starved the armory behind construction orders. The bot performs
+ * that small logistics step itself: the recipe's inputs are reserved through the normal
+ * {@link WarehouseLogistics} network, taken from its warehouses and placed in the producing building
+ * before the job is queued. The goods are still real and the reservation bookkeeping is unchanged; only
+ * the walk is skipped, which keeps production running while the builders raise the base. A human player
+ * keeps the ordinary hauler path.
  *
  * <h2>Where buildings go</h2>
  *
@@ -315,9 +325,20 @@ public final class ClassicAi implements WorldTickHook {
         // Buildings first: an upgrade replaces the armory, so training in the same decision has to see the
         // new tier rather than a queue that the upgrade would cancel.
         upkeepBuildings(world, ai, units, buildings);
-        upkeepEngineers(world, ai, units, buildings);
-        if (countArmy(units) < strategy.armyTarget()) {
-            trainArmy(world, ai, buildings);
+        int army = countArmy(units);
+        // While the army is still below the aggression threshold it outranks extra engineers: one armory
+        // produces one unit at a time, and an army that never reaches the threshold never attacks. A bot
+        // with no engineer at all still trains the engineer first, because it could not raise anything
+        // else and the base would never become staffed.
+        boolean hasEngineer = countUnitType(units, ClassicContent.ENGINEER) > 0;
+        if (!hasEngineer) {
+            upkeepEngineers(world, ai, units, buildings);
+        }
+        if (army < strategy.armyTarget()) {
+            trainArmy(world, ai, buildings, army, strategy.attackArmySize());
+        }
+        if (hasEngineer) {
+            upkeepEngineers(world, ai, units, buildings);
         }
         if (mode == Mode.ATTACK) {
             attack(world, ai, units, enemyBuildings(world, ai));
@@ -425,20 +446,34 @@ public final class ClassicAi implements WorldTickHook {
         }
     }
 
-    /** Trains the strongest affordable melee tier the best idle armory allows. */
-    private static void trainArmy(World world, Player ai, List<Building> buildings) {
+    /**
+     * Trains one melee tier in the best idle armory.
+     *
+     * <p>While the combat army is still below the aggression threshold the cheapest allowed tier is
+     * trained, so the bot actually reaches that threshold in a bounded time on one armory. Once the army
+     * is large enough to march, the choice reverses: the strongest affordable tier is trained, which is
+     * what makes the later army stronger instead of merely larger. Both orders are pure functions of the
+     * strategy and the world state, so the decision stays deterministic.
+     */
+    private static void trainArmy(World world, Player ai, List<Building> buildings, int armySize,
+            int attackArmySize) {
         Building armory = idleArmory(world, ai, buildings);
         if (armory == null || !ai.hasLogistics()) {
             return;
         }
         List<Recipe> allowed = world.content().recipesFor(armory.type());
         List<ClassicContent.MeleeTier> tiers = ClassicContent.meleeTiers();
-        for (int index = tiers.size() - 1; index >= 0; index--) {
+        boolean rush = armySize < attackArmySize;
+        for (int step = 0; step < tiers.size(); step++) {
+            int index = rush ? step : tiers.size() - 1 - step;
             Recipe candidate = recipe(world, ClassicContent.recipePath(tiers.get(index).tier()));
             if (candidate == null || !allowed.contains(candidate)) {
                 continue;
             }
             if (!ai.logistics().hasAvailable(candidate.inputs())) {
+                continue;
+            }
+            if (!stockArmory(ai, armory, candidate)) {
                 continue;
             }
             world.production().enqueue(armory, candidate, 1);
@@ -455,7 +490,77 @@ public final class ClassicAi implements WorldTickHook {
         if (armory == null || !ai.logistics().hasAvailable(recipe.inputs())) {
             return;
         }
+        if (!stockArmory(ai, armory, recipe)) {
+            return;
+        }
         world.production().enqueue(armory, recipe, 1);
+    }
+
+    /**
+     * Moves one recipe's inputs from the bot's warehouses into its producing building before the job is
+     * queued.
+     *
+     * <p>The bot has only a handful of engineers and they are also its builders. If every production job
+     * waited for one of them to walk the goods across the base, the armory would spend most of its time
+     * idle behind a construction order, and the army would never reach its aggression threshold. The bot
+     * therefore performs its own small logistics step: the goods are reserved through the normal
+     * {@link WarehouseLogistics} network, taken from the warehouses and put into the factory buffer, so
+     * the stock is still real and the reservation rules are unchanged - only the walk is skipped. A
+     * partial transfer is harmless: production asks the hauling system for whatever is still missing.
+     *
+     * @return whether at least part of the inputs reached the building
+     */
+    private static boolean stockArmory(Player ai, Building armory, Recipe recipe) {
+        ItemBundle inputs = recipe.inputs();
+        if (inputs.isEmpty()) {
+            return true;
+        }
+        WarehouseLogistics logistics = WarehouseLogistics.of(ai);
+        if (logistics == null) {
+            return false;
+        }
+        var reserved = logistics.reserve(inputs);
+        if (reserved.isEmpty()) {
+            return false;
+        }
+        var reservation = reserved.get();
+        boolean moved = false;
+        for (Building warehouse : logistics.pickupWarehouses(reservation)) {
+            ItemBundle wanted = logistics.pendingPickup(reservation, warehouse);
+            ItemBundle picked = logistics.pickUp(reservation, warehouse, wanted);
+            if (picked.isEmpty()) {
+                continue;
+            }
+            moved = true;
+            ItemBundle leftover = insertInto(armory.inventory(), picked);
+            if (!leftover.isEmpty()) {
+                logistics.store(leftover);
+            }
+        }
+        if (reservation.active()) {
+            ItemBundle stillOnTheShelf = reservation.commit();
+            if (!stillOnTheShelf.isEmpty()) {
+                ItemBundle leftover = insertInto(armory.inventory(), stillOnTheShelf);
+                if (!leftover.isEmpty()) {
+                    logistics.store(leftover);
+                }
+            }
+        }
+        return moved;
+    }
+
+    /** Inserts as much of the bundle as the inventory accepts and returns the remainder. */
+    private static ItemBundle insertInto(io.github.sob1234509876.oc.rts.economy.Inventory inventory,
+            ItemBundle bundle) {
+        Map<ItemType, Natural> leftover = new java.util.LinkedHashMap<>();
+        for (ItemBundle.Amount component : bundle.components()) {
+            Natural accepted = inventory.insert(component.item(), component.amount());
+            Natural rest = component.amount().subtractClamped(accepted);
+            if (!rest.isZero()) {
+                leftover.put(component.item(), rest);
+            }
+        }
+        return ItemBundle.of(leftover);
     }
 
     /**
@@ -630,14 +735,19 @@ public final class ClassicAi implements WorldTickHook {
             return null;
         }
         TileRect warehouseArea = warehouse.footprint(warehouseOrigin.x(), warehouseOrigin.y());
+        // Keep one clear tile around each opening footprint. The three openings are searched before any of
+        // them is spawned, so canPlace cannot see the previous ones; without the clearance the armory could
+        // cover the warehouse's entrance tile, and a hauler could then never stand where it has to deliver.
         GridPos armoryOrigin = findOpenOrigin(world, armory,
-                warehouseOrigin.plus(OFFSET_ARMORY.x(), OFFSET_ARMORY.y()), List.of(warehouseArea));
+                warehouseOrigin.plus(OFFSET_ARMORY.x(), OFFSET_ARMORY.y()),
+                List.of(warehouseArea.expanded(1)));
         if (armoryOrigin == null) {
             return null;
         }
         TileRect armoryArea = armory.footprint(armoryOrigin.x(), armoryOrigin.y());
         GridPos mineOrigin = findOpenOrigin(world, mine,
-                warehouseOrigin.plus(OFFSET_MINE.x(), OFFSET_MINE.y()), List.of(warehouseArea, armoryArea));
+                warehouseOrigin.plus(OFFSET_MINE.x(), OFFSET_MINE.y()),
+                List.of(warehouseArea.expanded(1), armoryArea.expanded(1)));
         if (mineOrigin == null) {
             return null;
         }

@@ -27,6 +27,31 @@ import {
 } from "./view.ts";
 
 /**
+ * The engineer a BUILD placement should use, or `undefined` when the selection is not an engineer-only
+ * group.
+ *
+ * <p>The panel offers BUILD for one **or several** selected engineers; the first engineer in selection
+ * order receives the order and the others stay selected, so the owner can keep a group of builders and
+ * place several buildings without re-selecting one after every site. A mixed group (an engineer plus a
+ * combat unit) deliberately has no placement engineer: BUILD needs one builder and silently picking one
+ * out of a mixed order would be misleading.
+ */
+export function engineerForPlacement(
+  selection: readonly EntityView[],
+  myPlayerId: number | null,
+): EntityView | undefined {
+  if (selection.length === 0) {
+    return undefined;
+  }
+  for (const entity of selection) {
+    if (ownershipOf(entity.playerId, myPlayerId) !== "mine" || !isEngineerKind(entity.kind)) {
+      return undefined;
+    }
+  }
+  return selection[0];
+}
+
+/**
  * Whether a kind is an engineer.
  *
  * The classic catalogue calls it `unit.engineer`, while the demo and legacy snapshots use the short

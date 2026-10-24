@@ -18,9 +18,9 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (445 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (458 checks) |
 | World content | `oc-classic` |
-| Art | `assets/manifest.json` and a 96x96 `assets/atlas.png` |
+| Art | `assets/manifest.json` and a 96x128 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
 
 ## The five melee tiers
@@ -274,16 +274,13 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 445 checks passed.
+classic plugin self check: all 458 checks passed.
 ```
 
-445 is the sum of sixteen sections: the catalogue 84, the five-tier stat ladder 40, the armory level gate 14,
-the mine income ladder 20, the lumber camp ladder 35, the three upgrade ladders 30, the economy payout 33
-(18 gold + 15 wood), the buildable warehouse 11, the starting stock 10, the manifest and atlas 17, the host and
-snapshot 35 (including the compact warehouse `contents` row), the enemy AI 36 (including the armory upgrade and
-the lumber camp upkeep), determinism 9 (including the AI's 64-tile entity bound over a 600-tick run), the bot
-players 38 (zero bots, the byte-identical one-bot world, two differing bots, and the seed rules), the plugin
-seam 21 (including the `bots` option) and the plugin loader 12. The gate section is the strict part: it proves
+458 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
+default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
+STOP must be followed by an applicable move and build against a real `CommandService`, and each of the
+nine classic buildings must own a distinct atlas cell. The gate section is the strict part: it proves
 against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
 says so; the upgrade section proves the same ladders are executable in a real engine, the AI section proves
 the enemy really reaches tier 2 through the command, and the bots section proves the default one-bot world is
@@ -302,8 +299,8 @@ byte-for-byte the old one while two bots differ and a different seed moves their
 | `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the two hooks, reads `--bots` from the plugin options |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
-| `src/main/resources/assets/atlas.png` | the 96x96 unit and building atlas |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 445 check self check program |
+| `src/main/resources/assets/atlas.png` | the 96x128 unit and building atlas (one 32x32 cell per building kind) |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 458 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

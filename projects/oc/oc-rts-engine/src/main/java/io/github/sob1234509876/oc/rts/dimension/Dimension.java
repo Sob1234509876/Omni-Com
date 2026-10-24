@@ -142,6 +142,12 @@ public final class Dimension {
      * other: the terrain must still be buildable and every other living building still blocks the site, so
      * an upgrade cannot be used to squeeze a building onto a neighbour.
      *
+     * <p><strong>Entrances stay usable.</strong> Two footprints that merely touch used to be accepted,
+     * even when the new building covered the tile another building's units use to enter and leave. A
+     * hauler then had to stand inside a building to deliver, which separation kept it from doing, and the
+     * producer's queue waited forever. A new footprint therefore may not contain another building's
+     * entrance tile, and the new building's own entrance may not be inside another footprint.
+     *
      * @param type     the new building type
      * @param origin   minimum corner of the new footprint
      * @param replaced the building the caller is about to remove, or {@code null} to block on every entity
@@ -156,12 +162,26 @@ public final class Dimension {
                 return false;
             }
         }
-        for (Entity entity : spatial.inRect(footprint)) {
-            if (entity != replaced && entity.isAlive() && entity instanceof Building) {
+        GridPos newEntrance = entranceTile(type, origin);
+        for (Entity entity : spatial.inRect(footprint.expanded(1))) {
+            if (entity == replaced || !entity.isAlive() || !(entity instanceof Building building)) {
+                continue;
+            }
+            if (building.occupiedTiles().intersects(footprint)) {
+                return false;
+            }
+            // Neither building may swallow the tile the other one's units walk through.
+            if (footprint.contains(building.entranceTile())
+                    || building.occupiedTiles().contains(newEntrance)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Tile just outside the footprint's east side, where the building's units enter and leave. */
+    private static GridPos entranceTile(BuildingType type, GridPos origin) {
+        return new GridPos(origin.x() + type.sizeX(), origin.y() + type.sizeY() / 2);
     }
 
     // ------------------------------------------------------------------ entities

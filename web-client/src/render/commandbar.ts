@@ -22,13 +22,14 @@
  * the ground rings and minimap dots (`ownershipColor`).
  */
 
-import { BUILDING_PATHS, UNIT_PATHS } from "../commands.ts";
+import { BUILDING_PATHS, trainableUnitsForBuilding } from "../commands.ts";
 import { isEngineerKind } from "./selection.ts";
 import { progressBarRatio } from "./status.ts";
 import {
   isBuildingEntityKind,
   isOwnUnit,
   ownershipColor,
+  ownershipDecision,
   ownershipOf,
   type EntityView,
   type Ownership,
@@ -94,14 +95,26 @@ export interface CommandBarModel {
   readonly unitCount: number;
   /** Number of selected own buildings. */
   readonly buildingCount: number;
+  /** Whether the local player id is known; false means "not logged in" for every message. */
+  readonly loggedIn: boolean;
+  /** One shared ownership verdict for the HUD tag, the message and the actions. */
+  readonly ownership: "logged-out" | "own" | "other" | "neutral";
+  /** `我` / `敌` / `中立`, or `未登录` when there is no local player id. */
+  readonly ownershipTag: string;
 }
 
 /** Optional catalogues/labels so the check can use short fixtures and the page can use the manifest. */
 export interface CommandBarOptions {
   /** Manifest display name for a content path; raw path when omitted. */
   readonly labelForPath?: (path: string) => string;
-  readonly unitPaths?: readonly string[];
   readonly buildingPaths?: readonly string[];
+  /**
+   * Unit paths one building kind may train.
+   *
+   * Defaults to the classic catalogue in `commands.ts`. A test can inject a fixture, and the page keeps
+   * one rule: a mine, lumber camp or warehouse trains nothing, while an armory trains the melee line.
+   */
+  readonly unitsForBuilding?: (kind: string) => readonly string[];
 }
 
 /** The two unit actions, in the order the command bar renders them. */
@@ -134,9 +147,11 @@ function pathActions(
  * 2. own units plus an own building -> `mixed`: unit actions only, with a hint that says so. TRAIN is
  *    suppressed because it needs exactly one building, and BUILD because it needs exactly one
  *    engineer; silently applying only part of a mixed selection would be misleading;
- * 3. exactly one own engineer -> the unit actions plus one BUILD entry per catalogued building;
+ * 3. an own engineer-only group (one or several engineers) -> the unit actions plus one BUILD entry per
+ *    catalogued building;
  * 4. any own units -> the unit actions;
- * 5. exactly one own building -> one TRAIN entry per catalogued unit, in the context zone;
+ * 5. exactly one own building -> one TRAIN entry per unit that building itself may train, in the context
+ *    zone (a mine, lumber camp or warehouse trains nothing);
  * 6. anything else (enemy/neutral entities, several buildings) -> no actions and an honest hint.
  *
  * Enemy and neutral entities never contribute actions; own units inside a larger selection still do,
@@ -148,10 +163,11 @@ export function commandBarModel(
   options: CommandBarOptions = {},
 ): CommandBarModel {
   const labelForPath = options.labelForPath ?? ((path: string): string => path);
-  const unitPaths = options.unitPaths ?? UNIT_PATHS;
+  const unitsForBuilding = options.unitsForBuilding ?? trainableUnitsForBuilding;
   const buildingPaths = options.buildingPaths ?? BUILDING_PATHS;
 
   const selectedCount = selection.length;
+  const loggedIn = myPlayerId !== null && Number.isFinite(myPlayerId) && myPlayerId > 0;
   const ownUnits = selection.filter((entity) => isOwnUnit(entity, myPlayerId));
   const ownBuildings = selection.filter(
     (entity) =>
@@ -160,95 +176,117 @@ export function commandBarModel(
   const unitCount = ownUnits.length;
   const buildingCount = ownBuildings.length;
   const single = selectedCount === 1 ? selection[0] : undefined;
-  const singleEngineer =
-    single !== undefined && isOwnUnit(single, myPlayerId) && isEngineerKind(single.kind);
+  const decision =
+    single === undefined
+      ? ownershipDecision(undefined, myPlayerId)
+      : ownershipDecision(single.playerId, myPlayerId);
+  const base = {
+    selectedCount,
+    unitCount,
+    buildingCount,
+    loggedIn,
+    ownership: decision.kind,
+    ownershipTag: decision.tag,
+  };
+  const engineerCount = ownUnits.filter((entity) => isEngineerKind(entity.kind)).length;
+  // One or several engineers selected on their own: every one of them is a builder, so the panel offers
+  // the four BUILD entries. A mixed unit group (an engineer plus a soldier) deliberately does not,
+  // because BUILD needs one builder and silently picking one would be misleading.
+  const engineerOnlySelection =
+    unitCount > 0 && selectedCount === unitCount && engineerCount === unitCount;
 
   if (selectedCount === 0) {
     return {
+      ...base,
       kind: "none",
       mixed: false,
       actions: [],
       hint: EMPTY_SELECTION_HINT,
-      selectedCount,
-      unitCount,
-      buildingCount,
+    };
+  }
+
+  if (!loggedIn) {
+    return {
+      ...base,
+      kind: "other",
+      mixed: false,
+      actions: [],
+      hint: "你尚未登录（或玩家 id 未知）：请先连接并 LOGIN，再看自己的单位能否下达命令",
     };
   }
 
   if (unitCount > 0 && buildingCount > 0) {
     return {
+      ...base,
       kind: "mixed",
       mixed: true,
       actions: unitActions(),
       hint:
         `已选 ${unitCount} 个单位与 ${buildingCount} 个建筑：混合选择只提供单位动作` +
         "（停止 / 攻击移动）；TRAIN 与 BUILD 需要单独选中一个建筑或工兵",
-      selectedCount,
-      unitCount,
-      buildingCount,
     };
   }
 
-  if (singleEngineer) {
+  if (engineerOnlySelection) {
     return {
+      ...base,
       kind: "engineer",
       mixed: false,
       actions: [...unitActions(), ...pathActions("build", buildingPaths, labelForPath)],
       hint:
-        `工兵已选中：停止 / 攻击移动；右下角 ${buildingPaths.length} 个 BUILD 条目，` +
+        `已选 ${engineerCount} 个工兵：停止 / 攻击移动；右下角 ${buildingPaths.length} 个 BUILD 条目，` +
         "点条目后左键放置",
-      selectedCount,
-      unitCount,
-      buildingCount,
     };
   }
 
   if (unitCount > 0) {
     return {
+      ...base,
       kind: "units",
       mixed: false,
       actions: unitActions(),
       hint: `已选 ${unitCount} 个单位：停止 / 攻击移动；右键直接移动或攻击`,
-      selectedCount,
-      unitCount,
-      buildingCount,
     };
   }
 
-  if (buildingCount === 1 && selectedCount === 1) {
+  if (buildingCount === 1 && selectedCount === 1 && single !== undefined) {
+    const trainable = unitsForBuilding(single.kind);
     return {
+      ...base,
       kind: "building",
       mixed: false,
-      actions: pathActions("train", unitPaths, labelForPath),
-      hint: "选中建筑：右下角是 TRAIN 条目与生产队列，一次只排一个单位",
-      selectedCount,
-      unitCount,
-      buildingCount,
+      actions: pathActions("train", trainable, labelForPath),
+      hint:
+        trainable.length === 0
+          ? "选中建筑：这个建筑不训练单位（矿井 / 伐木场 / 仓库只产出资源）"
+          : "选中建筑：右下角是 TRAIN 条目与生产队列，一次只排一个单位",
     };
   }
 
-  if (myPlayerId === null) {
+  if (decision.kind === "neutral") {
     return {
+      ...base,
       kind: "other",
       mixed: false,
       actions: [],
-      hint: "先连接并 LOGIN，才能识别自己的单位并下达命令",
-      selectedCount,
-      unitCount,
-      buildingCount,
+      hint: "选中的实体没有归属或属于中立方，也没有可下达的单位动作",
     };
   }
-  const mine = single !== undefined && ownershipOf(single.playerId, myPlayerId) === "mine";
+  if (decision.kind === "own") {
+    return {
+      ...base,
+      kind: "other",
+      mixed: false,
+      actions: [],
+      hint: "当前选中没有可下达的单位动作；一次只能选中一个建筑来 TRAIN 或一个工兵来 BUILD",
+    };
+  }
   return {
+    ...base,
     kind: "other",
     mixed: false,
     actions: [],
-    hint: mine
-      ? "当前选中没有可下达的单位动作；一次只能选中一个建筑来 TRAIN 或一个工兵来 BUILD"
-      : "选中的实体不属于你，也没有可下达的单位动作",
-    selectedCount,
-    unitCount,
-    buildingCount,
+    hint: "选中的实体不属于你，也没有可下达的单位动作",
   };
 }
 

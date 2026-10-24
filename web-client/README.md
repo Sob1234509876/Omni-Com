@@ -122,16 +122,18 @@ the **日志** history overlay work in either view. (The page's own interface is
   enemy red, neutral grey); the bar is full when the snapshot does not report health. The strip shows one chip per
   selected unit up to the first **12**, then a `+N` chip for the rest; clicking a chip replaces the selection with just
   that unit. The command bar always shows the current hint / armed-mode reminder, and an engineer selection
-  additionally lists that engineer's **BUILD** entries in the context zone.
-- **bottom-right —context panel:** for a selected own building it shows the **TRAIN** entries and the production queue
-  list (the same per-item `ticks / total` rows as before); for a selected engineer it shows the **BUILD** entries;
-  otherwise it stays empty. A building's queue is still shown for an enemy building, because it is read-only
-  information rather than an action.
+  (one **or several** engineers) additionally lists the **BUILD** entries in the context zone.
+- **bottom-right —context panel:** for a selected own building it shows the **TRAIN** entries that building
+  itself offers and the production queue list (the same per-item `ticks / total` rows as before); only the
+  armory trains units, while a selected mine, lumber camp or warehouse shows no TRAIN section at all. For a
+  selected engineer group it shows the **BUILD** entries; otherwise it stays empty. A building's queue is
+  still shown for an enemy building, because it is read-only information rather than an action.
 
 **Mixed selections.** A selection that contains at least one own unit **and** an own building offers the unit actions
-only: the hint says `混合选择只提供单位动作` and TRAIN/BUILD are suppressed. Neither `TRAIN` (exactly one building) nor
-`BUILD` (exactly one engineer) can honestly apply to a mixed group, so the page neither silently picks one half nor
-sends a command the selection does not justify. The pure rule lives in [`src/render/commandbar.ts`](src/render/commandbar.ts).
+only: the hint says `混合选择只提供单位动作` and TRAIN/BUILD are suppressed. Neither `TRAIN` (exactly one
+building) nor `BUILD` (one engineer to place with) can honestly apply to a mixed group, so the page neither
+silently picks one half nor sends a command the selection does not justify. The pure rule lives in
+[`src/render/commandbar.ts`](src/render/commandbar.ts).
 
 **Smaller windows.** At 1280x720 and larger the three zones fit without touching each other, the minimap or the toast
 stack: the minimap is a 180px grid column and the toast stack is raised above the fixed-height bar. Below **1100px** the
@@ -160,12 +162,12 @@ The HUD is pinned to the top-left corner of the view and shows, in real time:
 - World source: `世界：server · tick 42` while snapshots are arriving, `世界：demo` when the page is drawing its built-in fallback map;
 - Camera coordinates and window origin: `坐标：1234,-567 · 窗口：1250,-582`. Both may be negative and keep counting as the owner pans; the window origin changes as the camera streams a new window. On the demo map the chip starts at `坐标：2,16 · 窗口：,0` (the demo island is its own window at origin `0,0`);
 - Texture source: `atlas · oc-hello` (plugin ids are listed when there are at most three plugins), `atlas · 4 plugins`; `procedural` when it has fallen back to procedural drawing;
-- the engine player id answered by `WHOAMI` (`玩家：`; `玩家：—` before login, cleared again on every reconnect);
+- the engine player id answered by `WHOAMI` (`玩家：`; `玩家：未登录` before login, `玩家：获取 id 中…` while the answer is outstanding, cleared again on every reconnect). If the answer is lost, the client also recovers the id from the snapshot's `players` row whose `name` equals the account name that just logged in;
 - the local player's resources and income rates from the `players` row whose id matches `WHOAMI`: `资源：alice · 金 300 (+30/分) · 木 60 (+20/分)`. The rate suffix comes from `goldPerMinute` / `woodPerMinute` and is omitted when an older snapshot lacks those fields (and `+0/分` is shown when a new server reports zero, so the operator can see that no mine is running). The label greys out and shows dashes (`资源：金 —· 木—`) while the world has no row for the player yet - before login, on the demo map, or against an older server whose snapshot has no `players` field;
 - the tile coordinates under the mouse;
 - the zoom factor (0.5× to 2.5×);
 - the smoothed FPS;
-- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通[我] (12.5, 8.5)`) when exactly one entity is selected; the tag is `我` for the local player, `敌` for any other player and `中立` for an ownerless entity or before `WHOAMI` answers. When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [中立] (12.5, 8.5)`), and `选中：无` means nothing is selected. With more than one unit selected the same chip becomes `已选：3 个实体`, and the single-entity detail plus the building chip are intentionally suppressed;
+- the id, display name, ownership tag and ground coordinates of the selected entity (`选中：e12 普通[我] (12.5, 8.5)`) when exactly one entity is selected; the tag is `我` for the local player, `敌` for any other player, `中立` for an ownerless entity and `未登录` when no local player id is known yet. The same verdict drives the command bar actions and its message, so the tag can never say `我` while the bar says "not yours". When the texture manifest has no name for that kind, the raw kind is shown instead (`选中：e12 unit.melee.t1 [未登录] (12.5, 8.5)`), and `选中：无` means nothing is selected. With more than one unit selected the same chip becomes `已选：3 个实体`, and the single-entity detail plus the building chip are intentionally suppressed;
 - when exactly one **own unit** is selected and its `contents` object is non-empty, the same row appends its cargo: `· 携带：金 7 · 木 3`. The item name comes from the plugin manifest first and the classic `金` / `木` labels second; a path the manifest does not know keeps its raw path. A unit with no cargo (or an older snapshot without `contents`) adds nothing at all, and an enemy unit never shows a cargo line. The pure formatter is `unitCargoLabel` in [`src/render/status.ts`](src/render/status.ts);
 - the display name and id of the selected building (`建筑：兵工厂 1 级 #42`), own or enemy, again falling back to the raw kind (`建筑：building.armory.t1 #42`). When the snapshot carries the footprint, the chip appends it as `· 尺寸：3×3`, and while the building is under construction a small inline bar shows the completion percentage (`▮42%`). A selected warehouse also appends its stored items, for example `· 库存：金 120 · 木40`; only positive amounts are shown, in a fixed gold/wood order. A snapshot without `w`/`h`/`progress`/`contents` (an older server, the demo world) simply omits those parts;
 - for the selected building, one small row per unfinished production job under the building chip: the manifest display name (raw `kind` when the manifest has no name), a thin `ticks / total` bar and the one-based `i/n` (`普通▮▮▮1/2`). A job that has not started reports `ticks === total`, so its bar starts empty. The canvas keeps the existing `生产中×N` marker; a legacy snapshot with `queue` but no `queueItems` shows the marker and no per-item rows.
@@ -371,7 +373,7 @@ footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, o
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 300 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 323 passing checks.
 
 ## hello plugin demo
 
@@ -466,8 +468,9 @@ plugin directory, or an account's password/permissions.
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring, the thin ownership ring, the greyscale building construction bar and the `生产中×N` queue marker drawn when there is no atlas, plus the brief achromatic selection-flash halo |
 | `src/render/flash.ts` | pure selection-flash rules: the `FLASH_MS = 250` duration, `startFlash` for newly selected ids, the linear clamped `flashIntensity` fade, finished-entry pruning, and the achromatic halo colour |
 | `src/render/status.ts` | pure status chrome: percentage formatting, the clamped bar ratio, the `生产中×N` marker text, the `尺寸：W×H` size label, the warehouse stock label (`库存：…`), the unit cargo label (`携带：…`, manifest names with a raw-path fallback) and shared item display names, the `(+N/分` income suffix and the per-queue-item bar ratio / `i/n` label, all tolerating the optional snapshot fields |
-| `src/render/selection.ts` | pure selection rules: the marquee priority (`selectByPriority`: combat units, else builders/engineers, else buildings, own only), the double-click same-kind rule (own and in-window only, the single-building case) and the all-own-engineers shortcut, with the combat-kind and `unit.engineer` / `engineer` tests |
-| `src/render/commandbar.ts` | pure command-bar rules: the action set for nothing / units / an own engineer / an own building / a mixed unit-and-building selection (unit actions only), the selected-units chip list capped at 12 plus `+N`, the two-character manifest-name abbreviation, and the clamped health-bar ratio with an absent report treated as full |
+| `src/render/selection.ts` | pure selection rules: the marquee priority (`selectByPriority`: combat units, else builders/engineers, else buildings, own only), the double-click same-kind rule (own and in-window only, the single-building case), the all-own-engineers shortcut, and the first engineer of an engineer-only group used for BUILD placement, with the combat-kind and `unit.engineer` / `engineer` tests |
+| `src/render/picking.ts` | pure click picking: a unit from its visible body capsule (not a small circle at its feet) and a building from its whole footprint, with units outranking buildings and the frontmost entity winning ties |
+| `src/render/commandbar.ts` | pure command-bar rules: the action set for nothing / units / one or several own engineers / an own building / a mixed unit-and-building selection (unit actions only), the per-building train list (only an armory trains units; a mine, lumber camp or warehouse trains nothing), the selected-units chip list capped at 12 plus `+N`, the two-character manifest-name abbreviation, and the clamped health-bar ratio with an absent report treated as full |
 | `src/render/tooltip.ts` | pure hover-tooltip rules: display name plus owner tag, optional health percentage, building footprint and queue summary, and the window-edge clamp with its cursor gap |
 | `src/render/events.ts` | pure snapshot diff events: building completion (`progress !== 1` →`1`), a 10-point health drop, and the five-second per-entity de-duplicator |
 | `src/render/resources.ts` | pure read-only warehouse total: sum the `contents` of own buildings, label items, sort by display name, and count own warehouses |
@@ -476,7 +479,7 @@ plugin directory, or an account's password/permissions.
 | `src/render/stream.ts` | pure window-streaming rules: signed edge distance, the 8-tile trigger, the `centre - radius` origin for any signed centre, the duplicate-origin guard, and the monotonic request tracker |
 | `src/render/placement.ts` | pure build-placement ghost: footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, entity-footprint occupancy, the 16-tile reach approximation of the server's path rule, the blocked > out-of-reach > legal combination, the five status-line reason texts and the three ghost colours |
 | `src/render/minimap.ts` | pure minimap mapping (aspect-fit layout, floor-based panel-to-world and world-to-panel conversion for signed origins, the clamped camera target) plus the `MinimapRenderer` that draws terrain pixels, 2x2 ownership dots and the white camera rectangle on its own canvas |
-| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` / `QueueItemView` shapes (window origin and window size, no map size, optional role/attackDamage/footprint/progress/queue/queueItems/contents fields and player income rates), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership classification and colour rule, the under-construction test, the own-unit-and-own-building marquee containment that feeds `selectByPriority`, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
+| `src/render/view.ts` | `WorldView` / `EntityView` / `PlayerView` / `QueueItemView` shapes (window origin and window size, no map size, optional role/attackDamage/footprint/progress/queue/queueItems/contents fields and player income rates), signed absolute-to-window terrain translation with floor semantics and the in-window entity rule, the ownership decision and colour rules, the footprint-centre-to-origin conversion used by occupancy, picking and the BUILD ghost, the under-construction test, the own-unit-and-own-building marquee containment that feeds `selectByPriority`, the account-name-to-player-id roster fallback for a lost `WHOAMI`, the deterministic `demoWorld(seed)` fallback, and the `/world/snapshot` windowed fetch/conversion |
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, a gold selection ring for every selected entity, the brief selection-flash halo above the sprite and below that ring, the marquee rectangle, the per-tile green/red/amber placement ghost, and the construction bar / production marker above buildings |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas: click and Shift+click selection, double-click detection with the drag/marquee guard, hover entity picking for the tooltip, empty-ground marquee drag, entity drag selection, middle/Space camera pan, entity picking, right-click orders, placement clicks, the `O` engineer shortcut, and the Ctrl/Shift/plain 1..9 control-group key mapping |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |

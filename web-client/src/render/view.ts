@@ -14,7 +14,7 @@
  * as its fallback terrain.
  */
 
-import type { TileRange } from "./camera";
+import type { TileCoord, TileRange } from "./camera";
 import { selectByPriority } from "./selection.ts";
 
 export type TerrainId = string;
@@ -198,6 +198,29 @@ export interface PlayerView {
   readonly woodPerMinute?: number;
 }
 
+/**
+ * The engine player id of one account in a snapshot's `players` rows, or `null` when the roster does
+ * not name it.
+ *
+ * <p>The account name is the server's identity, and a player row carries that same name beside its id.
+ * This is the fallback for a lost `WHOAMI` answer: without it the client would leave `myPlayerId` null
+ * and call the player's own units somebody else's even though the roster already knew the answer.
+ */
+export function localPlayerIdFromRoster(
+  players: readonly PlayerView[] | undefined,
+  loginName: string | null,
+): number | null {
+  if (players === undefined || loginName === null || loginName.trim() === "") {
+    return null;
+  }
+  for (const player of players) {
+    if (player.name === loginName && Number.isSafeInteger(player.id) && player.id > 0) {
+      return player.id;
+    }
+  }
+  return null;
+}
+
 /** How one entity stands relative to the local player. */
 export type Ownership = "mine" | "enemy" | "neutral";
 
@@ -225,6 +248,48 @@ export function ownershipTag(ownership: Ownership): string {
     default:
       return "中立";
   }
+}
+
+/** How the local player stands to a selected entity, including "no local identity yet". */
+export type OwnershipDecisionKind = "logged-out" | "own" | "other" | "neutral";
+
+/** One shared verdict for the HUD tag, the command bar and the context panel. */
+export interface OwnershipDecision {
+  readonly kind: OwnershipDecisionKind;
+  /** Renderer/ownership colour classification; "logged-out" is neutral grey. */
+  readonly ownership: Ownership;
+  /** HUD tag: `我`, `敌`, `中立`, or `未登录` when there is no local player id. */
+  readonly tag: string;
+}
+
+/**
+ * Classifies one entity against the local player, treating a missing id as "not logged in".
+ *
+ * <p>The distinction is the reported bug: `ownershipOf` maps an absent `myPlayerId` to `neutral`,
+ * which is right for the grey ring but wrong for a panel message. A player who has not logged in must be
+ * told exactly that instead of being told the entity belongs to somebody else. The tag, the command bar
+ * actions and the message all read this one decision, so they cannot disagree.
+ */
+export function ownershipDecision(
+  playerId: number | undefined,
+  myPlayerId: number | null,
+): OwnershipDecision {
+  if (myPlayerId === null || !Number.isFinite(myPlayerId) || myPlayerId <= 0) {
+    return { kind: "logged-out", ownership: "neutral", tag: "未登录" };
+  }
+  switch (ownershipOf(playerId, myPlayerId)) {
+    case "mine":
+      return { kind: "own", ownership: "mine", tag: "我" };
+    case "enemy":
+      return { kind: "other", ownership: "enemy", tag: "敌" };
+    default:
+      return { kind: "neutral", ownership: "neutral", tag: "中立" };
+  }
+}
+
+/** The HUD tag for an entity, including `未登录` when the local player id is unknown. */
+export function ownershipTagFor(playerId: number | undefined, myPlayerId: number | null): string {
+  return ownershipDecision(playerId, myPlayerId).tag;
 }
 
 /** Ownership ring colours: mine, enemy, and neutral / no owner / no local player. */
@@ -363,6 +428,48 @@ export function entityInWindow(world: WorldView, entity: EntityView): boolean {
 /** Whether the entity is an own unit: owned by `myPlayerId` and not a building. */
 export function isOwnUnit(entity: EntityView, myPlayerId: number | null): boolean {
   return ownershipOf(entity.playerId, myPlayerId) === "mine" && !isBuildingEntityKind(entity.kind);
+}
+
+/** Footprint width of an entity in whole tiles; 1 when the snapshot does not report one. */
+export function entityFootprintWidth(entity: EntityView): number {
+  const width = entity.footprint?.width;
+  return width !== undefined && Number.isInteger(width) && width > 0 ? width : 1;
+}
+
+/** Footprint height of an entity in whole tiles; 1 when the snapshot does not report one. */
+export function entityFootprintHeight(entity: EntityView): number {
+  const height = entity.footprint?.height;
+  return height !== undefined && Number.isInteger(height) && height > 0 ? height : 1;
+}
+
+/**
+ * Top-left tile of an entity's footprint.
+ *
+ * <p>The server reports an entity by the **centre** of its footprint: a 3 x 3 building placed at tile
+ * `(5, 5)` is at `(6.5, 6.5)`, and a unit on tile 5 is at `5.5`. Treating the floored centre as the
+ * footprint origin shifted every multi-tile building one tile down and right, which is what made the
+ * BUILD ghost judge occupancy against the wrong cells. Subtracting half the footprint and rounding
+ * recovers the real origin for odd, even and missing sizes alike.
+ */
+export function entityFootprintOrigin(entity: EntityView): TileCoord {
+  // The server places an entity at the centre of its footprint: origin + width/2. Rounding recovers the
+  // origin for every width (odd, even or the 1x1 default) and for a unit that is not exactly on a tile
+  // centre because movement left it fractionally between tiles.
+  return {
+    x: Math.round(entity.x - entityFootprintWidth(entity) / 2),
+    y: Math.round(entity.y - entityFootprintHeight(entity) / 2),
+  };
+}
+
+/** Whether an entity's whole footprint covers one world tile. */
+export function entityCoversTile(entity: EntityView, x: number, y: number): boolean {
+  const origin = entityFootprintOrigin(entity);
+  return (
+    x >= origin.x &&
+    y >= origin.y &&
+    x < origin.x + entityFootprintWidth(entity) &&
+    y < origin.y + entityFootprintHeight(entity)
+  );
 }
 
 /**

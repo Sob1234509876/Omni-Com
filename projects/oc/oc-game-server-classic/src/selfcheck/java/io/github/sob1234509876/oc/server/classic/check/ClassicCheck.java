@@ -20,6 +20,7 @@ import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
@@ -86,7 +87,7 @@ import java.util.stream.Stream;
  *   <li>the numbers do not ascend - the five melee tiers, the three mines, the three lumber camps;</li>
  *   <li>the engine gate does not hold - the basic armory must not be able to train t4 or t5, and that has to
  *       be proven against a real {@link ProductionSystem}, not by reading the content back;</li>
- *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 96 atlas,
+ *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 128 atlas,
  *       every tile and entity must carry a display name, and a world built from the content must only name
  *       kinds the manifest knows.</li>
  * </ol>
@@ -96,8 +97,17 @@ import java.util.stream.Stream;
  */
 public final class ClassicCheck {
 
-    /** Side of the bundled atlas, in pixels. */
-    private static final int ATLAS_PIXELS = 96;
+    /** Width of the bundled atlas, in pixels. */
+    private static final int ATLAS_WIDTH = 96;
+
+    /**
+     * Height of the bundled atlas, in pixels.
+     *
+     * <p>The sheet is taller than it is wide because every classic building kind has its own 32 x 32
+     * cell. The three-by-three grid of 32 pixel cells (armory t1/t2, mine t1..t3, lumber camp t1..t3 and
+     * the warehouse) needs three rows, and the 16 pixel unit sprites occupy the top of the sheet.
+     */
+    private static final int ATLAS_HEIGHT = 128;
 
     /** Side of one atlas cell, in pixels; the manifest must agree. */
     private static final int TILE_PIXELS = 16;
@@ -749,6 +759,8 @@ public final class ClassicCheck {
             rects++;
         }
         List<String> unnamedEntities = new ArrayList<>();
+        Map<String, String> buildingCells = new LinkedHashMap<>();
+        List<String> sharedCells = new ArrayList<>();
         for (Map.Entry<String, Object> entry : entities.entrySet()) {
             if (!hasNonBlankName(entry.getValue())) {
                 unnamedEntities.add("entities." + entry.getKey());
@@ -767,9 +779,17 @@ public final class ClassicCheck {
                     rects++;
                 }
             }
+            if (entry.getKey().startsWith("building.") && !frames.isEmpty()) {
+                String cell = frameKey(frames.get(0));
+                String previous = buildingCells.putIfAbsent(cell, entry.getKey());
+                if (previous != null) {
+                    sharedCells.add(previous + " 与 " + entry.getKey() + " 都使用 " + cell);
+                }
+            }
         }
-        check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x96 内（共 " + rects + " 个）"
+        check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x128 内（共 " + rects + " 个）"
                 + (bad.length() == 0 ? "" : ": " + bad));
+        check.that(sharedCells.isEmpty(), "每个建筑都有自己的纹理格: " + sharedCells);
         check.that(rects >= 20 + 15, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
         check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
         check.that(unnamedEntities.isEmpty(), "每个实体都有非空的 name: " + unnamedEntities);
@@ -802,8 +822,8 @@ public final class ClassicCheck {
         check.that(png != null && png.length > 24, "jar 里有 " + ATLAS_RESOURCE);
         if (png != null && png.length > 24) {
             check.that(isPng(png), "atlas.png 以 PNG 签名开头");
-            check.equal(ATLAS_PIXELS, intAt(png, 16), "atlas 的宽是 96");
-            check.equal(ATLAS_PIXELS, intAt(png, 20), "atlas 的高是 96");
+            check.equal(ATLAS_WIDTH, intAt(png, 16), "atlas 的宽是 96");
+            check.equal(ATLAS_HEIGHT, intAt(png, 20), "atlas 的高是 128");
         }
         return Map.of("tiles", (Object) tiles, "entities", (Object) entities);
     }
@@ -975,6 +995,8 @@ public final class ClassicCheck {
         keepsLumberCamp(check, registry);
         attacksAtSix(check, registry);
         defendsItsBase(check, registry);
+        aiProducesAndAttacks(check);
+        stopThenMoveAndBuild(check, registry);
     }
 
     /** No engineers yet: the first decision has to queue the engineer recipe, not a soldier. */
@@ -1237,7 +1259,102 @@ public final class ClassicCheck {
         check.equal(2, attacking, "两个空闲单位都接到攻击入侵者的命令（最近目标）");
     }
 
-    // ------------------------------------------------------------------ 7c) determinism
+    /**
+     * The bot really produces and really attacks in the default one-bot world.
+     *
+     * <p>The historical check only asserted "more than the four opening entities", which the fifth
+     * opening entity (a construction site) already satisfied without a single trained unit. This one runs
+     * the default {@link ClassicBots} world for six hundred ticks, records the opening unit count after
+     * the bootstrap, and counts the attack orders the bot issues against the player. Both are required:
+     * a bot that only builds, or one that only upgrades, fails.
+     */
+    private static void aiProducesAndAttacks(Check check) {
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), new ClassicBots(1)));
+        try {
+            int[] attackOrders = {0};
+            host.engine().world().events().subscribe(Events.OrderIssued.class, event -> {
+                if (event.unit().owner().id().value() == ClassicAi.PLAYER_ID
+                        && event.orderName().contains("attack")) {
+                    attackOrders[0]++;
+                }
+            });
+            host.step();
+            Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+            int opening = enemy == null ? 0 : host.engine().world().unitsOf(enemy).size();
+            int melee = 0;
+            for (int tick = 1; tick < 600; tick++) {
+                host.step();
+                if (enemy != null) {
+                    melee = Math.max(melee, countMelee(host.engine().world(), enemy));
+                }
+            }
+            int finalUnits = enemy == null ? 0 : host.engine().world().unitsOf(enemy).size();
+            check.that(opening > 0, "默认单机器人世界在开局建立了一名工兵（开局单位数 " + opening + "）");
+            check.that(finalUnits > opening,
+                    "600 tick 内敌人的单位数超过开局（" + opening + " -> " + finalUnits + "）");
+            check.that(melee >= ClassicAi.ATTACK_ARMY_SIZE,
+                    "600 tick 内敌人训练出了至少 " + ClassicAi.ATTACK_ARMY_SIZE + " 个战斗单位（实际 " + melee + "）");
+            check.that(attackOrders[0] > 0, "600 tick 内敌人至少下达过一次攻击命令（实际 " + attackOrders[0] + " 次）");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** Living combat units of a player, counted through their content role. */
+    private static int countMelee(World world, Player player) {
+        int count = 0;
+        for (Unit unit : world.unitsOf(player)) {
+            if (unit.isAlive() && unit.role() == UnitRole.COMBAT) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * STOP clears the queue but must not seal the unit: a move and a build ordered afterwards both apply.
+     *
+     * <p>The engine used to drop queued orders without cancelling them, so a pending build or haul order
+     * could stay attached to the unit while the queue looked empty. This drives the exact user sequence -
+     * order, stop, move, stop, build - against a real {@link io.github.sob1234509876.oc.rts.order.CommandService}.
+     */
+    private static void stopThenMoveAndBuild(Check check, ContentRegistry registry) {
+        check.section("停止之后单位仍能接受命令");
+        OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7));
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        Building depot = warehouse(world, registry, player, new GridPos(20, 20));
+        Unit builder = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player, new GridPos(22, 22));
+        stock(check, registry, player, depot);
+        var commands = engine.commands();
+
+        commands.move(builder, new GridPos(30, 22));
+        engine.tick();
+        check.that(builder.orders().current() != null && "move".equals(builder.orders().current().name()),
+                "停止之前下达的移动命令已经生效");
+        commands.stop(builder);
+        check.that(builder.orders().isEmpty(), "STOP 清空了单位的所有命令");
+        check.that(builder.motion().goalOrNull() == null, "STOP 也清掉了移动目标");
+
+        commands.move(builder, new GridPos(22, 30));
+        engine.tick();
+        boolean movedAfterStop = builder.orders().current() != null
+                && "move".equals(builder.orders().current().name());
+        check.that(movedAfterStop, "STOP 之后下达的移动命令照常生效");
+        commands.stop(builder);
+        check.that(builder.orders().isEmpty(), "第二次 STOP 同样清空队列");
+
+        var result = commands.tryBuild(builder, registry.building(ClassicContent.MINE_T1),
+                new GridPos(25, 24));
+        check.that(result.placed(), "STOP 之后下达的 BUILD 仍然可以放置工地: " + result.refusal());
+        engine.tick();
+        check.that(result.placed() && builder.orders().current() != null
+                        && "build".equals(builder.orders().current().name()),
+                "STOP 之后单位执行的是新的建造命令");
+    }
+
+
 
     /**
      * The strongest determinism proof this module can make: two scripted 600 tick runs of a real
@@ -1957,6 +2074,13 @@ public final class ClassicCheck {
         return name instanceof String text && !text.isBlank();
     }
 
+    /** A stable textual signature of one frame, used to detect two buildings sharing a texture cell. */
+    private static String frameKey(Object rawRect) {
+        List<Object> rect = array(rawRect);
+        return longOf(rect.get(0)) + "," + longOf(rect.get(1)) + ","
+                + longOf(rect.get(2)) + "," + longOf(rect.get(3));
+    }
+
     /** Checks one rect (a tile or a frame) against the atlas; records the reason when it does not fit. */
     private static boolean withinAtlas(StringBuilder bad, String label, Object rawRect) {
         List<Object> rect;
@@ -1975,10 +2099,10 @@ public final class ClassicCheck {
         long width = longOf(rect.get(2));
         long height = longOf(rect.get(3));
         if (x < 0 || y < 0 || width <= 0 || height <= 0
-                || x + width > ATLAS_PIXELS || y + height > ATLAS_PIXELS) {
+                || x + width > ATLAS_WIDTH || y + height > ATLAS_HEIGHT) {
             bad.append(label).append(" = [").append(x).append(", ").append(y).append(", ")
                     .append(width).append(", ").append(height).append("] is outside ")
-                    .append(ATLAS_PIXELS).append("x").append(ATLAS_PIXELS).append("; ");
+                    .append(ATLAS_WIDTH).append("x").append(ATLAS_HEIGHT).append("; ");
             return false;
         }
         return true;
