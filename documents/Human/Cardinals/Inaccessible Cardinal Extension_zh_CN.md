@@ -1,0 +1,214 @@
+> English: [Inaccessible Cardinal Extension.md](Inaccessible%20Cardinal%20Extension.md)
+
+# 不可达基数拓展
+
+> **约定（GCH）。** 本文档中的每条定义都以广义连续统假设为前提：对每个无穷基数 $\kappa$，
+> 都有 $2^{\kappa} = \kappa^{+}$。在 GCH 下，下文关于*幂的极限*的几种概念全部重合，因此
+> “强不可达”“弱不可达”与“不可达”指称同一批基数，我们直接说*不可达*。
+
+## 强不可达基数
+
+基数 $\kappa$ 是**强不可达**的，当且仅当下列条件全部成立。
+
+1. $\kappa$ 不可数：$\kappa > \omega$。
+2. $\kappa$ 是正则的：$cf(\kappa) = \kappa$。
+3. $\kappa$ 是强极限：对每个 $\alpha < \kappa$，$2^{\alpha} < \kappa$。
+
+$$
+\boxed{
+\kappa \text{ is strongly inaccessible}
+\;\Longleftrightarrow\;
+\kappa > \omega \;\wedge\; cf(\kappa) = \kappa \;\wedge\; \forall \alpha < \kappa \;\bigl(2^{\alpha} < \kappa\bigr).
+}
+$$
+
+等价地，$\kappa$ 是不可数的正则基数且是强极限；等价地，在 GCH 下，是不可数的正则极限基数。由于 $\kappa$ 是具有不可数共尾度的强极限，$\kappa$ 是 $\beth$ 函数的不动点；又由于它是正则的，它不是少于 $\kappa$ 个更小基数的极限。
+
+### 不可达基数的类
+
+不可达基数在所有序数构成的类 $\mathrm{Ord}$ 中无界，但它们**不**构成闭类。若 $\lambda$ 是极限序数，且每个 $\mathbb{I}_{\alpha}$ 在 $\alpha < \lambda$ 时都不可达，则 $\sup_{\alpha < \lambda} \mathbb{I}_{\alpha}$ 的共尾度至多为 $\lambda$，而该值小于上确界本身，因此该上确界是奇异的，从而不是不可达的。所以下面的枚举是严格递增的，并且 $\mathbb{I}_{\lambda}$ 是严格大于每个 $\mathbb{I}_{\alpha}$（其中 $\alpha < \lambda$）的最小不可达基数。
+
+## 记号
+
+对序数 $\alpha$，我们用 $\mathbb{I}_{\alpha}$ 表示第 $\alpha$ 个强不可达基数，按递增顺序枚举，并且从下标 $0$ 开始。
+
+$$
+\boxed{
+\mathbb{I}_{0} = \text{the least inaccessible cardinal},
+\qquad
+\mathbb{I}_{\alpha} < \mathbb{I}_{\beta}
+\;\Longleftrightarrow\;
+\alpha < \beta .
+}
+$$
+
+因此 $\mathbb{I}_{0}$ 是最小的不可达基数，在别处常写作 $I$，而 $\mathbb{I}_{\alpha}$ 是第 $(1+\alpha)$ 个不可达基数（从 $1$ 开始计数时）。
+
+**约定。** 本文档后续的所有定义都如开头所声明的那样以 GCH 为前提，并使用上面固定了索引方式的记号 $\mathbb{I}_{\alpha}$。
+
+## $\alpha$-不可达基数
+
+设 $\kappa$ 是基数，$\alpha$ 是序数。性质*$\kappa$ 是 $\alpha$-不可达的* 通过对 $\alpha$ 的超限递归定义。
+
+### 基础情形：$\alpha = 0$
+
+$$
+\boxed{
+\kappa \text{ is } 0\text{-inaccessible}
+\;\Longleftrightarrow\;
+\kappa \text{ is (strongly) inaccessible.}
+}
+$$
+
+### 归纳步骤：$\alpha > 0$
+
+$$
+\boxed{
+\kappa \text{ is } \alpha\text{-inaccessible}
+\;\Longleftrightarrow\;
+\kappa \text{ is inaccessible and, for every } \beta < \alpha,\;
+\{\, \lambda < \kappa : \lambda \text{ is } \beta\text{-inaccessible} \,\} \text{ is unbounded in } \kappa .
+}
+$$
+
+用文字说：对每个 $\beta < \alpha$，$\beta$-不可达基数在 $\kappa$ 之下共尾，因此 $\kappa$ 是它们的极限点；而且这对所有更小的 $\beta$ 必须同时成立。注意 $\alpha$-不可达性与要求该集合*平稳*并**不**相同：正则 $\kappa$ 之下的一个无界奇异基数集合不必与 $\kappa$ 的每个闭无界集相交。平稳版本严格更强，并且不是这里使用的概念。
+
+**约定。** $0$-不可达指通常的（强）不可达，上面的递归是本文档唯一使用的约定。
+
+### 强度：该层级保持在马洛之下
+
+本拓展的预期强度上限**严格低于马洛基数**，而上面选择*无界*而非*平稳*，正是使它保持在那里的原因。
+
+1. 设 $M$ 是最小的马洛基数。$M$ 不可达，且正则基数在 $M$ 中平稳；从而 $M$ 是不可达基数的极限，并且对 $\alpha < M$ 归纳可知它也是 $\alpha$-不可达基数的极限。于是对每个 $\alpha < M$，$\alpha$-不可达基数在 $M$ 之下无界，并且每个 $\mathbb{I}(\alpha,\beta)$（其中 $\alpha, \beta < M$）都低于 $M$。
+2. 归纳步骤的平稳变体**严格更强**：“$\kappa$ 的每个闭无界子集都含有一个 $\beta$-不可达基数”本质上是升高一层的马洛性质，而仅仅应用它一次，就已经给出上面的层级所无法得到的基数。因此该变体被有意**排除**在本文档之外。
+3. 因此这里建立的拓展是**超不可达**层级：它与马洛基数的不存在相容，并且它产生的每个基数都低于每个马洛基数。马洛基数属于更晚的、严格更强的阶段。
+4. 如果下文的某个定义为了论证成立而需要“平稳”，那就是一个信号：该论证已经离开了本拓展并走向马洛；这样的定义不应加入本文档。
+
+## 不可达基数维布伦函数（inaccessible cardinal Veblen function）
+
+我们写作
+
+$$
+\boxed{
+\mathbb{I}(\alpha,\beta)
+\;=\; \text{the } (1+\beta)\text{-th } \alpha\text{-inaccessible cardinal,}
+}
+$$
+
+按递增顺序计数，并且从下标 $0$ 开始。同一个字母承载两种形式：序列 $\mathbb{I}_{\alpha}$ 是一元情形，二元形式则是下面的维布伦式函数。函数 $\mathbb{I} : \mathrm{Ord} \times \mathrm{Ord} \to \mathrm{Ord}$ 称为**不可达基数维布伦函数（inaccessible cardinal Veblen function）**。
+
+基本性质，直接由定义可得。
+
+1. $\mathbb{I}(0,\beta) = \mathbb{I}_{\beta}$：$0$-不可达即不可达，且两种枚举从同一点开始计数。
+2. 对每个固定的 $\alpha$，映射 $\beta \mapsto \mathbb{I}(\alpha,\beta)$ 严格递增且连续，因此是正规函数。
+3. $\mathbb{I}(1,0)$ 是以不可达基数为极限的最小不可达基数，而 $\mathbb{I}(\alpha,0)$ 是最小的 $\alpha$-不可达基数。
+4. 定义的形状与经典维布伦函数 $\varphi(\alpha,\beta)$ 完全相同，只是用“不可达”代替了“$\xi \mapsto \omega^{\xi}$ 的不动点”，因此同样的不动点与正规函数机制以 $\mathbb{I}$ 为基底适用。
+
+## 多变量不可达基数
+
+一元层级可推广到任意有限元组 $(\alpha_1,\dots,\alpha_n)$。递归总是从右往左读元组：最后一个坐标是阶梯下标，它前面的那个坐标是对角线步。
+
+### 递归
+
+1. **空前缀，下标 $\beta$。** $\kappa$ 是 $(\beta)$-不可达的，当且仅当 $\kappa$ 是上一节意义下的 $\beta$-不可达。因此一元情形是整个构造的基础情形。
+2. **带前缀的下标 $0$。** $\kappa$ 是 $(\alpha_1,\dots,\alpha_n,0)$-不可达的，当且仅当 $\kappa$ 不可达，且对**每个** $\gamma < \kappa$，集合 $\{\, \lambda < \kappa : \lambda \text{ is } (\alpha_1,\dots,\alpha_{n-1},\gamma)\text{-inaccessible} \,\}$ 在 $\kappa$ 中无界。这就是对角线步：$\kappa$ 使前一个变量对所有更小的下标封闭，因此它是整个前一个阶梯的极限点。这就是构造所依据的“映射 $\alpha \mapsto (\alpha)$ 的不可达点”，而要求 $\kappa$ 不可达使它成为该映射的正则点。
+3. **下标 $\beta > 0$。** $\kappa$ 是 $(\alpha_1,\dots,\alpha_n,\beta)$-不可达的，当且仅当 $\kappa$ 不可达，且对每个 $\gamma < \beta$ 同一个集合在 $\kappa$ 中无界：这是一元情形的通常归纳步骤，施加于坐标 $\beta$ 上。
+
+从右往左读递归，可重现预期的阶梯：$(\alpha)$ 是基础阶梯，$(1,0)$ 封闭它，$(1,1)$ 攀登 $(1,0)$ 阶梯，$(2,0)$ 封闭那一个，$(1,0,0)$ 封闭 $(\alpha,0)$ 阶梯，而 $(1,0,1)$、$(1,1,0)$、$(2,0,0)$ 在升高一层的水平上重复这一模式，并以 $1,0,0,\dots$ 作为有限元组的极限。
+
+### 多变量不可达基数维布伦函数（multi-variable inaccessible cardinal Veblen function）
+
+$$
+\boxed{
+\mathbb{I}(\alpha_1,\dots,\alpha_n,\beta)
+= \text{the } (1+\beta)\text{-th } (\alpha_1,\dots,\alpha_n)\text{-inaccessible cardinal.}
+}
+$$
+
+同一个字母 $\mathbb{I}$ 用于每个元数。元组的元数决定上面指的是哪种情形，而一元情形就是前一节的序列 $\mathbb{I}_{\alpha_1}$。该映射称为**多变量不可达基数维布伦函数（multi-variable inaccessible cardinal Veblen function）**。
+
+### 基本性质
+
+1. $\mathbb{I}(\alpha_1,\dots,\alpha_n,0)$ 是最小的 $(\alpha_1,\dots,\alpha_n)$-不可达基数；并且对固定的前缀，映射 $\beta \mapsto \mathbb{I}(\alpha_1,\dots,\alpha_n,\beta)$ 严格递增且连续，从而是正规函数。
+2. $\mathbb{I}(0,\beta) = \mathbb{I}_{\beta}$，与一元一节相符。
+3. $\mathbb{I}(1,0)$ 是把一元阶梯对所有更小下标封闭的最小不可达基数，$\mathbb{I}(1,\beta)$ 枚举该运算的不动点，而 $\mathbb{I}(2,0)$ 封闭 $(1,\beta)$ 阶梯。
+4. 有限元组层级的极限，即上面写作 $1,0,0,\dots$ 者，是在每个有限元组下都封闭的最小基数。它是小维布伦序数的类比，只不过是在不可达基数上而非在 $\xi \mapsto \omega^{\xi}$ 上取的。
+5. **强度。** 完整的多变量层级仍然保持在马洛基数之下。确切的原因是：马洛性恰好就是“每个正则上的正规函数在其下方都有一个闭无界的闭包点集”这一性质：对**固定的**元组，其不可达闭包点构成的类在任何马洛基数之下是闭无界的，而闭无界类的交仍是闭无界的。对角线步中的条件对 $\gamma < \kappa$ 量化，但它仍然只是 $\kappa$ 的一个性质，因此同样的论证适用于每个有限元组；而整个有限层级的极限是在所有这一切下封闭的最小点，它是某个闭无界类的最小元，从而低于每个马洛基数。会离开本拓展的并不是对 $\gamma < \kappa$ 的量化，而是**平稳**变体，它在此被排除。
+
+## 序元不可达基数
+
+有限元组可以替换为有限条*系数条目* $a \mathbin{@} b$ 组成的表：一个序数 $a$ 附着于一个层级 $b$。形式地说，表 $(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)$ 是可容许的，当且仅当 $a_i > 0$ 对每个 $i$ 成立且 $b_1 > b_2 > \dots > b_n$，并且比较是从左起的字典序：层级 $b$ 较大的条目较大，层级相等时按系数 $a$ 比较。这与康托尔范式形状相同，其中层级扮演指数的角色，系数扮演首项因子的角色。有限元组 $(\alpha_1,\dots,\alpha_n)$ 是每个系数都为 $1$ 的特殊情形。
+
+### 递归
+
+1. **空表。** $\kappa$ 是 $()$-不可达的，当且仅当 $\kappa$ 不可达。
+2. **后继步骤。** $\kappa$ 是 $(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)$-不可达的，当且仅当 $\kappa$ 不可达，并且是对每个严格更小的可容许表都不可达的那些基数的极限点。在有限情形，这就是上一节的通常归纳步骤；一般地，它是以序数为下标的维布伦层级的后继步骤。
+3. **极限步骤。** 当第一个条目的层级是极限序数时，或当表本身作为可容许表的极限被逼近时，使用的是对**所有**严格更小的表的同一封闭，恰如元组递归的对角线步中那样。
+
+因此该递归就是以良序为下标的维布伦层级的通常递归，而上一节的元组是有限下标的情形。
+
+### 序元不可达基数维布伦函数（ordinal-coefficient inaccessible cardinal Veblen function）
+
+$$
+\boxed{
+\mathbb{I}(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)
+= \text{the least } (a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)\text{-inaccessible cardinal,}
+}
+$$
+
+而带有尾部下标 $\beta$ 时，
+
+$$
+\boxed{
+\mathbb{I}(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n, \beta)
+= \text{the } (1+\beta)\text{-th one,}
+}
+$$
+
+因此尾部下标的行为与多变量一节完全相同。这称为**序元不可达基数维布伦函数（ordinal-coefficient inaccessible cardinal Veblen function）**。
+
+### 基本性质
+
+1. $\mathbb{I}(1 \mathbin{@} 0)$ 是整个有限元组层级的同时极限点的最小基数，即**小维布伦序数**的不可达类比。
+2. $\mathbb{I}(1 \mathbin{@} 1)$ 是在 $1 \mathbin{@} 0$ 构造下封闭的最小点，即**大维布伦序数**的类比；更一般地，增大 $a$ 会重复该构造，增大 $b$ 会嵌套它。
+3. 对固定的表，按 $\beta$ 的枚举是正规函数；而 $\mathbb{I}(0 \mathbin{@} b, \dots)$ 归约到上一节，因为零系数被丢弃。
+4. **强度。** 整个系数层级，包括大维布伦类比，仍然由同样的闭无界论证保持在马洛基数之下：马洛基数在每个正则上的正规函数下封闭，因此在这个下标下也封闭，而最小闭包点是其下方某个闭无界类的最小元。平稳变体仍然是唯一被排除的步骤。
+
+## 自嵌套层级（最后的拓展）
+
+最后一步让**层级** $b$ 在条目 $a \mathbin{@} b$ 中可以是迄今所建立记号中的任意下标项，而不再只能是序数：一个元组、另一个系数条目，或形如 $a \mathbin{@} B$ 的项，其中 $B$ 又是指下标项。下标记号不再是元组的集合，而成为**在其自身层级构造下封闭的项代数**，层级则按同样的递归拓展到该代数上。
+
+### 规则
+
+1. **来自元组世界的层级。** $B$ 可以是元组 $(\beta_1,\dots,\beta_m)$；此时 $a \mathbin{@} B$ 表示系数 $a$ 附着于作为层级的该元组，正如元组曾作为多变量一节的层级。
+2. **对族的封闭。** $\mathbb{I}(1 \mathbin{@} B)$ 是整个族 $\{\mathbb{I}(1 \mathbin{@} b) : b < B\}$ 的同时极限点的最小不可达基数，其中 $b < B$ 取遍项序中低于 $B$ 的下标项。
+3. **嵌套。** $B$ 本身可以具有形式 $1 \mathbin{@} B'$，于是层级构造被施加于自身的输出。项序是项代数上的字典序，它是良序，因为每个层级都由正则上的正规函数构建。
+4. **重复与嵌套。** $a \mathbin{@} B$ 在 $a > 1$ 时重复该构造，而增大 $B$ 会嵌套它，恰如系数一节。
+
+### 列出的项
+
+$$
+\begin{aligned}
+&\mathbb{I}(1 \mathbin{@} (1,0)) &&\text{closure of the family } \mathbb{I}(1 \mathbin{@} \alpha)\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1) &&\text{the next level above that closure}\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1, 0) &&\text{the diagonal one level above}\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1 \mathbin{@} a) &&\text{a coefficient climb on top of it}\\
+&\mathbb{I}(2 \mathbin{@} (1,0)) &&\text{repetition of the closure}\\
+&\mathbb{I}(1 \mathbin{@} (1,1)) &&\text{closure taken at the } (1,1) \text{ level}\\
+&\mathbb{I}(1 \mathbin{@} (2,0)) &&\text{closure taken at the } (2,0) \text{ level}\\
+&\mathbb{I}(1 \mathbin{@} (1,0,0)) &&\text{closure at the tuple limit}\\
+&\mathbb{I}(1 \mathbin{@} (1,0,0,0)) &&\text{the same one tuple arity higher}\\
+&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} a)) &&\text{closure over the } 1 \mathbin{@} \text{ family itself}\\
+&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} (1,0))) &&\text{a fixed point of that nesting}
+\end{aligned}
+$$
+
+整个构造的极限，非形式地写作 $1 \mathbin{@} (1 \mathbin{@} (1 \mathbin{@} \dots))$，是在整个自嵌套项代数下封闭的最小基数，本文档到此为止。
+
+### 强度
+
+自嵌套构造也没有离开本拓展。下标是排成良序的项代数，每个层级都是正则上的正规函数，而马洛基数在每个这样的函数下封闭，因此上面所有闭包点在任意马洛基数之下都是闭无界的，其中最小者低于该基数。上一节的规则仍然不加改变地适用：**平稳步骤是唯一会离开本拓展的步骤**，它仍然被排除。马洛基数是下一个严格更强的阶段，不属于本文档的一部分。
+
+### 本拓展不是什么
+
+它不是一个坍缩：本记号中没有任何项以能与项目其他地方所使用的可数序数相比较的方式指称最小的马洛基数以下的序数。它是以记号表达的**基数存在性公理**的层级，而记号的强度只与上面的闭包论证相当。特别地，这里的每个项仍然由同样的组合论证被证明位于每个马洛基数之下，并且它们中没有一个是在不假定其下方那些基数存在的情况下被证明存在的。
