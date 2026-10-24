@@ -16,7 +16,7 @@
 
 $$
 \boxed{
-\kappa \text{ is strongly inaccessible}
+\kappa \text{ 是强不可达的}
 \;\Longleftrightarrow\;
 \kappa > \omega \;\wedge\; cf(\kappa) = \kappa \;\wedge\; \forall \alpha < \kappa \;\bigl(2^{\alpha} < \kappa\bigr).
 }
@@ -34,7 +34,7 @@ $$
 
 $$
 \boxed{
-\mathbb{I}_{0} = \text{the least inaccessible cardinal},
+\mathbb{I}_{0} = \text{最小的不可达基数},
 \qquad
 \mathbb{I}_{\alpha} < \mathbb{I}_{\beta}
 \;\Longleftrightarrow\;
@@ -54,9 +54,9 @@ $$
 
 $$
 \boxed{
-\kappa \text{ is } 0\text{-inaccessible}
+\kappa \text{ 是 } 0\text{-不可达}
 \;\Longleftrightarrow\;
-\kappa \text{ is (strongly) inaccessible.}
+\kappa \text{ 是（强）不可达的.}
 }
 $$
 
@@ -64,10 +64,10 @@ $$
 
 $$
 \boxed{
-\kappa \text{ is } \alpha\text{-inaccessible}
+\kappa \text{ 是 } \alpha\text{-不可达}
 \;\Longleftrightarrow\;
-\kappa \text{ is inaccessible and, for every } \beta < \alpha,\;
-\{\, \lambda < \kappa : \lambda \text{ is } \beta\text{-inaccessible} \,\} \text{ is unbounded in } \kappa .
+\kappa \text{ 不可达，且对每个 } \beta < \alpha,\;
+\{\, \lambda < \kappa : \lambda \text{ 是 } \beta\text{-不可达的} \,\} \text{ 在 } \kappa \text{ 中无界} .
 }
 $$
 
@@ -91,7 +91,7 @@ $$
 $$
 \boxed{
 \mathbb{I}(\alpha,\beta)
-\;=\; \text{the } (1+\beta)\text{-th } \alpha\text{-inaccessible cardinal,}
+\;=\; \text{第 } (1+\beta) \text{ 个 } \alpha\text{-不可达基数,}
 }
 $$
 
@@ -102,7 +102,7 @@ $$
 1. $\mathbb{I}(0,\beta) = \mathbb{I}_{\beta}$：$0$-不可达即不可达，且两种枚举从同一点开始计数。
 2. 对每个固定的 $\alpha$，映射 $\beta \mapsto \mathbb{I}(\alpha,\beta)$ 严格递增且连续，因此是正规函数。
 3. $\mathbb{I}(1,0)$ 是以不可达基数为极限的最小不可达基数，而 $\mathbb{I}(\alpha,0)$ 是最小的 $\alpha$-不可达基数。
-4. 定义的形状与经典维布伦函数 $\varphi(\alpha,\beta)$ 完全相同，只是用“不可达”代替了“$\xi \mapsto \omega^{\xi}$ 的不动点”，因此同样的不动点与正规函数机制以 $\mathbb{I}$ 为基底适用。
+4. 定义的形状与经典维布伦函数 $\varphi(\alpha,\beta)$ 完全相同，只是用“不可达”代替了“$\xi \mapsto \omega^{\xi}$ 的不动点”，因此同样的极限点与正规函数机制以 $\mathbb{I}$ 为基底适用。
 
 ## 多变量不可达基数
 
@@ -111,7 +111,7 @@ $$
 ### 递归
 
 1. **空前缀，下标 $\beta$。** $\kappa$ 是 $(\beta)$-不可达的，当且仅当 $\kappa$ 是上一节意义下的 $\beta$-不可达。因此一元情形是整个构造的基础情形。
-2. **带前缀的下标 $0$。** $\kappa$ 是 $(\alpha_1,\dots,\alpha_n,0)$-不可达的，当且仅当 $\kappa$ 不可达，且对**每个** $\gamma < \kappa$，集合 $\{\, \lambda < \kappa : \lambda \text{ is } (\alpha_1,\dots,\alpha_{n-1},\gamma)\text{-inaccessible} \,\}$ 在 $\kappa$ 中无界。这就是对角线步：$\kappa$ 使前一个变量对所有更小的下标封闭，因此它是整个前一个阶梯的极限点。这就是构造所依据的“映射 $\alpha \mapsto (\alpha)$ 的不可达点”，而要求 $\kappa$ 不可达使它成为该映射的正则点。
+2. **带前缀的下标 $0$。** $\kappa$ 是 $(\alpha_1,\dots,\alpha_n,0)$-不可达的，当且仅当 $\kappa$ 不可达，且对**每个** $\gamma < \kappa$，集合 $\{\, \lambda < \kappa : \lambda \text{ 是 } (\alpha_1,\dots,\alpha_{n-1},\gamma)\text{-不可达的} \,\}$ 在 $\kappa$ 中无界。这就是对角线步：$\kappa$ 使前一个变量对所有更小的下标封闭，因此它是整个前一个阶梯的极限点。这就是构造所依据的“映射 $\alpha \mapsto (\alpha)$ 的不可达点”，而要求 $\kappa$ 不可达使它成为该映射的正则点。
 3. **下标 $\beta > 0$。** $\kappa$ 是 $(\alpha_1,\dots,\alpha_n,\beta)$-不可达的，当且仅当 $\kappa$ 不可达，且对每个 $\gamma < \beta$ 同一个集合在 $\kappa$ 中无界：这是一元情形的通常归纳步骤，施加于坐标 $\beta$ 上。
 
 从右往左读递归，可重现预期的阶梯：$(\alpha)$ 是基础阶梯，$(1,0)$ 封闭它，$(1,1)$ 攀登 $(1,0)$ 阶梯，$(2,0)$ 封闭那一个，$(1,0,0)$ 封闭 $(\alpha,0)$ 阶梯，而 $(1,0,1)$、$(1,1,0)$、$(2,0,0)$ 在升高一层的水平上重复这一模式，并以 $1,0,0,\dots$ 作为有限元组的极限。
@@ -121,7 +121,7 @@ $$
 $$
 \boxed{
 \mathbb{I}(\alpha_1,\dots,\alpha_n,\beta)
-= \text{the } (1+\beta)\text{-th } (\alpha_1,\dots,\alpha_n)\text{-inaccessible cardinal.}
+= \text{第 } (1+\beta) \text{ 个 } (\alpha_1,\dots,\alpha_n)\text{-不可达基数.}
 }
 $$
 
@@ -131,9 +131,11 @@ $$
 
 1. $\mathbb{I}(\alpha_1,\dots,\alpha_n,0)$ 是最小的 $(\alpha_1,\dots,\alpha_n)$-不可达基数；并且对固定的前缀，映射 $\beta \mapsto \mathbb{I}(\alpha_1,\dots,\alpha_n,\beta)$ 严格递增且连续，从而是正规函数。
 2. $\mathbb{I}(0,\beta) = \mathbb{I}_{\beta}$，与一元一节相符。
-3. $\mathbb{I}(1,0)$ 是把一元阶梯对所有更小下标封闭的最小不可达基数，$\mathbb{I}(1,\beta)$ 枚举该运算的不动点，而 $\mathbb{I}(2,0)$ 封闭 $(1,\beta)$ 阶梯。
+3. $\mathbb{I}(1,0)$ 是把一元阶梯对所有更小下标封闭的最小不可达基数，$\mathbb{I}(1,\beta)$ 枚举该运算的极限点，而 $\mathbb{I}(2,0)$ 封闭 $(1,\beta)$ 阶梯。
 4. 有限元组层级的极限，即上面写作 $1,0,0,\dots$ 者，是在每个有限元组下都封闭的最小基数。它是小维布伦序数的类比，只不过是在不可达基数上而非在 $\xi \mapsto \omega^{\xi}$ 上取的。
 5. **强度。** 完整的多变量层级仍然保持在马洛基数之下。确切的原因是：马洛性恰好就是“每个正则上的正规函数在其下方都有一个闭无界的闭包点集”这一性质：对**固定的**元组，其不可达闭包点构成的类在任何马洛基数之下是闭无界的，而闭无界类的交仍是闭无界的。对角线步中的条件对 $\gamma < \kappa$ 量化，但它仍然只是 $\kappa$ 的一个性质，因此同样的论证适用于每个有限元组；而整个有限层级的极限是在所有这一切下封闭的最小点，它是某个闭无界类的最小元，从而低于每个马洛基数。会离开本拓展的并不是对 $\gamma < \kappa$ 的量化，而是**平稳**变体，它在此被排除。
+
+仅仅要求闭类条件会容许奇异极限：若只要求对较低阶梯封闭，那么闭包点序列的任何递增极限都会合格，而该极限是奇异的。因此定义总是同时要求 $\kappa$ 本身不可达，而正是这一要求使层级的每个成员都是正则的。相应地，层级是由较低阶梯的极限点（闭包点）构建的，而不是由底层正规函数的不动点构建的。
 
 ## 序元不可达基数
 
@@ -152,7 +154,7 @@ $$
 $$
 \boxed{
 \mathbb{I}(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)
-= \text{the least } (a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)\text{-inaccessible cardinal,}
+= \text{最小的 } (a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n)\text{-不可达基数,}
 }
 $$
 
@@ -161,7 +163,7 @@ $$
 $$
 \boxed{
 \mathbb{I}(a_1 \mathbin{@} b_1, \dots, a_n \mathbin{@} b_n, \beta)
-= \text{the } (1+\beta)\text{-th one,}
+= \text{第 } (1+\beta) \text{ 个,}
 }
 $$
 
@@ -189,17 +191,17 @@ $$
 
 $$
 \begin{aligned}
-&\mathbb{I}(1 \mathbin{@} (1,0)) &&\text{closure of the family } \mathbb{I}(1 \mathbin{@} \alpha)\\
-&\mathbb{I}(1 \mathbin{@} (1,0), 1) &&\text{the next level above that closure}\\
-&\mathbb{I}(1 \mathbin{@} (1,0), 1, 0) &&\text{the diagonal one level above}\\
-&\mathbb{I}(1 \mathbin{@} (1,0), 1 \mathbin{@} a) &&\text{a coefficient climb on top of it}\\
-&\mathbb{I}(2 \mathbin{@} (1,0)) &&\text{repetition of the closure}\\
-&\mathbb{I}(1 \mathbin{@} (1,1)) &&\text{closure taken at the } (1,1) \text{ level}\\
-&\mathbb{I}(1 \mathbin{@} (2,0)) &&\text{closure taken at the } (2,0) \text{ level}\\
-&\mathbb{I}(1 \mathbin{@} (1,0,0)) &&\text{closure at the tuple limit}\\
-&\mathbb{I}(1 \mathbin{@} (1,0,0,0)) &&\text{the same one tuple arity higher}\\
-&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} a)) &&\text{closure over the } 1 \mathbin{@} \text{ family itself}\\
-&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} (1,0))) &&\text{a fixed point of that nesting}
+&\mathbb{I}(1 \mathbin{@} (1,0)) &&\text{对族 } \mathbb{I}(1 \mathbin{@} \alpha) \text{ 取闭包}\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1) &&\text{该闭包之上的下一层}\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1, 0) &&\text{高一层处的对角线项}\\
+&\mathbb{I}(1 \mathbin{@} (1,0), 1 \mathbin{@} a) &&\text{在其之上的一次系数攀升}\\
+&\mathbb{I}(2 \mathbin{@} (1,0)) &&\text{该闭包的重复}\\
+&\mathbb{I}(1 \mathbin{@} (1,1)) &&\text{在 } (1,1) \text{ 层上取闭包}\\
+&\mathbb{I}(1 \mathbin{@} (2,0)) &&\text{在 } (2,0) \text{ 层上取闭包}\\
+&\mathbb{I}(1 \mathbin{@} (1,0,0)) &&\text{在元组极限处取闭包}\\
+&\mathbb{I}(1 \mathbin{@} (1,0,0,0)) &&\text{元数高一位的同一项}\\
+&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} a)) &&\text{对 } 1 \mathbin{@} \text{ 族本身取闭包}\\
+&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} (1,0))) &&\text{该嵌套的极限点}
 \end{aligned}
 $$
 

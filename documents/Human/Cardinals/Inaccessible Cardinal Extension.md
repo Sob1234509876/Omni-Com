@@ -139,7 +139,7 @@ Basic properties, immediate from the definition.
    cardinals, and $\mathbb{I}(\alpha,0)$ is the least $\alpha$-inaccessible cardinal.
 4. The shape of the definition is exactly that of the classical Veblen function $\varphi(\alpha,\beta)$
    with "inaccessible" in place of "fixed point of $\xi \mapsto \omega^{\xi}$", so the same
-   fixed-point and normal-function machinery applies with $\mathbb{I}$ as its base.
+   limit-point and normal-function machinery applies with $\mathbb{I}$ as its base.
 
 ## Multi-variable inaccessible cardinals
 
@@ -189,7 +189,7 @@ is called the **multi-variable inaccessible cardinal Veblen function**.
    hence a normal function.
 2. $\mathbb{I}(0,\beta) = \mathbb{I}_{\beta}$, matching the unary section.
 3. $\mathbb{I}(1,0)$ is the least inaccessible cardinal that closes the unary ladder over all smaller
-   indices, $\mathbb{I}(1,\beta)$ enumerates the fixed points of that operation, and
+   indices, $\mathbb{I}(1,\beta)$ enumerates the limit points of that operation, and
    $\mathbb{I}(2,0)$ closes the $(1,\beta)$ ladder.
 4. The limit of the finite tuple hierarchy, written $1,0,0,\dots$ above, is the least cardinal closed
    under every finite tuple. It is the analogue of the small Veblen ordinal, taken over inaccessible
@@ -203,6 +203,8 @@ is called the **multi-variable inaccessible cardinal Veblen function**.
    finite hierarchy is the least point closed under all of them, which is the least element of a club
    and therefore below every Mahlo cardinal. What would leave this extension is not the quantification
    over $\gamma < \kappa$, but the **stationary** variant, which is excluded here.
+
+A bare closed-class condition would admit singular limits: if only closure under the lower ladder were required, the limit of an increasing sequence of such closure points would qualify, and that limit is singular. The definition therefore always requires $\kappa$ itself to be inaccessible, and it is exactly this requirement that keeps every member regular. Accordingly the hierarchy is built from limit points (closure points) of the lower ladders, not from fixed points of the underlying normal function.
 
 ## Ordinal-coefficient inaccessible cardinals
 
@@ -301,7 +303,7 @@ $$
 &\mathbb{I}(1 \mathbin{@} (1,0,0)) &&\text{closure at the tuple limit}\\
 &\mathbb{I}(1 \mathbin{@} (1,0,0,0)) &&\text{the same one tuple arity higher}\\
 &\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} a)) &&\text{closure over the } 1 \mathbin{@} \text{ family itself}\\
-&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} (1,0))) &&\text{a fixed point of that nesting}
+&\mathbb{I}(1 \mathbin{@} (1 \mathbin{@} (1,0))) &&\text{a limit point of that nesting}
 \end{aligned}
 $$
 
