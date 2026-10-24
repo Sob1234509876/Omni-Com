@@ -193,6 +193,26 @@ export function train(buildingId: number, unitPath: string): string {
 }
 
 /**
+ * One `TRAIN` line per selected same-type building, for the item 23 batch command.
+ *
+ * <p>The server's grammar has one building per line, so "select many armories and train at once" is a
+ * client-side batch: every building keeps its own queue and the production system ticks them in
+ * parallel. The list is kept in selection order rather than sorted, so the log reads like the click the
+ * owner made; a duplicate id is rejected by the caller's selection model (an entity is selected once),
+ * but this builder does not silently de-duplicate. An empty list is a programming error and throws,
+ * which stops the caller from sending a no-op batch.
+ */
+export function trainBatch(
+  buildingIds: readonly number[],
+  unitPath: string,
+): string[] {
+  if (buildingIds.length === 0) {
+    throw new Error("批量 TRAIN 至少需要一座建筑");
+  }
+  return buildingIds.map((buildingId) => train(buildingId, unitPath));
+}
+
+/**
  * `UPGRADE <buildingId>`; the answer is `OK <newBuildingId>` or `ERR <reason>`.
  *
  * The replacement has a new entity id, so the caller must not keep using the old one after a successful

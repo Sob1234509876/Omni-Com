@@ -993,9 +993,10 @@ public final class ClassicCheck {
         buildsMissingStructures(check, registry);
         upgradesArmory(check);
         keepsLumberCamp(check, registry);
-        attacksAtSix(check, registry);
+        attacksWithGatheredArmy(check, registry);
         defendsItsBase(check, registry);
         aiProducesAndAttacks(check);
+        eliteSwarm(check);
         stopThenMoveAndBuild(check, registry);
     }
 
@@ -1193,41 +1194,98 @@ public final class ClassicCheck {
                 "已有一座伐木场时，AI 不再放下第二座（维持目标 1 座）");
     }
 
-    /** Six fighting units: the AI marches them all at the nearest enemy building, and only once. */
-    private static void attacksAtSix(Check check, ContentRegistry registry) {
-        OcRtsEngine engine = aiEngine(registry);
-        World world = engine.world();
-        Player human = engine.players().get(0);
-        Player enemy = engine.players().get(1);
-        warehouse(world, registry, enemy, new GridPos(20, 20));
-        Building near = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), human,
+    /**
+     * The first wave gathers the strategy's full army target; only then does the AI march.
+     *
+     * <p>The owner reported a "single unit trickle": the AI used to enter {@code ATTACK} at
+     * {@link ClassicAi#ATTACK_ARMY_SIZE} (six) even though it trains up to {@link ClassicAi#ARMY_TARGET}
+     * (eight), so the first units left while the rest were still arriving. The first fixture proves seven
+     * units do not march; the second proves eight do, all at once; the third uses a derived strategy with a
+     * different {@code armyTarget} to prove the gate really reads the strategy rather than a constant.
+     */
+    private static void attacksWithGatheredArmy(Check check, ContentRegistry registry) {
+        // --- one unit short of the legacy target: no march yet
+        OcRtsEngine almost = aiEngine(registry);
+        World almostWorld = almost.world();
+        Player almostHuman = almost.players().get(0);
+        Player almostEnemy = almost.players().get(1);
+        warehouse(almostWorld, registry, almostEnemy, new GridPos(20, 20));
+        almostWorld.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), almostHuman,
                 new GridPos(40, 40));
-        world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), human, new GridPos(4, 4));
-        List<Unit> army = new ArrayList<>();
-        for (int index = 0; index < ClassicAi.ATTACK_ARMY_SIZE; index++) {
-            army.add(world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), enemy,
-                    new GridPos(30, 30 + index)));
-        }
-        army.sort(Comparator.comparing(Unit::id));
-        ClassicAi ai = new ClassicAi();
+        List<Unit> notYet = spawnArmy(almostWorld, registry, almostEnemy,
+                ClassicAi.ARMY_TARGET - 1, new GridPos(30, 30));
+        ClassicAi almostAi = new ClassicAi();
+        almostAi.tick(almostWorld, 20);
+        check.that(almostAi.mode() != ClassicAi.Mode.ATTACK,
+                (ClassicAi.ARMY_TARGET - 1) + " combat units are below the army target, so the AI is not in ATTACK ("
+                        + almostAi.mode() + ")");
+        check.equal(0, countOrders(notYet, "attack_move"),
+                "no unit marches before the strategy's army target is gathered");
+        check.that(!almostAi.hasAttacked(), "the first-wave flag is still false");
 
-        ai.tick(world, 20);
-        check.equal(ClassicAi.Mode.ATTACK, ai.mode(), "6 个战斗单位时 AI 进入 ATTACK 状态");
-        check.equal(ClassicAi.ATTACK_ARMY_SIZE, countOrders(army, "attack_move"),
-                "6 个没有命令的单位都收到 attack_move");
+        // --- exactly the target: every idle combat unit marches in the same decision
+        OcRtsEngine gathered = aiEngine(registry);
+        World gatheredWorld = gathered.world();
+        Player gatheredHuman = gathered.players().get(0);
+        Player gatheredEnemy = gathered.players().get(1);
+        warehouse(gatheredWorld, registry, gatheredEnemy, new GridPos(20, 20));
+        Building near = gatheredWorld.spawnBuilding(registry.building(ClassicContent.WAREHOUSE),
+                gatheredHuman, new GridPos(40, 40));
+        gatheredWorld.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), gatheredHuman,
+                new GridPos(4, 4));
+        List<Unit> army = spawnArmy(gatheredWorld, registry, gatheredEnemy,
+                ClassicAi.ARMY_TARGET, new GridPos(30, 30));
+        ClassicAi gatheredAi = new ClassicAi();
+        gatheredAi.tick(gatheredWorld, 20);
+        check.equal(ClassicAi.Mode.ATTACK, gatheredAi.mode(),
+                "the full army target enters ATTACK");
+        check.equal(ClassicAi.ARMY_TARGET, countOrders(army, "attack_move"),
+                "all " + ClassicAi.ARMY_TARGET + " units receive attack_move on the same decision");
+        check.that(gatheredAi.hasAttacked(), "the first-wave flag flips when the wave really marches");
         List<Order> pending = new ArrayList<>(army.get(0).orders().pending());
-        check.equal(1, pending.size(), "每个单位只有一条待执行命令");
-        check.that(pending.get(0) instanceof AttackMoveOrder, "命令是 attack_move");
+        check.equal(1, pending.size(), "each unit has exactly one queued order");
+        check.that(pending.get(0) instanceof AttackMoveOrder, "the order is attack_move");
         check.equal(near.position(), ((AttackMoveOrder) pending.get(0)).destination(),
-                "单位朝最近的敌方建筑进攻（按平方距离，不是按索引）");
+                "the wave marches on the nearest enemy building (nearest by squared distance)");
 
-        ai.tick(world, 40);
+        gatheredAi.tick(gatheredWorld, 40);
         check.equal(pending, army.get(0).orders().pending(),
-                "单位已有命令时 AI 不再重复下发（待执行命令对象原样保留）");
-        engine.tick();
-        ai.tick(world, 60);
-        check.equal(1, army.get(0).orders().size(), "命令正在执行时也不会叠加第二条");
-        check.equal("attack_move", army.get(0).orders().current().name(), "执行中的命令就是 attack_move");
+                "a unit that already has an order is not re-ordered by the next decision");
+
+        // --- the gate reads the strategy, not the legacy constant: a nine-unit target needs nine
+        OcRtsEngine custom = aiEngine(registry);
+        World customWorld = custom.world();
+        Player customHuman = custom.players().get(0);
+        Player customEnemy = custom.players().get(1);
+        warehouse(customWorld, registry, customEnemy, new GridPos(20, 20));
+        customWorld.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), customHuman,
+                new GridPos(40, 40));
+        List<Unit> customArmy = spawnArmy(customWorld, registry, customEnemy, 8, new GridPos(30, 30));
+        BotStrategy nine = new BotStrategy(3, 3, 9, 5, true);
+        ClassicAi customAi = new ClassicAi(new BotFaction(0, ClassicAi.PLAYER_ID,
+                ClassicBots.factionSeed(1L, 0), nine, new GridPos(192, 192)));
+        customAi.tick(customWorld, 20);
+        check.that(customAi.mode() != ClassicAi.Mode.ATTACK,
+                "a strategy with armyTarget 9 still waits at eight units");
+        check.equal(0, countOrders(customArmy, "attack_move"), "and issues no attack order");
+        customArmy.addAll(spawnArmy(customWorld, registry, customEnemy, 1, new GridPos(30, 39)));
+        customAi.tick(customWorld, 40);
+        check.equal(ClassicAi.Mode.ATTACK, customAi.mode(),
+                "the ninth unit satisfies the strategy's own target and the AI marches");
+        check.equal(9, countOrders(customArmy, "attack_move"),
+                "all nine gathered units march together");
+    }
+
+    /** Spawns a compact block of melee t1 units for the first-wave checks. */
+    private static List<Unit> spawnArmy(World world, ContentRegistry registry, Player owner, int count,
+            GridPos origin) {
+        List<Unit> units = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            units.add(world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), owner,
+                    new GridPos(origin.x(), origin.y() + index)));
+        }
+        units.sort(Comparator.comparing(Unit::id));
+        return units;
     }
 
     /** An intruder next to the base outranks everything: every idle unit attacks it. */
@@ -1264,9 +1322,10 @@ public final class ClassicCheck {
      *
      * <p>The historical check only asserted "more than the four opening entities", which the fifth
      * opening entity (a construction site) already satisfied without a single trained unit. This one runs
-     * the default {@link ClassicBots} world for six hundred ticks, records the opening unit count after
+     * the default {@link ClassicBots} world for twelve hundred ticks, records the opening unit count after
      * the bootstrap, and counts the attack orders the bot issues against the player. Both are required:
-     * a bot that only builds, or one that only upgrades, fails.
+     * a bot that only builds, or one that only upgrades, fails. The longer run is what the first-wave rule
+     * needs: the bot now gathers its full army target before it marches, which happens after tick 600.
      */
     private static void aiProducesAndAttacks(Check check) {
         WorldHost host = new WorldHost(1L, new ClassicContent(),
@@ -1283,7 +1342,7 @@ public final class ClassicCheck {
             Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
             int opening = enemy == null ? 0 : host.engine().world().unitsOf(enemy).size();
             int melee = 0;
-            for (int tick = 1; tick < 600; tick++) {
+            for (int tick = 1; tick < 1200; tick++) {
                 host.step();
                 if (enemy != null) {
                     melee = Math.max(melee, countMelee(host.engine().world(), enemy));
@@ -1292,14 +1351,200 @@ public final class ClassicCheck {
             int finalUnits = enemy == null ? 0 : host.engine().world().unitsOf(enemy).size();
             check.that(opening > 0, "默认单机器人世界在开局建立了一名工兵（开局单位数 " + opening + "）");
             check.that(finalUnits > opening,
-                    "600 tick 内敌人的单位数超过开局（" + opening + " -> " + finalUnits + "）");
-            check.that(melee >= ClassicAi.ATTACK_ARMY_SIZE,
-                    "600 tick 内敌人训练出了至少 " + ClassicAi.ATTACK_ARMY_SIZE + " 个战斗单位（实际 " + melee + "）");
-            check.that(attackOrders[0] > 0, "600 tick 内敌人至少下达过一次攻击命令（实际 " + attackOrders[0] + " 次）");
+                    "1200 tick 内敌人的单位数超过开局（" + opening + " -> " + finalUnits + "）");
+            check.that(melee >= ClassicAi.ARMY_TARGET,
+                    "1200 tick 内敌人训练出了至少一个满编 " + ClassicAi.ARMY_TARGET
+                            + " 个战斗单位（实际 " + melee + "）");
+            check.that(attackOrders[0] > 0, "1200 tick 内敌人至少下达过一次攻击命令（实际 " + attackOrders[0] + " 次）");
         } finally {
             host.stop();
         }
     }
+
+    /**
+     * Where the late "elite" units come from: a census of the default one-bot world over 1200 ticks.
+     *
+     * <p>This is the reproduction the owner asked for. The world is the shipped default ({@code --bots 1},
+     * the legacy style, seed 1) and the check prints, at five timestamps, every player's entity count by
+     * content kind. The recorded expectation is the deterministic result of that run:
+     *
+     * <ul>
+     *   <li>the bot's first wave gathers its full {@link ClassicAi#ARMY_TARGET}-unit army and marches on
+     *       tick 1040 with eight melee units: six {@code unit.melee.t1} and two {@code unit.melee.t5};</li>
+     *   <li>the two T5 units are the "elite" units that appear late - they are the bot's, trained by
+     *       {@link ClassicAi} once the army passed its aggression threshold;</li>
+     *   <li>the other T3/T4/T5 units in the world belong to player 1 and are the sample-scene display
+     *       units placed before tick 1. Their entity ids at tick 1200 are the same ids as at tick 0, which
+     *       proves no new elite unit appeared on the player's side;</li>
+     *   <li>the six T1 units are the bulk of the wave, so "a swarm of elites" is really "a gathered
+     *       eight-unit wave with two T5 elites", which is why the owner could not tell where they came
+     *       from: they are all player 2's.</li>
+     * </ul>
+     *
+     * <p>The census is printed with {@link Check#note(String)} so the actual numbers are part of the
+     * build log even when the assertions pass. The run is synchronous ({@link WorldHost#step()}), so the
+     * timestamps are exact and the result is reproducible.
+     */
+    private static void eliteSwarm(Check check) {
+        check.section("精英单位来源：默认单机器人世界 1200 tick");
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), new ClassicBots(1)));
+        try {
+            int[] attackOrders = {0};
+            long[] firstAttackTick = {-1L};
+            host.engine().world().events().subscribe(Events.OrderIssued.class, event -> {
+                if (event.unit().owner().id().value() == ClassicAi.PLAYER_ID
+                        && event.orderName().contains("attack")) {
+                    attackOrders[0]++;
+                    if (firstAttackTick[0] < 0) {
+                        firstAttackTick[0] = host.tick();
+                    }
+                }
+            });
+            World world = host.engine().world();
+            Player human = host.findPlayer(1).orElse(null);
+            Player enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+            Set<Long> sampleEliteIds = tierAtLeastIds(world, human, 3);
+            check.note("tick 0 player 1 T3+ ids (sample scene): " + sampleEliteIds);
+
+            int[] marks = {0, 300, 600, 900, 1200};
+            int mark = 0;
+            int botTierThreeAt900 = 0;
+            int botTierThreeAt1200 = 0;
+            int botMeleeAt1200 = 0;
+            int botArmyAtFirstAttack = 0;
+            for (int tick = 0; tick <= 1200; tick++) {
+                if (tick > 0) {
+                    host.step();
+                }
+                world = host.engine().world();
+                human = host.findPlayer(1).orElse(null);
+                enemy = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+                if (mark < marks.length && tick == marks[mark]) {
+                    check.note("tick " + tick + ": " + entityCensus(world));
+                    mark++;
+                }
+                if (tick == 900 && enemy != null) {
+                    botTierThreeAt900 = countTierAtLeast(world, enemy, 3);
+                }
+                if (tick == 1200) {
+                    if (enemy != null) {
+                        botTierThreeAt1200 = countTierAtLeast(world, enemy, 3);
+                        botMeleeAt1200 = countMelee(world, enemy);
+                    }
+                }
+                if (attackOrders[0] > 0 && botArmyAtFirstAttack == 0 && enemy != null) {
+                    botArmyAtFirstAttack = countMelee(world, enemy);
+                }
+            }
+            Set<Long> stillSampleEliteIds = tierAtLeastIds(world, human, 3);
+            check.that(enemy != null, "the default world really created the bot player 2");
+            check.that(human != null, "the default world still has player 1");
+            check.that(botTierThreeAt900 >= 1,
+                    "by tick 900 the bot already owns an elite T3+ melee unit (actual "
+                            + botTierThreeAt900 + ")");
+            check.that(botTierThreeAt1200 >= 2,
+                    "by tick 1200 the bot owns at least two T3+ melee units (actual "
+                            + botTierThreeAt1200 + ")");
+            check.equal(ClassicAi.ARMY_TARGET, botMeleeAt1200,
+                    "the bot's field army at tick 1200 is exactly the gathered army target");
+            check.that(attackOrders[0] > 0,
+                    "the bot has issued attack orders by tick 1200 (actual " + attackOrders[0]
+                            + ", first on tick " + firstAttackTick[0] + ")");
+            check.that(botArmyAtFirstAttack >= ClassicAi.ARMY_TARGET,
+                    "the first attack wave had at least the army target in melee units (actual "
+                            + botArmyAtFirstAttack + ")");
+            check.equal(sampleEliteIds, stillSampleEliteIds,
+                    "player 1's T3+ units at tick 1200 are the same sample-scene units as at tick 0; "
+                            + "no elite unit was newly produced for player 1");
+            check.note("tick 1200 player 1 kinds: " + censusOf(world, human));
+            check.note("tick 1200 bot kinds: " + censusOf(world, enemy));
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** Entity ids of one player's living T3+ melee units, sorted, for the sample-scene identity check. */
+    private static Set<Long> tierAtLeastIds(World world, Player player, int minimumTier) {
+        List<Long> ids = new ArrayList<>();
+        if (player != null) {
+            for (Unit unit : world.unitsOf(player)) {
+                if (unit.isAlive() && unit.role() == UnitRole.COMBAT
+                        && meleeTier(unit) >= minimumTier) {
+                    ids.add(unit.id().value());
+                }
+            }
+        }
+        ids.sort(Comparator.naturalOrder());
+        return new LinkedHashSet<>(ids);
+    }
+
+    /** One line per player: entity counts by content kind (melee units already carry their tier). */
+    private static String entityCensus(World world) {
+        StringBuilder line = new StringBuilder();
+        List<Player> players = new ArrayList<>(world.players());
+        players.sort(Comparator.comparing(player -> player.id()));
+        for (Player player : players) {
+            if (line.length() > 0) {
+                line.append(" | ");
+            }
+            line.append('P').append(player.id().value()).append(censusOf(world, player));
+        }
+        return line.toString();
+    }
+
+    /** One player's entity counts by content path, sorted, with the total. */
+    private static String censusOf(World world, Player player) {
+        if (player == null) {
+            return "{}";
+        }
+        Map<String, Integer> counts = new java.util.TreeMap<>();
+        for (Entity entity : world.entities()) {
+            if (!entity.owner().equals(player) || !entity.isAlive()) {
+                continue;
+            }
+            String kind;
+            if (entity instanceof Unit unit) {
+                kind = unit.type().key().path();
+            } else if (entity instanceof Building building) {
+                kind = building.type().key().path();
+            } else {
+                kind = entity.typeKey().path();
+            }
+            counts.merge(kind, 1, Integer::sum);
+        }
+        int total = counts.values().stream().mapToInt(Integer::intValue).sum();
+        return counts + " (" + total + " entities)";
+    }
+
+    /** Living combat units of at least the given melee tier. */
+    private static int countTierAtLeast(World world, Player player, int minimumTier) {
+        int count = 0;
+        for (Unit unit : world.unitsOf(player)) {
+            if (!unit.isAlive() || unit.role() != UnitRole.COMBAT) {
+                continue;
+            }
+            if (meleeTier(unit) >= minimumTier) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** The tier of a `unit.melee.tN` content path, or 0 when the unit is not a tiered melee unit. */
+    private static int meleeTier(Unit unit) {
+        String path = unit.type().key().path();
+        int marker = path.lastIndexOf(".t");
+        if (marker < 0) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(path.substring(marker + 2));
+        } catch (NumberFormatException notTiered) {
+            return 0;
+        }
+    }
+
 
     /** Living combat units of a player, counted through their content role. */
     private static int countMelee(World world, Player player) {

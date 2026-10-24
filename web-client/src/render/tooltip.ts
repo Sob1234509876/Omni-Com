@@ -32,7 +32,9 @@ export const TOOLTIP_MARGIN_PX = 8;
 export interface TooltipContent {
   /** Manifest display name, or the raw kind when the manifest had no name. */
   readonly name: string;
-  /** Short greyscale lines: ownership/health, building footprint, queue summary. */
+  /** Ownership tag (`我` / `敌` / `中立` / `未登录`), rendered bold on its own line. */
+  readonly ownerTag: string;
+  /** Short greyscale lines: health, building footprint, queue summary. */
   readonly lines: readonly string[];
 }
 
@@ -57,13 +59,13 @@ export interface TooltipPoint {
 /**
  * The text of one entity's tooltip.
  *
- * The first line always carries the ownership tag (`我` / `敌` / `中立`, or `未登录` when the page has no
- * local player id and the caller passes that label). A health ratio the snapshot
- * reports becomes `生命 72%`; an old snapshot without `health` omits the health part rather than
- * inventing a full bar. A building appends its reported footprint (`尺寸：3×3`) and a non-empty
- * production queue appends the same summary the canvas marker uses (`生产中 ×2`). Buildings and units
- * share the name line - the caller passes `contentLabel(kind)`, so the manifest name wins and the raw
- * kind is the fallback.
+ * The owner is its own field, `ownerTag`, so the page can render it in bold instead of burying it in a
+ * detail line. The caller passes the shared `ownershipTagFor` label, including `未登录` when the page has
+ * no local player id. A health ratio the snapshot reports becomes `生命 72%`; an old snapshot without
+ * `health` omits the health part rather than inventing a full bar. A building appends its reported
+ * footprint (`尺寸：3×3`) and a non-empty production queue appends the same summary the canvas marker
+ * uses (`生产中 ×2`). Buildings and units share the name line - the caller passes `contentLabel(kind)`,
+ * so the manifest name wins and the raw kind is the fallback.
  */
 export function tooltipContent(
   name: string,
@@ -71,11 +73,14 @@ export function tooltipContent(
   ownership: Ownership,
   ownershipLabel: string = ownershipTag(ownership),
 ): TooltipContent {
-  const detail: string[] = [ownershipLabel];
+  const detail: string[] = [];
   if (entity.healthRatio !== undefined && Number.isFinite(entity.healthRatio)) {
     detail.push(`生命 ${formatProgressPercent(entity.healthRatio)}`);
   }
-  const lines: string[] = [detail.join(" · ")];
+  const lines: string[] = [];
+  if (detail.length > 0) {
+    lines.push(detail.join(" · "));
+  }
   if (isBuildingEntityKind(entity.kind)) {
     const footprint = sizeLabel(entity);
     if (footprint !== null) {
@@ -86,7 +91,7 @@ export function tooltipContent(
   if (queue !== "") {
     lines.push(queue);
   }
-  return { name, lines };
+  return { name, ownerTag: ownershipLabel, lines };
 }
 
 /**

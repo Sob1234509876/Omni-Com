@@ -226,8 +226,8 @@ legacy values are:
 | --- | --- | --- | --- |
 | `mineTarget` | **2..4** | 3 | mines the bot keeps standing |
 | `engineerTarget` | **2..4** | 3 | engineers the bot keeps alive |
-| `armyTarget` | **6..10** | 8 | army size it grows towards |
-| `attackArmySize` (the aggression threshold) | **4..8**, never above `armyTarget` | 6 | army size at which it enters `ATTACK` and marches |
+| `armyTarget` | **6..10** | 8 | army size it grows towards; the **first** wave gathers this many before marching |
+| `attackArmySize` (the later-wave threshold) | **4..8**, never above `armyTarget` | 6 | aggression threshold for waves after the first; the first march never leaves before `armyTarget` |
 | `upgradeArmoryFirst` | `true` or `false` | `true` | `true`: an affordable armory upgrade wins the decision before a missing mine/camp; `false`: fill the missing economy building first, upgrade afterwards |
 
 Two bots in one world therefore do not behave identically, and a derived style that would equal the legacy

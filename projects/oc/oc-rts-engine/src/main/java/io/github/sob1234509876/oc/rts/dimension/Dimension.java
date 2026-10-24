@@ -142,11 +142,15 @@ public final class Dimension {
      * other: the terrain must still be buildable and every other living building still blocks the site, so
      * an upgrade cannot be used to squeeze a building onto a neighbour.
      *
-     * <p><strong>Entrances stay usable.</strong> Two footprints that merely touch used to be accepted,
-     * even when the new building covered the tile another building's units use to enter and leave. A
-     * hauler then had to stand inside a building to deliver, which separation kept it from doing, and the
-     * producer's queue waited forever. A new footprint therefore may not contain another building's
-     * entrance tile, and the new building's own entrance may not be inside another footprint.
+     * <p><strong>Footprints that merely touch are legal.</strong> Occupancy is an exact covered-tile
+     * test: a site whose left edge is the tile immediately after an existing building's right edge does
+     * not overlap it, and is accepted. The previous release also rejected a footprint that contained
+     * another building's <em>preferred</em> entrance tile, which made a flush right-hand placement
+     * impossible even though the footprints did not share a tile. Entrances are now resolved against the
+     * live buildings instead of being reserved at placement time: see {@link #entranceTile(Building)}.
+     *
+     * <p>An in-place upgrade still passes the replaced building as {@code replaced}; no other building is
+     * ignored.
      *
      * @param type     the new building type
      * @param origin   minimum corner of the new footprint
@@ -162,26 +166,79 @@ public final class Dimension {
                 return false;
             }
         }
-        GridPos newEntrance = entranceTile(type, origin);
-        for (Entity entity : spatial.inRect(footprint.expanded(1))) {
+        for (Entity entity : spatial.inRect(footprint)) {
             if (entity == replaced || !entity.isAlive() || !(entity instanceof Building building)) {
                 continue;
             }
             if (building.occupiedTiles().intersects(footprint)) {
                 return false;
             }
-            // Neither building may swallow the tile the other one's units walk through.
-            if (footprint.contains(building.entranceTile())
-                    || building.occupiedTiles().contains(newEntrance)) {
-                return false;
-            }
         }
         return true;
     }
 
-    /** Tile just outside the footprint's east side, where the building's units enter and leave. */
-    private static GridPos entranceTile(BuildingType type, GridPos origin) {
-        return new GridPos(origin.x() + type.sizeX(), origin.y() + type.sizeY() / 2);
+    /**
+     * The tile a building's units enter and leave through.
+     *
+     * <p>The content layout names a <em>preferred</em> tile just outside the east side
+     * ({@link Building#entranceTile()}). It is free in the ordinary case. When a later building stands on
+     * it - which is exactly what a legal flush placement can do - the entrance is moved to the nearest
+     * free tile of the footprint's one-tile approach ring, in a fixed row-major scan with ties broken by
+     * that order. The result is deterministic and always a passable tile not covered by a living
+     * building, so haulers and freshly produced units do not aim inside a neighbour. If the whole ring is
+     * blocked the preferred tile is returned: there is no better answer, and the caller's path search
+     * reports the problem instead of inventing a tile inside a footprint.
+     *
+     * @param building the building whose entrance is wanted
+     * @return the preferred tile when it is free, otherwise the nearest free ring tile
+     */
+    public GridPos entranceTile(Building building) {
+        Objects.requireNonNull(building, "building");
+        GridPos preferred = building.entranceTile();
+        if (isEntranceFree(building, preferred)) {
+            return preferred;
+        }
+        TileRect footprint = building.occupiedTiles();
+        TileRect approach = footprint.expanded(1);
+        Vec2 centre = preferred.center();
+        GridPos best = null;
+        float bestDistance = Float.MAX_VALUE;
+        for (int y = approach.minY(); y <= approach.maxY(); y++) {
+            for (int x = approach.minX(); x <= approach.maxX(); x++) {
+                if (footprint.contains(x, y)) {
+                    continue;
+                }
+                GridPos candidate = new GridPos(x, y);
+                if (!isEntranceFree(building, candidate)) {
+                    continue;
+                }
+                float distance = candidate.center().distanceSquared(centre);
+                if (best == null || distance < bestDistance) {
+                    best = candidate;
+                    bestDistance = distance;
+                }
+            }
+        }
+        return best != null ? best : preferred;
+    }
+
+    /** World position of the entrance a building's units use; see {@link #entranceTile(Building)}. */
+    public Vec2 entrance(Building building) {
+        return Vec2.centerOf(entranceTile(building));
+    }
+
+    /** Whether a tile is passable and not covered by a living building other than {@code building}. */
+    private boolean isEntranceFree(Building building, GridPos tile) {
+        if (!map.isPassable(tile)) {
+            return false;
+        }
+        for (Entity entity : spatial.inRect(TileRect.centered(tile, 0))) {
+            if (entity != building && entity.isAlive() && entity instanceof Building other
+                    && other.occupiedTiles().contains(tile)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ entities

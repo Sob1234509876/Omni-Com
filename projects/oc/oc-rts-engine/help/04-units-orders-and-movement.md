@@ -37,9 +37,9 @@ b.completeConstruction();      // 立刻可用（spawnBuilding() 就是这么做
 b.restartConstruction();       // 回到施工中
 ```
 
-上面的 `advanceConstruction` 是手动推进。正常对局里由 `ConstructionSystem` 每 tick 推进：工地挂着几个 `BuildOrder`，就按 `min(builderCount(), ConstructionSystem.MAX_BUILDERS_PER_SITE)` 扣几点，没有附着建造者的工地不会自己推进；多个建造者、各自占一块相邻地块的规则见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
+上面的 `advanceConstruction` 是手动推进。正常对局里由 `ConstructionSystem` 每 tick 推进：工地挂着几个 `BuildOrder`、其中几个已经走到自己的站位，就按 `min(到位的建造者数, ConstructionSystem.MAX_BUILDERS_PER_SITE)` 扣几点，只附着但还在走路的建造者不贡献；多个建造者、各自占一块相邻地块的规则见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
 
-`entranceTile()` 是 `(origin.x + sizeX, origin.y + sizeY / 2)`，`entrance()` 是它的中心点——搬运工的目标点就是这个，见 [06-economy-logistics-and-production.md](06-economy-logistics-and-production.md)。
+`entranceTile()` 是内容声明的**首选**入口 `(origin.x + sizeX, origin.y + sizeY / 2)`；贴边放置可能让邻居占掉它，因此实际取用要走 `world.dimensionOf(building).entranceTile(building)`，它会在首选格被占时改取占地外一环上最近的可通行空格。`Building.entrance()` 是首选格的中心点。
 
 `Health` 只有 `damage(amount)` / `heal(amount)` / `setCurrent(value)` / `restore()`，`max` 为零会在构造时抛 `IllegalArgumentException`。血量与伤害都是 `Natural`（`Health(long)` 是便捷构造器，`damage(long)` / `heal(long)` 是小字面量重载），所以 `damage(Natural.BEYOND)` 能一击打死任何有限血量的实体：伤害的语义是 `min(当前血量, 伤害)`。`fraction()` 仍然是 `float`——渲染要的是比例，不是数量；完整的数值约定见 [12-numbers-and-googology.md](12-numbers-and-googology.md)。
 

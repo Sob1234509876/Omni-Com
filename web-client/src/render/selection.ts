@@ -10,7 +10,9 @@
  *   then buildings (see {@link selectByPriority});
  * - a double click on a unit replaces the selection with **every own unit of the same kind inside the
  *   loaded window** (the window is the same visibility rule picking uses);
- * - a double click on a building selects just that building, whichever player owns it;
+ * - a double click on an own building selects **every own building of the same kind in the loaded
+ *   window**, so a row of armories can be given a batch TRAIN; a double click on an enemy or neutral
+ *   building still selects just that building;
  * - the engineer shortcut selects every own engineer inside the loaded window. The snapshot carries
  *   no order/busy state, so this deliberately means "all engineers", not "idle engineers".
  *
@@ -143,11 +145,11 @@ export function selectByPriority(entities: readonly EntityView[], myPlayerId?: n
 /**
  * The selection a double click on `entityId` produces, in world entity order.
  *
- * A building - own, enemy or neutral - answers just its own id, because it has no group order. A unit
- * answers every **own, in-window** unit of the same kind, including the clicked unit itself; enemy and
- * neutral entities of that kind are excluded, and so is a same-kind unit standing outside the loaded
- * window (the renderer and the picker never show it either). Double-clicking empty ground clears the
- * selection.
+ * A unit answers every **own, in-window** unit of the same kind, including the clicked unit itself;
+ * enemy and neutral entities of that kind are excluded, and so is a same-kind unit standing outside the
+ * loaded window (the renderer and the picker never show it either). An **own building** answers every
+ * own, in-window building of the same kind, which is the multi-building selection item 23 asks for; a
+ * building that is not yours answers just its own id. Double-clicking empty ground clears the selection.
  */
 export function doubleClickSelection(
   world: WorldView,
@@ -161,12 +163,14 @@ export function doubleClickSelection(
   if (clicked === undefined) {
     return [];
   }
-  if (isBuildingEntityKind(clicked.kind)) {
+  const ownBuilding = isBuildingEntityKind(clicked.kind)
+    && ownershipOf(clicked.playerId, myPlayerId) === "mine";
+  if (isBuildingEntityKind(clicked.kind) && !ownBuilding) {
     return [clicked.id];
   }
   const ids: number[] = [];
   for (const entity of world.entities) {
-    if (!entityInWindow(world, entity) || isBuildingEntityKind(entity.kind)) {
+    if (!entityInWindow(world, entity) || isBuildingEntityKind(entity.kind) !== isBuildingEntityKind(clicked.kind)) {
       continue;
     }
     if (ownershipOf(entity.playerId, myPlayerId) !== "mine") {
@@ -176,7 +180,7 @@ export function doubleClickSelection(
       ids.push(entity.id);
     }
   }
-  return ids;
+  return ids.length > 0 ? ids : [clicked.id];
 }
 
 /**

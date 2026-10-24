@@ -24,6 +24,7 @@ import {
   orderStop,
   parseWhoAmI,
   train,
+  trainBatch,
   trainableUnitsForBuilding,
   upgrade,
   whoAmI,
@@ -106,6 +107,7 @@ import {
 } from "../src/toast.ts";
 import {
   demoWorld,
+  ENEMY_UNIT_BASE_COLOR,
   entityCoversTile,
   entityFootprintHeight,
   entityFootprintOrigin,
@@ -116,9 +118,11 @@ import {
   isWorldTile,
   localPlayerIdFromRoster,
   marqueeSelection,
+  OWN_UNIT_OUTLINE_COLOR,
   OWNERSHIP_ENEMY_COLOR,
   OWNERSHIP_MINE_COLOR,
   OWNERSHIP_NEUTRAL_COLOR,
+  ownerBadge,
   ownershipColor,
   ownershipDecision,
   ownershipOf,
@@ -209,10 +213,13 @@ import {
   tooltipContent,
 } from "../src/render/tooltip.ts";
 import {
+  ATTACKER_DETECTION_TILES,
   EVENT_DEDUPE_MS,
   EventDeduplicator,
   HEALTH_DROP_THRESHOLD,
+  attackerTierNear,
   diffSnapshotEvents,
+  meleeTierOf,
 } from "../src/render/events.ts";
 import {
   isWarehouseKind,
@@ -1816,6 +1823,30 @@ check(
   [1, 2, 3, undefined].every((playerId) => ownershipColor(playerId, null) === OWNERSHIP_NEUTRAL_COLOR),
 );
 check(
+  "己方单位额外标记：细亮白描边（无彩色，符合灰阶面板规则）",
+  ownerBadge({ id: 30, kind: "unit.melee.t1", x: 0, y: 0, playerId: 1 }, 1) === "own-outline" &&
+    OWN_UNIT_OUTLINE_COLOR === "rgba(255, 255, 255, 0.95)",
+  OWN_UNIT_OUTLINE_COLOR,
+);
+check(
+  "敌方单位额外标记：脚下红色底环；中立单位无额外标记",
+  ownerBadge({ id: 31, kind: "unit.melee.t5", x: 0, y: 0, playerId: 2 }, 1) === "enemy-base" &&
+    ENEMY_UNIT_BASE_COLOR.startsWith("rgba(239, 68, 68") &&
+    ownerBadge({ id: 32, kind: "unit.melee.t1", x: 0, y: 0 }, 1) === "none",
+  `${ownerBadge({ id: 31, kind: "unit.melee.t5", x: 0, y: 0, playerId: 2 }, 1)} / ${ENEMY_UNIT_BASE_COLOR}`,
+);
+check(
+  "建筑不画白描边或红底环，保留原有归属环（提示框仍加粗显示归属）",
+  ownerBadge(
+    { id: 33, kind: "building.warehouse", x: 0, y: 0, playerId: 1, footprint: { width: 3, height: 3 } },
+    1,
+  ) === "none" &&
+    ownerBadge(
+      { id: 34, kind: "building.warehouse", x: 0, y: 0, playerId: 2, footprint: { width: 3, height: 3 } },
+      1,
+    ) === "none",
+);
+check(
   "选中环颜色保持不变，仍是金色 #ffd166",
   SELECTION_COLOR === "#ffd166",
   SELECTION_COLOR,
@@ -2325,6 +2356,88 @@ check(
     placementReasonText("out-of-reach") === "超出工兵范围 16 格" &&
     placementReasonText("blocked-window") === "超出已载入窗口",
 );
+
+/** An 8x8 grass window with one 3x3 warehouse at the given origin and an engineer five tiles away. */
+function flushPlacementWorld(
+  originX: number,
+  originY: number,
+  buildingOriginX = 0,
+  buildingOriginY = 0,
+): WorldView {
+  const tiles: TerrainId[][] = Array.from({ length: 8 }, () =>
+    Array.from({ length: 8 }, () => "grass" as TerrainId),
+  );
+  return {
+    originX,
+    originY,
+    width: 8,
+    height: 8,
+    tiles,
+    entities: [
+      {
+        id: 21,
+        kind: "building.warehouse",
+        x: buildingOriginX + 1.5,
+        y: buildingOriginY + 1.5,
+        playerId: 1,
+        footprint: { width: 3, height: 3 },
+        progress: 1,
+      },
+      {
+        id: 22,
+        kind: "unit.engineer",
+        x: originX + 7.5,
+        y: originY + 7.5,
+        playerId: 1,
+        footprint: { width: 1, height: 1 },
+      },
+    ],
+  };
+}
+
+const flushWorld = flushPlacementWorld(0, 0);
+const flushRightPreview = buildPlacementPreview(
+  flushWorld,
+  "building.warehouse",
+  { x: 3, y: 0 },
+  flushWorld.entities[1]!,
+);
+const overlappingRightPreview = buildPlacementPreview(
+  flushWorld,
+  "building.warehouse",
+  { x: 2, y: 0 },
+  flushWorld.entities[1]!,
+);
+check(
+  "客户端幽灵：3×3 建筑紧贴另一座 3×3 的右边（origin 3）是合法，退一格（origin 2）被占用",
+  flushRightPreview.state === "legal" &&
+    flushRightPreview.tiles.every((tile) => tile.state === "legal") &&
+    overlappingRightPreview.state === "blocked" &&
+    overlappingRightPreview.reason === "blocked-occupied" &&
+    overlappingRightPreview.tiles.some((tile) => tile.reason === "blocked-occupied"),
+  `${flushRightPreview.state} / ${overlappingRightPreview.state}:${overlappingRightPreview.reason}`,
+);
+const negativeFlushWorld = flushPlacementWorld(-4, -4, -3, -3);
+const negativeFlushPreview = buildPlacementPreview(
+  negativeFlushWorld,
+  "building.warehouse",
+  { x: 0, y: -3 },
+  negativeFlushWorld.entities[1]!,
+);
+const negativeOverlapPreview = buildPlacementPreview(
+  negativeFlushWorld,
+  "building.warehouse",
+  { x: -1, y: -3 },
+  negativeFlushWorld.entities[1]!,
+);
+check(
+  "客户端幽灵在负坐标上同样按覆盖格判定：origin -3 的建筑与 origin 0 紧贴合法，origin -1 重叠非法",
+  negativeFlushPreview.state === "legal" &&
+    negativeFlushPreview.tiles.every((tile) => tile.state === "legal") &&
+    negativeOverlapPreview.state === "blocked" &&
+    negativeOverlapPreview.reason === "blocked-occupied",
+  `${negativeFlushPreview.state} / ${negativeOverlapPreview.state}:${negativeOverlapPreview.reason}`,
+);
 check(
   "幽灵颜色是画布内容：合法绿 25% 填充、阻挡红、超距琥珀",
   PLACEMENT_LEGAL_FILL === "rgba(74, 222, 128, 0.25)" &&
@@ -2482,6 +2595,15 @@ const selectionWorld: WorldView = {
       playerId: 2,
       footprint: { width: 3, height: 3 },
     },
+    {
+      id: 10,
+      kind: "building.armory.t1",
+      x: 1.5,
+      y: 5.5,
+      playerId: 1,
+      footprint: { width: 3, height: 3 },
+      progress: 1,
+    },
   ],
 };
 const doubleClickedWorker = doubleClickSelection(selectionWorld, 1, 1);
@@ -2504,8 +2626,8 @@ check(
   doubleClickedWorker.join(","),
 );
 check(
-  "双击建筑只选该建筑：自己的与敌人的都只返回一个 id",
-  JSON.stringify(doubleClickSelection(selectionWorld, 8, 1)) === JSON.stringify([8]) &&
+  "双击自己的建筑选中窗口内全部同类型建筑；敌方建筑仍只选它自己",
+  JSON.stringify(doubleClickSelection(selectionWorld, 8, 1)) === JSON.stringify([8, 10]) &&
     JSON.stringify(doubleClickSelection(selectionWorld, 9, 1)) === JSON.stringify([9]),
   `${doubleClickSelection(selectionWorld, 8, 1).join(",")} / ` +
     `${doubleClickSelection(selectionWorld, 9, 1).join(",")}`,
@@ -2538,10 +2660,11 @@ const unitTooltip = tooltipContent(
   "mine",
 );
 check(
-  "提示框显示清单名、归属标签与生命百分比",
+  "提示框显示清单名、加粗归属字段与生命百分比",
   unitTooltip.name === "普通" &&
-    JSON.stringify(unitTooltip.lines) === JSON.stringify(["我 · 生命 72%"]),
-  `${unitTooltip.name} / ${unitTooltip.lines.join(" / ")}`,
+    unitTooltip.ownerTag === "我" &&
+    JSON.stringify(unitTooltip.lines) === JSON.stringify(["生命 72%"]),
+  `${unitTooltip.name} / 归属：${unitTooltip.ownerTag} / ${unitTooltip.lines.join(" / ")}`,
 );
 const buildingTooltip = tooltipContent(
   "兵工厂 1 级",
@@ -2558,11 +2681,12 @@ const buildingTooltip = tooltipContent(
   "enemy",
 );
 check(
-  "提示框为建筑追加尺寸与队列摘要（敌 · 生命 42% / 尺寸 / 生产中）",
+  "提示框为建筑追加尺寸与队列摘要（归属：敌 / 生命 42% / 尺寸 / 生产中）",
   buildingTooltip.name === "兵工厂 1 级" &&
+    buildingTooltip.ownerTag === "敌" &&
     JSON.stringify(buildingTooltip.lines) ===
-      JSON.stringify(["敌 · 生命 42%", "尺寸：3×3", "生产中 ×2"]),
-  buildingTooltip.lines.join(" / "),
+      JSON.stringify(["生命 42%", "尺寸：3×3", "生产中 ×2"]),
+  `归属：${buildingTooltip.ownerTag} / ${buildingTooltip.lines.join(" / ")}`,
 );
 const noHealthTooltip = tooltipContent(
   "矿井",
@@ -2571,13 +2695,15 @@ const noHealthTooltip = tooltipContent(
 );
 check(
   "没有 healthRatio 的旧快照不编造生命值，建筑仍显示尺寸",
-  JSON.stringify(noHealthTooltip.lines) === JSON.stringify(["我", "尺寸：3×3"]),
+  noHealthTooltip.ownerTag === "我" &&
+    JSON.stringify(noHealthTooltip.lines) === JSON.stringify(["尺寸：3×3"]),
   noHealthTooltip.lines.join(" / "),
 );
 const neutralTooltip = tooltipContent("worker", { id: 14, kind: "worker", x: 0, y: 0 }, "neutral");
 check(
-  "无主单位只有中立标签，queue=0 不显示队列摘要",
-  JSON.stringify(neutralTooltip.lines) === JSON.stringify(["中立"]),
+  "无主单位只有中立归属，queue=0 不显示队列摘要",
+  neutralTooltip.ownerTag === "中立" &&
+    JSON.stringify(neutralTooltip.lines) === JSON.stringify([]),
   neutralTooltip.lines.join(" / "),
 );
 check(
@@ -2641,17 +2767,22 @@ const eventBefore = eventWorld([
   { id: 4, kind: "unit.melee.t1", x: 4, y: 4, playerId: 2, healthRatio: 1 },
   { id: 5, kind: "unit.melee.t1", x: 5, y: 5, playerId: 1, healthRatio: 0.5 },
   { id: 8, kind: "unit.melee.t1", x: 6, y: 6, playerId: 1, healthRatio: 1 },
+  // Hostiles near the two damaged own units: the toast must name the highest tier nearby.
+  { id: 6, kind: "unit.melee.t3", x: 2, y: 2, playerId: 2, healthRatio: 1 },
+  { id: 10, kind: "unit.melee.t5", x: 6, y: 6, playerId: 2, healthRatio: 1 },
 ]);
 const eventAfter = eventWorld([
   { id: 1, kind: "building.armory.t1", x: 1, y: 1, playerId: 1, progress: 1, healthRatio: 1 },
   { id: 2, kind: "building.warehouse", x: 2, y: 2, playerId: 1, progress: 1, healthRatio: 1 },
   // Exactly a 10-point drop: 1 -> 0.9 must fire despite binary floating point.
   { id: 3, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, healthRatio: 0.9 },
-  // 9-point drop: below the threshold.
+  // Enemy unit loses 9 points: below the threshold, and never "my base under attack" anyway.
   { id: 4, kind: "unit.melee.t1", x: 4, y: 4, playerId: 2, healthRatio: 0.91 },
   { id: 5, kind: "unit.melee.t1", x: 5, y: 5, playerId: 1, healthRatio: 0.4 },
   // Appears only in the current snapshot: no previous health to compare.
-  { id: 7, kind: "unit.melee.t1", x: 7, y: 7, playerId: 1, healthRatio: 0.2 },
+  { id: 20, kind: "unit.melee.t1", x: 7, y: 7, playerId: 1, healthRatio: 0.2 },
+  { id: 6, kind: "unit.melee.t3", x: 2, y: 2, playerId: 2, healthRatio: 1 },
+  { id: 10, kind: "unit.melee.t5", x: 6, y: 6, playerId: 2, healthRatio: 1 },
 ]);
 const eventLabel = (kind: string): string =>
   kind === "building.armory.t1"
@@ -2660,7 +2791,7 @@ const eventLabel = (kind: string): string =>
       ? "普通"
       : kind;
 const eventDedupe = new EventDeduplicator();
-const firstEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 1_000, eventDedupe);
+const firstEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 1_000, eventDedupe, 1);
 check(
   "快照差分产出建筑完成与遭到攻击事件，且只比较两帧都存在的实体",
   firstEvents
@@ -2669,11 +2800,16 @@ check(
   firstEvents.map((event) => `${event.kind}:${event.entityId}`).join(","),
 );
 check(
-  "事件文案是 建筑完成：<名称> / 遭到攻击：<名称>",
+  "攻击提示是 遭到攻击：<名称>（攻击者：tN），N 取附近最高等级",
   firstEvents[0]?.text === "建筑完成：兵工厂 1 级" &&
-    firstEvents[1]?.text === "遭到攻击：普通" &&
-    firstEvents[2]?.text === "遭到攻击：普通",
+    firstEvents[1]?.text === "遭到攻击：普通（攻击者：t3）" &&
+    firstEvents[2]?.text === "遭到攻击：普通（攻击者：t5）",
   firstEvents.map((event) => event.text).join(" / "),
+);
+check(
+  "只有自己的建筑/单位被打才提示；敌方单位掉血不产生 under-attack",
+  firstEvents.every((event) => event.kind !== "under-attack" || event.entityId !== 4) &&
+    ownershipOf(4, 1) === "enemy",
 );
 check(
   "生命下降至少 10% 才触发：1→0.9 触发，1→0.91 不触发，0.5→0.4 触发",
@@ -2682,17 +2818,40 @@ check(
     !firstEvents.some((event) => event.entityId === 4) &&
     firstEvents.some((event) => event.entityId === 5),
 );
-const tooSoonEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 5_999, eventDedupe);
+check(
+  "攻击者等级解析与邻近推断：t3/t5 路径可解析，8 格内取最高，远处不误报",
+  meleeTierOf("unit.melee.t3") === 3 &&
+    meleeTierOf("unit.melee.t5") === 5 &&
+    meleeTierOf("unit.engineer") === 0 &&
+    ATTACKER_DETECTION_TILES === 4 &&
+    attackerTierNear(eventAfter.entities[2]!, eventAfter.entities) === 3 &&
+    attackerTierNear(
+      { id: 99, kind: "unit.melee.t1", x: 0, y: 0, playerId: 1 },
+      [{ id: 100, kind: "unit.melee.t5", x: 40, y: 40, playerId: 2 }],
+    ) === 0,
+);
+const tooSoonEvents = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 5_999, eventDedupe, 1);
 check(
   "同一实体 5 秒内不会重复产生事件（4.999 秒时全部被抑制）",
   EVENT_DEDUPE_MS === 5_000 && tooSoonEvents.length === 0,
   tooSoonEvents.map((event) => event.text).join(" / "),
 );
-const afterFiveSeconds = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 6_000, eventDedupe);
+const afterFiveSeconds = diffSnapshotEvents(eventBefore, eventAfter, eventLabel, 6_000, eventDedupe, 1);
 check(
   "满 5 秒后同一实体可以再次产生事件",
   afterFiveSeconds.length === 3,
   afterFiveSeconds.map((event) => event.text).join(" / "),
+);
+check(
+  "未知本地玩家时不把自己的归属猜错：myPlayerId 为 null 不产生 under-attack",
+  diffSnapshotEvents(
+    eventBefore,
+    eventAfter,
+    eventLabel,
+    20_000,
+    new EventDeduplicator(),
+    null,
+  ).every((event) => event.kind !== "under-attack"),
 );
 const independentDedupe = new EventDeduplicator();
 check(
@@ -2866,6 +3025,52 @@ check(
     ) &&
     buildingCommand.actions[0]?.label === "普通",
   `${buildingCommand.kind} / ${buildingCommand.actions.length}`,
+);
+
+const multiBuildingCommand = commandBarModel(
+  [commandBuilding(4), commandBuilding(10), commandBuilding(11)],
+  1,
+  { labelForPath: (path) => path },
+);
+check(
+  "选中多座同类型建筑仍给出 TRAIN，提示说明一次点击会并行排产",
+  multiBuildingCommand.kind === "building" &&
+    multiBuildingCommand.buildingCount === 3 &&
+    multiBuildingCommand.actions.length === UNIT_PATHS.length &&
+    multiBuildingCommand.actions.every((action) => action.kind === "train") &&
+    multiBuildingCommand.hint.includes("并行生产"),
+  `${multiBuildingCommand.kind} / ${multiBuildingCommand.hint}`,
+);
+const batches = trainBatch([4, 10, 11], "unit.melee.t2");
+check(
+  "批量 TRAIN 为每座建筑生成一条指令，顺序与选择一致",
+  JSON.stringify(batches) ===
+    JSON.stringify([
+      "TRAIN 4 unit.melee.t2",
+      "TRAIN 10 unit.melee.t2",
+      "TRAIN 11 unit.melee.t2",
+    ]) &&
+    trainBatch([7], "unit.engineer").length === 1 &&
+    (() => {
+      try {
+        trainBatch([], "unit.melee.t1");
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  batches.join(" / "),
+);
+const mixedBuildingKinds = commandBarModel(
+  [commandBuilding(4), commandBuilding(12, "building.warehouse")],
+  1,
+);
+check(
+  "多座但类型不同时不提供 TRAIN，并说明需要同类型",
+  mixedBuildingKinds.kind === "other" &&
+    mixedBuildingKinds.actions.length === 0 &&
+    mixedBuildingKinds.hint.includes("同类型"),
+  `${mixedBuildingKinds.kind} / ${mixedBuildingKinds.hint}`,
 );
 
 const mixedCommand = commandBarModel(

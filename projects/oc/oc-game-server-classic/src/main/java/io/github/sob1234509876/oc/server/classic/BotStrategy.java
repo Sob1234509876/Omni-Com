@@ -21,10 +21,10 @@ package io.github.sob1234509876.oc.server.classic;
  *   <tr><td>{@link #engineerTarget()}</td><td>2..4</td><td>3</td>
  *       <td>engineers the bot tries to keep alive</td></tr>
  *   <tr><td>{@link #armyTarget()}</td><td>6..10</td><td>8</td>
- *       <td>army size the bot grows to before it stops training</td></tr>
+ *       <td>army size the bot grows to and the size the <em>first</em> wave gathers before it marches</td></tr>
  *   <tr><td>{@link #attackArmySize()}</td><td>4..8, and never above {@link #armyTarget()}</td><td>6</td>
- *       <td>the aggression threshold: the army size at which the bot enters {@link ClassicAi.Mode#ATTACK}
- *       and marches</td></tr>
+ *       <td>aggression threshold for waves after the first: a replacement force may counter-attack at this
+ *       smaller size, while the first march never leaves before {@link #armyTarget()}</td></tr>
  *   <tr><td>{@link #upgradeArmoryFirst()}</td><td>{@code true} or {@code false}</td><td>{@code true}</td>
  *       <td>{@code true}: an affordable armory upgrade wins a decision before a missing mine or lumber camp;
  *       {@code false}: the bot fills a missing armory, mine or camp first and upgrades only when its base is
@@ -37,8 +37,9 @@ package io.github.sob1234509876.oc.server.classic;
  *
  * @param mineTarget mines the bot tries to keep standing, 2..4
  * @param engineerTarget engineers the bot tries to keep alive, 2..4
- * @param armyTarget army size the bot grows towards, 6..10
- * @param attackArmySize the aggression threshold, 4..8 and no larger than {@code armyTarget}
+ * @param armyTarget army size the bot grows towards and the first wave must gather, 6..10
+ * @param attackArmySize the aggression threshold after the first wave, 4..8 and no larger than
+ *     {@code armyTarget}
  * @param upgradeArmoryFirst whether an affordable armory upgrade outranks a missing economy building
  */
 public record BotStrategy(int mineTarget, int engineerTarget, int armyTarget, int attackArmySize,

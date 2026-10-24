@@ -50,11 +50,15 @@ import java.util.Objects;
  *       {@value #DEFENCE_RADIUS_TILES} tiles of any of the AI's buildings. Every idle AI unit is ordered to
  *       attack the nearest intruder (nearest by squared distance, ties by entity id). Defence is the one
  *       state that does nothing else: an intruder in the base outranks every building project.</li>
- *   <li><strong>{@link Mode#ATTACK}</strong> - the army (the living combat units) has reached
- *       {@value #ATTACK_ARMY_SIZE}. Every combat unit without an order is ordered to
- *       {@code attackMove} towards its nearest enemy building (nearest by squared distance, ties by entity
- *       id). A unit that already has an order is left alone, so the AI never replaces a march that is
- *       still running and therefore never thrashes.</li>
+ *   <li><strong>{@link Mode#ATTACK}</strong> - the army (the living combat units) has reached the wave
+ *       size. The <em>first</em> wave waits for the strategy's full {@link BotStrategy#armyTarget()}, not
+ *       merely the aggression threshold, so the bot marches as one gathered army instead of feeding six
+ *       units in and then trickling the rest into a fight it already started. After that first march the
+ *       threshold falls back to {@link BotStrategy#attackArmySize()}, so replacements can counter-attack
+ *       without waiting for a full rebuild. Every combat unit without an order is ordered to
+ *       {@code attackMove} towards its nearest enemy building (nearest by squared distance, ties by
+ *       entity id). A unit that already has an order is left alone, so the AI never replaces a march that
+ *       is still running and therefore never thrashes.</li>
  *   <li><strong>{@link Mode#ARMY}</strong> - the base is staffed but the army is below
  *       {@value #ARMY_TARGET}, so the AI trains troops.</li>
  *   <li><strong>{@link Mode#ECON}</strong> - the base is not staffed yet: the AI trains engineers and
@@ -190,7 +194,7 @@ public final class ClassicAi implements WorldTickHook {
     /** Army size the AI grows towards; past it the AI stops training troops. */
     public static final int ARMY_TARGET = 8;
 
-    /** Army size at which the AI starts marching on the enemy. */
+    /** Army size at which the AI starts marching on the enemy after the first wave. */
     public static final int ATTACK_ARMY_SIZE = 6;
 
     /** Distance, in tiles, within which an enemy unit counts as an intruder in the base. */
@@ -248,6 +252,15 @@ public final class ClassicAi implements WorldTickHook {
 
     /** Whether the one-time enemy bootstrap was attempted, successfully or not. */
     private boolean bootstrapped;
+
+    /**
+     * Whether a first wave has already marched.
+     *
+     * <p>The first march is the one that must gather the strategy's full army target; it changes the
+     * threshold for later waves, so it is simulation state and is deterministic (it flips only on a
+     * decision that actually issues attack orders).
+     */
+    private boolean hasAttacked;
 
     /**
      * Creates the historical single enemy: player 2, the legacy style and the fixed anchor.
@@ -311,6 +324,11 @@ public final class ClassicAi implements WorldTickHook {
         return mode;
     }
 
+    /** Whether the first gathered wave has marched; later waves use the smaller threshold. */
+    public boolean hasAttacked() {
+        return hasAttacked;
+    }
+
     // ------------------------------------------------------------------ the decision
 
     private void decide(World world, Player ai) {
@@ -335,13 +353,18 @@ public final class ClassicAi implements WorldTickHook {
             upkeepEngineers(world, ai, units, buildings);
         }
         if (army < strategy.armyTarget()) {
+            // While the wave is still being assembled the cheapest allowed tier keeps the train moving;
+            // from the smaller aggression threshold onwards the strongest affordable tier is taken, so the
+            // last units of the gathered wave and every replacement are as strong as the stock allows.
             trainArmy(world, ai, buildings, army, strategy.attackArmySize());
         }
         if (hasEngineer) {
             upkeepEngineers(world, ai, units, buildings);
         }
         if (mode == Mode.ATTACK) {
-            attack(world, ai, units, enemyBuildings(world, ai));
+            if (attack(world, ai, units, enemyBuildings(world, ai))) {
+                hasAttacked = true;
+            }
         }
     }
 
@@ -350,7 +373,8 @@ public final class ClassicAi implements WorldTickHook {
         if (!intruders.isEmpty()) {
             return Mode.DEFEND;
         }
-        if (countArmy(units) >= strategy.attackArmySize()) {
+        int waveSize = hasAttacked ? strategy.attackArmySize() : strategy.armyTarget();
+        if (countArmy(units) >= waveSize) {
             return Mode.ATTACK;
         }
         boolean staffed = countUnitType(units, ClassicContent.ENGINEER) >= strategy.engineerTarget()
@@ -449,21 +473,24 @@ public final class ClassicAi implements WorldTickHook {
     /**
      * Trains one melee tier in the best idle armory.
      *
-     * <p>While the combat army is still below the aggression threshold the cheapest allowed tier is
-     * trained, so the bot actually reaches that threshold in a bounded time on one armory. Once the army
-     * is large enough to march, the choice reverses: the strongest affordable tier is trained, which is
-     * what makes the later army stronger instead of merely larger. Both orders are pure functions of the
-     * strategy and the world state, so the decision stays deterministic.
+     * <p>While the combat army is below the aggression threshold it walks
+     * {@link ClassicContent#meleeTiers()} from the cheapest tier upwards, so one armory reaches that threshold
+     * in bounded time instead of spending the whole opening on expensive units. Once at the threshold it
+     * reverses the walk and takes the strongest tier the armory's level and the warehouse stock allow; a tier
+     * two armory then trains {@code unit.melee.t5} whenever the gold is there. The first wave still waits for
+     * the strategy's full {@link BotStrategy#armyTarget()} (that gate lives in {@link #modeFor}), so its last
+     * slots are filled with the strongest affordable tier rather than cheap filler; after the first march the
+     * same threshold is used for replacements, so a counter-attack can be strong sooner.
      */
     private static void trainArmy(World world, Player ai, List<Building> buildings, int armySize,
-            int attackArmySize) {
+            int gatherUntil) {
         Building armory = idleArmory(world, ai, buildings);
         if (armory == null || !ai.hasLogistics()) {
             return;
         }
         List<Recipe> allowed = world.content().recipesFor(armory.type());
         List<ClassicContent.MeleeTier> tiers = ClassicContent.meleeTiers();
-        boolean rush = armySize < attackArmySize;
+        boolean rush = armySize < gatherUntil;
         for (int step = 0; step < tiers.size(); step++) {
             int index = rush ? step : tiers.size() - 1 - step;
             Recipe candidate = recipe(world, ClassicContent.recipePath(tiers.get(index).tier()));
@@ -611,11 +638,18 @@ public final class ClassicAi implements WorldTickHook {
         }
     }
 
-    private static void attack(World world, Player ai, List<Unit> units, List<Building> enemyBuildings) {
+    /**
+     * Orders every idle combat unit at the nearest enemy building.
+     *
+     * @return whether at least one attack order was issued, which is the fact that flips the one-time
+     *     "first wave has marched" state
+     */
+    private static boolean attack(World world, Player ai, List<Unit> units, List<Building> enemyBuildings) {
         if (enemyBuildings.isEmpty()) {
-            return;
+            return false;
         }
         UnitDirector director = director(world);
+        boolean issued = false;
         for (Unit unit : units) {
             if (!unit.isAlive() || unit.role() != UnitRole.COMBAT || !unit.orders().isEmpty()) {
                 continue;
@@ -623,8 +657,10 @@ public final class ClassicAi implements WorldTickHook {
             Building target = nearestBuilding(unit.position(), enemyBuildings);
             if (target != null) {
                 director.attackMove(unit, target.position());
+                issued = true;
             }
         }
+        return issued;
     }
 
     /** Every living building that does not belong to the AI or an ally, in entity id order. */

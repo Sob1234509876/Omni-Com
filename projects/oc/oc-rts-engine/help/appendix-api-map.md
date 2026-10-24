@@ -258,7 +258,7 @@
 | `ProductionQueue` | 单个建筑的生产队列 | `enqueue()`、`jobs()`、`current()`、`cancel(index)`、`clear()` | [06](06-economy-logistics-and-production.md) |
 | `ProductionJob` | 一次配方执行的全部账目（含欠料与待产出） | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`stateTicks()`、`isFinished()` | [06](06-economy-logistics-and-production.md) |
 | `ProductionState` | 生产任务所处的阶段 | `WAITING_MATERIALS`/`DELIVERING`/`PRODUCING`/`WAITING_OUTPUT`/`COMPLETED`/`CANCELLED`、`isFinished()` | [06](06-economy-logistics-and-production.md) |
-| `ConstructionSystem` | 推进有建造者附着的工地，直到建筑可用；完工 tick 同步结束所有附着命令 | `SYSTEM_ORDER`、`MAX_BUILDERS_PER_SITE`（4）、`progressPerTick(attachedBuilders)` | [06](06-economy-logistics-and-production.md) |
+| `ConstructionSystem` | 推进有到位建造者的工地，直到建筑可用；完工 tick 同步结束所有附着命令 | `SYSTEM_ORDER`、`MAX_BUILDERS_PER_SITE`（4）、`progressPerTick(standingBuilders)` | [06](06-economy-logistics-and-production.md) |
 
 ### `...oc.rts.sim`
 

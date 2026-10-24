@@ -528,6 +528,58 @@ export function drawBuildingShape(
 }
 
 /**
+ * Red-tinted ground ellipse under an enemy unit, drawn before the sprite.
+ *
+ * It is wider and softer than the ownership ring so the base reads as "hostile" even when a unit is
+ * crowded; the ring above it keeps the crisp one-pixel owner colour. `color` comes from
+ * {@link ENEMY_UNIT_BASE_COLOR}, a translucent version of the enemy ring red.
+ */
+export function drawEnemyBaseTint(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  tilePixels: number,
+  color: string,
+): void {
+  const radiusX = tilePixels * 0.4;
+  const radiusY = radiusX * 0.34;
+  if (radiusX < 1) {
+    return;
+  }
+  context.save();
+  context.fillStyle = color;
+  context.beginPath();
+  context.ellipse(screenX, screenY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+/**
+ * Thin bright outline around an own unit's body, drawn after the sprite.
+ *
+ * The centre is the same body anchor {@link drawUnitShape} uses, so the rim follows the drawn sprite
+ * rather than the ground point. The stroke is white and thin on purpose: it stays readable in a grey
+ * palette, cannot be mistaken for the gold selection ring, and is cheap enough for a frame-loop pass.
+ */
+export function drawOwnUnitOutline(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  tilePixels: number,
+  color: string,
+): void {
+  const radius = Math.max(3.5, tilePixels * 0.2);
+  const bodyY = screenY - radius * 1.15;
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = Math.max(1, tilePixels * 0.035);
+  context.beginPath();
+  context.arc(screenX, bodyY, radius * 1.08, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+/**
  * Ownership ring drawn on the ground under an entity.
  *
  * It is the same ellipse as {@link drawSelectionRing} but thinner and without the halo, so the gold

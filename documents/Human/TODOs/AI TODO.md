@@ -12,8 +12,8 @@ A handoff list. The long sentences after each item are the **specification** and
 | D. Interface and HUD | 3 | 2 | 1 | 8–13 |
 | E. Interaction | 2 | 1 | 0 | 14–16 |
 | F. Units and orders | 4 | 0 | 0 | 17–19 |
-| G. New goals | 0 | 0 | 3 | 20–22 |
-| **Total** | **14** | **4** | **4** | **22** |
+| G. New goals | 1 | 0 | 2 | 20–22 |
+| **Total** | **15** | **4** | **3** | **22** |
 
 ---
 
@@ -59,4 +59,4 @@ A handoff list. The long sentences after each item are the **specification** and
 20. ⬜ **Repair, resume and reclaim.** Let engineers repair, continue build buildings and reclaim buildings.
 21. ⬜ **Show movement paths.** Show the paths of the moving units.
 22. ⬜ **Waypoints.** Add waypoints.
-23. ⬜ **Faster** You can choose a lot of same typed buildings and let them work at once and producing units.
+23. ✅ **Faster** You can choose a lot of same typed buildings and let them work at once and producing units. — *double-clicking an own building selects every own building of that kind in the loaded window; the context panel then offers one TRAIN click that sends one `TRAIN <id> <unitPath>` line per selected building, so every queue produces in parallel. Deferred: no batch upgrade/repair, and the per-building queue rows still describe only a single selected building.*

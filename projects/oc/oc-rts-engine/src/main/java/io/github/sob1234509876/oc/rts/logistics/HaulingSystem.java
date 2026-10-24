@@ -389,10 +389,10 @@ public final class HaulingSystem implements SimulationSystem {
         WarehouseLogistics logistics = WarehouseLogistics.of(job.player());
         if (logistics != null) {
             for (Building warehouse : logistics.pickupWarehouses(job.reservation())) {
-                return warehouse.entrance();
+                return world.dimensionOf(warehouse).entrance(warehouse);
             }
         }
-        return job.target().entrance();
+        return world.dimensionOf(job.target()).entrance(job.target());
     }
 
     /**

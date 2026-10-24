@@ -28,6 +28,7 @@ import { progressBarRatio } from "./status.ts";
 import {
   isBuildingEntityKind,
   isOwnUnit,
+  kindName,
   ownershipColor,
   ownershipDecision,
   ownershipOf,
@@ -150,9 +151,12 @@ function pathActions(
  * 3. an own engineer-only group (one or several engineers) -> the unit actions plus one BUILD entry per
  *    catalogued building;
  * 4. any own units -> the unit actions;
- * 5. exactly one own building -> one TRAIN entry per unit that building itself may train, in the context
- *    zone (a mine, lumber camp or warehouse trains nothing);
- * 6. anything else (enemy/neutral entities, several buildings) -> no actions and an honest hint.
+ * 5. one or more own buildings of the **same kind** -> one TRAIN entry per unit that kind may train,
+ *    in the context zone. With several selected, each TRAIN click queues one job in every one of them,
+ *    so a row of armories produces in parallel (item 23). A mine, lumber camp or warehouse trains
+ *    nothing and says so;
+ * 6. anything else (enemy/neutral entities, several buildings of different kinds) -> no actions and an
+ *    honest hint.
  *
  * Enemy and neutral entities never contribute actions; own units inside a larger selection still do,
  * because right-click / STOP / ATTACKMOVE target every own unit in the group.
@@ -176,10 +180,10 @@ export function commandBarModel(
   const unitCount = ownUnits.length;
   const buildingCount = ownBuildings.length;
   const single = selectedCount === 1 ? selection[0] : undefined;
-  const decision =
-    single === undefined
-      ? ownershipDecision(undefined, myPlayerId)
-      : ownershipDecision(single.playerId, myPlayerId);
+  // For a group of own buildings the ownership verdict still has to describe the group, not "no entity";
+  // otherwise a mixed-kind building selection would be reported as neutral.
+  const decisionSource = single ?? (ownBuildings.length > 0 ? ownBuildings[0] : undefined);
+  const decision = ownershipDecision(decisionSource?.playerId, myPlayerId);
   const base = {
     selectedCount,
     unitCount,
@@ -249,18 +253,25 @@ export function commandBarModel(
     };
   }
 
-  if (buildingCount === 1 && selectedCount === 1 && single !== undefined) {
-    const trainable = unitsForBuilding(single.kind);
-    return {
-      ...base,
-      kind: "building",
-      mixed: false,
-      actions: pathActions("train", trainable, labelForPath),
-      hint:
-        trainable.length === 0
-          ? "选中建筑：这个建筑不训练单位（矿井 / 伐木场 / 仓库只产出资源）"
-          : "选中建筑：右下角是 TRAIN 条目与生产队列，一次只排一个单位",
-    };
+  if (buildingCount > 0 && buildingCount === selectedCount) {
+    const first = ownBuildings[0];
+    const oneKind = first !== undefined
+      && ownBuildings.every((building) => kindName(building.kind) === kindName(first.kind));
+    if (oneKind && first !== undefined) {
+      const trainable = unitsForBuilding(first.kind);
+      return {
+        ...base,
+        kind: "building",
+        mixed: false,
+        actions: pathActions("train", trainable, labelForPath),
+        hint:
+          trainable.length === 0
+            ? "选中建筑：这个建筑不训练单位（矿井 / 伐木场 / 仓库只产出资源）"
+            : buildingCount === 1
+              ? "选中建筑：右下角是 TRAIN 条目与生产队列，一次只排一个单位"
+              : `已选 ${buildingCount} 座同类型建筑：点一次 TRAIN 会向每座各排一个，它们并行生产`,
+      };
+    }
   }
 
   if (decision.kind === "neutral") {
@@ -278,7 +289,7 @@ export function commandBarModel(
       kind: "other",
       mixed: false,
       actions: [],
-      hint: "当前选中没有可下达的单位动作；一次只能选中一个建筑来 TRAIN 或一个工兵来 BUILD",
+      hint: "已选多座不同类型的建筑：一次只能向同类型的一组建筑 TRAIN；请只选同一种建筑，或单独选一座",
     };
   }
   return {

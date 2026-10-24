@@ -29,8 +29,9 @@ import java.util.Set;
  * one tile approach ring: the tile the builder already stands on when it is already free, otherwise the
  * nearest free tile in row major order with ties broken by that order. The tile is claimed through
  * {@link Building#attachBuilder(Unit, GridPos)}, so a second builder never parks on top of the first
- * one. Construction speed is a pure function of the number of attached builders, never of which builder
- * attached first.
+ * one. Each builder then walks to that tile; only a builder that has arrived counts towards
+ * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} progress, and the speed is a pure
+ * function of the number of arrived builders, never of which builder attached first.
  *
  * <p>The order walks the builder to its standing tile, parks it there and reports
  * {@link OrderState#COMPLETED} on the tick the site reports {@link Building#isConstructed()}. On
@@ -157,7 +158,7 @@ public final class BuildOrder implements Order {
         if (context.tick().number() - startTick > TIMEOUT_TICKS) {
             return OrderState.FAILED;
         }
-        if (atSite(unit)) {
+        if (atSite(unit, context.world())) {
             // Standing at the site: hold position and let ConstructionSystem finish the building. Keeping
             // the goal cleared is what stops the builder from shuffling around the entrance while it waits.
             if (motion.hasGoal()) {
@@ -166,7 +167,8 @@ public final class BuildOrder implements Order {
             stalledTicks = 0;
             return OrderState.RUNNING;
         }
-        Vec2 goal = standTile != null ? standTile.center() : current.entrance();
+        Vec2 goal = standTile != null ? standTile.center()
+                : context.world().dimensionOf(current).entrance(current);
         Vec2 currentGoal = motion.goalOrNull();
         if (currentGoal == null || !currentGoal.equals(goal)) {
             motion.setGoal(goal);
@@ -213,10 +215,30 @@ public final class BuildOrder implements Order {
     }
 
     /** Whether the builder stands close enough to its standing tile to be working on the site. */
-    private boolean atSite(Unit unit) {
+    private boolean atSite(Unit unit, World world) {
         GridPos tile = standTile;
-        Vec2 target = tile != null ? tile.center() : site.entrance();
-        return unit.position().distance(target) <= BUILD_RANGE_TILES + unit.radius();
+        if (tile != null) {
+            return isAtStandTile(unit, tile);
+        }
+        return unit.position().distance(world.dimensionOf(site).entrance(site))
+                <= BUILD_RANGE_TILES + unit.radius();
+    }
+
+    /**
+     * Whether a builder has reached the standing tile it claimed for a site.
+     *
+     * <p>This is the one arrival rule, shared by the order (which parks the unit and stops steering it)
+     * and by {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} (which must not count an
+     * attached builder that is still walking). The tolerance is {@link #BUILD_RANGE_TILES} plus the
+     * unit's body radius, measured against that builder's own tile rather than the site entrance.
+     *
+     * @param unit      the attached builder
+     * @param standTile the ring tile it claimed; {@code null} means "not attached"
+     * @return whether the unit is standing close enough to work
+     */
+    public static boolean isAtStandTile(Unit unit, GridPos standTile) {
+        return standTile != null
+                && unit.position().distance(standTile.center()) <= BUILD_RANGE_TILES + unit.radius();
     }
 
     /**

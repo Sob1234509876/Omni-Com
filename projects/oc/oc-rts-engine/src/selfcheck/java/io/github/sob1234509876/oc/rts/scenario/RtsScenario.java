@@ -99,8 +99,10 @@ public final class RtsScenario {
         checkBuildingCombat(check, content);
         checkBuildingCosts(check, content);
         checkBuildReach(check, content);
+        checkFootprintBoundaries(check, content);
         checkBuildingUpgrades(check);
         checkCooperativeConstruction(check);
+        checkBuilderArrival(check);
 
         check.summary("RTS engine scenario");
     }
@@ -1630,6 +1632,98 @@ public final class RtsScenario {
                 "the refused site behind water left no reservation in the warehouse network");
     }
 
+    // ------------------------------------------------------------------ 14b) touching footprints
+
+    /**
+     * The occupancy boundary in all four directions, including negative coordinates.
+     *
+     * <p>A 3x3 base at origin {@code (0, 0)} occupies exactly {@code 0..2} on both axes. A second 3x3
+     * building at origin {@code (3, 0)} touches the base's right edge without sharing a tile and must be
+     * legal; origin {@code (2, 0)} shares the column {@code x = 2} and must be illegal. The same pair is
+     * asserted on the left, below and above, and with the base at a negative origin so a sign-dependent
+     * comparison would fail. The 2x2 and 4x3 footprints repeat the rule because an odd/even size mistake
+     * is exactly what a single size cannot catch.
+     *
+     * <p>The actual placement is executed as well as queried: the site creator must create a second
+     * building at the touching origin, not only answer {@code canPlace}.
+     */
+    private static void checkFootprintBoundaries(Check check, ContentRegistry content) {
+        check.section("14b) a footprint that merely touches another is legal on every side");
+        BuildingType[] types = {
+                content.building(ScenarioContent.WAREHOUSE),
+                content.building(ScenarioContent.ORE_SILO),
+                content.building(ScenarioContent.WORKSHOP),
+        };
+        String[] names = {"3x3 warehouse", "2x2 ore silo", "4x3 workshop"};
+        int seed = 81;
+        for (int index = 0; index < types.length; index++) {
+            BuildingType type = types[index];
+            String label = names[index] + " (" + type.sizeX() + "x" + type.sizeY() + ")";
+            OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), seed++);
+            Player player = engine.players().get(0);
+            World world = engine.world();
+            world.spawnBuilding(type, player, new GridPos(0, 0));
+            // A second base far away at negative coordinates: touching it is the same rule on the other
+            // side of the origin, where a floor/truncate mistake would show up.
+            world.spawnBuilding(type, player, new GridPos(-10, -10));
+            assertTouchingSides(check, world, type, new GridPos(0, 0), label + " at (0,0)");
+            assertTouchingSides(check, world, type, new GridPos(-10, -10), label + " at (-10,-10)");
+
+            OcRtsEngine actual = flatEngine(content, VisualLibrary.empty(), seed++);
+            Player actualPlayer = actual.players().get(0);
+            World actualWorld = actual.world();
+            Building first = actualWorld.spawnBuilding(type, actualPlayer, new GridPos(0, 0));
+            GridPos touching = new GridPos(type.sizeX(), 0);
+            check.that(actualWorld.canPlace(type, touching),
+                    label + ": the right-hand touching origin " + touching + " is legal");
+            Building second = actualWorld.placeBuilding(type, actualPlayer, touching);
+            check.equal(touching, second.origin(), label + ": the touching site is really created there");
+            check.equal(2, actualWorld.buildingsOf(actualPlayer).size(),
+                    label + ": two buildings now stand side by side");
+            // The flush neighbour covers the first building's preferred entrance, so hauling and unit
+            // production must use the resolved ring tile instead of aiming inside the new building.
+            GridPos resolvedEntrance = actualWorld.defaultDimension().entranceTile(first);
+            check.that(!resolvedEntrance.equals(first.entranceTile())
+                            && !second.occupiedTiles().contains(resolvedEntrance)
+                            && actualWorld.map().isPassable(resolvedEntrance),
+                    label + ": the covered preferred entrance resolves to a free ring tile " + resolvedEntrance);
+        }
+
+        // The exact example from the report: two 3x3 buildings at origins 0 and 3.
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 99L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        BuildingType armory = content.building(ScenarioContent.WAREHOUSE);
+        world.spawnBuilding(armory, player, new GridPos(0, 0));
+        check.that(world.canPlace(armory, new GridPos(3, 0)),
+                "two 3x3 buildings at origins 0 and 3 are both legal (0,3 flush right)");
+        check.that(!world.canPlace(armory, new GridPos(2, 0)),
+                "two 3x3 buildings at origins 0 and 2 overlap and are illegal");
+    }
+
+    /** Asserts the legal touching origin and the illegal one-tile-in origin on all four sides. */
+    private static void assertTouchingSides(Check check, World world, BuildingType type, GridPos base,
+            String label) {
+        int width = type.sizeX();
+        int height = type.sizeY();
+        check.that(world.canPlace(type, base.plus(width, 0)),
+                label + ": touching on the right (+x) is legal");
+        check.that(!world.canPlace(type, base.plus(width - 1, 0)),
+                label + ": one tile into the right edge overlaps and is illegal");
+        check.that(world.canPlace(type, base.plus(-width, 0)),
+                label + ": touching on the left (-x, negative origin) is legal");
+        check.that(!world.canPlace(type, base.plus(-width + 1, 0)),
+                label + ": one tile into the left edge overlaps and is illegal");
+        check.that(world.canPlace(type, base.plus(0, height)),
+                label + ": touching below (+y) is legal");
+        check.that(!world.canPlace(type, base.plus(0, height - 1)),
+                label + ": one tile into the bottom edge overlaps and is illegal");
+        check.that(world.canPlace(type, base.plus(0, -height)),
+                label + ": touching above (-y, negative origin) is legal");
+        check.that(!world.canPlace(type, base.plus(0, -height + 1)),
+                label + ": one tile into the top edge overlaps and is illegal");
+    }
+
     // ------------------------------------------------------------------ 15) building upgrades
 
     /**
@@ -2041,6 +2135,77 @@ public final class RtsScenario {
                 + firstFingerprint.lines().findFirst().orElse("<empty>"));
     }
 
+    // ------------------------------------------------------------------ 16b) the builder must arrive first
+
+    /**
+     * A builder twenty tiles away is attached from the first order tick but contributes nothing until it
+     * has walked to its standing tile.
+     *
+     * <p>The site is placed directly, so the command reach rule (sixteen tiles) is not involved: this is
+     * the unit-level contract of {@link BuildOrder} and {@link ConstructionSystem}. The builder's speed is
+     * the cooperative content's ten tiles per second, so the walk is many ticks and any accidental early
+     * progress is unambiguous. The completion tick is asserted as arithmetic: the ticks before arrival
+     * plus the content's build time.
+     */
+    private static void checkBuilderArrival(Check check) {
+        check.section("16b) attached but still walking does not build");
+        ContentRegistry content = cooperativeContent();
+        BuildingType hut = content.building(COOP_HUT);
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 123L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building site = world.placeBuilding(hut, player, new GridPos(30, 10));
+        Unit builder = world.spawnUnit(content.unit(COOP_BUILDER), player, new GridPos(10, 10));
+        int buildTime = hut.buildTimeTicks();
+        check.that(!site.isConstructed() && site.constructionRemaining() == buildTime,
+                "the site starts unfinished with the content's " + buildTime + " build ticks");
+
+        builder.orders().push(new BuildOrder(site));
+        engine.tick();
+        Order current = builder.orders().current();
+        check.that(current instanceof BuildOrder, "the builder is running its build order");
+        GridPos standTile = current instanceof BuildOrder order ? order.standTile() : null;
+        check.that(standTile != null, "the order claimed a standing tile on the approach ring: " + standTile);
+        check.equal(1, site.builderCount(),
+                "the builder is attached to the site from the first order tick");
+        check.that(!BuildOrder.isAtStandTile(builder, standTile),
+                "the builder is still twenty tiles away, not standing at its tile");
+        check.equal(buildTime, site.constructionRemaining(),
+                "an attached but walking builder removes no construction point");
+
+        int arrivalTick = -1;
+        int tick = 1;
+        boolean noProgressBeforeArrival = true;
+        while (!site.isConstructed() && tick < 400) {
+            int before = site.constructionRemaining();
+            engine.tick();
+            tick++;
+            if (arrivalTick < 0) {
+                if (BuildOrder.isAtStandTile(builder, standTile)) {
+                    arrivalTick = tick;
+                    check.equal(buildTime, before,
+                            "the tick before arrival still had the full " + buildTime + " points");
+                    check.equal(before - 1, site.constructionRemaining(),
+                            "the first construction point is removed on the arrival tick itself");
+                } else {
+                    noProgressBeforeArrival &= site.constructionRemaining() == before;
+                }
+            }
+        }
+        check.that(noProgressBeforeArrival,
+                "no construction point was removed on any tick before the builder arrived");
+        check.that(arrivalTick > 1, "the walk really took more than one tick (arrived on tick "
+                + arrivalTick + ")");
+        check.that(site.isConstructed(), "the site completed after the builder arrived");
+        int walkTicks = arrivalTick - 1;
+        int buildTicks = tick - arrivalTick + 1;
+        check.equal(buildTime, buildTicks,
+                "the building took its full " + buildTime + " construction ticks after arrival");
+        check.equal(walkTicks + buildTime, tick,
+                "walk plus build (" + walkTicks + " + " + buildTime + ") equals the completion tick " + tick);
+        check.equal(0, site.builderCount(), "the completed site keeps no attached builder");
+    }
+
     /** The content of the cooperative check: a 40 tick hut, a depot and fast engineers. */
     private static ContentRegistry cooperativeContent() {
         return ContentRegistry.builder("coop")
@@ -2074,8 +2239,19 @@ public final class RtsScenario {
         check.that(leftover.isEmpty(), "the cooperative check starts with 1000 gold in the depot");
 
         List<Unit> builders = new ArrayList<>();
+        // Start every builder on a distinct tile of the site's approach ring. The cooperation checks are
+        // about the speed formula and the join rules, not about walking; 16b below owns the arrival rule.
+        // Starting on the ring means "arrived" is true on the first order tick, so the tick arithmetic is
+        // exactly the construction formula rather than a measurement of the path.
+        GridPos[] ring = {
+                new GridPos(15, 9),
+                new GridPos(16, 9),
+                new GridPos(17, 9),
+                new GridPos(18, 9),
+                new GridPos(15, 10),
+        };
         for (int index = 0; index < builderCount; index++) {
-            builders.add(world.spawnUnit(content.unit(COOP_BUILDER), player, new GridPos(14, 12 + index)));
+            builders.add(world.spawnUnit(content.unit(COOP_BUILDER), player, ring[index]));
         }
         CoopSite run = new CoopSite(engine, player, world);
         world.events().subscribe(Events.OrderFinished.class, event -> {

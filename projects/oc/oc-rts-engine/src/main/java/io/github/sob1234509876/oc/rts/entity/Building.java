@@ -26,12 +26,12 @@ import java.util.Set;
  *
  * <p>Buildings can be placed under construction: while {@link #isConstructed()} is false, production
  * does not start and {@link #constructionRemaining()} counts down. A site can have several builders
- * attached at once; each one claims its own adjacent standing tile and
- * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} advances the site faster while
- * more of them are attached. The attachment is a two way link that is always torn down explicitly: when
- * a builder's order finishes, fails or is cancelled it calls {@link #detachBuilder(Unit)}, and the
- * construction system (on completion) or the command service (on destruction) detaches every builder
- * of a site that is lost.
+ * attached at once; each one claims its own adjacent standing tile and walks there, and
+ * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} only counts the ones that have
+ * <em>arrived</em>, so an attached builder that is still walking does not advance the site. The attachment
+ * is a two way link that is always torn down explicitly: when a builder's order finishes, fails or is
+ * cancelled it calls {@link #detachBuilder(Unit)}, and the construction system (on completion) or the
+ * command service (on destruction) detaches every builder of a site that is lost.
  */
 public final class Building extends Entity {
 
@@ -124,8 +124,11 @@ public final class Building extends Entity {
     /**
      * Number of builders attached to this site.
      *
-     * <p>Every attached builder counts, even one that is still walking to its standing tile; the
-     * construction speed is derived from this count only, never from the order builders attached in.
+     * <p>Every attached builder counts here, even one that is still walking to its standing tile; this is
+     * the size of the attachment set, not the number of builders currently working.
+     * {@link io.github.sob1234509876.oc.rts.production.ConstructionSystem} filters the set with
+     * {@link io.github.sob1234509876.oc.rts.order.BuildOrder#isAtStandTile(Unit, GridPos)} and advances the
+     * site only for the builders that have arrived, so the count reported here is never used as progress.
      */
     public int builderCount() {
         return builders.size();
@@ -210,12 +213,19 @@ public final class Building extends Entity {
         return type.sizeY();
     }
 
-    /** Tile of the building's entry point, used by haulers as their delivery position. */
+    /**
+     * The <em>preferred</em> entry tile of the content layout: just outside the east side.
+     *
+     * <p>This is the tile the type declares, not necessarily the tile that is usable today. A legal flush
+     * placement can put another building on it, so gameplay code must ask
+     * {@link io.github.sob1234509876.oc.rts.dimension.Dimension#entranceTile(Building)} for the resolved
+     * entrance; this method stays the deterministic content anchor that resolution starts from.
+     */
     public GridPos entranceTile() {
         return new GridPos(origin.x() + type.sizeX(), origin.y() + type.sizeY() / 2);
     }
 
-    /** World position just outside the footprint, where units queue up to interact. */
+    /** World position of the preferred entry point; see {@link #entranceTile()} for the caveat. */
     public Vec2 entrance() {
         return Vec2.centerOf(entranceTile());
     }

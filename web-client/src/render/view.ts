@@ -315,6 +315,39 @@ export function ownershipColor(playerId: number | undefined, myPlayerId: number 
   }
 }
 
+/**
+ * The extra canvas mark a unit carries because the thin ownership ring is easy to miss in a fight.
+ *
+ * `own-outline` is a thin bright white rim around the body; it is achromatic, so it survives the
+ * greyscale palette rule and does not compete with the gold selection ring. `enemy-base` is a
+ * translucent red ellipse under the enemy unit's feet, using the same red as the enemy ownership ring.
+ * Buildings keep only the existing ring: a white outline around a large roof would read as a selection
+ * and a base tint would fight the construction bar. The tooltip carries the bold owner tag for every
+ * entity, so a building's owner is still unmistakable.
+ */
+export type OwnerBadge = "own-outline" | "enemy-base" | "none";
+
+/** Bright, thin, greyscale unit outline for the local player's own units. */
+export const OWN_UNIT_OUTLINE_COLOR = "rgba(255, 255, 255, 0.95)";
+
+/** Ground tint under an enemy unit; the ownership red, translucent enough to read the terrain. */
+export const ENEMY_UNIT_BASE_COLOR = "rgba(239, 68, 68, 0.34)";
+
+/** Which extra owner mark a unit gets, if any; buildings answer `none` and keep their ring. */
+export function ownerBadge(entity: EntityView, myPlayerId: number | null): OwnerBadge {
+  if (isBuildingEntityKind(entity.kind)) {
+    return "none";
+  }
+  switch (ownershipOf(entity.playerId, myPlayerId)) {
+    case "mine":
+      return "own-outline";
+    case "enemy":
+      return "enemy-base";
+    default:
+      return "none";
+  }
+}
+
 /** Kinds the fallback renderer draws as buildings rather than units. */
 const BUILDING_KINDS: ReadonlySet<string> = new Set<string>([
   "warehouse",

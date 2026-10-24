@@ -142,7 +142,7 @@ public final class HaulOrder implements Order {
             return OrderState.RUNNING;
         }
         if (!moving) {
-            issueMove(context, pickupTarget.entrance());
+            issueMove(context, context.world().dimensionOf(pickupTarget).entrance(pickupTarget));
             moving = true;
         }
         if (!unit.motion().isArrived()) {
@@ -171,7 +171,7 @@ public final class HaulOrder implements Order {
 
     private OrderState tickTarget(OrderContext context, Unit unit, WarehouseLogistics logistics) {
         if (!moving) {
-            issueMove(context, job.target().entrance());
+            issueMove(context, context.world().dimensionOf(job.target()).entrance(job.target()));
             moving = true;
         }
         if (!unit.motion().isArrived()) {

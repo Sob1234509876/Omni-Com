@@ -6,12 +6,15 @@
  * pixels. It never assumes the two sizes are equal.
  *
  * Draw order is terrain, tile grid (fallback only), the hover tile or the build-placement ghost, ground
- * shadows, ownership rings, entities sorted by y so lower entities overlap higher ones, their health
- * bars and the greyscale construction bar / `生产中 ×N` marker above buildings, the brief achromatic
- * selection flash halo, one gold selection ring per selected entity, and finally the marquee rectangle.
- * Ownership rings are thinner than selection rings and are drawn first, so every gold selection ring
- * always stays on top. The flash halo is drawn over the sprite but under the gold ring, so the feedback
- * never hides the selection colour. The construction chrome sits above the roof, never over the sprite.
+ * shadows, enemy unit base tints, ownership rings, entities sorted by y so lower entities overlap higher
+ * ones, own-unit white outlines, their health bars and the greyscale construction bar / `生产中 ×N`
+ * marker above buildings, the brief achromatic selection flash halo, one gold selection ring per
+ * selected entity, and finally the marquee rectangle. Ownership rings are thinner than selection rings
+ * and are drawn first, so every gold selection ring always stays on top. The enemy base tint is the one
+ * extra hostile mark, and the white own-unit outline is deliberately achromatic; both live on the
+ * canvas, while the surrounding chrome stays greyscale. The flash halo is drawn over the sprite but
+ * under the gold ring, so the feedback never hides the selection colour. The construction chrome sits
+ * above the roof, never over the sprite.
  *
  * The placement ghost is the one deliberate exception to the greyscale chrome rule: it is canvas
  * content, like the ownership rings, so each footprint tile is painted green, red or amber by its
@@ -30,9 +33,11 @@ import type { ScreenRect } from "./marquee";
 import {
   drawBuildingProgressBar,
   drawBuildingShape,
+  drawEnemyBaseTint,
   drawFlashHalo,
   drawGroundShadow,
   drawHealthBar,
+  drawOwnUnitOutline,
   drawOwnershipRing,
   drawQueueMarker,
   drawSelectionRing,
@@ -49,9 +54,12 @@ import {
   type PlacementPreview,
 } from "./placement";
 import {
+  ENEMY_UNIT_BASE_COLOR,
+  OWN_UNIT_OUTLINE_COLOR,
   entityInWindow,
   isBuildingEntityKind,
   kindName,
+  ownerBadge,
   ownershipColor,
   terrainAt,
   tileInWindow,
@@ -329,7 +337,20 @@ export class WorldRenderer {
         isBuildingEntityKind(item.entity.kind),
       );
     }
-    // Ownership pass: one thin ring per entity, first, so the gold selection ring can stay on top.
+    // Ownership pass: an enemy unit's red base tint first, then one thin ring per entity, so the gold
+    // selection ring can stay on top. The base tint is the extra mark that survives a crowded fight;
+    // the own-unit white outline is drawn over the sprite in the entity pass below.
+    for (const item of prepared) {
+      if (ownerBadge(item.entity, options.myPlayerId) === "enemy-base") {
+        drawEnemyBaseTint(
+          context,
+          item.screenX,
+          item.screenY,
+          tileOnScreen,
+          ENEMY_UNIT_BASE_COLOR,
+        );
+      }
+    }
     for (const item of prepared) {
       drawOwnershipRing(
         context,
@@ -373,6 +394,18 @@ export class WorldRenderer {
           item.screenY,
           tileOnScreen,
           playerColor(entity.playerId),
+        );
+      }
+
+      // Owner mark over the sprite: a thin bright white rim on the local player's units. It is
+      // achromatic and deliberately weaker than the gold selection ring drawn later.
+      if (ownerBadge(entity, options.myPlayerId) === "own-outline") {
+        drawOwnUnitOutline(
+          context,
+          item.screenX,
+          item.screenY,
+          tileOnScreen,
+          OWN_UNIT_OUTLINE_COLOR,
         );
       }
 

@@ -35,7 +35,7 @@ import {
   orderMove,
   orderStop,
   parseWhoAmI,
-  train,
+  trainBatch,
   upgrade,
   whoAmI,
 } from "./commands";
@@ -102,6 +102,7 @@ import {
   fetchWorldSnapshot,
   isBuildingEntityKind,
   isOwnUnit,
+  kindName,
   localPlayerIdFromRoster,
   marqueeSelection,
   ownershipOf,
@@ -1576,7 +1577,16 @@ function updateGameplayPanel(): void {
   const gameplayReady = loggedIn && socket !== null;
   const ownUnits = resolved.filter((entity) => isOwnUnit(entity, myPlayerId));
   const single = singleSelectedEntity();
-  const ownBuilding = single !== undefined && isMine(single) && isBuildingEntity(single);
+  const selectedOwnBuildings = resolved.filter(
+    (entity) => isMine(entity) && isBuildingEntity(entity),
+  );
+  const sameKindOwnBuildings =
+    selectedOwnBuildings.length > 0 &&
+    selectedOwnBuildings.length === resolved.length &&
+    selectedOwnBuildings.every(
+      (building) => kindName(building.kind) === kindName(selectedOwnBuildings[0]!.kind),
+    );
+  const trainBuilding = sameKindOwnBuildings ? selectedOwnBuildings[0] : undefined;
   const ownEngineer = placementEngineer() !== undefined;
 
   // The selection can lose its last own unit between snapshots; an armed attack move then has no
@@ -1598,9 +1608,13 @@ function updateGameplayPanel(): void {
   const showTrain = model.actions.some((action) => action.kind === "train");
   trainSection.hidden = !showTrain;
   trainTarget.textContent =
-    showTrain && single !== undefined ? `· e${single.id} ${contentLabel(single.kind)}` : "";
+    showTrain && trainBuilding !== undefined
+      ? selectedOwnBuildings.length === 1
+        ? `· e${trainBuilding.id} ${contentLabel(trainBuilding.kind)}`
+        : `· ${selectedOwnBuildings.length} 座 ${contentLabel(trainBuilding.kind)}（一次点击各排一个）`
+      : "";
   for (const button of trainButtons) {
-    button.disabled = !(gameplayReady && ownBuilding);
+    button.disabled = !(gameplayReady && sameKindOwnBuildings);
   }
 
   const showBuild = model.actions.some((action) => action.kind === "build");
@@ -1734,17 +1748,39 @@ function doAttackMove(tile: TileCoord): void {
   updateHud(true);
 }
 
+/**
+ * Queues one TRAIN job in every selected own building of the same kind.
+ *
+ * <p>Item 23 ("choose a lot of same typed buildings and let them work at once") is a client batch: the
+ * server grammar trains one building per line, so the page sends one line per selected building in
+ * selection order. Each building keeps its own queue, and the production system already ticks every
+ * queue each simulation tick, so the group produces in parallel. A mixed-kind or mixed unit/building
+ * selection is refused instead of silently training only part of it.
+ */
 function doTrain(unitPath: string): void {
-  const selected = singleSelectedEntity();
-  if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
-    refuse("先选中自己的建筑，再训练单位");
+  const selected = selectedEntities();
+  const buildings = selected.filter((entity) => isMine(entity) && isBuildingEntity(entity));
+  const oneKind =
+    buildings.length > 0 &&
+    buildings.length === selected.length &&
+    buildings.every((building) => kindName(building.kind) === kindName(buildings[0]!.kind));
+  if (!oneKind) {
+    refuse("先选中自己的同类型建筑（可以多座），再训练单位");
     return;
   }
-  void sendGameplayCommand(
-    "TRAIN",
-    train(selected.id, unitPath),
-    `已下训练 ${labelledContent(unitPath)}`,
-  );
+  let lines: string[];
+  try {
+    lines = trainBatch(buildings.map((building) => building.id), unitPath);
+  } catch (error: unknown) {
+    refuse(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  const first = buildings[0];
+  const confirmation =
+    buildings.length === 1 && first !== undefined
+      ? `已下训练 ${labelledContent(unitPath)}`
+      : `${buildings.length} 座 ${labelledContent(buildings[0]!.kind)} 各排入一个 ${labelledContent(unitPath)}`;
+  void sendGameplayBatch("TRAIN", lines, lines, confirmation);
 }
 
 /**
@@ -2122,19 +2158,22 @@ function updateTooltip(): void {
   );
   const signature =
     `${entity.id}\u0000${myPlayerId ?? "none"}\u0000${content.name}\u0000` +
-    content.lines.join("\u0001");
+    `${content.ownerTag}\u0000${content.lines.join("\u0001")}`;
   if (signature !== tooltipSignature) {
     tooltipSignature = signature;
     const name = document.createElement("div");
     name.className = "entity-tooltip-name";
     name.textContent = content.name;
+    const owner = document.createElement("div");
+    owner.className = "entity-tooltip-owner";
+    owner.textContent = `归属：${content.ownerTag}`;
     const rows = content.lines.map((line) => {
       const row = document.createElement("div");
       row.className = "entity-tooltip-line";
       row.textContent = line;
       return row;
     });
-    tooltipElement.replaceChildren(name, ...rows);
+    tooltipElement.replaceChildren(name, owner, ...rows);
   }
 
   // Unhide before measuring: a hidden element has an empty box. This happens inside one frame, so the
@@ -2273,6 +2312,7 @@ function emitSnapshotEvents(previous: WorldView, current: WorldView): void {
     (kind) => contentLabel(kind),
     performance.now(),
     snapshotEventDedupe,
+    myPlayerId,
   );
   for (const event of events) {
     log("info", event.text);
