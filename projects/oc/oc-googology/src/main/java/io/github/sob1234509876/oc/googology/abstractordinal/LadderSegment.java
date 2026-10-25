@@ -10,10 +10,12 @@ package io.github.sob1234509876.oc.googology.abstractordinal;
  *   <li>{@link #SEGMENT_ONE} - {@code 0 ~ SHO}, the part that BMS already names. It is not reimplemented
  *       here: a {@link LadderOrdinal} of this segment carries a {@link
  *       io.github.sob1234509876.oc.googology.bms.BmsOrdinal} and delegates every comparison to it.</li>
- *   <li>{@link #SEGMENT_TWO} - {@code SHO ~ LRPO}, represented as {@code TBMS(0)(1^alpha)} for
- *       {@code alpha < omega_1^CK} and as {@code TTBMS(0)(1^alpha)} for {@code alpha >= omega_1^CK}. The
- *       value is the abstract function {@link LadderOrdinal#f(LadderArgument)}; neither TBMS nor TTBMS is
- *       implemented as a matrix system.</li>
+ *   <li>{@link #SEGMENT_TWO} - {@code SHO ~ LRPO}, the images of the recursively expanded arguments. The
+ *       value is the abstract function {@link LadderOrdinal#f(LadderArgument)}, printed
+ *       {@code TBMS(0)(1^alpha)}. A non-recursively expanded argument gives a {@code TTBMS} fixed point at
+ *       its own layer instead, so it is not a segment-two value; the notation switch is the argument's
+ *       recursion type, not a comparison with {@code omega_1^CK}. Neither TBMS nor TTBMS is implemented as
+ *       a matrix system.</li>
  *   <li>{@link #SEGMENT_THREE} - the stage-two NRBMS segment, {@code omega_1^CK ~ X}, where {@code X} is
  *       the least fixed point {@code min{alpha | alpha = TNRBMS(0)(1^alpha)}}. It has two notations: an
  *       NRBMS expression is printed as {@code NRBMS(...)} and a TNRBMS value as
@@ -25,8 +27,8 @@ package io.github.sob1234509876.oc.googology.abstractordinal;
  *       omega_alpha}; the notation is {@code omega_alpha} (the subscript is an argument). The segment's
  *       switch is the boundary {@code X}, above which every value of the ladder is printed {@code
  *       omega_alpha}; the top is the shared boundary name {@code psi_I(I) = min{alpha | alpha =
- *       omega_alpha}}. Whether the switch belongs exactly at {@code X} is the open question Q7, and
- *       {@code X} is implemented as the documented default.</li>
+ *       omega_alpha}}. The owner confirmed in Q7a that the switch is exactly at {@code X} and that the
+ *       family starts at {@code omega_1}.</li>
  *   <li>{@link #PLACEHOLDER} - the named layer: {@code psi}, {@code SHO}, {@code LRPO},
  *       {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X} and {@code psi_I(I)}. These are names kept by
  *       the register, not values with a fundamental sequence or an arithmetic. They are boundaries that
@@ -48,8 +50,8 @@ public enum LadderSegment {
     /** Segment 1, {@code 0 ~ SHO}: the BMS layer, delegated to {@code BmsOrdinal}. */
     SEGMENT_ONE("segment 1 (0 ~ SHO, BMS)"),
 
-    /** Segment 2, {@code SHO ~ LRPO}: {@code f(alpha) = TBMS(0)(1^alpha)} or {@code TTBMS(0)(1^alpha)}. */
-    SEGMENT_TWO("segment 2 (SHO ~ LRPO, TBMS/TTBMS)"),
+    /** Segment 2, {@code SHO ~ LRPO}: {@code f(alpha) = TBMS(0)(1^alpha)} for a recursive argument. */
+    SEGMENT_TWO("segment 2 (SHO ~ LRPO, TBMS)"),
 
     /**
      * Segment 3, {@code omega_1^CK ~ X}: the NRBMS values below {@code lim(NRBMS)} and the TNRBMS values
@@ -68,7 +70,7 @@ public enum LadderSegment {
      * The named layer: {@code psi}, {@code SHO}, {@code LRPO}, {@code omega_1^CK}, {@code lim(NRBMS)},
      * {@code X} and {@code psi_I(I)}.
      */
-    PLACEHOLDER("named abstract layer (psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X, psi_I(I))");
+    PLACEHOLDER("named abstract layer (psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X, omega_1, psi_I(I))");
 
     private final String description;
 

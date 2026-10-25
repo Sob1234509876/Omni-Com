@@ -21,11 +21,12 @@ import java.util.Optional;
  *       is changed or reimplemented here; {@link LadderPlaceholder#SHO} is the same stage as
  *       {@link AbstractOrdinal#SHO} and is where the lower end of the ladder refers to the existing
  *       register.</li>
- *   <li><b>Segment 2, {@code SHO ~ LRPO}</b> - the abstract function {@link #f(LadderArgument)
- *       f(alpha) = TTBMS(0)(1^alpha)}. A value of this segment is printed as {@code TBMS(0)(1^alpha)}
- *       when {@code alpha < omega_1^CK} and as {@code TTBMS(0)(1^alpha)} when
- *       {@code alpha >= omega_1^CK}; {@link #notationName()} is that rule. Neither TBMS nor TTBMS is
- *       implemented as a matrix system, as the owner explicitly requested.</li>
+ *   <li><b>Segment 2, {@code SHO ~ LRPO}</b> - the abstract function {@link #f(LadderArgument)}. The
+ *       owner's layering rule selects its behaviour by the recursion type of the argument: a recursively
+ *       expanded argument gives {@code TBMS(0)(1^alpha)} and a value above it (A1); a non-recursively
+ *       expanded argument gives {@code TTBMS(0)(1^alpha)}, the fixed point of the TBMS step, which stays
+ *       at the argument's layer and compares equal to it (A2 with its fixed-point exception). Neither TBMS
+ *       nor TTBMS is implemented as a matrix system, as the owner explicitly requested.</li>
  *   <li><b>Segment 3, {@code omega_1^CK ~ X}</b> - the stage-two NRBMS segment. It has two notations.
  *       An NRBMS expression is the argument-side notation of the rungs below
  *       {@code lim(NRBMS)} and is printed as {@code NRBMS(...)}. Above it, the abstract function
@@ -41,8 +42,9 @@ import java.util.Optional;
  *       {@code TNRBMS(0)(1^alpha) -> omega_alpha} is the boundary {@code X}: every proper TNRBMS value is
  *       below {@code X} and every {@code omega_alpha} value is above it. The top of the segment is the
  *       shared boundary name {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, with
- *       {@code h(psi_I(I)) = psi_I(I)}. The placement of the switch at {@code X} is the documented
- *       default of the open question Q7, not a settled reading of the owner's specification.</li>
+ *       {@code h(psi_I(I)) = psi_I(I)}. The switch is at the fixed point of
+ *       {@code alpha -> TNRBMS(0)(1^alpha)} and the family starts at {@code omega_1}; the owner confirmed
+ *       both in Q7a. Q7b (whether an {@code omega_alpha} value may be a subscript) remains open.</li>
  *   <li><b>The named abstract layer</b> - {@link LadderPlaceholder#PSI}, {@link
  *       LadderPlaceholder#SHO}, {@link LadderPlaceholder#LRPO}, {@link
  *       LadderPlaceholder#OMEGA_ONE_CK}, {@link LadderPlaceholder#LIM_NRBMS}, {@link
@@ -54,15 +56,18 @@ import java.util.Optional;
  * the following declared one:
  *
  * <pre>
- *   psi &lt; every BMS value &lt; SHO &lt; every f(alpha) &lt; LRPO &lt; omega_1^CK
+ *   psi &lt; every BMS value &lt; SHO &lt; every recursive f(alpha) &lt; LRPO &lt; omega_1^CK
  *       &lt; every NRBMS value &lt; lim(NRBMS) &lt; every TNRBMS value &lt; X
- *       &lt; every omega_alpha value &lt; psi_I(I)
+ *       &lt; omega_1 &lt; every other omega_alpha value &lt; psi_I(I)
  * </pre>
  *
- * <p>The order is implemented by a tier for each layer ({@code psi} = 0, BMS = 1, {@code SHO} = 2,
- * {@code f} values = 3, {@code LRPO} = 4, {@code omega_1^CK} = 5, NRBMS values = 6,
- * {@code lim(NRBMS)} = 7, TNRBMS values = 8, {@code X} = 9, {@code omega_alpha} values = 10,
- * {@code psi_I(I)} = 11) and then, inside a layer, by the exact order that layer already has:
+ * <p>A {@code TTBMS} fixed point is not a separate tier: it compares equal to its argument, so
+ * {@code f(omega_1^CK) = omega_1^CK}, {@code f(NRBMS) = NRBMS}, {@code f(lim(NRBMS)) = lim(NRBMS)} and
+ * {@code f(X) = X} sit at the argument's own place in this order. The order is implemented by a tier for
+ * each layer ({@code psi} = 0, BMS = 1, {@code SHO} = 2, recursive {@code f} values = 3, {@code LRPO} = 4,
+ * {@code omega_1^CK} = 5, NRBMS values = 6, {@code lim(NRBMS)} = 7, TNRBMS values = 8, {@code X} = 9,
+ * {@code omega_alpha} values = 10, {@code psi_I(I)} = 11; a fixed point reuses its argument's tier) and
+ * then, inside a layer, by the exact order that layer already has:
  * {@link BmsOrdinal#compareTo(BmsOrdinal)} for segment 1,
  * {@link NonRecursiveBms#compareTo(NonRecursiveBms)} for the NRBMS values, the order of the arguments for
  * the segment-2, segment-3 and segment-4 step values (because the steps are declared strictly increasing),
@@ -72,39 +77,45 @@ import java.util.Optional;
  * reports the two {@link LadderSegment}s the comparison took place in, so a cross-layer comparison cannot
  * be mistaken for a same-layer one.
  *
- * <p><b>Arguments and values are different types.</b> This is the stage-two answer to
- * {@code OPEN QUESTIONS.md} Q6. The step functions take a {@link LadderArgument}, never a
- * {@code LadderOrdinal}:
+ * <p><b>The public rule: layering by recursion.</b> The owner's answer to {@code OPEN QUESTIONS.md} Q6 is
+ * not the argument/value split; it is the recursion layering. The step functions take a
+ * {@link LadderArgument}, and the <em>type of the argument</em> decides everything about {@code f}:
  *
  * <ul>
- *   <li>the <b>argument side</b> is {@link LadderArgument}: BMS values, NRBMS expressions and the five
- *       boundary names. A1 lives here;</li>
- *   <li>the <b>value side</b> is this class: the step values it produces, plus the argument-side
- *       ordinals embedded for the total order. A2's inequality bounds a produced value here, while its
- *       quantifier ranges over the argument side;</li>
- *   <li>there is <strong>no conversion from a value to an argument</strong>. In particular
- *       {@code f(f(omega_1^CK))}, {@code tnrbms(tnrbms(...))} and {@code omegaAlpha(omegaAlpha(...))}
- *       cannot be written: the compiler rejects them. {@link #ofArgument(LadderArgument)} embeds an
- *       argument into the value order so that one total order still exists, but there is no way back.</li>
+ *   <li>a <b>recursively expanded</b> argument (a finite recursive expression: a BMS value at or above
+ *       {@code omega}, or {@code SHO}) gives {@code TBMS(0)(1^alpha)}, which is strictly above the
+ *       argument. A1 lives here;</li>
+ *   <li>a <b>non-recursively expanded</b> argument (an NRBMS expression, or {@code omega_1^CK} or a later
+ *       boundary) gives {@code TTBMS(0)(1^alpha)}, the fixed point of {@code alpha -> TBMS(0)(1^alpha)}.
+ *       The value stays at the argument's layer: it compares equal to the argument at a fixed point, and
+ *       it can never land below {@code omega_1^CK}. A2 lives here, with the fixed-point exception.</li>
  * </ul>
  *
- * <p>The five boundary names ({@code SHO}, {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X},
- * {@code psi_I(I)}) are deliberately shared by both sides: they are boundary names rather than proper step
- * nodes, and the owner's definitions need them on both sides ({@code f(SHO)}, {@code f(X) = LRPO},
+ * <p>The two types remain as an <em>internal</em> design: the argument side is {@link LadderArgument} (BMS
+ * values, NRBMS expressions and the six boundary names), the value side is this class (the step values it
+ * produces, plus the argument-side ordinals embedded for the total order). There is <strong>no conversion
+ * from a value to an argument</strong>, so {@code f(f(omega_1^CK))} is still a compile error. That type
+ * boundary is a useful seam, but it is no longer presented as the resolution of Q6: the earlier
+ * argument/value separation only made the old boundary step unrepresentable, it did not remove the
+ * problem. The recursion layering removes it.
+ *
+ * <p>The six boundary names ({@code SHO}, {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X},
+ * {@code omega_1}, {@code psi_I(I)}) are deliberately shared by both sides: they are boundary names rather than proper step
+ * nodes, and the owner's definitions need them on both sides ({@code f(SHO)}, {@code f(X) = X},
  * {@code TNRBMS(X) = X}, {@code TNRBMS(omega) = lim(NRBMS)}, {@code omegaAlpha(psi_I(I)) = psi_I(I)}).
- * Every <em>produced</em> step value ({@link #isStepValue()}: a TBMS/TTBMS, TNRBMS or
- * {@code omega_alpha} node) is never accepted as an argument. The only places where a boundary name and a
- * produced value name the same ordinal are the boundary collapses {@code f(omega) = SHO},
- * {@code g(omega) = lim(NRBMS)}, {@code f(X) = LRPO}, {@code g(X) = X} and
- * {@code h(psi_I(I)) = psi_I(I)}.
+ * Every <em>produced</em> step value ({@link #isStepValue()}: a TBMS node, a TTBMS fixed point, a TNRBMS
+ * node or an {@code omega_alpha} node) is executed only as a value. The only places where a boundary name
+ * and a produced value name the same ordinal are the collapses {@code f(omega) = SHO},
+ * {@code g(omega) = lim(NRBMS)}, {@code g(X) = X}, {@code h(psi_I(I)) = psi_I(I)} and the fixed-point
+ * images such as {@code f(omega_1^CK) = omega_1^CK} and {@code f(X) = X}.
  *
  * <p><b>The stage-three argument decision.</b> The step {@code h(alpha) = omega_alpha} reuses the
  * stage-two split: its subscript is a {@link LadderArgument}, never an {@code omega_alpha} value.
  * {@code omega_alpha} is itself the iteration of {@code alpha -> omega^alpha}, so chained subscripts such
- * as {@code omega_{omega_X}} are mathematically natural; the register still keeps them out. This is
- * deliberate. An {@code omega_alpha} value already denotes a rung that the step produced, and letting it
- * back in as a subscript would reintroduce the type of feedback the separation exists to prevent; it would
- * also weaken the reflection invariant that no {@link LadderOrdinal} occurs in {@link LadderArgument}.
+ * as {@code omega_{omega_X}} are mathematically natural; the register still keeps them out. This is the
+ * separate Q7 decision, not the Q6 resolution. An {@code omega_alpha} value already denotes a rung that
+ * the step produced, and letting it back in as a subscript would weaken the reflection invariant that no
+ * {@link LadderOrdinal} occurs in {@link LadderArgument}.
  * The restriction is <strong>not</strong> too restrictive for the rungs the owner lists, because every
  * subscript can be drawn from the previous stages (BMS, NRBMS, {@code SHO}, {@code omega_1^CK},
  * {@code lim(NRBMS)}, {@code X}) or from the shared fixed-point boundary {@code psi_I(I)}. What it does
@@ -115,71 +126,63 @@ import java.util.Optional;
  * {@link LadderArgument} would be the larger and worse change. This is recorded in {@code OPEN
  * QUESTIONS.md} Q7; no relaxation is implemented here.
  *
- * <p><b>What is assumed, not proved.</b> The owner's specification states two inequalities for the
- * function {@code f(alpha) = TTBMS(0)(1^alpha)}, restated on the two sides:
+ * <p><b>A1 is a theorem; A2 is by definition.</b> The owner's ruling on Q2 settles the status:
  *
  * <ul>
- *   <li><b>Assumption A1 (argument side).</b> For every argument {@code alpha} in
- *       {@link LadderArgument#isA1Domain()} (that is, {@code alpha < omega_1^CK}), {@code f(alpha) >
- *       alpha}.</li>
- *   <li><b>Assumption A2 (argument side, bounding the value).</b> For every argument {@code alpha} in
- *       {@link LadderArgument#isA2Domain()} (that is, {@code omega_1^CK <= alpha < X}), {@code psi(alpha)
- *       < f(alpha) < alpha}, assuming an OCF exists up to {@code alpha}.</li>
+ *   <li><b>A1, recursive arguments: a theorem.</b> For every recursively expanded argument {@code alpha} in
+ *       {@link LadderArgument#isA1Domain()} (a BMS value at or above {@code omega}, or {@code SHO}),
+ *       {@code f(alpha) = TBMS(0)(1^alpha)} and {@code f(alpha) > alpha}. The owner states that this is
+ *       <strong>proved</strong>, not assumed; the self check asserts it as a theorem on the recursive
+ *       sample.</li>
+ *   <li><b>A2, non-recursive arguments: by the definition of TTBMS.</b> For every non-recursively expanded
+ *       argument {@code alpha} in {@link LadderArgument#isA2Domain()} ({@code omega_1^CK}, an NRBMS
+ *       expression, {@code lim(NRBMS)}, {@code X}, {@code omega_1} or {@code psi_I(I)}),
+ *       {@code f(alpha) = TTBMS(0)(1^alpha)} is the fixed point of {@code alpha -> TBMS(0)(1^alpha)}. At a
+ *       fixed point, {@code f(alpha) = alpha}; otherwise {@code f(alpha) < alpha}; and
+ *       {@code psi(alpha) < f(alpha)} where the OCF is defined. This follows directly from the definition
+ *       of TTBMS. That definition has never been written out in full: the owner states explicitly that the
+ *       Chinese googology community treats it as standard and considers it unnecessary to write it down.
+ *       The register records that status and does not pretend to have a written definition it does not
+ *       have.</li>
  * </ul>
  *
- * <p>Neither inequality is proved, and neither follows from the tier construction; they are the owner's
- * assumptions, checked on a sample by the self check and labelled as assumptions there. The register
- * models the OCF {@code psi} as the single name {@link LadderPlaceholder#PSI}, placed below everything,
- * so that "some {@code psi}-value is below {@code f(alpha)}" can be written without inventing an
- * evaluation of an OCF. It does not model {@code psi} as a function.
+ * <p>The identifications {@code SHO = lim(BMS) = f(omega)} and {@code LRPO < omega_1^CK} are
+ * <strong>definitions</strong> of the owner's specification, not discoveries. The register models the OCF
+ * {@code psi} as the single name {@link LadderPlaceholder#PSI}, placed below everything; that placement is
+ * a documented modelling choice, so that "some {@code psi}-value is below {@code f(alpha)}" can be written
+ * without inventing an evaluation of an OCF. It does not model {@code psi} as a function. None of these
+ * items is labelled an assumption.
  *
- * <p><b>The boundary analysis, re-run under the separation.</b> The old contradiction used
- * {@code beta = omega_1^CK}:
- *
- * <ol>
- *   <li>A2 gives {@code f(beta) < beta}.</li>
- *   <li>Let {@code alpha = f(beta)}; since {@code alpha < beta = omega_1^CK}, A1 would apply.</li>
- *   <li>A1 demands {@code f(alpha) > alpha}, while strict monotonicity demands
- *       {@code f(alpha) < f(beta) = alpha}.</li>
- * </ol>
- *
- * <p>Under the separation, step 2 is not expressible: {@code f(beta)} is a {@code LadderOrdinal} and
- * {@link #f(LadderArgument)} only accepts a {@link LadderArgument}. The two sides do not share a domain,
- * so A1 and A2 cannot be applied to the same object and the contradiction is removed from the register.
- * The result is a <em>change of shape</em>, not a proof of consistency:
+ * <p><b>The boundary, closed by layering.</b> Historically, A2 at {@code beta = omega_1^CK} was read as
+ * {@code f(beta) < beta}; the value then fell below {@code omega_1^CK}, back into A1's domain, where A1
+ * demanded {@code f(f(beta)) > f(beta)} while strict monotonicity demanded the opposite. That is the
+ * contradiction recorded by the earlier Q6. Stage two made the second step unrepresentable by separating
+ * argument and value types, but that was a workaround: it only hid the problem, because the denied ordinal
+ * was still the denotation of {@code f(omega_1^CK)}. The owner's layering removes it instead:
  *
  * <ul>
- *   <li>in the register, A1 and A2 are jointly consistent and are checked separately; every
- *       {@code f} value sits in tier 3, so A1's values are above {@code SHO} while A2's values are below
- *       {@code omega_1^CK};</li>
- *   <li>the owner's A1 says "for any ordinal {@code alpha < omega_1^CK}", but the ordinal denoted by
- *       {@code f(omega_1^CK)} is still below {@code omega_1^CK} and still a legitimate ordinal. The
- *       separation avoids the contradiction only by <strong>restricting A1 to the argument side</strong>.
- *       If A1 is kept as an unrestricted statement about all ordinals below {@code omega_1^CK}, the
- *       contradiction survives for the denotation of {@code f(omega_1^CK)}; the self check records this
- *       as {@code [BOUNDARY]}. This restriction is exactly what the separation forces, not a new repair
- *       invented on top of it;</li>
- *   <li>for the same reason A2 is asserted only for argument-side {@code alpha}. The proper step values
- *       that lie in {@code [omega_1^CK, X)} (for example {@code g(omega) = lim(NRBMS)} or
- *       {@code g(a)} for an NRBMS argument {@code a}) are not arguments, so A2 is not asserted at
- *       them;</li>
- *   <li>the fixed points {@code X} and {@code psi_I(I)} are the two places where a value-side limit must
- *       be admitted as an argument: the owner defines {@code LRPO = f(X)}, {@code X} itself by
- *       {@code X = TNRBMS(0)(1^X)}, and {@code psi_I(I)} by {@code psi_I(I) = omega_{psi_I(I)}}. The
- *       register therefore exposes both as boundary names on both sides, and checks {@code f(X) = LRPO},
- *       {@code g(X) = X} and {@code h(psi_I(I)) = psi_I(I)}. Without those boundary exceptions the owner's
- *       definitions could not be written at all. Neither fixed point is produced by its step at any smaller
- *       argument ({@code g(a) != a} for every argument {@code a < X}; {@code h(a) != a} for every
- *       argument {@code a < psi_I(I)}).</li>
+ *   <li>{@code omega_1^CK} is a <em>non-recursively expanded</em> argument, so {@code f(omega_1^CK) =
+ *       TTBMS(0)(1^omega_1^CK)} is a fixed point at its own layer. In the register it compares equal to
+ *       {@code omega_1^CK}; it is not below it, so A1's domain (the recursive type) is never re-entered
+ *       and A1 is never re-triggered;</li>
+ *   <li>A1's domain is the recursive type and A2's is the non-recursive type; they are disjoint by
+ *       construction, not by restricting a quantifier to one side of an argument/value split;</li>
+ *   <li>the register materialises every non-recursively expanded argument as a fixed point, so A2's
+ *       strict {@code f(alpha) < alpha} branch has no materialised instance here. The branch is stated
+ *       because the owner states it; the invariant this register does check for every argument is the
+ *       layering invariant: no value produced by {@code f} is below its argument. The old contradiction
+ *       cannot be stated: there is no {@code beta} with {@code f(beta) < beta} at the boundary.</li>
  * </ul>
  *
- * <p><b>The boundary names.</b> {@code SHO} is the lower boundary of segment 2 and a valid argument:
- * {@code f(SHO)} is the first {@code f}-value above it, and A1 applies. {@code omega_1^CK} is both the
- * start of A2 and the TBMS/TTBMS switch. {@code lim(NRBMS)} is the value of the TNRBMS step at
- * {@code omega} and the NRBMS/TNRBMS switch. {@code X} is the top of segment 3, the TNRBMS/omega switch
- * and is accepted as an argument because the owner defines LRPO as {@code f(X)}. {@code psi_I(I)} is the
- * top of segment 4 and the fixed point of the {@code omega_alpha} step; it is accepted as an argument
- * because the fixed-point equation needs it. {@code LRPO} and {@code psi} are not arguments.
+ * <p><b>The boundary names.</b> {@code SHO} is the lower boundary of segment 2, a recursive argument:
+ * {@code f(SHO)} is a TBMS node above it, and A1 applies. {@code omega_1^CK} is the floor of the
+ * non-recursive layer, the first non-recursive A2 argument; its image is a TTBMS fixed point equal to
+ * itself. {@code lim(NRBMS)} is the value of the TNRBMS step at {@code omega} and the NRBMS/TNRBMS
+ * switch. {@code X} is the top of segment 3, the TNRBMS/omega switch, and a non-recursive A2 argument
+ * with {@code f(X) = X}. {@code psi_I(I)} is the top of segment 4 and the fixed point of the
+ * {@code omega_alpha} step; it is accepted as an argument because the fixed-point equation needs it.
+ * {@code LRPO} and {@code psi} are not arguments. The earlier {@code f(X) = LRPO} is retired; {@code LRPO}
+ * is the declared top of the recursive segment-two images.
  *
  * <p><b>The NRBMS segment.</b> The NRBMS values are not a new matrix system: they wrap a
  * {@link NonRecursiveBms} and delegate comparison, expansion and the non-recursive case to it. The TNRBMS
@@ -221,6 +224,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     private enum Kind {
         BMS,
         FUNCTION,
+        FIXPOINT,
         NRBMS,
         TNRBMS,
         OMEGA_ALPHA,
@@ -232,6 +236,13 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
 
     /** {@code omega}, written {@code BMS(0)(1)}; the first argument of {@link #f(LadderArgument)}. */
     private static final LadderOrdinal OMEGA = new LadderOrdinal(BmsOrdinal.of(new int[][]{{0}, {1}}));
+
+    /**
+     * {@code omega_1}, the first uncountable ordinal and the first value of the {@code omega_alpha}
+     * segment. It is also the shared boundary argument of the uncountable layer.
+     */
+    private static final LadderOrdinal OMEGA_ONE =
+            new LadderOrdinal(LadderArgument.one(), Kind.OMEGA_ALPHA);
 
     private static final LadderOrdinal PSI = new LadderOrdinal(LadderPlaceholder.PSI);
     private static final LadderOrdinal SHO = new LadderOrdinal(LadderPlaceholder.SHO);
@@ -365,11 +376,15 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         if (argument.isNrbms()) {
             return ofNrbms(argument.nrbms().orElseThrow());
         }
+        if (argument.equals(LadderArgument.omegaOne())) {
+            return OMEGA_ONE;
+        }
         return of(switch (argument.boundary().orElseThrow()) {
             case SHO -> LadderPlaceholder.SHO;
             case OMEGA_ONE_CK -> LadderPlaceholder.OMEGA_ONE_CK;
             case LIM_NRBMS -> LadderPlaceholder.LIM_NRBMS;
             case TNRBMS_FIXPOINT -> LadderPlaceholder.TNRBMS_FIXPOINT;
+            case OMEGA_ONE -> throw new AssertionError("omega_1 is mapped just above");
             case PSI_I_I -> LadderPlaceholder.PSI_I_I;
         });
     }
@@ -384,6 +399,16 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return OMEGA;
     }
 
+    /**
+     * {@code omega_1}, the first uncountable ordinal and the first value of the {@code omega_alpha}
+     * segment ({@code omegaAlpha(one())}). It is also the shared boundary argument of the uncountable
+     * layer, so the matrix-derived steps are the identity on it: {@code f(omega_1) = g(omega_1) =
+     * omega_1}. The {@code omega_alpha} enumeration grows, so {@code h(omega_1) > omega_1}.
+     */
+    public static LadderOrdinal omegaOne() {
+        return OMEGA_ONE;
+    }
+
     /** The BMS limit {@code SHO}, the lower boundary of segment 2 and the same stage as {@link AbstractOrdinal#SHO}. */
     public static LadderOrdinal sho() {
         return SHO;
@@ -394,7 +419,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return LRPO;
     }
 
-    /** The Church-Kleene ordinal placeholder {@code omega_1^CK}, where the TBMS/TTBMS rule switches. */
+    /** The Church-Kleene ordinal placeholder {@code omega_1^CK}, the floor of the non-recursive layer. */
     public static LadderOrdinal omegaOneCk() {
         return OMEGA_ONE_CK;
     }
@@ -424,31 +449,51 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     }
 
     /**
-     * The abstract function {@code f(alpha) = TTBMS(0)(1^alpha)} of segment 2.
+     * The abstract function {@code f(alpha) = TBMS(0)(1^alpha)} / {@code TTBMS(0)(1^alpha)}.
      *
-     * <p>The argument is a {@link LadderArgument}: a value produced by a step is never accepted, which is
-     * the stage-two separation. The notation rule is applied by {@link #toString()} and
-     * {@link #notationName()}: the value is {@code TBMS(0)(1^alpha)} when {@code alpha < omega_1^CK} and
-     * {@code TTBMS(0)(1^alpha)} when {@code alpha >= omega_1^CK}. The function itself is abstract: no TBMS
-     * or TTBMS matrix is built, and the only computational content of an {@code f} value is its argument,
-     * which makes the comparison order-isomorphic to the argument order (assumption A1 and the strict
-     * monotonicity are the owner's).
+     * <p><b>The owner's layering rule.</b> The notation and the fixed-point behaviour are selected by the
+     * <em>recursion type of the argument</em>, not by comparing the argument with a fixed ordinal:
      *
-     * <p><b>Boundary collapses.</b> {@code f(omega) = SHO} (the owner's
-     * {@code SHO = lim(BMS) = TBMS(0)(1^omega)}) and {@code f(X) = LRPO} (the owner's definition of LRPO
-     * at the TNRBMS fixed point). Both are names, not {@code f} nodes; the boundary names are shared
-     * between the two sides and are the only values that may also be arguments.
+     * <ul>
+     *   <li>for a <b>recursively expanded</b> argument {@code alpha} (a finite recursive expression: a BMS
+     *       value at or above {@code omega}, or the boundary {@code SHO}), {@code f(alpha) =
+     *       TBMS(0)(1^alpha)} and the owner's A1 <strong>theorem</strong> holds: {@code f(alpha) > alpha}.
+     *       The value is an ordinary segment-two node in tier 3, above the argument's layer;</li>
+     *   <li>for a <b>non-recursively expanded</b> argument {@code alpha} (an NRBMS expression, or the
+     *       boundary {@code omega_1^CK} or a later boundary), {@code f(alpha) = TTBMS(0)(1^alpha)} is the
+     *       fixed point of the step {@code alpha -> TBMS(0)(1^alpha)}. In this register that fixed point is
+     *       the argument itself: the returned value compares equal to {@code alpha} and prints
+     *       {@code TTBMS(0)(1^alpha)}. It is therefore at its own layer and can never fall below
+     *       {@code omega_1^CK}, so A1 is never re-triggered by it.</li>
+     * </ul>
+     *
+     * <p>The function itself is abstract: no TBMS or TTBMS matrix is built, and the only computational
+     * content of an {@code f} value is its argument. Strict monotonicity is the owner's, and the layering
+     * keeps it: recursive images are the segment-two nodes above {@code SHO}, and a non-recursively
+     * expanded image sits exactly at its argument's layer, so a larger argument still gives a larger (or
+     * equal, at a fixed point) image and never a smaller one.
+     *
+     * <p><b>Boundary collapse.</b> {@code f(omega) = SHO} (the owner's
+     * {@code SHO = lim(BMS) = TBMS(0)(1^omega)}). The value is a name, not an {@code f} node. The earlier
+     * identification {@code f(X) = LRPO} is <strong>retired</strong> by the layering: {@code X} is
+     * non-recursively expanded, so {@code f(X)} is the TTBMS fixed point at {@code X}'s own layer, not a
+     * value below {@code omega_1^CK}. {@code LRPO} stays the declared top of the recursive segment-two
+     * images.
      *
      * <p><b>Domain.</b> The mathematical {@code f} is a function on ordinals. This implementation
      * materialises the part the ladder needs: an argument at or above {@code omega} (a BMS value, an NRBMS
      * expression, or a boundary name). A BMS argument below {@code omega} is segment 1 and is rejected.
      *
-     * <p><b>Assumptions A1 and A2</b> are stated on the class and are the owner's, not theorems of this
-     * class. The self check asserts them on a sample and labels the assertions as assumptions.
+     * <p><b>A1 is a theorem and A2 is by the definition of TTBMS.</b> The owner's Q2 ruling states A1 as
+     * proved; A2 follows directly from the TTBMS definition, which the owner states is community standard
+     * and has never been written out in full. The self check asserts A1 on recursive arguments as a
+     * theorem, and A2 on non-recursively expanded arguments including its fixed-point exception, as the
+     * definition's consequence. No assumption tag is used.
      *
      * @param alpha the argument of {@code f}
-     * @return {@code SHO} for {@code omega}, {@code LRPO} for {@code X}, otherwise an abstract segment-two
-     *         value carrying {@code alpha}
+     * @return {@code SHO} for {@code omega}; for a recursively expanded argument an abstract segment-two
+     *         {@code TBMS} node carrying {@code alpha}; for a non-recursively expanded argument the
+     *         {@code TTBMS} fixed point, which compares equal to {@code alpha}
      * @throws NullPointerException     if {@code alpha} is {@code null}
      * @throws IllegalArgumentException if {@code alpha} is a BMS argument below {@code omega}
      */
@@ -459,27 +504,110 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
                     + " (BMS values >= omega, NRBMS expressions, SHO, omega_1^CK, lim(NRBMS), X and psi_I(I)),"
                     + " but got " + alpha + "; values below omega belong to segment 1 and are delegated to BMS");
         }
+        if (alpha.isNonRecursivelyExpanded()) {
+            return new LadderOrdinal(alpha, Kind.FIXPOINT);
+        }
         if (alpha.equals(LadderArgument.omega())) {
             return SHO;
         }
-        if (alpha.equals(LadderArgument.tnrbmsFixpoint())) {
-            return LRPO;
-        }
         return new LadderOrdinal(alpha, Kind.FUNCTION);
+    }
+
+    /**
+     * Whether {@code alpha} is a fixed point of the TBMS step, checked exactly as the register states it:
+     * {@code f(alpha) == alpha} under {@link #compareTo(LadderOrdinal)}. The predicate is the executable
+     * form of the owner's A2 exception: a non-recursively expanded argument is a fixed point, so
+     * {@code f(alpha) = alpha} rather than {@code f(alpha) < alpha}; a recursively expanded argument has
+     * {@code f(alpha) > alpha} and is not a fixed point.
+     *
+     * <p>The check is materialised only where {@code f} is: a BMS argument below {@code omega} is rejected
+     * by {@code f} and by this method.
+     *
+     * @param alpha the argument to test
+     * @return whether {@code f(alpha)} compares equal to {@code alpha}
+     * @throws NullPointerException     if {@code alpha} is {@code null}
+     * @throws IllegalArgumentException if {@code alpha} is a BMS argument below {@code omega}
+     */
+    public static boolean isFixedPointOfTbms(LadderArgument alpha) {
+        Objects.requireNonNull(alpha, "alpha");
+        if (!alpha.isFunctionArgument()) {
+            throw new IllegalArgumentException("the fixed-point test is materialised on the same domain as f"
+                    + " (at or above omega), but got " + alpha);
+        }
+        return f(alpha).compareTo(ofArgument(alpha)) == 0;
+    }
+
+    /**
+     * Whether {@code alpha} is a fixed point of the TNRBMS step: {@code g(alpha) == alpha} under
+     * {@link #compareTo(LadderOrdinal)}. {@code X} is the least countable fixed point, and every
+     * uncountable argument is a fixed point by the owner's convention.
+     *
+     * @param alpha the argument to test
+     * @return whether {@code tnrbms(alpha)} compares equal to {@code alpha}
+     * @throws NullPointerException     if {@code alpha} is {@code null}
+     * @throws IllegalArgumentException if {@code alpha} is a BMS argument below {@code omega}
+     */
+    public static boolean isFixedPointOfTnrbms(LadderArgument alpha) {
+        Objects.requireNonNull(alpha, "alpha");
+        if (!alpha.isFunctionArgument()) {
+            throw new IllegalArgumentException("the TNRBMS fixed-point test is materialised on the same"
+                    + " domain as g (at or above omega), but got " + alpha);
+        }
+        return tnrbms(alpha).compareTo(ofArgument(alpha)) == 0;
+    }
+
+    /**
+     * Whether {@code alpha} is a fixed point of the {@code omega_alpha} step:
+     * {@code h(alpha) == alpha} under {@link #compareTo(LadderOrdinal)}. The enumeration
+     * {@code alpha -> omega_alpha} grows, so an uncountable argument is <em>not</em> automatically a fixed
+     * point: {@code omega_{omega_1} > omega_1}. The fixed points are the ordinals with
+     * {@code alpha = omega_alpha}; the register materialises {@code psi_I(I)} as the least one.
+     *
+     * @param alpha the subscript to test
+     * @return whether {@code omegaAlpha(alpha)} compares equal to {@code alpha}
+     * @throws NullPointerException     if {@code alpha} is {@code null}
+     * @throws IllegalArgumentException if {@code alpha} is not an {@code omega_alpha} argument
+     */
+    public static boolean isFixedPointOfOmegaAlpha(LadderArgument alpha) {
+        Objects.requireNonNull(alpha, "alpha");
+        if (!alpha.isOmegaAlphaArgument()) {
+            throw new IllegalArgumentException("the omega_alpha fixed-point test is materialised on the"
+                    + " omega_alpha domain, but got " + alpha);
+        }
+        return omegaAlpha(alpha).compareTo(ofArgument(alpha)) == 0;
+    }
+
+    /**
+     * Whether {@code alpha} is a fixed point of the initial-ordinal enumeration:
+     * {@code omega_alpha = alpha}. This is the owner's Q7a fixed-point notion for the {@code omega_alpha}
+     * family and the same test as {@link #isFixedPointOfOmegaAlpha(LadderArgument)}. It is <em>not</em>
+     * implied by {@code alpha} being uncountable: {@code omega_{omega_1} > omega_1}, because
+     * {@code omega_1} is the first infinite initial ordinal, while {@code omega_{omega_1}} is the
+     * {@code omega_1}-th one. The matrix-derived steps ({@code f}, {@code g}) are identity on uncountable
+     * arguments by the owner's convention; the {@code omega_alpha} enumeration is not.
+     *
+     * @param alpha the subscript to test
+     * @return whether {@code omega_alpha} compares equal to {@code alpha}
+     * @throws NullPointerException     if {@code alpha} is {@code null}
+     * @throws IllegalArgumentException if {@code alpha} is not an {@code omega_alpha} argument
+     */
+    public static boolean isOmegaFixedPoint(LadderArgument alpha) {
+        return isFixedPointOfOmegaAlpha(alpha);
     }
 
     /**
      * The abstract function {@code g(alpha) = TNRBMS(0)(1^alpha)} of segment 3.
      *
      * <p>The argument is a {@link LadderArgument}, so a TNRBMS or TBMS value is never accepted. The
-     * notation is {@code TNRBMS(0)(1^alpha)} for every value above the boundary; the two boundary
-     * collapses are {@code g(omega) = lim(NRBMS) = TNRBMS(0)(1^omega)} and
-     * {@code g(X) = X} (the fixed point). The step is declared strictly increasing, and its only
-     * computational content is its argument.
+     * notation is {@code TNRBMS(0)(1^alpha)} for every countable value above the boundary; the two
+     * boundary collapses are {@code g(omega) = lim(NRBMS) = TNRBMS(0)(1^omega)} and
+     * {@code g(X) = X} (the least fixed point). On an uncountable argument the owner's convention makes
+     * the matrix-derived step the identity: {@code g(kappa) = kappa}. The step is declared strictly
+     * increasing, and its only computational content is its argument.
      *
      * @param alpha the argument of {@code g}
-     * @return {@code lim(NRBMS)} for {@code omega}, {@code X} for {@code X}, otherwise an abstract
-     *         segment-three value carrying {@code alpha}
+     * @return {@code lim(NRBMS)} for {@code omega}, {@code X} for {@code X}, the argument itself for an
+     *         uncountable argument, otherwise an abstract segment-three value carrying {@code alpha}
      * @throws NullPointerException     if {@code alpha} is {@code null}
      * @throws IllegalArgumentException if {@code alpha} is a BMS argument below {@code omega}
      */
@@ -488,6 +616,10 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         if (!alpha.isFunctionArgument()) {
             throw new IllegalArgumentException("TNRBMS is materialised on the same argument-side domain as f"
                     + " (at or above omega), but got " + alpha);
+        }
+        if (alpha.isUncountable()) {
+            // The owner's convention: every uncountable ordinal is a fixed point of the TNRBMS step.
+            return ofArgument(alpha);
         }
         if (alpha.equals(LadderArgument.omega())) {
             return LIM_NRBMS;
@@ -512,30 +644,45 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
      * and accepted only by a second overload of this method, not a {@code LadderOrdinal} inside
      * {@link LadderArgument}. No such overload is implemented.
      *
-     * <p><b>The switch.</b> The owner's item 5 changes the notation from {@code TNRBMS(0)(1^alpha)} to
-     * {@code omega_alpha}. The register places that switch at the boundary {@code X}: every proper TNRBMS
-     * value is below {@code X}, every {@code omega_alpha} value is above it, and all of them are printed
-     * {@code omega_alpha}. The subscript itself is not what selects the notation, so an argument below
-     * {@code X} still produces an {@code omega_alpha} value above {@code X}; this is the same layer jump
-     * the TNRBMS step already performs. The placement is the documented default of
-     * {@code OPEN QUESTIONS.md} Q7, because the owner has not confirmed it.
+     * <p><b>The switch (owner's Q7a).</b> The owner has confirmed that the notation switches from
+     * {@code TNRBMS(0)(1^alpha)} to {@code omega_alpha} at the fixed point of
+     * {@code alpha -> TNRBMS(0)(1^alpha)}, which is {@code X}; the {@code omega_alpha} family then starts
+     * at the uncountable ordinals. The register therefore materialises {@code omega_1 =
+     * omegaAlpha(one())} as the first segment-four value, not {@code omega_omega}. Every proper TNRBMS
+     * value is below {@code X}, and every {@code omega_alpha} value is above it.
+     *
+     * <p><b>The enumeration grows (correction to Q7b).</b> {@code omega_alpha} is the {@code alpha}-th
+     * infinite initial ordinal. It is the identity only at an enumeration fixed point
+     * ({@code alpha = omega_alpha}, checked by {@link #isOmegaFixedPoint(LadderArgument)}); it is
+     * <em>not</em> the identity merely because {@code alpha} is uncountable. In particular
+     * {@code omega_{omega_1} > omega_1}. The owner's "every uncountable ordinal is a fixed point"
+     * convention applies to the matrix-derived steps {@code f} and {@code g} only. Q7b is therefore not
+     * moot: allowing an {@code omega_alpha} value as a subscript would produce new ordinals such as
+     * {@code omega_{omega_X}}. The current default keeps values out of subscripts; the smallest
+     * relaxation is a dedicated stage-four subscript type accepted only by a second overload of this
+     * method, with no general value-to-argument conversion. It is documented and <strong>not</strong>
+     * implemented.
      *
      * <p><b>Boundary collapse.</b> {@code h(psi_I(I)) = psi_I(I)} (the owner's
      * {@code psi_I(I) = min{alpha | alpha = omega_alpha}}). Every other materialised argument produces an
      * abstract segment-four value carrying that argument; the step is declared strictly increasing in the
-     * subscript, and its only computational content is the subscript.
+     * subscript, and its only computational content is the subscript. In particular {@code h(omega_1)}
+     * is a new segment-four value above {@code omega_1}.
      *
      * @param alpha the subscript of {@code omega_alpha}
-     * @return {@code psi_I(I)} for the fixed-point boundary, otherwise an abstract segment-four value
-     *         carrying {@code alpha}
+     * @return {@code omega_1} for {@code 1}, {@code psi_I(I)} for the least fixed-point boundary,
+     *         otherwise an abstract segment-four value carrying {@code alpha}
      * @throws NullPointerException     if {@code alpha} is {@code null}
-     * @throws IllegalArgumentException if {@code alpha} is a BMS argument below {@code omega}
+     * @throws IllegalArgumentException if {@code alpha} is not an {@code omega_alpha} argument
      */
     public static LadderOrdinal omegaAlpha(LadderArgument alpha) {
         Objects.requireNonNull(alpha, "alpha");
-        if (!alpha.isFunctionArgument()) {
+        if (!alpha.isOmegaAlphaArgument()) {
             throw new IllegalArgumentException("omega_alpha is materialised on the same argument-side domain"
-                    + " as f and TNRBMS (at or above omega), but got " + alpha);
+                    + " as f and TNRBMS (at or above omega), plus 1 for omega_1, but got " + alpha);
+        }
+        if (alpha.equals(LadderArgument.one())) {
+            return OMEGA_ONE;
         }
         if (alpha.equals(LadderArgument.psiII())) {
             return PSI_I_I;
@@ -545,11 +692,15 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
 
     // ------------------------------------------------------------------ inspection
 
-    /** The segment this value belongs to. */
+    /**
+     * The segment this value belongs to. A TBMS fixed point is not a segment-two value: it sits at its
+     * argument's layer, so its segment is the segment of the embedded argument.
+     */
     public LadderSegment segment() {
         return switch (kind) {
             case BMS -> LadderSegment.SEGMENT_ONE;
             case FUNCTION -> LadderSegment.SEGMENT_TWO;
+            case FIXPOINT -> ofArgument(argument).segment();
             case NRBMS, TNRBMS -> LadderSegment.SEGMENT_THREE;
             case OMEGA_ALPHA -> LadderSegment.SEGMENT_FOUR;
             case PLACEHOLDER -> LadderSegment.PLACEHOLDER;
@@ -561,9 +712,21 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return kind == Kind.BMS;
     }
 
-    /** Whether this is a segment-two value, i.e. a materialised {@code f(alpha)}. */
+    /**
+     * Whether this is a segment-two value, i.e. a materialised {@code TBMS(0)(1^alpha)} for a recursively
+     * expanded argument. The fixed-point images of non-recursively expanded arguments are
+     * {@link #isTbmsFixedPoint() TTBMS fixed points}, not segment-two nodes.
+     */
     public boolean isFunctionValue() {
         return kind == Kind.FUNCTION;
+    }
+
+    /**
+     * Whether this is the {@code TTBMS(0)(1^alpha)} fixed point of a non-recursively expanded argument.
+     * Such a value compares equal to its argument and sits at the argument's layer.
+     */
+    public boolean isTbmsFixedPoint() {
+        return kind == Kind.FIXPOINT;
     }
 
     /** Whether this is a segment-three NRBMS value. */
@@ -587,12 +750,13 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     }
 
     /**
-     * Whether this value was produced by a ladder step: a TBMS/TTBMS node, a TNRBMS node or an
-     * {@code omega_alpha} node. These are the values that are never accepted as an argument; the boundary
-     * collapses are placeholders and are documented as the shared names.
+     * Whether this value was produced by a ladder step: a TBMS node, a TTBMS fixed point, a TNRBMS node or
+     * an {@code omega_alpha} node. The boundary collapses are placeholders and are documented as the
+     * shared names.
      */
     public boolean isStepValue() {
-        return kind == Kind.FUNCTION || kind == Kind.TNRBMS || kind == Kind.OMEGA_ALPHA;
+        return kind == Kind.FUNCTION || kind == Kind.FIXPOINT || kind == Kind.TNRBMS
+                || kind == Kind.OMEGA_ALPHA;
     }
 
     /** Whether this is the empty BMS matrix, the ladder's {@code 0}. */
@@ -610,9 +774,14 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return Optional.ofNullable(nrbms);
     }
 
-    /** The argument {@code alpha} of a materialised {@code f(alpha)}, when this is a segment-two value. */
+    /**
+     * The argument {@code alpha} of a materialised {@code f(alpha)}, when this is either a segment-two
+     * TBMS node or a TTBMS fixed point.
+     */
     public Optional<LadderArgument> functionArgument() {
-        return kind == Kind.FUNCTION ? Optional.ofNullable(argument) : Optional.empty();
+        return kind == Kind.FUNCTION || kind == Kind.FIXPOINT
+                ? Optional.ofNullable(argument)
+                : Optional.empty();
     }
 
     /** The argument {@code alpha} of a materialised {@code g(alpha)}, when this is a segment-three TNRBMS value. */
@@ -637,8 +806,9 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
      *
      * <ul>
      *   <li>segment 1: {@code "BMS"};</li>
-     *   <li>segment 2: {@code "TBMS"} for an argument below {@code omega_1^CK} and {@code "TTBMS"} for an
-     *       argument at or above it;</li>
+     *   <li>{@code f} images: {@code "TBMS"} for a recursively expanded argument and {@code "TTBMS"} for a
+     *       non-recursively expanded one. The switch is the recursion type of the argument, never the
+     *       position of the argument relative to {@code omega_1^CK};</li>
      *   <li>segment 3: {@code "NRBMS"} for an NRBMS value and {@code "TNRBMS"} for a TNRBMS value. The
      *       switch between the two is the boundary {@code lim(NRBMS)};</li>
      *   <li>segment 4: {@code "omega"} for an {@code omega_alpha} value. The switch from {@code TNRBMS} to
@@ -650,7 +820,8 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     public String notationName() {
         return switch (kind) {
             case BMS -> "BMS";
-            case FUNCTION -> argument.compareTo(LadderArgument.omegaOneCk()) < 0 ? "TBMS" : "TTBMS";
+            case FUNCTION -> "TBMS";
+            case FIXPOINT -> "TTBMS";
             case NRBMS -> "NRBMS";
             case TNRBMS -> "TNRBMS";
             case OMEGA_ALPHA -> "ω";
@@ -669,6 +840,13 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     @Override
     public int compareTo(LadderOrdinal other) {
         Objects.requireNonNull(other, "other");
+        if (kind == Kind.FIXPOINT || other.kind == Kind.FIXPOINT) {
+            // A TTBMS fixed point is the argument itself in the order: delegate to the argument's value.
+            // LadderOrdinal.ofArgument never returns a fixed point, so this recursion terminates.
+            LadderOrdinal left = kind == Kind.FIXPOINT ? ofArgument(argument) : this;
+            LadderOrdinal right = other.kind == Kind.FIXPOINT ? ofArgument(other.argument) : other;
+            return left.compareTo(right);
+        }
         int byTier = Integer.compare(tier(), other.tier());
         if (byTier != 0) {
             return byTier;
@@ -681,6 +859,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
             case FUNCTION, TNRBMS, OMEGA_ALPHA -> argument.compareTo(other.argument);
             case NRBMS -> nrbms.compareTo(other.nrbms);
             case PLACEHOLDER -> placeholder.compareTo(other.placeholder);
+            case FIXPOINT -> throw new AssertionError("a fixed point is handled above");
         };
     }
 
@@ -708,6 +887,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return switch (kind) {
             case BMS -> 1;
             case FUNCTION -> 3;
+            case FIXPOINT -> ofArgument(argument).tier();
             case NRBMS -> 6;
             case TNRBMS -> 8;
             case OMEGA_ALPHA -> 10;
@@ -725,7 +905,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     public String toArgumentString() {
         return switch (kind) {
             case BMS -> bms.toString();
-            case FUNCTION, TNRBMS, OMEGA_ALPHA -> toString();
+            case FUNCTION, FIXPOINT, TNRBMS, OMEGA_ALPHA -> toString();
             case NRBMS -> nrbms.toString();
             case PLACEHOLDER -> placeholder.text();
         };
@@ -737,6 +917,9 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
      * the notation around them.
      */
     private String omegaSubscriptText() {
+        if (argument.isOne()) {
+            return "1";
+        }
         String text = argument.toArgumentString();
         return argument.isBoundary() ? text : "{" + text + "}";
     }
@@ -750,7 +933,8 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     public String toString() {
         return switch (kind) {
             case BMS -> bms.isZero() ? "0" : notationName() + bms;
-            case FUNCTION, TNRBMS -> notationName() + "(0)(1^" + argument.toArgumentString() + ")";
+            case FUNCTION, FIXPOINT, TNRBMS ->
+                    notationName() + "(0)(1^" + argument.toArgumentString() + ")";
             case OMEGA_ALPHA -> notationName() + "_" + omegaSubscriptText();
             case NRBMS -> notationName() + nrbms;
             case PLACEHOLDER -> placeholder.text();
@@ -767,6 +951,8 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         return switch (kind) {
             case BMS -> 31 * Kind.BMS.ordinal() + bms.hashCode();
             case FUNCTION -> 31 * Kind.FUNCTION.ordinal() + argument.hashCode();
+            // A fixed point is the argument in the order, so its hash is the argument-value hash.
+            case FIXPOINT -> ofArgument(argument).hashCode();
             case NRBMS -> 31 * Kind.NRBMS.ordinal() + nrbms.hashCode();
             case TNRBMS -> 31 * Kind.TNRBMS.ordinal() + argument.hashCode();
             case OMEGA_ALPHA -> 31 * Kind.OMEGA_ALPHA.ordinal() + argument.hashCode();

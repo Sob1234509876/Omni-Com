@@ -2,62 +2,63 @@
 
 A running list so nothing is silently assumed. The agent keeps working while these are open and records the default it chose; answering one changes the default, not the schedule.
 
-## Q6. The two ladder assumptions in `Ordinals.md` contradict each other (needs a decision)
+## Q6. The two ladder assumptions in `Ordinals.md` — **answered by the owner: layer by recursion**
 
-**This one blocks a real specification, not just a preference.** Stage one of item 3 implements `f(α) = TTBMS(0)(1^α)` with the two assumed inequalities from `Ordinals.md`:
+**Status: answered and implemented.** The old reading was that `f(α) = TTBMS(0)(1^α)` satisfies A1 for `α < ω₁^CK` and A2 (including `f(α) < α`) for `ω₁^CK ≤ α <` the fixed point, which conflicts with monotonicity at `β = ω₁^CK`: A2 gives `f(β) < β`, so `α = f(β)` falls inside A1's domain, and A1 demands `f(α) > α` while monotonicity forbids it.
 
-- **A1**: for `α < ω₁^CK`, `f(α) > α`.
-- **A2**: for `ω₁^CK ≤ α <` the relevant fixed point, `ψ(α) < f(α) < α`.
+The owner's answer is **layering by recursion**, which removes the problem rather than hiding it. Quoted rule:
 
-They are **not jointly consistent with `f` being strictly increasing**:
+> For an argument `a` that is **recursive** in the NRBMS sense (a finite recursive expression), `f(a) = TBMS(0)(1^a)` and **A1 holds: `f(a) > a`.** For an argument `a` that is **non-recursively expanded** in NRBMS, `TTBMS(0)(1^a)` is a **fixed point of `a ↦ TBMS(0)(1^a)`**, so `f(a) = TTBMS(0)(1^a)` is that fixed point and therefore **always at or above its own layer** — it can never fall below `ω₁^CK`, so A1 is never re-triggered by it. **A2 is corrected in exactly one place**: at a fixed point `f(a) = a` (not `< a`); the strict `<` remains only for non-recursive arguments that are not fixed points.
 
-1. Take `β = ω₁^CK`. A2 gives `f(β) < β`.
-2. Let `α = f(β)`. Since `f(β) < β = ω₁^CK`, we have `α < ω₁^CK`, so A1 applies and requires `f(α) > α`.
-3. But `α < β` and `f` is increasing gives `f(α) < f(β) = α`. Contradiction.
+Implemented rule:
 
-So at least one of the following must be changed: drop monotonicity of `f`, weaken A1 to "`f(α) ≥ α`", weaken A2 to "`f(α) < α` without the `ψ(α) <` half", restrict A1 to `α` that is not of the form `f(β)`, or make `f` depend on a segment/cardinal parameter (`f_H`, `f_𝕀`, …) as the later rungs (items 5 and up of `Ordinals.md`) already imply.
+- **A1 (recursive arguments):** for every recursively expanded argument `a`, `f(a) = TBMS(0)(1^a)` and `f(a) > a`.
+- **A2 (non-recursive arguments, fixed-point exception):** for every non-recursively expanded argument `a`, `f(a) = TTBMS(0)(1^a)` is the fixed point of `a ↦ TBMS(0)(1^a)`; at a fixed point `f(a) = a`, otherwise `f(a) < a`, and `ψ(a) < f(a)` where the OCF is defined.
+- The notation switch is by the **recursion type of the argument**, not by comparing the argument with `ω₁^CK`.
+- The register materialises every non-recursively expanded argument as a fixed point, so `f(a) = a` for all of them and **no value produced by `f` ever lands below its argument's layer**. The old contradiction cannot be stated: `f(ω₁^CK) = ω₁^CK`, not `< ω₁^CK`.
 
-**Default while unanswered:** stage one implements `f` strictly increasing, checks A1 and A2 each on their own domain and **records the boundary at `ω₁^CK` as a failing-consistent condition** rather than pretending it holds; both are labelled as assumptions. Stage two will separate the "argument register" from the "value register", which is where the resolution most likely lives, and the agent will not silently pick a repair for the owner's specification.
+**What happened to the argument/value separation:** it is retained as an *internal type design* only. The earlier claim that it resolved Q6 is withdrawn: it only made the value-to-argument step unrepresentable, which hid the contradiction without removing it. The recursion layering removes it.
 
-**Outcome of stage two (recorded; the question is still open for the owner):** the separation **does** dissolve the contradiction inside the model — `f` accepts only arguments, `f(ω₁^CK)` is a value, so the step that fed that value back into `f` cannot be written, and A1 and A2 end up on disjoint domains where they are jointly consistent. But that is a **change of shape, not a proof**: your literal quantifier says "for every `α < ω₁^CK`", and the ordinal **denoted** by `f(ω₁^CK)` is such an ordinal, so under the unrestricted reading the contradiction survives for the denotation. The remaining decision is therefore narrow:
-- keep the quantifier over **argument-side ordinals only** (current implementation, consistent), or
-- keep the unrestricted quantifier and accept that `f` cannot be both increasing and satisfy A1 at that denotation (then one of the five repairs above is needed).
-Three residuals are also recorded: A2 is not asserted at proper `TNRBMS` values because they are values; the fixed point `X` is a shared boundary name because two axioms could not otherwise be written; and "least fixed point" is only checkable over the argument register.
+**What remains for Q6:** nothing blocking. A below-`I` enumeration fixed point other than `ψ_𝕀(𝕀)` cannot be named by the current machinery; that is recorded as a documented limitation, not invented. `Q7` is a separate stage-four question (see below); the part of it that asked where the `f` notation switches is obsoleted by the recursion-type rule, and the owner has since answered the `TNRBMS → ω_α` switch (Q7a) as well.
 
 ## Q7. Stage three: where does `TNRBMS(0)(1^α)` become `ω_α`, and may an `ω_α` value be a subscript?
 
-`Ordinals.md` item 5 changes the notation "from `TBMS(0)(1^α)` and `TTBMS(0)(1^α)` to `ω_α`" and gives the segment as `ω₁ ~ min{α | α = ω_α} = ψ_𝕀(𝕀)`. It does not say where in the ladder the `TNRBMS(0)(1^α)` notation stops and `ω_α` starts, and it does not say whether the subscript of `ω_α` may itself be an `ω_α` value. Stage three has to pick a default.
+### Q7a — switch point: **answered by the owner**
 
-**The switch point.** Candidate readings:
+The `TNRBMS(0)(1^α)` notation switches to `ω_α` **at the fixed point of `a ↦ TNRBMS(0)(1^a)`**, i.e. at `X`, and the `ω_α` family **starts at the uncountable ordinals, at `ω₁`**. The register therefore materialises `ω₁ = h(1)` (not `h(ω) = ω_ω`) as the first segment-four value; `h(ω) = ω_ω` remains a normal segment-four value above `X`. The old note that the register "does not claim `ω_ω = ω₁`" is replaced by this rule.
 
-1. **At `X`** (implemented). The stage-two fixed point `X = min{α | α = TNRBMS(0)(1^α)}` is the switch: every proper TNRBMS value is below `X`, every `ω_α` value above it. `X` is also the new segment's lower input, so the ladder stays contiguous at `X`.
-2. **At `lim(NRBMS)`.** The switch would happen one boundary earlier, so the whole TNRBMS range above `lim(NRBMS)` would already be written `ω_α`; the `TNRBMS` notation would cover only the boundary itself.
-3. **Only after some further fixed point.** Neither `X` nor `lim(NRBMS)`; the `ω_α` rungs would start only after another fixed point above `X`, leaving a gap the register cannot name today.
+### Q7b — values as subscripts: **open, and not moot**
 
-**May an `ω_α` value be a subscript?** Candidate readings:
+`ω_α` is the `α`-th infinite initial ordinal. It is **not** the identity on every uncountable argument: `ω_{ω₁} > ω₁`, because `ω₁` is the first infinite initial ordinal. The owner's "every uncountable ordinal is a fixed point" convention applies only to the **matrix-derived steps** (`TBMS`, the `TTBMS` fixed-point map, `TNRBMS`), which are declared conventions. The real enumeration fixed points are the `α` with `α = ω_α`; the owner states that every ordinal at or above the inaccessible cardinal `I` (and every cardinal-register stage above it) is one, so `ω_I = I` and `ω_a = a` from `I` upward. Fixed points below `I` exist but are not required by `Ordinals.md`; `ψ_𝕀(𝕀)` is the one the register names.
 
-- **No** (implemented). A subscript is a previous-stage argument (`BMS` at or above `ω`, an `NRBMS` expression, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or the new shared boundary `ψ_𝕀(𝕀)`. This keeps the stage-two argument/value separation and the reflection invariant that no `LadderOrdinal` occurs in `LadderArgument`.
-- **Yes, for the `ω` step only** (the smallest relaxation, described but not implemented). A dedicated stage-four subscript type wraps an `ω_α` value, is accepted only by the `ω` step through a second overload, and has no conversion back to a value. This would make `ω_{ω_X}` and longer chains writable while keeping `f` and the TNRBMS step unable to take a stage-four value.
-- **Yes, generally.** An `ω_α` value becomes an ordinary `LadderArgument`. Rejected: it would put `LadderOrdinal` inside `LadderArgument` and reopen exactly the value-to-argument feedback the separation exists to prevent.
+Because `ω_α` grows below `I`, allowing an `ω_α` value as a subscript **would produce new ordinals** (`ω_{ω_X}`, `ω_{ω_{ω_X}}`, …). The two options:
 
-**Default while unanswered:** the switch is at `X`, and an `ω_α` value is **not** a subscript. This is implemented as `LadderOrdinal.omegaAlpha(...)`, `LadderOrdinal.psiII()` and `LadderSegment.SEGMENT_FOUR`; the self check asserts the switch, the strict increase in the subscript and the fixed point. Answering Q7 changes the switch point or enables the relaxation; it does not change the four-stage schedule.
+- **No** (current default, implemented). A subscript is a previous-stage argument (`BMS` at or above `ω`, an `NRBMS` expression, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or a shared boundary (`ω₁`, `ψ_𝕀(𝕀)`). This still expresses every rung in `Ordinals.md`.
+- **The smallest relaxation** (described, not implemented). A dedicated stage-four subscript type wraps one `ω_α` value, is accepted only by a second `omegaAlpha` overload, and has no general conversion to `LadderArgument`. Values must not become ordinary arguments: that would put `LadderOrdinal` inside `LadderArgument` and destroy the one-way reflection invariant.
+
+**Default while Q7b is unanswered:** no value-to-subscript conversion; the relaxation is documented in `help/ordinal-ladder.md` and the Javadoc, not implemented. The `ω_α` family is treated as growing on the strip `ω₁ ≤ a < I` and as the identity from `I` upward; the cardinal register carries the growth above the ordinal ladder.
 
 ## Q1. Item 3, the 21-rung ladder: what counts as "done" per stage?
 
 `Ordinals.md` describes a ladder from `0` to `Ω_Absolute`. It is being built in four stages, and each stage ships a compiling, checked milestone rather than waiting for the whole ladder:
 
-1. `0 ~ SHO` (BMS, already there) + `f(α) = TTBMS(0)(1^α)` + the `SHO ~ LRPO` segment with the `TBMS`/`TTBMS` notation switch at `ω₁^CK`.
+1. `0 ~ SHO` (BMS, already there) + `f(α)` + the `SHO ~ LRPO` segment, with `TBMS`/`TTBMS` selected by the argument's recursion type (Q6's owner answer).
 2. `ω₁^CK ~ lim(NRBMS)` with the NRBMS segment and the same notation rule over `TNRBMS(0)(1^α)`.
 3. The `ω₁ ~ ψ_𝕀(𝕀)` (i.e. `ω_α`) rungs.
 4. The cardinal register: inaccessible → Mahlo → weakly compact → indescribable → measurable → strong → supercompact → I3..I0 → Icarus → Reinhardt → Berkeley → Ord-Berkeley → limit club Berkeley → `Ω ~ Ω_Absolute`, each delegating its definition to `documents/Human/Cardinals/`.
 
 **Default while unanswered:** stages run in that order, one per work batch, each landing with checks and its own help page.
 
-## Q2. The `f` inequalities are assumptions — confirm that we may assert them as assumptions
+## Q2. The status of the `f` inequalities, `SHO`/`LRPO` and `ψ` — **answered by the owner**
 
-`Ordinals.md` says: assume `f(α) > α` for `α < ω₁^CK`, and `ψ(α) < f(α) < α` for `ω₁^CK ≤ α <` the relevant fixed point. `ω₁^CK` and `ψ` are therefore modelled as **named placeholders**, and the inequalities are checked and **labelled as assumptions**, not proved.
+The owner has ruled on the four items; the ladder now has **no `[ASSUMPTION]` tags**:
 
-**Default while unanswered:** implement exactly that, and say "assumption of the ladder, as specified by the owner" in the Javadoc and the help page. **Superseded by Q6** for the boundary, which cannot be assumed away.
+1. **A1 (`f(a) > a` for recursive arguments) is a THEOREM**, not an assumption. It is asserted and checked as a theorem; it is not described as an assumption anywhere.
+2. **A2 is correct directly from the definition of TTBMS.** The definition of TTBMS has never actually been written down in full, but the Chinese googology community treats it as standard and considers it unnecessary to write. A2 is therefore **by definition**, and the documentation says exactly that — "by the definition of TTBMS; the definition is community standard and has not been written out in full, which the owner states explicitly" — without calling it an assumption and without pretending there is a written definition.
+3. **`SHO = lim(BMS) = f(ω)` and `LRPO < ω₁^CK` are definitions**, not discoveries. They are labelled as definitions in the code and the docs.
+4. **`ψ` stays a name.** The owner approved the current modelling choice (`可以这样子搞`): an opaque named placeholder placed below the whole ladder, documented as a modelling choice with the limitation stated. A real OCF is out of scope and not required by `Ordinals.md`; no OCF work is to be added.
+
+**Status:** implemented. The self check prints A1 as `[THEOREM]` and A2 as `[DEFINITION]`, and checks that no `[ASSUMPTION]` tag remains in the ladder documentation. Q6's layering fix and the Q7 answers are unchanged.
 
 ## Q3. Who owns the elite swarm the owner met twice?
 

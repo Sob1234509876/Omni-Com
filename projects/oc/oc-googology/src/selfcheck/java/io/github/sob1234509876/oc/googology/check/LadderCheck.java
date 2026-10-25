@@ -10,30 +10,37 @@ import io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveExpansion;
+import io.github.sob1234509876.oc.googology.cardinalregister.CardinalRung;
+import io.github.sob1234509876.oc.googology.cardinalregister.RelativePath;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
  * The ordinal-ladder section of the self check: the register of {@link LadderOrdinal}s (segment 1
- * delegated to BMS, segment 2 as the abstract function {@code f(alpha) = TTBMS(0)(1^alpha)}, segment 3 as
- * the NRBMS/TNRBMS segment, segment 4 as the stage-three {@code omega_alpha} segment, and the named
- * placeholders), the separated argument register {@link LadderArgument}, the functions' strict monotonicity
- * and order isomorphism, the notation switches at {@code omega_1^CK}, {@code lim(NRBMS)} and {@code X}, the
- * owner's assumptions re-stated on the argument side, the argument/value separation (enforced by the types
- * and checked by reflection), the boundary analysis at {@code omega_1^CK}, the stage-three decision that an
- * {@code omega_alpha} value is never an argument, and the totality/transitivity of the declared order over a
- * sample that covers all four segments.
+ * delegated to BMS, segment 2 as the abstract function {@code f(alpha)} with its notation chosen by the
+ * argument's recursion type, segment 3 as the NRBMS/TNRBMS segment, segment 4 as the initial-ordinal
+ * {@code omega_alpha} segment from {@code omega_1}, and the named placeholders), the argument register
+ * {@link LadderArgument}, the functions' strict monotonicity and order isomorphism, the
+ * {@code lim(NRBMS)}/`X` notation switches, A1 as the owner's theorem and A2 as a consequence of the TTBMS
+ * definition, the recursion layering that removes the old boundary contradiction, the internal
+ * argument/value seam (enforced by the types and checked by reflection), the matrix steps' identity on
+ * uncountable arguments, the {@code omega_1} start and the {@code I}-upward fixed points of the enumeration,
+ * the open Q7b decision that an {@code omega_alpha} value is never a subscript, and the
+ * totality/transitivity of the declared order over a sample that covers all four segments.
  *
  * <p>The checks report into the same counters as {@link GoogologyCheck} through their {@link Result}, so
- * the one printed total still counts every check. The two inequalities that are the owner's assumptions,
- * not theorems, are printed with the tag {@code [ASSUMPTION]}; the boundary-analysis statements are
- * ordinary checks, printed with the tag {@code [BOUNDARY]} so they are not mistaken for assumptions.
+ * the one printed total still counts every check. A1 is the owner's theorem, printed with
+ * {@code [THEOREM]}; A2 is the consequence of the TTBMS definition, printed with {@code [DEFINITION]};
+ * the boundary-analysis statements are ordinary checks, printed with {@code [BOUNDARY]}. There is no
+ * assumption tag anywhere.
  */
 public final class LadderCheck {
 
@@ -120,17 +127,20 @@ public final class LadderCheck {
         check("f(ω^ω) 是段二函数值，并保存实参 ω^ω",
                 fOmegaOmega.isFunctionValue()
                         && fOmegaOmega.functionArgument().orElseThrow().equals(omegaOmegaArgument));
-        check("f(ω_1^CK) 是段二函数值，并保存实参 ω_1^CK",
-                fOmegaOne.isFunctionValue()
-                        && fOmegaOne.functionArgument().orElseThrow().equals(omegaOneCkArgument));
+        check("f(ω_1^CK) 是非递归实参的 TTBMS 固定点：与 ω_1^CK 比较相等并保存实参 ω_1^CK",
+                fOmegaOne.isTbmsFixedPoint()
+                        && fOmegaOne.compareTo(LadderOrdinal.omegaOneCk()) == 0
+                        && fOmegaOne.functionArgument().orElseThrow().equals(omegaOneCkArgument)
+                        && LadderOrdinal.isFixedPointOfTbms(omegaOneCkArgument));
         equal("f(ω^ω) 的 TBMS 记号", "TBMS(0)(1^(0)(1)(2))", fOmegaOmega.toString());
         equal("f(ω_1^CK) 的 TTBMS 记号", "TTBMS(0)(1^ω₁^CK)", fOmegaOne.toString());
 
         check("f(ω^ω) 的记号选择是 TBMS", "TBMS".equals(fOmegaOmega.notationName()));
         check("f(ω_1^CK) 的记号选择是 TTBMS", "TTBMS".equals(fOmegaOne.notationName()));
         check("段一值的记号选择是 BMS", "BMS".equals(one.notationName()) && "BMS".equals(omega.notationName()));
-        check("段二函数值即使实参 ≥ ω_1^CK 也仍属于段二",
-                fOmegaOne.segment() == LadderSegment.SEGMENT_TWO);
+        check("递归实参的 f 值属于段二；非递归实参的固定点归入实参所在层",
+                fOmegaOmega.segment() == LadderSegment.SEGMENT_TWO
+                        && fOmegaOne.segment() == LadderSegment.PLACEHOLDER);
 
         check("段一的值归入段一", zero.segment() == LadderSegment.SEGMENT_ONE
                 && omega.segment() == LadderSegment.SEGMENT_ONE);
@@ -177,15 +187,16 @@ public final class LadderCheck {
                         && LadderPlaceholder.TNRBMS_FIXPOINT.tier() < LadderPlaceholder.PSI_I_I.tier());
         check("每个占位符都有非空描述", allDescriptionsPresent());
 
-        check("f 接受 ω、ω^ω、ε₀、SHO、ω_1^CK、lim(NRBMS)、NRBMS 与 X",
+        check("f 接受 ω、ω^ω、ε₀、SHO、ω_1^CK、lim(NRBMS)、NRBMS 与 X；递归侧是 TBMS 结点，非递归侧是固定点",
                 LadderOrdinal.f(omegaArgument) == LadderOrdinal.sho()
                         && LadderOrdinal.f(omegaOmegaArgument).isFunctionValue()
                         && LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}})).isFunctionValue()
                         && LadderOrdinal.f(LadderArgument.sho()).isFunctionValue()
-                        && LadderOrdinal.f(LadderArgument.omegaOneCk()).isFunctionValue()
-                        && LadderOrdinal.f(LadderArgument.limNrbms()).isFunctionValue()
-                        && LadderOrdinal.f(LadderArgument.ofNrbms(NonRecursiveBms.parse("(1)"))).isFunctionValue()
-                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()) == LadderOrdinal.lrpo());
+                        && LadderOrdinal.f(LadderArgument.omegaOneCk()).isTbmsFixedPoint()
+                        && LadderOrdinal.f(LadderArgument.limNrbms()).isTbmsFixedPoint()
+                        && LadderOrdinal.f(LadderArgument.ofNrbms(NonRecursiveBms.parse("(1)"))).isTbmsFixedPoint()
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).equals(
+                                LadderOrdinal.tnrbmsFixpoint()));
         check("f 拒绝 0、1（低于 ω，属于段一，交给 BMS）",
                 throwsIllegalArgument(() -> LadderOrdinal.f(LadderArgument.ofBms(new int[][]{})))
                         && throwsIllegalArgument(() -> LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}}))));
@@ -231,7 +242,7 @@ public final class LadderCheck {
 
         List<LadderArgument> arguments = List.of(omega, omegaOmega, epsilon, LadderArgument.sho(),
                 omegaOneCk, nrbmsOne, nrbmsTwo, nrbmsThree, LadderArgument.limNrbms(),
-                LadderArgument.tnrbmsFixpoint());
+                LadderArgument.tnrbmsFixpoint(), LadderArgument.psiII());
         List<LadderOrdinal> values = new ArrayList<>();
         for (LadderArgument argument : arguments) {
             values.add(LadderOrdinal.f(argument));
@@ -243,7 +254,7 @@ public final class LadderCheck {
                 increasing = false;
             }
         }
-        check("f 在 " + arguments.size() + " 个实参的样本上严格递增", increasing);
+        check("f 在 " + arguments.size() + " 个实参的样本上严格递增（固定点处用相等，不下降）", increasing);
 
         int pairs = 0;
         boolean isomorphic = true;
@@ -263,62 +274,136 @@ public final class LadderCheck {
         boolean a1 = true;
         for (LadderArgument alpha : a1Arguments) {
             checkedA1++;
-            if (LadderOrdinal.f(alpha).compareTo(LadderOrdinal.ofArgument(alpha)) <= 0) {
+            if (!alpha.isRecursivelyExpanded() || !alpha.isA1Domain()
+                    || LadderOrdinal.f(alpha).compareTo(LadderOrdinal.ofArgument(alpha)) <= 0
+                    || LadderOrdinal.isFixedPointOfTbms(alpha)) {
                 a1 = false;
             }
         }
-        assumption("A1（所有者假设，未证明，现已限定在实参侧）：每个 A1 实参 α < ω₁^CK 都有 f(α) > α（"
-                + checkedA1 + " 个 α）", a1 && checkedA1 == 4);
+        check("[THEOREM] A1（所有者裁定的定理，不是假设）：对每个递归实参 a（BMS ≥ ω 或 SHO），"
+                + "f(a) = TBMS(0)(1^a) 且 f(a) > a（" + checkedA1 + " 个 a）", a1 && checkedA1 == 4);
 
         List<LadderArgument> a2Arguments = List.of(omegaOneCk, nrbmsOne, nrbmsTwo, nrbmsThree,
-                LadderArgument.limNrbms());
+                LadderArgument.limNrbms(), LadderArgument.tnrbmsFixpoint(), LadderArgument.psiII());
         int checkedA2 = 0;
         boolean a2 = true;
+        boolean allA2FixedPoints = true;
         for (LadderArgument alpha : a2Arguments) {
             checkedA2++;
-            if (LadderOrdinal.psi().compareTo(LadderOrdinal.f(alpha)) >= 0
-                    || LadderOrdinal.f(alpha).compareTo(LadderOrdinal.ofArgument(alpha)) >= 0) {
+            boolean fixed = LadderOrdinal.isFixedPointOfTbms(alpha);
+            allA2FixedPoints &= fixed;
+            if (!alpha.isNonRecursivelyExpanded() || !alpha.isA2Domain()
+                    || LadderOrdinal.psi().compareTo(LadderOrdinal.f(alpha)) >= 0
+                    || LadderOrdinal.f(alpha).compareTo(LadderOrdinal.ofArgument(alpha)) != 0
+                    || !fixed) {
                 a2 = false;
             }
         }
-        assumption("A2（所有者假设，未证明，现已限定在实参侧）：每个 A2 实参 ω₁^CK ≤ α < X 都有"
-                + " ψ < f(α) < α（" + checkedA2 + " 个 α）", a2 && checkedA2 == 5);
+        check("[DEFINITION] A2（由 TTBMS 的定义直接得到；该定义是社区标准，所有者明确说从未完整写出）："
+                + "对每个非递归实参 a，f(a) = TTBMS(0)(1^a) 是 TBMS 步的不动点；"
+                + "在不动点 f(a) = a（不再是 <），且 ψ(a) < f(a)（" + checkedA2 + " 个 a）",
+                a2 && allA2FixedPoints && checkedA2 == 7);
 
-        check("A1 的定义域与 A2 的定义域不相交，且以 ω₁^CK 为分界：SHO 是最后一个 A1 实参，ω₁^CK 是第一个 A2 实参",
+        boolean fixedPointAgrees = true;
+        boolean nonRecursiveAtOrAbove = true;
+        boolean noValueBelowArgument = true;
+        for (LadderArgument alpha : arguments) {
+            LadderOrdinal value = LadderOrdinal.f(alpha);
+            boolean byComparison = value.compareTo(LadderOrdinal.ofArgument(alpha)) == 0;
+            if (LadderOrdinal.isFixedPointOfTbms(alpha) != byComparison) {
+                fixedPointAgrees = false;
+            }
+            if (alpha.isNonRecursivelyExpanded()
+                    && value.compareTo(LadderOrdinal.ofArgument(alpha)) < 0) {
+                nonRecursiveAtOrAbove = false;
+            }
+            if (value.compareTo(LadderOrdinal.ofArgument(alpha)) < 0) {
+                noValueBelowArgument = false;
+            }
+        }
+        check("不动点谓词与比较一致：isFixedPointOfTbms(a) 当且仅当 f(a) == a（" + arguments.size()
+                + " 个实参）", fixedPointAgrees);
+        check("每个非递归实参都有 f(a) >= a（本寄存器把它们全部物化为不动点，故为 =）",
+                nonRecursiveAtOrAbove);
+        check("没有 f 产生的值落在实参层之下：对每个实参 a，f(a) >= a", noValueBelowArgument);
+
+        check("A1 与 A2 的定义域按递归类型分开且不相交：SHO 是递归侧最后一个实参，ω₁^CK 是非递归侧第一个实参",
                 LadderArgument.sho().isA1Domain() && !LadderArgument.sho().isA2Domain()
                         && omegaOneCk.isA2Domain() && !omegaOneCk.isA1Domain()
                         && LadderArgument.sho().compareTo(omegaOneCk) < 0);
-        check("A2 的定义域在 X 处严格截断：X 既不是 A1 实参也不是 A2 实参",
-                !LadderArgument.tnrbmsFixpoint().isA1Domain()
-                        && !LadderArgument.tnrbmsFixpoint().isA2Domain());
+        check("X 与 ψ_𝕀(𝕀) 都是 A2 实参（旧 A2 的 ω₁^CK ≤ α < X 区间已废止）",
+                LadderArgument.tnrbmsFixpoint().isA2Domain()
+                        && LadderArgument.tnrbmsFixpoint().isNonRecursivelyExpanded()
+                        && LadderArgument.psiII().isA2Domain()
+                        && !LadderArgument.psiII().isA1Domain());
 
-        check("ω_1^CK 以下用 TBMS：f(ε₀) 以 TBMS(0)(1^ 开头",
+        boolean notationFollowsType = true;
+        for (LadderArgument alpha : arguments) {
+            if (alpha.equals(omega)) {
+                continue; // f(omega) collapses to the SHO boundary name
+            }
+            String expected = alpha.isNonRecursivelyExpanded() ? "TTBMS" : "TBMS";
+            if (!expected.equals(LadderOrdinal.f(alpha).notationName())) {
+                notationFollowsType = false;
+            }
+        }
+        check("记号由实参的递归类型决定：递归 → TBMS，非递归 → TTBMS（" + arguments.size()
+                + " 个实参，ω 的 SHO 塌缩除外）", notationFollowsType);
+        check("记号的切换不再是 ω₁^CK 比较：f(ε₀) 是 TBMS，f(ω₁^CK) 是 TTBMS",
                 LadderOrdinal.f(epsilon).notationName().equals("TBMS")
-                        && LadderOrdinal.f(epsilon).toString().startsWith("TBMS(0)(1^"));
-        check("ω_1^CK 及以上用 TTBMS：f(ω_1^CK) 与 f(lim(NRBMS)) 都以 TTBMS(0)(1^ 开头",
-                LadderOrdinal.f(omegaOneCk).notationName().equals("TTBMS")
-                        && LadderOrdinal.f(omegaOneCk).toString().startsWith("TTBMS(0)(1^")
+                        && LadderOrdinal.f(epsilon).toString().startsWith("TBMS(0)(1^")
+                        && LadderOrdinal.f(omegaOneCk).notationName().equals("TTBMS")
+                        && LadderOrdinal.f(omegaOneCk).toString().startsWith("TTBMS(0)(1^"));
+        check("NRBMS 与 lim(NRBMS) 的 f 记号也是 TTBMS，与递归侧断开",
+                LadderOrdinal.f(nrbmsThree).notationName().equals("TTBMS")
                         && LadderOrdinal.f(LadderArgument.limNrbms()).notationName().equals("TTBMS"));
-        check("记号在 ω_1^CK 处只切换一次：SHO 仍是 TBMS，ω_1^CK 起全是 TTBMS",
-                LadderOrdinal.f(LadderArgument.sho()).notationName().equals("TBMS")
-                        && LadderOrdinal.f(epsilon).notationName().equals("TBMS")
-                        && LadderOrdinal.f(omegaOneCk).notationName().equals("TTBMS"));
 
-        check("f(ω) = SHO 是段二的下边界，不带 TBMS 文本",
+        check("f(ω) = SHO 是递归侧的下边界，不带 TBMS 文本",
                 LadderOrdinal.f(omega).equals(LadderOrdinal.sho())
                         && LadderOrdinal.f(omega).toString().equals("SHO"));
-        check("f(X) = LRPO 是段二的上边界（所有者的定义），不带 TTBMS 文本",
-                LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()) == LadderOrdinal.lrpo()
-                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).toString().equals("LRPO"));
-        check("f 的实参定义域：ω、ω^ω、SHO、ω_1^CK、lim(NRBMS)、NRBMS 与 X 都是实参，0 与 1 不是",
+        check("f(X) 是 TTBMS 不动点并与 X 比较相等（旧的 f(X) = LRPO 已退役，LRPO 仍是递归段的顶）",
+                LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).isTbmsFixedPoint()
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).compareTo(
+                                LadderOrdinal.tnrbmsFixpoint()) == 0
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).toString()
+                                .equals("TTBMS(0)(1^X)")
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).compareTo(
+                                LadderOrdinal.lrpo()) > 0);
+        check("f 的实参定义域：ω、ω^ω、SHO、ω_1^CK、lim(NRBMS)、NRBMS、X 与 ψ_𝕀(𝕀) 都是实参；0 与 1 不是",
                 omega.isFunctionArgument() && omegaOmega.isFunctionArgument()
                         && LadderArgument.sho().isFunctionArgument()
                         && omegaOneCk.isFunctionArgument()
                         && LadderArgument.limNrbms().isFunctionArgument()
                         && nrbmsOne.isFunctionArgument()
                         && LadderArgument.tnrbmsFixpoint().isFunctionArgument()
+                        && LadderArgument.psiII().isFunctionArgument()
                         && !LadderArgument.ofBms(new int[][]{}).isFunctionArgument()
                         && !LadderArgument.ofBms(new int[][]{{0}}).isFunctionArgument());
+        check("不动点谓词与 f 使用同一个定义域：0、1 与 null 被拒绝",
+                throwsIllegalArgument(() -> LadderOrdinal.isFixedPointOfTbms(
+                                LadderArgument.ofBms(new int[][]{})))
+                        && throwsIllegalArgument(() -> LadderOrdinal.isFixedPointOfTbms(
+                                LadderArgument.ofBms(new int[][]{{0}})))
+                        && throwsNullPointer(() -> LadderOrdinal.isFixedPointOfTbms(null)));
+        check("阶梯的帮助页与 README 不再含任何 assumption 标签", noAssumptionTagInDocs());
+    }
+
+    /**
+     * The owner's Q2 ruling removes every assumption tag: A1 is a theorem, A2 is the definition of TTBMS,
+     * the SHO/LRPO identifications are definitions, and the psi placement is a modelling choice. This
+     * check reads the generated ladder documentation and refuses a stale tag.
+     */
+    private static boolean noAssumptionTagInDocs() {
+        String forbidden = "[" + "ASSUMPTION]";
+        try {
+            String help = Files.readString(RelativePath.of(
+                    "projects/oc/oc-googology/help/ordinal-ladder.md", "十、常见坑").resolve());
+            String readme = Files.readString(RelativePath.of(
+                    "projects/oc/oc-googology/README.md", "Ordinal ladder (stages one to three)").resolve());
+            return !help.contains(forbidden) && !readme.contains(forbidden);
+        } catch (IOException missing) {
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------ 23 stage one/two order
@@ -331,11 +416,10 @@ public final class LadderCheck {
         LadderOrdinal epsilon = LadderOrdinal.ofBms(new int[][]{{0, 0}, {1, 1}});
         LadderOrdinal fOmegaOmega = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}));
         LadderOrdinal fEpsilon = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}));
-        LadderOrdinal fOmegaOne = LadderOrdinal.f(LadderArgument.omegaOneCk());
 
         List<LadderOrdinal> sample = List.of(
                 LadderOrdinal.psi(), zero, one, omega, omegaOmega, epsilon, LadderOrdinal.sho(),
-                fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()), fOmegaOne,
+                fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()),
                 LadderOrdinal.lrpo(), LadderOrdinal.omegaOneCk());
 
         boolean increasing = true;
@@ -345,7 +429,7 @@ public final class LadderCheck {
             }
         }
         check("段一与段二样本严格递增：ψ < 0 < 1 < ω < ω^ω < ε₀ < SHO < f(ω^ω) < f(ε₀)"
-                + " < f(SHO) < f(ω_1^CK) < LRPO < ω_1^CK", increasing);
+                + " < f(SHO) < LRPO < ω_1^CK", increasing);
 
         int pairs = 0;
         boolean antisymmetric = true;
@@ -404,7 +488,7 @@ public final class LadderCheck {
                 cross.left() == LadderSegment.SEGMENT_ONE && cross.right() == LadderSegment.SEGMENT_TWO
                         && cross.isCrossSegment() && cross.signum() < 0
                         && cross.comparedWithin().contains("vs"));
-        LadderComparison segmentToName = fOmegaOne.compareWithin(LadderOrdinal.lrpo());
+        LadderComparison segmentToName = fEpsilon.compareWithin(LadderOrdinal.lrpo());
         check("段二对具名层：报告段二 vs 具名层",
                 segmentToName.left() == LadderSegment.SEGMENT_TWO
                         && segmentToName.right() == LadderSegment.PLACEHOLDER
@@ -424,13 +508,17 @@ public final class LadderCheck {
                         && throwsIllegalArgument(() -> new LadderComparison(LadderSegment.SEGMENT_ONE,
                         LadderSegment.SEGMENT_TWO, ComparisonResult.PROBABLE_GREATER)));
 
-        check("段一在段二之下：任意 BMS 值 < 任意函数值",
-                zero.compareTo(fOmegaOmega) < 0 && epsilon.compareTo(fOmegaOne) < 0
+        check("段一在递归 f 值之下：任意 BMS 值 < 任意递归 TBMS 值",
+                zero.compareTo(fOmegaOmega) < 0 && epsilon.compareTo(fEpsilon) < 0
                         && LadderOrdinal.sho().compareTo(fOmegaOmega) < 0);
-        check("段二在 LRPO 之下，LRPO 在 ω_1^CK 之下",
+        check("递归 f 值在 LRPO 之下，LRPO 在 ω_1^CK 之下",
                 fOmegaOmega.compareTo(LadderOrdinal.lrpo()) < 0
-                        && fOmegaOne.compareTo(LadderOrdinal.lrpo()) < 0
+                        && LadderOrdinal.f(LadderArgument.sho()).compareTo(LadderOrdinal.lrpo()) < 0
                         && LadderOrdinal.lrpo().compareTo(LadderOrdinal.omegaOneCk()) < 0);
+        check("非递归 f 值是固定点，与 ω_1^CK 同层且不低于它",
+                LadderOrdinal.f(LadderArgument.omegaOneCk()).compareTo(LadderOrdinal.omegaOneCk()) == 0
+                        && LadderOrdinal.f(LadderArgument.omegaOneCk()).compareTo(
+                                LadderOrdinal.lrpo()) > 0);
         check("ψ 低于段一、段二与全部具名条目（A2 的左侧）",
                 LadderOrdinal.psi().compareTo(zero) < 0
                         && LadderOrdinal.psi().compareTo(fOmegaOmega) < 0
@@ -442,7 +530,7 @@ public final class LadderCheck {
                         && fEpsilon.hashCode() == LadderOrdinal.f(LadderArgument.ofBms(
                                 new int[][]{{0, 0}, {1, 1}})).hashCode());
         check("不同的函数值不相等", !fOmegaOmega.equals(fEpsilon)
-                && !fOmegaOne.equals(fOmegaOmega));
+                && !LadderOrdinal.f(LadderArgument.omegaOneCk()).equals(fOmegaOmega));
         check("比较入口都拒绝 null",
                 throwsNullPointer(() -> zero.compareTo(null))
                         && throwsNullPointer(() -> zero.compareMagnitude(null))
@@ -685,13 +773,14 @@ public final class LadderCheck {
                                 == LadderArgument.Boundary.SHO
                         && omega.isBms() && omega.bms().isPresent() && omega.boundary().isEmpty()
                         && nrbms.isNrbms() && nrbms.nrbms().isPresent() && nrbms.bms().isEmpty());
-        check("Boundary 恰好五个，按声明顺序是 SHO、ω_1^CK、lim(NRBMS)、X、ψ_𝕀(𝕀)",
-                LadderArgument.Boundary.values().length == 5
+        check("Boundary 恰好六个，按声明顺序是 SHO、ω_1^CK、lim(NRBMS)、X、ω₁、ψ_𝕀(𝕀)",
+                LadderArgument.Boundary.values().length == 6
                         && List.of(LadderArgument.Boundary.values()).equals(List.of(
                                 LadderArgument.Boundary.SHO,
                                 LadderArgument.Boundary.OMEGA_ONE_CK,
                                 LadderArgument.Boundary.LIM_NRBMS,
                                 LadderArgument.Boundary.TNRBMS_FIXPOINT,
+                                LadderArgument.Boundary.OMEGA_ONE,
                                 LadderArgument.Boundary.PSI_I_I)));
         check("实参工厂拒绝 null",
                 throwsNullPointer(() -> LadderArgument.ofBms((BmsOrdinal) null))
@@ -707,61 +796,85 @@ public final class LadderCheck {
         LadderOrdinal sho = LadderOrdinal.sho();
         LadderOrdinal lrpo = LadderOrdinal.lrpo();
         LadderOrdinal x = LadderOrdinal.tnrbmsFixpoint();
-        LadderOrdinal gOmegaOmega = LadderOrdinal.tnrbms(
-                LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}));
+        LadderOrdinal nrbms = LadderOrdinal.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)"));
+        LadderOrdinal lim = LadderOrdinal.limNrbms();
 
-        check("边界前提 1：A2 在 β = ω_1^CK 给出 f(β) < β",
-                fOmegaOne.compareTo(omegaOneCk) < 0);
-        check("边界前提 2：f(ω_1^CK) 是段二步进值，不是实参；SHO < f(ω_1^CK) < LRPO",
-                fOmegaOne.isStepValue()
+        check("[BOUNDARY] 回归：旧矛盾的前提 f(ω_1^CK) < ω_1^CK 已无法陈述，"
+                        + "边界值现在是 f(ω_1^CK) = ω_1^CK（TTBMS 不动点）",
+                fOmegaOne.compareTo(omegaOneCk) == 0
+                        && !(fOmegaOne.compareTo(omegaOneCk) < 0)
+                        && fOmegaOne.compareTo(omegaOneCk) >= 0
+                        && LadderOrdinal.isFixedPointOfTbms(LadderArgument.omegaOneCk()));
+        check("[BOUNDARY] f(ω_1^CK) 是 TTBMS 固定点，与实参同层且不在 LRPO 之下；SHO 仍严格低于它",
+                fOmegaOne.isTbmsFixedPoint()
+                        && fOmegaOne.isStepValue()
+                        && fOmegaOne.toString().equals("TTBMS(0)(1^ω₁^CK)")
                         && sho.compareTo(fOmegaOne) < 0
-                        && fOmegaOne.compareTo(lrpo) < 0);
-        check("[BOUNDARY] 旧矛盾的第二步不可表达：f(β) 是值，f 只接受 LadderArgument，"
-                        + "没有任何实参在值序里等于 f(ω_1^CK)",
-                noArgumentEquals(fOmegaOne) && noValueToArgumentPath());
-        check("[BOUNDARY] A1 与 A2 重新表述后分别成立且定义域不相交：A1 的顶部 SHO 低于 A2 的起点 ω_1^CK，"
-                        + "f(SHO) < f(ω_1^CK)，两条假设不再作用于同一个对象",
-                LadderArgument.sho().isA1Domain() && !LadderArgument.sho().isA2Domain()
-                        && LadderArgument.omegaOneCk().isA2Domain()
-                        && LadderOrdinal.f(LadderArgument.sho()).compareTo(fOmegaOne) < 0
+                        && fOmegaOne.compareTo(lrpo) > 0);
+        check("[BOUNDARY] 旧矛盾的第二步（把 α = f(β) < ω_1^CK 喂回 A1）无法成立：α = β，"
+                        + "而 β 是非递归 A2 实参、不是 A1 实参，A1 只覆盖递归类型",
+                LadderArgument.omegaOneCk().isA2Domain()
+                        && !LadderArgument.omegaOneCk().isA1Domain()
+                        && LadderArgument.sho().isA1Domain() && !LadderArgument.sho().isA2Domain()
+                        && fOmegaOne.compareTo(omegaOneCk) == 0
                         && a1AndA2DomainsDisjoint());
-        check("[BOUNDARY] 矛盾不是被证明消解，而是改变了形状：分离只是把 A1 限定到实参侧。"
-                        + "按所有者的字面表述“任何 α < ω_1^CK”，f(ω_1^CK) 表示的那个序数仍在其范围内，"
-                        + "而它不是实参；若拒绝这一限定，旧矛盾对该表示仍然成立",
-                fOmegaOne.compareTo(omegaOneCk) < 0
-                        && fOmegaOne.compareTo(sho) > 0
-                        && noArgumentEquals(fOmegaOne));
-        check("[BOUNDARY] A2 也只对实参侧成立：TNRBMS(ω^ω) 是落在 [ω_1^CK, X) 里的步进值，"
-                        + "但它是值而不是实参，所以字面上的“任何 α”并不覆盖它",
-                gOmegaOmega.isStepValue()
-                        && gOmegaOmega.compareTo(omegaOneCk) > 0
-                        && gOmegaOmega.compareTo(x) < 0
-                        && noArgumentEquals(gOmegaOmega));
-        check("[BOUNDARY] X 与 lim(NRBMS) 是两个被迫共享的边界名："
-                        + "f(X) = LRPO 与 TNRBMS(X) = X 只在 X 作为实参名时可写；"
-                        + "g(ω) = lim(NRBMS) 使 lim(NRBMS) 同时是值与实参名",
-                LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()) == lrpo
+        check("[BOUNDARY] A1/A2 一致：两条假设按递归类型分域，A2 的不动点例外是 f(a) = a；"
+                        + "所有 A1 实参的 f 值都严格低于 f(ω_1^CK)，A2 实参的 f 值不低于其层",
+                LadderOrdinal.f(LadderArgument.sho()).compareTo(fOmegaOne) < 0
+                        && fOmegaOne.compareTo(LadderOrdinal.ofArgument(LadderArgument.omegaOneCk())) >= 0
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).compareTo(x) == 0
+                        && LadderOrdinal.f(LadderArgument.limNrbms()).compareTo(lim) == 0
+                        && LadderOrdinal.f(LadderArgument.ofNrbms(
+                                NonRecursiveBms.parse("(1,1,1)(2,2)"))).compareTo(nrbms) == 0);
+        check("[BOUNDARY] 每个 f 值都不低于其实参：递归侧严格高于，非递归侧是固定点（相等）；"
+                        + "旧的 f(ω_1^CK) 落回 ω_1^CK 以下的值已经不存在",
+                noFValueBelowItsArgument());
+        check("[BOUNDARY] 每个可物化的实参都恰好属于 A1 或 A2：递归类型与非递归类型互补，不再靠 ω_1^CK 区间",
+                everyFunctionArgumentHasOneDomain());
+        check("[BOUNDARY] X 与 lim(NRBMS) 仍是共享边界名，但 f(X) 不再是 LRPO："
+                        + "f(X) = X 是 TTBMS 不动点，g(X) = X，g(ω) = lim(NRBMS)",
+                LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).compareTo(x) == 0
+                        && LadderOrdinal.f(LadderArgument.tnrbmsFixpoint()).isTbmsFixedPoint()
                         && LadderOrdinal.tnrbms(LadderArgument.tnrbmsFixpoint()) == x
-                        && LadderOrdinal.tnrbms(LadderArgument.omega()) == LadderOrdinal.limNrbms()
+                        && LadderOrdinal.tnrbms(LadderArgument.omega()) == lim
                         && !x.isStepValue()
-                        && !LadderOrdinal.limNrbms().isStepValue());
-        check("[BOUNDARY] X 是实参名但不是在更小实参处产生的值：所有 a < X 的样本都有 TNRBMS(a) ≠ a，"
-                        + "所以在寄存器里 X 是最小不动点；跨全体序数的最小性无法在分离后表达",
+                        && !lim.isStepValue());
+        check("[BOUNDARY] LRPO 仍是递归 f 值的声明上界，并低于 ω_1^CK；非递归固定点都在它之上",
+                LadderOrdinal.f(LadderArgument.sho()).compareTo(lrpo) < 0
+                        && LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}))
+                                .compareTo(lrpo) < 0
+                        && lrpo.compareTo(omegaOneCk) < 0
+                        && fOmegaOne.compareTo(lrpo) > 0);
+        check("[BOUNDARY] X 是 g 的最小不动点：所有 a < X 的样本都有 TNRBMS(a) ≠ a；"
+                        + "跨全体序数的最小性仍只在寄存器里可检查",
                 noSmallerTnrbmsFixedPoint());
-        check("[BOUNDARY] 分离的唯一“例外”是五个边界名（SHO、ω_1^CK、lim(NRBMS)、X、ψ_𝕀(𝕀)），"
-                        + "它们不是步进值；任何 TBMS/TTBMS/TNRBMS/ω_α 结点都没有进入实参类型的路径",
-                LadderArgument.Boundary.values().length == 5
-                        && LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}})).isStepValue()
+        check("[BOUNDARY] 六个边界名是共享的，步进值不是；f 的固定点虽然与实参同层，"
+                        + "仍是 isStepValue，而不是具名边界",
+                LadderArgument.Boundary.values().length == 6
+                        && fOmegaOne.isStepValue() && !fOmegaOne.isPlaceholder()
                         && noValueToArgumentPath());
+        check("[BOUNDARY] 矩阵步在不可数实参上是恒等（所有者约定）："
+                        + "f(ω₁) = g(ω₁) = ω₁，f(ψ_𝕀(𝕀)) = g(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)，"
+                        + "且两个不动点谓词都为真",
+                LadderOrdinal.f(LadderArgument.omegaOne()).compareTo(LadderOrdinal.omegaOne()) == 0
+                        && LadderOrdinal.tnrbms(LadderArgument.omegaOne())
+                                .compareTo(LadderOrdinal.omegaOne()) == 0
+                        && LadderOrdinal.f(LadderArgument.psiII()).compareTo(LadderOrdinal.psiII()) == 0
+                        && LadderOrdinal.tnrbms(LadderArgument.psiII())
+                                .compareTo(LadderOrdinal.psiII()) == 0
+                        && LadderOrdinal.isFixedPointOfTbms(LadderArgument.omegaOne())
+                        && LadderOrdinal.isFixedPointOfTnrbms(LadderArgument.omegaOne())
+                        && LadderOrdinal.isFixedPointOfTnrbms(LadderArgument.psiII()));
 
-        check("f 的严格递增只在实参上声明：A1 段与 A2 段的样本合起来仍严格递增",
+        check("f 在递归段与非递归段合起来仍不下降：f(ε₀) < f(SHO) < f(ω_1^CK) = ω_1^CK"
+                        + " < f(NRBMS) = NRBMS < f(lim) = lim < f(X) = X < f(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)",
                 LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}))
                                 .compareTo(LadderOrdinal.f(LadderArgument.sho())) < 0
                         && LadderOrdinal.f(LadderArgument.sho()).compareTo(fOmegaOne) < 0
-                        && fOmegaOne.compareTo(LadderOrdinal.f(LadderArgument.limNrbms())) < 0
-                        && LadderOrdinal.f(LadderArgument.limNrbms()).compareTo(lrpo) < 0);
-        check("边界值不落进 A1 的定义域：所有 A1 实参的值都低于 f(ω_1^CK)",
-                allA1ArgumentsBelow(fOmegaOne));
+                        && fOmegaOne.compareTo(nrbms) < 0
+                        && nrbms.compareTo(lim) < 0
+                        && lim.compareTo(x) < 0
+                        && x.compareTo(LadderOrdinal.f(LadderArgument.psiII())) < 0);
     }
 
     private static boolean a1AndA2DomainsDisjoint() {
@@ -773,7 +886,8 @@ public final class LadderCheck {
                 LadderArgument.omegaOneCk(),
                 LadderArgument.ofNrbms(NonRecursiveBms.parse("(1)")),
                 LadderArgument.limNrbms(),
-                LadderArgument.tnrbmsFixpoint()
+                LadderArgument.tnrbmsFixpoint(),
+                LadderArgument.psiII()
         };
         for (LadderArgument argument : sample) {
             if (argument.isA1Domain() && argument.isA2Domain()) {
@@ -783,9 +897,8 @@ public final class LadderCheck {
         return true;
     }
 
-    private static boolean noArgumentEquals(LadderOrdinal value) {
+    private static boolean noFValueBelowItsArgument() {
         List<LadderArgument> sample = List.of(
-                LadderArgument.ofBms(new int[][]{}),
                 LadderArgument.omega(),
                 LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}),
                 LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}),
@@ -795,23 +908,34 @@ public final class LadderCheck {
                 LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1)")),
                 LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)")),
                 LadderArgument.limNrbms(),
-                LadderArgument.tnrbmsFixpoint());
+                LadderArgument.tnrbmsFixpoint(),
+                LadderArgument.psiII());
         for (LadderArgument argument : sample) {
-            if (LadderOrdinal.ofArgument(argument).equals(value)) {
+            if (LadderOrdinal.f(argument).compareTo(LadderOrdinal.ofArgument(argument)) < 0) {
                 return false;
             }
         }
         return true;
     }
 
-    private static boolean allA1ArgumentsBelow(LadderOrdinal value) {
+    private static boolean everyFunctionArgumentHasOneDomain() {
         List<LadderArgument> sample = List.of(
                 LadderArgument.omega(),
                 LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}),
                 LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}),
-                LadderArgument.sho());
+                LadderArgument.sho(),
+                LadderArgument.omegaOneCk(),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1)")),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1)")),
+                LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)")),
+                LadderArgument.limNrbms(),
+                LadderArgument.tnrbmsFixpoint(),
+                LadderArgument.psiII());
         for (LadderArgument argument : sample) {
-            if (LadderOrdinal.ofArgument(argument).compareTo(value) >= 0) {
+            if (!argument.isFunctionArgument()) {
+                continue;
+            }
+            if (argument.isA1Domain() == argument.isA2Domain()) {
                 return false;
             }
         }
@@ -847,8 +971,6 @@ public final class LadderCheck {
         LadderOrdinal epsilon = LadderOrdinal.ofBms(new int[][]{{0, 0}, {1, 1}});
         LadderOrdinal fOmegaOmega = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}));
         LadderOrdinal fEpsilon = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}));
-        LadderOrdinal fOmegaOne = LadderOrdinal.f(LadderArgument.omegaOneCk());
-        LadderOrdinal fLimNrbms = LadderOrdinal.f(LadderArgument.limNrbms());
         LadderOrdinal nrbmsOne = LadderOrdinal.ofNrbms(NonRecursiveBms.parse("(1)"));
         LadderOrdinal nrbmsThree = LadderOrdinal.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)"));
         LadderOrdinal limNrbms = LadderOrdinal.limNrbms();
@@ -871,7 +993,7 @@ public final class LadderCheck {
 
         List<LadderOrdinal> sample = List.of(
                 LadderOrdinal.psi(), zero, one, omega, omegaOmega, epsilon, LadderOrdinal.sho(),
-                fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()), fOmegaOne, fLimNrbms,
+                fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()),
                 LadderOrdinal.lrpo(), LadderOrdinal.omegaOneCk(),
                 nrbmsOne, nrbmsThree, limNrbms, gOmegaOmega, gOmegaOne, gNrbms, gLimNrbms, x,
                 hOmega, hOmegaOmega, hSho, hOmegaOne, hNrbms, hLim, hX, psiII);
@@ -883,7 +1005,7 @@ public final class LadderCheck {
             }
         }
         check("四段样本严格递增：ψ < 0 < 1 < ω < ω^ω < ε₀ < SHO < f(ω^ω) < f(ε₀) < f(SHO)"
-                + " < f(ω_1^CK) < f(lim(NRBMS)) < LRPO < ω_1^CK < NRBMS < lim(NRBMS) < TNRBMS < X"
+                + " < LRPO < ω_1^CK < NRBMS < lim(NRBMS) < TNRBMS < X"
                 + " < ω_ω < ω_ω^ω < ω_SHO < ω_ω₁^CK < ω_NRBMS < ω_lim(NRBMS) < ω_X < ψ_𝕀(𝕀)",
                 increasing);
 
@@ -940,7 +1062,7 @@ public final class LadderCheck {
 
         check("段一 < 段二 < LRPO < ω_1^CK < 段三 < X < 段四 < ψ_𝕀(𝕀)：每个早段值都低于每个段四值",
                 zero.compareTo(nrbmsOne) < 0 && epsilon.compareTo(limNrbms) < 0
-                        && fOmegaOmega.compareTo(nrbmsOne) < 0 && fOmegaOne.compareTo(limNrbms) < 0
+                        && fOmegaOmega.compareTo(nrbmsOne) < 0 && fEpsilon.compareTo(limNrbms) < 0
                         && LadderOrdinal.lrpo().compareTo(nrbmsOne) < 0
                         && nrbmsThree.compareTo(gOmegaOmega) < 0
                         && gLimNrbms.compareTo(x) < 0
@@ -952,7 +1074,7 @@ public final class LadderCheck {
                 stageFourStageOne.left() == LadderSegment.SEGMENT_FOUR
                         && stageFourStageOne.right() == LadderSegment.SEGMENT_ONE
                         && stageFourStageOne.isCrossSegment() && stageFourStageOne.signum() > 0);
-        LadderComparison stageTwoStageFour = fOmegaOne.compareWithin(hOmegaOne);
+        LadderComparison stageTwoStageFour = fEpsilon.compareWithin(hOmegaOne);
         check("段二对段四：报告跨段且段二在下",
                 stageTwoStageFour.left() == LadderSegment.SEGMENT_TWO
                         && stageTwoStageFour.right() == LadderSegment.SEGMENT_FOUR
@@ -1051,12 +1173,13 @@ public final class LadderCheck {
                 LadderSegment.values().length == 5
                         && LadderSegment.SEGMENT_FOUR.description().contains("X")
                         && LadderSegment.SEGMENT_FOUR.description().contains("omega_alpha"));
-        check("ω_α 工厂拒绝 0、1 与 null（与 f、g 同一个下标定义域）",
+        check("ω_α 工厂拒绝 0 与 null，但接受 1 以物化 ω₁（Q7a 的起点；f 与 g 仍拒绝 1）",
                 throwsIllegalArgument(() -> LadderOrdinal.omegaAlpha(
                                 LadderArgument.ofBms(new int[][]{})))
-                        && throwsIllegalArgument(() -> LadderOrdinal.omegaAlpha(
-                                LadderArgument.ofBms(new int[][]{{0}})))
-                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha(null)));
+                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha(null))
+                        && LadderOrdinal.omegaAlpha(LadderArgument.one()) == LadderOrdinal.omegaOne()
+                        && throwsIllegalArgument(() -> LadderOrdinal.f(LadderArgument.one()))
+                        && throwsIllegalArgument(() -> LadderOrdinal.tnrbms(LadderArgument.one())));
         check("段四的 tier 顺序：X(9) < ω_α 值(10) < ψ_𝕀(𝕀)(11)",
                 LadderPlaceholder.TNRBMS_FIXPOINT.tier() == 9
                         && LadderPlaceholder.PSI_I_I.tier() == 11
@@ -1071,6 +1194,7 @@ public final class LadderCheck {
 
     private static void omegaAlphaStep() {
         List<LadderArgument> arguments = List.of(
+                LadderArgument.one(),
                 LadderArgument.omega(),
                 LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}),
                 LadderArgument.ofBms(new int[][]{{0, 0}, {1, 1}}),
@@ -1081,6 +1205,7 @@ public final class LadderCheck {
                 LadderArgument.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)")),
                 LadderArgument.limNrbms(),
                 LadderArgument.tnrbmsFixpoint(),
+                LadderArgument.omegaOne(),
                 LadderArgument.psiII());
 
         List<LadderOrdinal> values = new ArrayList<>();
@@ -1160,6 +1285,51 @@ public final class LadderCheck {
                         && LadderOrdinal.omegaAlpha(LadderArgument.limNrbms()).toString()
                                 .startsWith("ω_")
                         && LadderOrdinal.omegaAlpha(LadderArgument.limNrbms()).compareTo(x) > 0);
+
+        LadderOrdinal omega = LadderOrdinal.omega();
+        LadderOrdinal omegaOmega = LadderOrdinal.omegaAlpha(LadderArgument.omega());
+        LadderOrdinal omegaOne = LadderOrdinal.omegaOne();
+        LadderOrdinal omegaOmegaOne = LadderOrdinal.omegaAlpha(LadderArgument.omegaOne());
+        check("Q7a 起点：寄存器物化 ω₁ = h(1)，文本是 ω_1，且它严格高于 X",
+                omegaOne == LadderOrdinal.omegaAlpha(LadderArgument.one())
+                        && omegaOne.toString().equals("ω_1")
+                        && omegaOne.segment() == LadderSegment.SEGMENT_FOUR
+                        && omegaOne.compareTo(x) > 0);
+        check("ω_α 是初始序数枚举，不是对一切不可数的恒等：ω_1 < ω_{ω_1}，且两者都在 I 之下",
+                omegaOne.compareTo(omegaOmegaOne) < 0
+                        && omegaOmegaOne.toString().equals("ω_ω₁")
+                        && CardinalRung.INACCESSIBLE.compareWithLadder(omegaOne)
+                                == ComparisonResult.GREATER
+                        && CardinalRung.INACCESSIBLE.compareWithLadder(omegaOmegaOne)
+                                == ComparisonResult.GREATER);
+        check("ω_ω > ω 且 ω_ω 严格高于 X（ω 不是枚举的不动点）",
+                omegaOmega.compareTo(omega) > 0
+                        && omegaOmega.compareTo(x) > 0
+                        && omegaOmega.toString().equals("ω_{(0)(1)}")
+                        && !LadderOrdinal.isOmegaFixedPoint(LadderArgument.omega()));
+        check("不动点谓词与比较一致：只有 ψ_𝕀(𝕀) 是寄存器里的段四不动点，"
+                        + "ω、1、ω₁、X 都不是",
+                LadderOrdinal.isOmegaFixedPoint(LadderArgument.psiII())
+                        && LadderOrdinal.isFixedPointOfOmegaAlpha(LadderArgument.psiII())
+                        && LadderOrdinal.omegaAlpha(LadderArgument.psiII()).compareTo(psiII) == 0
+                        && !LadderOrdinal.isOmegaFixedPoint(LadderArgument.one())
+                        && !LadderOrdinal.isOmegaFixedPoint(LadderArgument.omega())
+                        && !LadderOrdinal.isOmegaFixedPoint(LadderArgument.omegaOne())
+                        && !LadderOrdinal.isOmegaFixedPoint(LadderArgument.tnrbmsFixpoint()));
+        check("I 与 I 以上的每个基数梯级都是 ω 的不动点：ω_I = I，ω_M = M，ω_Berkeley = Berkeley",
+                CardinalRung.INACCESSIBLE.isOmegaFixedPoint()
+                        && CardinalRung.INACCESSIBLE.omegaAlpha() == CardinalRung.INACCESSIBLE
+                        && CardinalRung.MAHLO.isOmegaFixedPoint()
+                        && CardinalRung.MAHLO.omegaAlpha() == CardinalRung.MAHLO
+                        && CardinalRung.BERKELEY.isOmegaFixedPoint()
+                        && CardinalRung.BERKELEY.omegaAlpha() == CardinalRung.BERKELEY);
+        check("I 处单调：ω_1 < ω_{ω_1} < I < M，且 I 是所有段四值的上界（基数寄存器的公理）",
+                CardinalRung.INACCESSIBLE.compareWithLadder(omegaOmegaOne)
+                                == ComparisonResult.GREATER
+                        && CardinalRung.MAHLO.compareWithLadder(omegaOmegaOne)
+                                == ComparisonResult.GREATER
+                        && CardinalRung.INACCESSIBLE.compareTo(CardinalRung.MAHLO) < 0
+                        && CardinalRung.MAHLO.omegaAlpha() == CardinalRung.MAHLO);
     }
 
     // ------------------------------------------------------------------ 31 the stage-three decision
@@ -1167,12 +1337,18 @@ public final class LadderCheck {
     private static void omegaAlphaDecision() {
         check("omegaAlpha 只有一个重载且只接受 LadderArgument（没有接受 LadderOrdinal 的重载）",
                 omegaAlphaTakesOnlyArgument());
-        check("LadderArgument 中没有任何成员接受或返回 LadderOrdinal：阶段三没有放宽类型分离",
+        check("LadderArgument 中没有任何成员接受或返回 LadderOrdinal：Q7b 的放宽没有实现",
                 noValueToArgumentPath());
         check("没有 asArgument/toArgument 之类的转换，也没有把 ω_α 值转成下标的公开方法",
                 noArgumentConversionMethod());
-        check("Boundary 恰好五个，没有把任何 ω_α 值注册成边界名",
-                LadderArgument.Boundary.values().length == 5 && noOmegaAlphaBoundary());
+        check("Boundary 恰好六个：共享的 ω₁ 是实参名，不是把某个 ω_α 值转成下标的通道",
+                LadderArgument.Boundary.values().length == 6
+                        && LadderArgument.omegaOne().boundary().orElseThrow()
+                                == LadderArgument.Boundary.OMEGA_ONE
+                        && !LadderArgument.omegaOne().isNrbms()
+                        && LadderArgument.omegaOne().isBoundary());
+        check("Q7b 保持开放：没有把 ω_X、ω_ω₁ 之类的段四值注册成 Boundary",
+                noOmegaAlphaBoundary());
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1344,17 +1520,6 @@ public final class LadderCheck {
         } else {
             FAILURES.add(description);
             System.out.println("  [FAIL] " + description);
-        }
-    }
-
-    /** An assertion of one of the owner's assumptions: it is checked, but it is explicitly not a proof. */
-    private static void assumption(String description, boolean condition) {
-        if (condition) {
-            passed++;
-            System.out.println("  [ok] [ASSUMPTION] " + description);
-        } else {
-            FAILURES.add("[ASSUMPTION] " + description);
-            System.out.println("  [FAIL] [ASSUMPTION] " + description);
         }
     }
 

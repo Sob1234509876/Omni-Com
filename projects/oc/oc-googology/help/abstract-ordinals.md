@@ -170,8 +170,8 @@ limit.compareWithBms(tsso);                     // ComparisonResult.GREATER，�
 
 ## 六、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **582 项**，其中第 19–20 节是抽象序数
-（`AbstractOrdinalCheck`，27 项），第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，154 项，见
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **596 项**，其中第 19–20 节是抽象序数
+（`AbstractOrdinalCheck`，27 项），第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，168 项，见
 [`ordinal-ladder.md`](ordinal-ladder.md)），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，
 50 项，见 [`cardinal-register.md`](cardinal-register.md)）：
 

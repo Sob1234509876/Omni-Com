@@ -28,7 +28,7 @@
 | 超限后继级别对有限级别**已经判得开** | 级别是超限后继（含归约后得到的后继）且高度 ≥ 3 时，值至少是 `10{ω+1}3 = 10{ω}(10{ω}10)`；它展开成 `10{X+1}X` 后是有限级别塔，交给同底有限级别证书即可。于是 `10{ω+1}3`、`10{ω+2}2`、`10{ω+10}2`（以及经归约变成后继的 `ω·2`/`ω²`/`ω^ω`）都大于 `10{100}10` | `Natural.compareTransfiniteFloor` |
 | 比较在**巨大序数级别**上会回落 | 把级别归约到后继所需的步数随级别爆炸：`ω` 1 步、`ω²` 2 步、`ω^ω` 12 步，但 `ω^ω^ω` 实测十分钟未完成、`ε₀` 是指数塔级（约 `f_3(n)`）。超出预算就不归约：两侧都没归约完时按序数级别判，其余情况才落到 `UNKNOWN`/兜底倾向 | `Natural.COMPARISON_REDUCTION_BUDGET`、`Ordinal.normaliseAt` |
 | 比较结果是**按值缓存**的 | 归约结果与比较级别都是值的纯函数，记在值自身上（懒计算），所以排序大量塔值时每个值只付一次预算，而不是每次比较都付 | `Natural.compareTo`（`comparisonValue`/`comparisonRankCache`） |
-| 库的 `selfcheck` 任务有 582 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返、序数、超限超运算、四值比较与 BMS 标准式、展开与非递归 BMS、BMS 极限之上的抽象序数名册（第 11–20 节） | `GoogologyCheck.java` |
+| 库的 `selfcheck` 任务有 596 项断言 | `./gradlew :projects:oc:oc-googology:selfcheck`，覆盖阈值边界、提升规则、结构形算术、排序、格式化与解析往返、序数、超限超运算、四值比较与 BMS 标准式、展开与非递归 BMS、BMS 极限之上的抽象序数名册（第 11–20 节） | `GoogologyCheck.java` |
 
 `float` 与 `int` 的领地没有被 `Natural` 取代，而且仍然各自带边界：位置/速度/半径/射程/`EntitySnapshot.healthFraction` 是 `float`，格坐标与一切 tick 时长（`buildTimeTicks`、`Recipe.durationTicks`、冷却、超时）是 `int`/`long`。位置与速度用的是 `float`，而 `Vec2` 只做 `float` 基本算术（这也是"同种子必然复现"的前提之一）：`float` 只有 24 位有效二进制位，**离原点越远分辨率越差**——原点附近相邻可表示值的间隔约 `1.2e-7` 格，到 10 万格处约 `0.0078` 格，到 100 万格处约 `0.0625` 格，此时"精确停在某个坐标"已没有意义（`UnitType.radius()` 通常在 0.35 格上下）。大数解决的是"数量"，不是"坐标"。
 
@@ -243,4 +243,4 @@ map.setMaxLoadedChunks(256);      // 0 或负数表示不限；超限时优先�
 - 移动的地形判断：[`MovementSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/movement/MovementSystem.java)
 - 战斗字段与生命：[`CombatStats.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatStats.java)、[`CombatSystem.java`](../src/main/java/io/github/sob1234509876/oc/rts/combat/CombatSystem.java)、[`UnitType.java`](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)、[`Health.java`](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)、[`Events.java`](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 数量类型的边界：[`Natural.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/Natural.java)、[`NaturalFormat.java`](../../oc-googology/src/main/java/io/github/sob1234509876/oc/googology/NaturalFormat.java)、[`Inventory.java`](../src/main/java/io/github/sob1234509876/oc/rts/economy/Inventory.java)
-- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（582 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1c、10、11、12、12b、13、14、15、16 节，整份 515 项）
+- 大数自校验：[`GoogologyCheck.java`](../../oc-googology/src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)（596 项）、[`RtsScenario.java`](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 1c、10、11、12、12b、13、14、15、16 节，整份 515 项）

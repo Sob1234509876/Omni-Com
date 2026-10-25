@@ -24,8 +24,9 @@
  * <p><b>The ordinal ladder.</b> The package also contains the register of {@code documents/Human/
  * Ordinals.md}'s first four segments: {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal}
  * holds a delegated {@link io.github.sob1234509876.oc.googology.bms.BmsOrdinal} for {@code 0 ~ SHO}, an
- * abstract {@code f(alpha) = TTBMS(0)(1^alpha)} value for {@code SHO ~ LRPO} (printed as
- * {@code TBMS(0)(1^alpha)} below {@code omega_1^CK} and as {@code TTBMS(0)(1^alpha)} at or above it), the
+ * abstract {@code f(alpha)} value for {@code SHO ~ LRPO} (printed {@code TBMS(0)(1^alpha)} for a
+ * recursively expanded argument and {@code TTBMS(0)(1^alpha)} for a non-recursively expanded one, which
+ * is a fixed point at the argument's own layer), the
  * stage-two NRBMS segment {@code omega_1^CK ~ X} (NRBMS expressions below
  * {@code lim(NRBMS) = TNRBMS(0)(1^omega)} and abstract {@code TNRBMS(0)(1^alpha)} values above it), the
  * stage-three {@code omega_alpha} segment {@code X ~ psi_I(I)} (abstract {@code omegaAlpha(alpha) =
@@ -33,11 +34,12 @@
  * {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X} and {@code psi_I(I)}
  * ({@link io.github.sob1234509876.oc.googology.abstractordinal.LadderPlaceholder}).
  * {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument} is the separate argument
- * register: the step functions accept only an argument, never a produced value, which is the stage-two
- * separation of {@code OPEN QUESTIONS.md} Q6 and the stage-three decision recorded in Q7. The comparison
- * reports the {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment}s it took place in,
- * and the owner assumptions are documented as assumptions rather than proved. The Chinese guide is
- * {@code help/ordinal-ladder.md}.
+ * register: the step functions accept only an argument, never a produced value. That is an internal seam;
+ * the resolution of {@code OPEN QUESTIONS.md} Q6 is the owner's recursion layering, not the type split.
+ * The stage-three Q7 decision about {@code omega_alpha} subscripts is separate. The comparison reports the
+ * {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment}s it took place in. A1 is the
+ * owner's theorem, A2 follows by the definition of TTBMS, and {@code psi} is a documented modelling choice;
+ * there are no assumption tags. The Chinese guide is {@code help/ordinal-ladder.md}.
  *
  * @since 2.0a
  */

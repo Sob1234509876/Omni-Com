@@ -16,7 +16,7 @@ import java.util.Objects;
  *   <li>two BMS values: {@code left == right == SEGMENT_ONE}, and the actual order came from {@code
  *       BmsOrdinal};</li>
  *   <li>two {@code f(alpha)} values: {@code left == right == SEGMENT_TWO}, and the order is the order of
- *       the arguments, because {@code f} is assumed strictly increasing;</li>
+ *       the arguments, because {@code f} is declared strictly increasing;</li>
  *   <li>two TNRBMS values: {@code left == right == SEGMENT_THREE}, and the order is the order of their
  *       {@link LadderArgument}s;</li>
  *   <li>an NRBMS value against a TNRBMS value: both are {@code SEGMENT_THREE}; their tiers still order

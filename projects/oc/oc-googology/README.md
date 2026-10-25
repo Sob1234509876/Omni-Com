@@ -16,11 +16,11 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (582 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (596 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
-| Ordinal ladder | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α` segment up to `ψ_𝕀(𝕀)`, the argument/value separation and the named boundaries |
+| Ordinal ladder | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS segment, the recursive/non-recursive `f` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α` segment from `ω₁` up to `ψ_𝕀(𝕀)`, the recursion layering and the named boundaries |
 | Cardinal register | [`help/cardinal-register.md`](help/cardinal-register.md) — stage four: the separate 19-rung register from the inaccessible cardinal to the fictional `Ω ~ Ω_Absolute` segment, its document delegation, the Berkeley/Reinhardt convention and the three unverified entries |
 
 ## What it gives you
@@ -314,10 +314,10 @@ reports which segment it compared within:
 | Layer | Value | Written as |
 | --- | --- | --- |
 | segment 1, `0 ~ SHO` | a delegated `BmsOrdinal` | `0`, `BMS(0)(1)`, `BMS(0)(1)(2)`, … |
-| segment 2, `SHO ~ LRPO` | `f(α) = TTBMS(0)(1^α)`, abstract | `TBMS(0)(1^α)` if `α < ω₁^CK`, otherwise `TTBMS(0)(1^α)` |
+| segment 2, `SHO ~ LRPO` | `f(α)`, abstract | `TBMS(0)(1^α)` for a recursively expanded `α`; `TTBMS(0)(1^α)`, the TBMS fixed point, for a non-recursively expanded one |
 | segment 3, `ω₁^CK ~ X` | an NRBMS expression below `lim(NRBMS)`, then `g(α) = TNRBMS(0)(1^α)` | `NRBMS(…)` below the switch, `TNRBMS(0)(1^α)` above it |
-| segment 4, `X ~ ψ_𝕀(𝕀)` | `h(α) = ω_α`, abstract | `ω_α`, with the subscript an argument |
-| named boundaries | `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)`, `X`, `ψ_𝕀(𝕀)` | the same names |
+| segment 4, `X ~ ψ_𝕀(𝕀)` | `h(α) = ω_α`, the initial-ordinal enumeration | `ω_α`, with the subscript an argument; `h(1) = ω₁` |
+| named boundaries | `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)`, `X`, `ω₁`, `ψ_𝕀(𝕀)` | the same names |
 
 ```java
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
@@ -341,7 +341,8 @@ fValue.toString();                                  // "TBMS(0)(1^(0)(1)(2))"
 
 LadderOrdinal fAtOmegaOne = LadderOrdinal.f(LadderArgument.omegaOneCk());
 fAtOmegaOne.toString();                             // "TTBMS(0)(1^ω₁^CK)"
-fAtOmegaOne.compareTo(LadderOrdinal.lrpo());        // < 0
+fAtOmegaOne.compareTo(LadderOrdinal.omegaOneCk());  // == 0: the TTBMS fixed point
+LadderOrdinal.isFixedPointOfTbms(LadderArgument.omegaOneCk()); // true
 
 // Stage two: the NRBMS/TNRBMS segment.
 NonRecursiveBms nrbms = NonRecursiveBms.parse("(1,1,1)(2,2)");
@@ -354,7 +355,8 @@ g.toString();                                       // "TNRBMS(0)(1^(1,1,1)(2,2)
 g.segment();                                        // LadderSegment.SEGMENT_THREE
 LadderOrdinal.tnrbms(LadderArgument.omega()) == LadderOrdinal.limNrbms(); // true
 LadderOrdinal.tnrbms(LadderArgument.tnrbmsFixpoint()); // X, the fixed point g(X) = X
-LadderOrdinal.f(LadderArgument.tnrbmsFixpoint());      // LRPO, i.e. the owner's f(X)
+LadderOrdinal.f(LadderArgument.tnrbmsFixpoint());      // X as a TTBMS fixed point (f(X) = X)
+LadderOrdinal.omegaAlpha(LadderArgument.one());        // ω₁, the first ω_α value
 
 // Stage three: the ω_α segment above X.
 LadderOrdinal h = LadderOrdinal.omegaAlpha(LadderArgument.sho());
@@ -370,56 +372,64 @@ LadderPlaceholder.SHO.abstractOrdinal().orElseThrow(); // AbstractOrdinal.SHO: t
 // LadderOrdinal.f(fValue);                          // does not compile: a value is never an argument
 ```
 
-The declared order is `ψ < every BMS value < SHO ≤ every materialised f(α) < LRPO < ω₁^CK < every NRBMS
-value < lim(NRBMS) < every TNRBMS value < X < every ω_α value < ψ_𝕀(𝕀)`. Segment 1 is below segment 2,
-both are below `ω₁^CK`, the NRBMS/TNRBMS segment is above it, and the `ω_α` segment is above `X`;
-`LRPO < ω₁^CK` is the owner's statement. `compareWithin` returns a `LadderComparison` carrying the two
-`LadderSegment`s, so a cross-segment comparison is never mistaken for a same-segment one;
-`compareMagnitude` is always a proof, because this register has no declared-unknown pair and no lean.
+The declared order is `ψ < every BMS value < SHO ≤ every recursive f(α) < LRPO < ω₁^CK < every NRBMS
+value < lim(NRBMS) < every TNRBMS value < X < ω₁ < every other ω_α value < ψ_𝕀(𝕀)`. A non-recursively
+expanded `f` value is a TTBMS fixed point at its argument's layer (`f(ω₁^CK) = ω₁^CK`, `f(X) = X`), so it
+does not appear in the segment-two interval. Segment 1 is below segment 2, both are below `ω₁^CK`, the
+NRBMS/TNRBMS segment is above it, and the `ω_α` segment is above `X`; `LRPO < ω₁^CK` is a definition.
+`compareWithin` returns a `LadderComparison` carrying the two `LadderSegment`s, so a cross-segment
+comparison is never mistaken for a same-segment one; `compareMagnitude` is always a proof, because this
+register has no declared-unknown pair and no lean.
 
-**Stage three and the notation switch.** The `ω_α` segment is the abstract step `h(α) = ω_α`; it stores its
-subscript and compares by it, exactly like `f` and `g`. The switch from `TNRBMS(0)(1^α)` to `ω_α` is
-implemented at `X`: every proper TNRBMS value is below `X`, every `ω_α` value above it. That placement is
-the documented default of `OPEN QUESTIONS.md` Q7, not a settled reading of the owner's text (the
-alternatives are `lim(NRBMS)` and a further fixed point). The top is the shared boundary name
-`ψ_𝕀(𝕀) = min{α | α = ω_α}`, with `h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)` and `h(a) ≠ a` for every smaller argument.
+**Stage three: the switch and the enumeration.** The `ω_α` segment is `h(α) = ω_α`, the `α`-th infinite
+initial ordinal; it stores its subscript and compares by it. The owner's Q7a answer fixes the switch from
+`TNRBMS(0)(1^α)` to `ω_α` at the fixed point of `a ↦ TNRBMS(0)(1^a)`, i.e. `X`, and starts the family at
+`ω₁`: the register materialises `ω₁ = h(1)`, not `ω_ω`. `ω_α` grows (`ω_{ω₁} > ω₁`); it is the identity only
+at enumeration fixed points. The owner's fact is that every ordinal at or above the inaccessible cardinal
+`I` is one: `ω_I = I`, and `ω_a = a` for every cardinal-register stage above `I`. The top of the segment is
+the shared boundary name `ψ_𝕀(𝕀) = min{α | α = ω_α}`, with `h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`.
 
-**An `ω_α` value is not a subscript.** The stage-three decision is the same separation as stage two: the
-step accepts a `LadderArgument` only. A subscript may be a previous-stage argument (`BMS` at or above `ω`,
-`NRBMS`, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or the new fixed-point boundary `ψ_𝕀(𝕀)`, but not an `ω_α`
-value. This is enough for every rung the owner lists and excludes only iterated subscripts such as
-`ω_{ω_X}`. The smallest relaxation — a dedicated stage-four subscript type accepted only by the `ω` step —
-is described in the guide and Q7 and deliberately not implemented.
+**An `ω_α` value is not a subscript (Q7b, open).** The step accepts a `LadderArgument` only. A subscript
+may be a previous-stage argument (`BMS` at or above `ω`, `NRBMS`, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or a
+shared boundary (`ω₁`, `ψ_𝕀(𝕀)`), but not an `ω_α` value. This is enough for every rung the owner lists,
+and it excludes iterated subscripts such as `ω_{ω_X}`. Unlike an earlier note, allowing them is **not**
+moot: `ω_α` grows below `I`, so `ω_{ω_X} > ω_X` would be a new ordinal. The smallest relaxation — a
+dedicated stage-four subscript type accepted only by a second `omegaAlpha` overload — is described in the
+guide and Q7b and deliberately not implemented.
 
-**The argument/value separation.** `LadderOrdinal` is the value side; `LadderArgument` is the argument
-side. The step functions take a `LadderArgument` only, there is no conversion from a value to an argument,
-and `LadderOrdinal.ofArgument` embeds an argument into the value order without a way back. `f(f(ω₁^CK))`,
-`TNRBMS(TNRBMS(…))`, `omegaAlpha(omegaAlpha(…))` and every similar term are therefore compile errors, not
-run-time mistakes. The five boundary names `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X` and `ψ_𝕀(𝕀)` are deliberately
-shared by both sides; every proper step value is never an argument.
+**The argument/value types are an internal design, not the Q6 answer.** `LadderOrdinal` is the value side;
+`LadderArgument` is the argument side. The step functions take a `LadderArgument` only, there is no
+conversion from a value to an argument, and `LadderOrdinal.ofArgument` embeds an argument into the value
+order without a way back. `f(f(ω₁^CK))`, `TNRBMS(TNRBMS(…))` and `omegaAlpha(omegaAlpha(…))` are compile
+errors. The six shared boundary names `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`, `ω₁` and `ψ_𝕀(𝕀)` are deliberately
+shared by both sides; every proper step value is never an argument. This type seam used to be presented as
+the resolution of Q6; that claim is withdrawn. It only made the old value-to-argument step unrepresentable.
+The owner's recursion layering removes the problem.
 
-**What is assumed.** The owner's two inequalities are taken as **assumptions**, re-stated on the separated
-argument side:
+**A1 is a theorem; A2 is by definition.** The owner's Q2 ruling:
 
-- **A1 (argument side).** For every argument `α < ω₁^CK` (a BMS value or `SHO`), `f(α) > α`.
-- **A2 (argument side, bounding the value).** For every argument `α` with `ω₁^CK ≤ α < X` (`ω₁^CK`, an
-  NRBMS expression or `lim(NRBMS)`), `ψ(α) < f(α) < α`, assuming an OCF exists up to `α`.
+- **A1 (recursive arguments), a theorem.** For every recursively expanded argument `a` (a BMS value at or
+  above `ω`, or `SHO`), `f(a) = TBMS(0)(1^a)` and `f(a) > a`. The owner states this is proved.
+- **A2 (non-recursive arguments), by the definition of TTBMS.** For every non-recursively expanded
+  argument `a` (`ω₁^CK`, an NRBMS expression, `lim(NRBMS)`, `X`, `ω₁`, `ψ_𝕀(𝕀)`),
+  `f(a) = TTBMS(0)(1^a)` is the fixed point of `a ↦ TBMS(0)(1^a)`. At a fixed point `f(a) = a`; otherwise
+  `f(a) < a`; and `ψ(a) < f(a)` where the OCF is defined. This follows directly from the TTBMS definition.
+  The owner states that the definition is community standard and has never been written out in full, so
+  the register does not pretend to have a written definition it does not have.
 
-The self check asserts them on samples and prints them with the `[ASSUMPTION]` tag.
+`SHO = lim(BMS) = f(ω)` and `LRPO < ω₁^CK` are **definitions** of the specification. `ψ` is an approved
+opaque placeholder placed below the whole ladder: a modelling choice, not an OCF implementation; a real
+OCF is out of scope and not required by `Ordinals.md`. The self check asserts A1 as `[THEOREM]` and A2 as
+`[DEFINITION]`; those are the only tags.
 
-**The boundary result.** Under the stage-one register, A2 at `β = ω₁^CK` gives `f(β) < β`; feeding
-`α = f(β)` back into `f` gave `f(α) > α` by A1 and `f(α) < f(β) = α` by monotonicity — a contradiction.
-Stage two separates the sides: `f(β)` is a `LadderOrdinal` and `f` takes a `LadderArgument`, so step two is
-unrepresentable and A1/A2 are jointly consistent in the register (checked separately). This is a **change
-of shape**, not a proof of the owner's arithmetic: the ordinal denoted by `f(ω₁^CK)` is still below
-`ω₁^CK`, so the owner's literal A1 ("for any ordinal `α < ω₁^CK`") still contains it. The separation forces
-A1 (and, for the same reason, A2) to be **restricted to the argument side**; if the owner keeps the literal
-unrestricted quantifier, the contradiction survives for the denotation of `f(ω₁^CK)`. The guide records this
-as the residual, together with the two forced boundary exceptions: `X` is the value-side limit of the
-TNRBMS step and `ψ_𝕀(𝕀)` the value-side limit of the `ω_α` step, but both are admitted as argument names so
-that `f(X) = LRPO`, `TNRBMS(X) = X` and `omegaAlpha(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)` can be written. `SHO` is the lower
-boundary and a valid argument (`f(SHO)` is the first `f` value above it); `LRPO` and `ψ` are value names,
-not arguments of `f`.
+**The boundary result: layering removes the contradiction.** The old reading had A2 at `β = ω₁^CK` give
+`f(β) < β`; feeding `α = f(β)` back into `f` gave `f(α) > α` by A1 and `f(α) < f(β) = α` by monotonicity.
+The owner's fix is layering by recursion: `ω₁^CK` is non-recursively expanded, so `f(ω₁^CK)` is a TTBMS
+fixed point at its own layer, and in the register `f(ω₁^CK) = ω₁^CK` — never below it. A1's domain is the
+recursive type, so it is never re-entered. The old contradiction cannot be stated, and the two rules are
+consistent. `f(X) = X` is a TTBMS fixed point; the earlier `f(X) = LRPO` is retired, while `LRPO` remains
+the declared top of the recursive `f` values. `SHO` is the lower boundary and a valid argument (`f(SHO)` is
+a TBMS value above it); `LRPO` and `ψ` are value names, not arguments of `f`.
 
 **What is deliberately not here.** TBMS, TTBMS and TNRBMS are **not** implemented as matrix systems; the
 NRBMS segment reuses `NonRecursiveBms` and its expansion rules, and the TNRBMS and `ω_α` steps are abstract
@@ -518,14 +528,14 @@ rung that quotes it is labelled as such in both the enum and this document. See
   "greater than every BMS value" comparison is an explicit axiom. It does not say how far above BMS a name
   lies, and the below-limit reference nodes are deliberately not part of it.
 - **A TBMS/TTBMS/TNRBMS matrix system.** `LadderOrdinal` implements stages one to
-  three of `Ordinals.md`: segment 1 delegates to BMS, segment 2 is the **abstract** function
-  `f(α) = TTBMS(0)(1^α)`, segment 3 is the NRBMS/TNRBMS segment up to the fixed point `X`, segment 4 is
-  the **abstract** `ω_α` segment up to `ψ_𝕀(𝕀)`, and the named layer is `ψ`, `SHO`, `LRPO`, `ω₁^CK`,
-  `lim(NRBMS)`, `X` and `ψ_𝕀(𝕀)`. It does not build a TBMS, TTBMS or TNRBMS matrix, does not compute an
-  OCF or a cardinal, and does not prove the two owner assumptions (A1 and A2). Its `f`, `g` and `h` values
-  compare by argument, which is the order-isomorphism the owner asked for, not a matrix expansion. The
-  cardinal register is separate and is described above: it delegates every definition and builds no cardinal
-  either.
+  three of `Ordinals.md`: segment 1 delegates to BMS, segment 2 is the **abstract** function `f(α)`,
+  segment 3 is the NRBMS/TNRBMS segment up to the fixed point `X`, segment 4 is the **abstract** `ω_α`
+  segment up to `ψ_𝕀(𝕀)`, and the named layer is `ψ`, `SHO`, `LRPO`, `ω₁^CK`, `lim(NRBMS)`, `X`, `ω₁` and
+  `ψ_𝕀(𝕀)`. It does not build a TBMS, TTBMS or TNRBMS matrix, does not compute an OCF or a cardinal. A1 is
+  the owner's theorem; A2 follows by the definition of TTBMS (community standard, never written out in
+  full). Its `f`, `g` and `h` values compare by argument, which is the
+  order-isomorphism the owner asked for, not a matrix expansion. The cardinal register is separate and is
+  described above: it delegates every definition and builds no cardinal either.
 - **BMS as a full `Ordinal`, and a proof of its strength.** The BMS layer expands a matrix, but it is not
   an `Ordinal`: it has no addition, no multiplication by a finite coefficient and no `ω^`, and it is not
   plugged into `OrdinalNotation`. The expansion's consistency (`S > S[n]`, strictly increasing sequences)
@@ -571,7 +581,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/package-info.java         BMS package documentation
     abstractordinal/AbstractOrdinal.java      the register of names above the BMS limit, with declared ranks
     abstractordinal/LadderOrdinal.java        the value side: BMS, f(alpha), NRBMS/TNRBMS, omega_alpha, the named boundaries
-    abstractordinal/LadderArgument.java       the argument side: BMS, NRBMS and the five shared boundary names; never built from a value
+    abstractordinal/LadderArgument.java       the argument side: BMS, NRBMS and the six shared boundary names; never built from a value
     abstractordinal/LadderPlaceholder.java    psi, SHO, LRPO, omega_1^CK, lim(NRBMS), X and psi_I(I), with declared tiers
     abstractordinal/LadderSegment.java        segment 1 / segment 2 / segment 3 / segment 4 / named abstract layer
     abstractordinal/LadderComparison.java     a comparison plus the segments it took place in
@@ -584,7 +594,7 @@ help/bms.md                       the Chinese guide to the BMS layer
 help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
-src/selfcheck/java/.../check/GoogologyCheck.java    the 582 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 596 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)
@@ -600,8 +610,8 @@ src/selfcheck/java/.../check/CardinalRegisterCheck.java  its cardinal-register s
 - [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the
   BMS limit, the declared-unknown pair and the "above BMS" axiom, in Chinese.
 - [`help/ordinal-ladder.md`](help/ordinal-ladder.md) — stages one to three of the 21-rung ladder: the BMS
-  segment, the abstract `f(α) = TTBMS(0)(1^α)` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α`
-  segment up to `ψ_𝕀(𝕀)`, the argument/value separation, the boundary result and the stage-four handoff,
+  segment, the recursive/non-recursive `f` segment, the NRBMS/TNRBMS segment up to `X`, the `ω_α`
+  segment from `ω₁` up to `ψ_𝕀(𝕀)`, the recursion layering, the boundary result and the stage-four handoff,
   in Chinese.
 - [`help/cardinal-register.md`](help/cardinal-register.md) — stage four: the 19-rung cardinal register,
   every rung's document section, the Berkeley/Reinhardt convention, the three unverified entries, the API

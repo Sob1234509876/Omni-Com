@@ -52,7 +52,7 @@
 | | 序数阶梯（阶段一至三） | 基数寄存器（阶段四） |
 | --- | --- | --- |
 | 类型 | `LadderOrdinal` / `LadderArgument` | `CardinalRung` |
-| 值 | BMS、`f(α)`、NRBMS/TNRBMS、`ω_α`、七个具名边界 | 19 个基数名，没有值 |
+| 值 | BMS、`f(α)`、NRBMS/TNRBMS、`ω_α`、七个旧具名边界与 `ω₁` | 19 个基数名，没有值 |
 | 顺序 | 四段 + 具名边界的声明全序 | 一致性强度的声明秩 |
 | 顶端 | `ψ_𝕀(𝕀)` | `Ω ~ Ω_Absolute`（虚构） |
 | 与另一层的关系 | `compareWithLadder` 是基数寄存器唯一的跨层操作（公理） | 不进入 `LadderSegment`，也不实现 `Comparable<LadderOrdinal>` |
@@ -209,6 +209,8 @@ club `λ`-Berkeley 定义；未核实的是：
 | `compareMagnitude(CardinalRung)` | 同一个秩，按比较 API 报告 | **永远是证明** |
 | `compareWithLadder(LadderOrdinal)` | 与序数阶梯比较 | 恒为 `GREATER`，**公理不是计算**；`null` 抛 NPE |
 | `isAboveLadder()` | 是否高于整个序数阶梯 | 恒为 `true`，公理的谓词形式 |
+| `isOmegaFixedPoint()` | 是否是 `a ↦ ω_a` 的不动点 | 恒为 `true`：从 `I` 起的每个基数梯级都满足 `ω_a = a`（数学事实） |
+| `omegaAlpha()` | `ω_α` 在该梯级上的值 | 返回该梯级本身（`ω_I = I`、`ω_M = M`）；这是桥，不是 `LadderOrdinal` 值 |
 | `isConceptuallyLargerThan(CardinalRung)` | 概念大小的约定 | 只对 `(REINHARDT, BERKELEY)` 为 `true`；不是第二个全序 |
 | `reinhardtIsConceptuallyLargerThanBerkeley()` | 同一条约定的静态访问器 | 恒为 `true` |
 
@@ -241,6 +243,9 @@ CardinalRung.REINHARDT.isConceptuallyLargerThan(CardinalRung.BERKELEY); // true�
 CardinalRung.reinhardtIsConceptuallyLargerThanBerkeley();              // true
 
 CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.psiII());    // GREATER，公理
+CardinalRung.INACCESSIBLE.isOmegaFixedPoint();      // true：ω_I = I
+CardinalRung.INACCESSIBLE.omegaAlpha() == CardinalRung.INACCESSIBLE; // true
+CardinalRung.MAHLO.omegaAlpha() == CardinalRung.MAHLO;               // true：ω_M = M
 CardinalRung.ICARUS.isVerified();                   // false
 CardinalRung.LIMIT_CLUB_BERKELEY.isVerified();      // false
 CardinalRung.ORD_BERKELEY.isVerified();             // false
@@ -249,8 +254,9 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 ## 六、常见坑
 
 1. **不是 `LadderOrdinal` 的段五。** 基数寄存器是独立类型；不要把它塞进 `LadderSegment`，也不要期望
-   `compareTo(LadderOrdinal)` 或 `Comparable<LadderOrdinal>`。唯一的跨层操作是 `compareWithLadder`，
-   而它是公理。
+   `compareTo(LadderOrdinal)` 或 `Comparable<LadderOrdinal>`。跨层操作只有两个：`compareWithLadder`
+   （公理）和 `isOmegaFixedPoint()`/`omegaAlpha()`（`a ↦ ω_a` 在 `I` 以上恒等的桥，`omegaAlpha()` 返回
+   梯级本身，不生成 `LadderOrdinal`）。
 2. **`compareWithLadder` 永远 `GREATER`。** 它不是"算出来的大小"，不说明一个基数比 `ψ_𝕀(𝕀)` 高多少。
    需要两个梯级之间的大小用 `compareTo` / `compareMagnitude`。
 3. **Berkeley/Reinhardt 有两个方向。** 排序用 `compareTo`（Berkeley 更大）；"概念上谁更大"用
@@ -271,7 +277,7 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 
 ## 七、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **582 项**，其中第 32–36 节是基数寄存器
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **596 项**，其中第 32–36 节是基数寄存器
 （`CardinalRegisterCheck`，50 项）：
 
 - **第 32 节（寄存器与文档委托，26 项）**：19 个梯级；枚举顺序就是 `Ordinals.md` 第 6–21 条（I3–I0

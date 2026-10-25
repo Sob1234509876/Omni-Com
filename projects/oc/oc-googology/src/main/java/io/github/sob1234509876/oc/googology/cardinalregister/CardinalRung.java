@@ -405,6 +405,31 @@ public enum CardinalRung {
     }
 
     /**
+     * Whether this rung is a fixed point of the initial-ordinal enumeration
+     * {@code alpha -> omega_alpha}: {@code omega_alpha = alpha}. Every cardinal rung from
+     * {@link #INACCESSIBLE} upward is one, and this is real mathematics rather than a convention: a
+     * regular strong limit cardinal that is a limit of initial ordinals satisfies {@code omega_alpha =
+     * alpha}. The register stores no cardinal, so the method records the fact and does not compute it.
+     *
+     * @return always {@code true}
+     */
+    public boolean isOmegaFixedPoint() {
+        return true;
+    }
+
+    /**
+     * The owner's rule that from the inaccessible rung upward the {@code omega_alpha} enumeration is the
+     * identity: {@code omega_alpha = alpha}. The result is this same rung, so the cardinal register stays
+     * the register that carries the growth above the ordinal ladder. This is a bridge for the
+     * fixed-point fact, not a {@link LadderOrdinal} value and not a second order.
+     *
+     * @return this rung
+     */
+    public CardinalRung omegaAlpha() {
+        return this;
+    }
+
+    /**
      * The owner's convention for the one pair where conceptual size and consistency strength disagree:
      * Reinhardt is conceptually larger than Berkeley. The declared order is consistency strength, so
      * {@link #BERKELEY} is above {@link #REINHARDT}; this accessor records the convention separately and
