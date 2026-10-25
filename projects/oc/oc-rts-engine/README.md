@@ -1,4 +1,4 @@
-﻿English | [简体中文](README_zh_CN.md)
+English | [简体中文](README_zh_CN.md)
 
 # Omni Com RTS Engine
 
@@ -54,7 +54,7 @@ owner and health fraction, several engineers raising one site faster, and an ASC
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 657 checks passed.
+RTS engine scenario: all 681 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -71,7 +71,9 @@ What the scenario actually proves, section by section:
 | 3 formations | twelve soldiers ordered onto one tile end up spread out, no pair overlaps, every unit walked the distance, and the five shapes yield five different spreads (line 0.85x9.87, column 7.27x2.53, box 2.02x3.28, wedge 3.48x3.64, circle 2.73x4.04) |
 | 4 items and warehouses | 46 item kinds; stored goods are visible to logistics while goods in a factory buffer or a backpack are not; reservations gate spending; slot limits and store filters hold |
 | 5 production | a barracks trains soldiers out of stored materials and spends them, blocked jobs wait instead of vanishing, a workshop smelts steel and crafts rifles |
-| 5b hauling | with hauling enabled a worker really walks to the warehouse, loads ore and planks and delivers them before the barracks can train |
+| 5b hauling | with hauling enabled a worker really walks to the warehouse, loads ore and planks and delivers them before the barracks can train; the engine publishes a non-empty `ItemsHauled` pickup and dropoff fact, each naming the hauler and its simulation tick |
+| 5c production views | `ProductionQueue.producingNow()` names the produced unit, position 1 and the two unfinished jobs; `demand()` lists exactly the recipe's two inputs, reports both short with `have` 0 and `stock` 0 (no warehouse in the fixture), flips to ready when the buffer holds them, stays ready after the engine consumes them, and shrinks its length when a waiting job is cancelled |
+| 5d engineer tasks | an idle engineer reads `空闲`; a `BuildOrder`, `RepairOrder` and a real reserved `HaulOrder` read `建造中 → …`, `修理中 → …` and `搬运中 → …` with the building's display name; a combat unit has no task, and an engineer walking under a plain move order is still `空闲` |
 | 6 sprites and animation | a spawned unit plays `idle`, switches to `move` when ordered, advances frames, faces its direction of travel, and the snapshot resolves a concrete sprite frame with sheet and pixel rectangle |
 | 7 determinism | two runs with the same seed and the same commands produce bit identical unit positions |
 | 10 huge numbers | an item with a `10^5000` stack and a unit with `10↑↑10` hit points: 1000 damage does not dent it, `Natural.BEYOND` damage kills it, a vault reports `BEYOND` slots while an unlimited vault is still not full, and a four slot vault with the same structural amount is |

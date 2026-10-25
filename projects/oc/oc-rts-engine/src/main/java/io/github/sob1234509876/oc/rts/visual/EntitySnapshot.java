@@ -7,6 +7,8 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.production.ProductionDemand;
+import io.github.sob1234509876.oc.rts.production.ProductionNow;
 
 import java.util.List;
 
@@ -50,6 +52,11 @@ import java.util.List;
  *                        {@link SnapshotFactory#MAX_SNAPSHOT_PATH_POINTS} points; empty when the unit is
  *                        idle or standing still
  * @param target          goal tile of the active move order, or {@code null} when the unit is not moving
+ * @param producingNow    compact view of the running production job, or {@code null} when the building
+ *                        has no unfinished job
+ * @param demand          the running job's recipe inputs against the building's own buffer, or
+ *                        {@code null} when the building has no unfinished job
+ * @param task            one-line task of an engineer, or {@code null} for every other entity
  */
 public record EntitySnapshot(
         EntityId id,
@@ -74,7 +81,10 @@ public record EntitySnapshot(
         int orderCount,
         ItemBundle carrying,
         List<GridPos> path,
-        GridPos target) {
+        GridPos target,
+        ProductionNow producingNow,
+        ProductionDemand demand,
+        String task) {
 
     public EntitySnapshot {
         if (id == null) {

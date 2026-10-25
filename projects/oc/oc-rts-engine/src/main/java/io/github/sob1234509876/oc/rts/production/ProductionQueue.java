@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The production queue of one building: the recipes it still has to run, in order.
@@ -75,6 +76,72 @@ public final class ProductionQueue {
             }
         }
         return null;
+    }
+
+    /**
+     * The compact HUD view of the running job: its output kind, its one-based position and the queue
+     * length.
+     *
+     * <p>The position is always {@code 1} for a queue the engine advances, because finished jobs are
+     * removed and the head job is the only one worked on; the value is still computed rather than
+     * hard-coded so a queue that ever keeps finished jobs in front of the current one reports the truth.
+     * Empty when no job is unfinished.
+     */
+    public Optional<ProductionNow> producingNow() {
+        ProductionJob current = current();
+        if (current == null) {
+            return Optional.empty();
+        }
+        List<ProductionJob> unfinished = jobs();
+        return Optional.of(new ProductionNow(outputKind(current.recipe()),
+                unfinished.indexOf(current) + 1, unfinished.size()));
+    }
+
+    /**
+     * The recipe inputs of the current job against what this building itself holds.
+     *
+     * <p>The engine's production rule is to get the inputs into the building buffer and consume them
+     * there, so this is the same comparison {@link ProductionSystem} makes when it decides whether it can
+     * start. A job already in {@code PRODUCING} or {@code WAITING_OUTPUT} has passed that check, so it is
+     * reported ready even though the consumed inputs no longer sit in the buffer; every input kind the
+     * recipe names is listed once, in recipe order, and {@code have} is capped at {@code need}.
+     * {@link ProductionDemand.ItemNeed#stock()} is the owner's unreserved warehouse total for that item,
+     * which is what a haul could still bring; a building whose owner has no logistics network reports
+     * {@code 0}. Empty when the queue has no unfinished job.
+     */
+    public Optional<ProductionDemand> demand() {
+        ProductionJob current = current();
+        if (current == null) {
+            return Optional.empty();
+        }
+        ItemBundle inputs = current.recipe().inputs();
+        boolean hasLogistics = building.owner().hasLogistics();
+        ItemBundle available = hasLogistics ? building.owner().logistics().available() : ItemBundle.EMPTY;
+        List<ProductionDemand.ItemNeed> needs = new ArrayList<>();
+        boolean allPresent = true;
+        for (ItemBundle.Amount component : inputs.components()) {
+            long need = component.amount().toLongSaturated();
+            long have = building.inventory().amount(component.item()).min(component.amount())
+                    .toLongSaturated();
+            long stock = available.amount(component.item()).toLongSaturated();
+            needs.add(new ProductionDemand.ItemNeed(component.item().key().path(), need, have, stock));
+            if (have < need) {
+                allPresent = false;
+            }
+        }
+        boolean started = current.state() == ProductionState.PRODUCING
+                || current.state() == ProductionState.WAITING_OUTPUT;
+        return Optional.of(new ProductionDemand(started || allPresent, needs));
+    }
+
+    /**
+     * Content path of the produced unit, or the recipe's own path for an item-only recipe.
+     *
+     * <p>This is the one rule the per-job {@code queueItems} rows and {@link #producingNow()} share, so a
+     * client resolving the name through its manifest sees the same key in both places.
+     */
+    public static String outputKind(Recipe recipe) {
+        return recipe.unitOutput().map(unit -> unit.key().path()).orElseGet(() -> recipe.key().path());
     }
 
     /**

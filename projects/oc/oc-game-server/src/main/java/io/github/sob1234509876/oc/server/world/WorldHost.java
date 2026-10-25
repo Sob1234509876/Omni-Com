@@ -16,6 +16,7 @@ import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
+import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -23,15 +24,19 @@ import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
 import io.github.sob1234509876.oc.rts.movement.Motion;
 import io.github.sob1234509876.oc.rts.order.CommandService;
+import io.github.sob1234509876.oc.rts.production.ProductionDemand;
 import io.github.sob1234509876.oc.rts.production.ProductionJob;
+import io.github.sob1234509876.oc.rts.production.ProductionNow;
 import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
+import io.github.sob1234509876.oc.rts.visual.UnitTask;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -352,6 +357,29 @@ public final class WorldHost {
     /** Guards the mutable engine; every tick and every read holds it. */
     private final Object stateLock = new Object();
 
+    /**
+     * Ticks a recent haul pop stays in the snapshot after the event that produced it.
+     *
+     * <p>The client polls every 500 ms and animates a pop for 600 ms, so one second of snapshot
+     * visibility is enough for the browser to see it exactly once; the client de-duplicates by the event
+     * tick, so two snapshots that both carry the same pop still animate it once. The value is one second
+     * at the host's fixed {@value #TICKS_PER_SECOND} ticks per second.
+     */
+    public static final int POP_TTL_TICKS = 20;
+
+    /**
+     * The most recent haul pop per unit, keyed by entity id.
+     *
+     * <p>Only mutated by event handlers on the world thread and read while {@link #stateLock} is held, so
+     * it needs no concurrent structure. Stale entries are pruned once per snapshot; the map stays tiny
+     * because only successful pickups and unloads enter it.
+     */
+    private final Map<EntityId, HaulPop> recentPops = new HashMap<>();
+
+    /** One unit's most recent haul pop: the wire kind and the simulation tick that produced it. */
+    private record HaulPop(String kind, long tick) {
+    }
+
     /** Guards the tick thread field and the running flag. */
     private final Object lifecycleLock = new Object();
 
@@ -465,6 +493,12 @@ public final class WorldHost {
                 .player(player)
                 .build();
         this.spawnAnchor = findSpawnAnchor(engine.world());
+        // The server turns the engine's haul facts into one compact, per-unit snapshot field. The event
+        // itself is momentary and the engine gives no history, so keeping the latest pop per unit here is
+        // the smallest server-side state that lets a polling client animate it at all.
+        engine.world().events().subscribe(Events.ItemsHauled.class,
+                event -> recentPops.put(event.unit().id(),
+                        new HaulPop(event.action().id(), event.tick())));
         // Player 1 is the sample-scene / human anchor. Its faction anchor is the tile the whole scene was
         // laid out around, so a snapshot can report where the human side started without inventing one.
         this.player.setAnchor(spawnAnchor);
@@ -1709,6 +1743,8 @@ public final class WorldHost {
         // The engine always installs a production system on the host's builder, so reading it once per
         // snapshot is both safe and cheaper than looking it up for every entity row.
         ProductionSystem production = engine.world().production();
+        long nowTick = engine.tickNumber();
+        recentPops.entrySet().removeIf(entry -> nowTick - entry.getValue().tick() > POP_TTL_TICKS);
 
         ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
         ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
@@ -1754,6 +1790,8 @@ public final class WorldHost {
             appendUpgradeOffer(json, entity, goldItem, woodItem);
             appendBuildingServices(json, entity, goldItem, woodItem);
             appendUnitPath(json, entity);
+            appendTask(json, entity);
+            appendPop(json, entity);
             json.append('}');
         }
         json.append("],\"players\":[");
@@ -1843,8 +1881,64 @@ public final class WorldHost {
             json.append(",\"queueTicks\":").append(queueTicks);
         }
         if (queue != null) {
+            appendProducingNow(json, queue);
+            appendDemand(json, queue);
             appendQueueItems(json, jobs);
         }
+    }
+
+    /**
+     * Appends the compact running-job view: {@code ,"producingNow":{"kind":...,"position":1,"length":3}}.
+     *
+     * <p>The HUD label is {@code 生产中 <position>/<length>} and no longer has to guess which of the
+     * per-job rows is the current one. Both numbers count unfinished jobs only, exactly like
+     * {@code queue}; a queue with nothing running omits the object. The engine computes it in
+     * {@link ProductionQueue#producingNow()} so the snapshot and an engine consumer cannot disagree.
+     */
+    private static void appendProducingNow(StringBuilder json, ProductionQueue queue) {
+        ProductionNow now = queue.producingNow().orElse(null);
+        if (now == null) {
+            return;
+        }
+        json.append(",\"producingNow\":{\"kind\":");
+        appendJsonString(json, now.kind());
+        json.append(",\"position\":").append(now.position())
+                .append(",\"length\":").append(now.length())
+                .append('}');
+    }
+
+    /**
+     * Appends the current job's input demand:
+     * {@code ,"demand":{"ready":false,"items":[{"item":"gold","need":50,"have":0}]}}.
+     *
+     * <p>{@code items} is exactly the recipe's input kinds in recipe order, and {@code have} is capped at
+     * {@code need}; unrelated stock is not listed. {@code stock} is the owner's unreserved warehouse total
+     * for that item - what a haul could still bring - so the HUD can show the local hold and the
+     * transferable amount beside it (Q10). {@code ready} is false only when the job still has to
+     * wait for those inputs - a job that already entered {@code PRODUCING} has consumed them and is
+     * reported ready. A queue with no unfinished job omits the object, and so does a building with no
+     * queue at all, which is the "omitted for buildings with no queue" rule. The engine's
+     * {@link ProductionQueue#demand()} is the single implementation.
+     */
+    private static void appendDemand(StringBuilder json, ProductionQueue queue) {
+        ProductionDemand demand = queue.demand().orElse(null);
+        if (demand == null) {
+            return;
+        }
+        json.append(",\"demand\":{\"ready\":").append(demand.ready()).append(",\"items\":[");
+        for (int index = 0; index < demand.items().size(); index++) {
+            if (index > 0) {
+                json.append(',');
+            }
+            ProductionDemand.ItemNeed item = demand.items().get(index);
+            json.append("{\"item\":");
+            appendJsonString(json, item.item());
+            json.append(",\"need\":").append(item.need())
+                    .append(",\"have\":").append(item.have())
+                    .append(",\"stock\":").append(item.stock())
+                    .append('}');
+        }
+        json.append("]}");
     }
 
     /**
@@ -1866,9 +1960,7 @@ public final class WorldHost {
             Recipe recipe = job.recipe();
             int total = recipe.durationTicks();
             int ticks = job.state() == ProductionState.PRODUCING ? job.remainingTicks() : total;
-            String kind = recipe.unitOutput()
-                    .map(unit -> unit.key().path())
-                    .orElseGet(() -> recipe.key().path());
+            String kind = ProductionQueue.outputKind(recipe);
             json.append("{\"kind\":");
             appendJsonString(json, kind);
             json.append(",\"ticks\":").append(ticks)
@@ -2047,6 +2139,47 @@ public final class WorldHost {
         }
         var target = motion.goalOrNull().tile();
         json.append("],\"target\":[").append(target.x()).append(',').append(target.y()).append(']');
+    }
+
+    /**
+     * Appends the optional one-line task of an engineer: {@code ,"task":"搬运中 → 兵工厂"}.
+     *
+     * <p>The value comes from {@link UnitTask}, which reads the head of the unit's order queue and never
+     * invents a task from movement. The field is absent for every non-engineer, so a combat unit or a
+     * building row is byte-for-byte what it was before. It is additive and presentational: an older
+     * client ignores it.
+     */
+    private static void appendTask(StringBuilder json, Entity entity) {
+        if (!(entity instanceof Unit unit)) {
+            return;
+        }
+        String task = UnitTask.of(unit).orElse(null);
+        if (task == null) {
+            return;
+        }
+        json.append(",\"task\":");
+        appendJsonString(json, task);
+    }
+
+    /**
+     * Appends the latest haul animation fact of a unit: {@code ,"pop":{"kind":"pickup","tick":123}}.
+     *
+     * <p>The field is only present while the event is at most {@value #POP_TTL_TICKS} ticks old, so a
+     * client that polls after a unit stopped hauling sees it disappear instead of replaying a stale pop
+     * forever. {@code kind} is {@code pickup} or {@code dropoff} and {@code tick} is the simulation tick
+     * of the engine event; a client de-duplicates on that tick, which keeps one event from animating
+     * twice across two polls. A per-entity object was chosen over a top-level event array because it
+     * needs no cap, no ordering rule and no second lookup: the browser already draws per entity, and only
+     * the newest pop of a unit matters.
+     */
+    private void appendPop(StringBuilder json, Entity entity) {
+        HaulPop pop = recentPops.get(entity.id());
+        if (pop == null || engine.tickNumber() - pop.tick() > POP_TTL_TICKS) {
+            return;
+        }
+        json.append(",\"pop\":{\"kind\":");
+        appendJsonString(json, pop.kind());
+        json.append(",\"tick\":").append(pop.tick()).append('}');
     }
 
     /** One item's amount in a bundle, or {@code 0} when that item is not registered. */

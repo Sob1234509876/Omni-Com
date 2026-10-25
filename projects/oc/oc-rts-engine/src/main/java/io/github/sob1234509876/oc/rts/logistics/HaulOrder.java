@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.order.OrderContext;
 import io.github.sob1234509876.oc.rts.order.OrderState;
@@ -160,6 +161,11 @@ public final class HaulOrder implements Order {
         if (!refused.isEmpty()) {
             pickupTarget.inventory().insert(refused);
         }
+        ItemBundle loaded = taken.minusClamped(refused);
+        if (!loaded.isEmpty()) {
+            context.world().events().publish(new Events.ItemsHauled(unit, Events.HaulAction.PICKUP,
+                    loaded, context.tick().number()));
+        }
         pickupTarget = null;
         moving = false;
         if (job.delivered().plus(unit.cargo().contents()).containsAll(job.bundle())
@@ -181,6 +187,10 @@ public final class HaulOrder implements Order {
             ItemBundle carried = unit.cargo().extractAll();
             ItemBundle accepted = putInto(job.target().inventory(), carried);
             job.recordDelivered(accepted);
+            if (!accepted.isEmpty()) {
+                context.world().events().publish(new Events.ItemsHauled(unit, Events.HaulAction.DROPOFF,
+                        accepted, context.tick().number()));
+            }
             ItemBundle leftover = carried.minusClamped(accepted);
             if (!leftover.isEmpty()) {
                 putIntoCargo(unit, leftover);

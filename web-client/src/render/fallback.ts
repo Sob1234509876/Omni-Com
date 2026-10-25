@@ -836,7 +836,36 @@ export function drawQueueMarker(
   text: string,
   tilePixels: number,
 ): void {
-  const fontSize = Math.max(9, Math.round(tilePixels * 0.34));
+  drawGreyTag(context, screenX, bottomY, text, tilePixels, 0.34);
+}
+
+/**
+ * Compact stock tag above a selected, loaded unit: the first item and the total amount.
+ *
+ * It is the same achromatic language as the queue marker (translucent black, one pixel grey border,
+ * white text) but smaller, and the caller places it above the unit's health bar so the two never
+ * overlap. `bottomY` is the tag's bottom edge in CSS pixels.
+ */
+export function drawUnitStockTag(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  bottomY: number,
+  text: string,
+  tilePixels: number,
+): void {
+  drawGreyTag(context, screenX, bottomY, text, tilePixels, 0.29);
+}
+
+/** Shared achromatic box used by the production marker and the unit stock tag. */
+function drawGreyTag(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  bottomY: number,
+  text: string,
+  tilePixels: number,
+  fontScale: number,
+): void {
+  const fontSize = Math.max(9, Math.round(tilePixels * fontScale));
   context.save();
   context.font = `600 ${fontSize}px ui-monospace, "Cascadia Code", Consolas, monospace`;
   context.textAlign = "center";
@@ -854,5 +883,41 @@ export function drawQueueMarker(
   context.strokeRect(left + 0.5, topY + 0.5, boxWidth - 1, boxHeight - 1);
   context.fillStyle = "#ffffff";
   context.fillText(text, screenX, topY + boxHeight / 2 + 0.5);
+  context.restore();
+}
+
+/**
+ * One haul pop: a small achromatic square outline with a centred dot, rising and fading.
+ *
+ * `bottomY` is the mark's bottom edge. The mark is chrome, never an ownership colour, so it reads the
+ * same for a pickup and a dropoff; the direction lives in the server's `kind`, not in a hue. `alpha` is
+ * expected in `[0, 1]` and the caller already advanced `bottomY` by the rise.
+ */
+export function drawResourcePop(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  bottomY: number,
+  alpha: number,
+  tilePixels: number,
+): void {
+  const safeAlpha = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 0));
+  if (safeAlpha <= 0) {
+    return;
+  }
+  const size = Math.max(8, tilePixels * 0.42);
+  const left = screenX - size / 2;
+  const top = bottomY - size;
+  context.save();
+  context.globalAlpha = safeAlpha;
+  context.strokeStyle = "#ffffff";
+  context.fillStyle = "#ffffff";
+  context.lineWidth = Math.max(1, 1.25);
+  context.fillStyle = "rgba(0, 0, 0, 0.55)";
+  context.fillRect(left, top, size, size);
+  context.strokeStyle = "#ffffff";
+  context.strokeRect(left + 0.5, top + 0.5, Math.max(0, size - 1), Math.max(0, size - 1));
+  context.beginPath();
+  context.arc(screenX, top + size / 2, Math.max(1.5, size * 0.16), 0, Math.PI * 2);
+  context.fill();
   context.restore();
 }

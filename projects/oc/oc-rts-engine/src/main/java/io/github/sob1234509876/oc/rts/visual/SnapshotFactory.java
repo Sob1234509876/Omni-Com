@@ -17,6 +17,10 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.Motion;
 import io.github.sob1234509876.oc.rts.order.OrderQueue;
+import io.github.sob1234509876.oc.rts.production.ProductionDemand;
+import io.github.sob1234509876.oc.rts.production.ProductionNow;
+import io.github.sob1234509876.oc.rts.production.ProductionQueue;
+import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -184,6 +188,16 @@ public final class SnapshotFactory {
             path = remainingPath(motion);
         }
         Player owner = entity.owner();
+        ProductionNow producingNow = null;
+        ProductionDemand demand = null;
+        if (entity instanceof Building building && building.isConstructed()) {
+            ProductionQueue queue = world.production().queue(building).orElse(null);
+            if (queue != null) {
+                producingNow = queue.producingNow().orElse(null);
+                demand = queue.demand().orElse(null);
+            }
+        }
+        String task = entity instanceof Unit unit ? UnitTask.of(unit).orElse(null) : null;
         return new EntitySnapshot(
                 entity.id(),
                 entity.typeKey(),
@@ -207,7 +221,10 @@ public final class SnapshotFactory {
                 orderCount,
                 carrying,
                 path,
-                target);
+                target,
+                producingNow,
+                demand,
+                task);
     }
 
     /**

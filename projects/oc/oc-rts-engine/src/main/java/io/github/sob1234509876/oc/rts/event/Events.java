@@ -69,6 +69,44 @@ public final class Events {
     public record ProductionStateChanged(Building building, Recipe recipe, String state, long tick) {
     }
 
+    /** Direction of one {@link ItemsHauled} event: goods entering or leaving a unit's cargo hold. */
+    public enum HaulAction {
+
+        /** The unit loaded the goods into its own cargo hold. */
+        PICKUP("pickup"),
+        /** The unit unloaded goods from its cargo hold into a building or warehouse. */
+        DROPOFF("dropoff");
+
+        private final String id;
+
+        HaulAction(String id) {
+            this.id = id;
+        }
+
+        /** Stable wire token of the action, {@code pickup} or {@code dropoff}. */
+        public String id() {
+            return id;
+        }
+    }
+
+    /**
+     * A hauler moved goods into or out of its own cargo hold.
+     *
+     * <p>This is the fact a client needs for the small "resource arrived" animation: it is published
+     * exactly at the two places a haul changes a unit's hold - the successful pickup from a warehouse and
+     * the successful unload into the target building - and it carries the amount that really changed, not
+     * the claim. The simulation never reads this event back; the server records the latest one per unit
+     * so a polling snapshot can carry it without adding a network stream.
+     */
+    public record ItemsHauled(Unit unit, HaulAction action, ItemBundle items, long tick) {
+
+        public ItemsHauled {
+            Objects.requireNonNull(unit, "unit");
+            Objects.requireNonNull(action, "action");
+            items = items == null ? ItemBundle.EMPTY : items;
+        }
+    }
+
     /** A chunk of a dimension was generated or loaded into memory. */
     public record ChunkLoaded(DimensionId dimension, ChunkPos pos, long tick) {
     }

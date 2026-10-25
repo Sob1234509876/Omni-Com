@@ -132,6 +132,38 @@ export interface EntityView {
    */
   readonly queueItems?: readonly QueueItemView[];
   /**
+   * Compact view of the job the building is producing now, from the snapshot's optional `producingNow`.
+   *
+   * The HUD label is `生产中 <position>/<length>` and no longer has to guess which of the per-item rows is
+   * current. A unit row, a building without a queue and an older server omit it, so the legacy
+   * `生产中 ×N` marker remains the fallback.
+   */
+  readonly producingNow?: ProducingNowView;
+  /**
+   * The current job's recipe inputs against the building's own buffer, from the snapshot's optional
+   * `demand` object.
+   *
+   * `ready` drives the small check/warning icon beside the queue row; `items` lists exactly the recipe's
+   * input kinds with `need` and the held `have` (capped at need). A building without a queue, and a
+   * queue with nothing unfinished, omit it.
+   */
+  readonly demand?: ProductionDemandView;
+  /**
+   * One-line task of an engineer from the snapshot's optional `task` string.
+   *
+   * It is derived by the server from the head of the unit's order queue (`搬运中 → 兵工厂`,
+   * `建造中 → …`, `修理中 → …`, `空闲`), never from movement; non-engineers and older snapshots omit it.
+   */
+  readonly task?: string;
+  /**
+   * The newest haul animation fact of a unit from the snapshot's optional `pop` object.
+   *
+   * Present for at most one second after the engine emitted a pickup or dropoff. The client de-duplicates
+   * on `tick`, so two polls that both carry the same event animate it once, and throttles the animation
+   * to one per unit per second.
+   */
+  readonly pop?: PopView;
+  /**
    * Items this entity currently stores or carries, keyed by item content path (`gold`, `wood`), from
    * the snapshot's optional `contents` object.
    *
@@ -188,6 +220,46 @@ export interface QueueItemView {
   readonly kind: string;
   readonly ticks: number;
   readonly total: number;
+}
+
+/**
+ * Compact view of the currently producing job, from the snapshot's optional `producingNow`.
+ *
+ * `position` is one-based and `length` is the number of unfinished jobs, so the HUD label is
+ * `生产中 <position>/<length>`. `kind` is the same produced-unit-or-recipe path the per-item rows use.
+ */
+export interface ProducingNowView {
+  readonly kind: string;
+  readonly position: number;
+  readonly length: number;
+}
+
+/** One recipe input, how much of it the producing building holds and what the warehouse could send. */
+export interface DemandItemView {
+  readonly item: string;
+  readonly need: number;
+  readonly have: number;
+  /** Unreserved warehouse amount that a haul could still bring; absent on a pre-Q10 snapshot. */
+  readonly stock?: number;
+}
+
+/**
+ * Whether the current production job has its inputs, from the snapshot's optional `demand` object.
+ *
+ * `ready` is false when at least one recipe input is short; `items` is capped at the recipe's input kinds
+ * and `have` never exceeds `need`.
+ */
+export interface ProductionDemandView {
+  readonly ready: boolean;
+  readonly items: readonly DemandItemView[];
+}
+
+/** One haul animation fact, from a snapshot's optional per-unit `pop` object. */
+export interface PopView {
+  /** `pickup` or `dropoff`; an unknown future kind still pops a neutral mark. */
+  readonly kind: string;
+  /** Simulation tick of the engine event, used for de-duplication across polls. */
+  readonly tick: number;
 }
 
 export interface WorldView {
@@ -859,6 +931,105 @@ function optionalNonNegativeInteger(value: unknown): number | undefined {
 }
 
 /**
+ * Reads the optional `producingNow` object of a building row.
+ *
+ * A legacy snapshot has no object; a malformed one is dropped rather than rejecting the world. The
+ * object is only useful when `position` is a positive integer and `length` is at least it, which is the
+ * one invariant the label `生产中 <position>/<length>` relies on.
+ */
+function snapshotProducingNow(value: unknown): ProducingNowView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const kind = value["kind"];
+  const position = finiteNumber(value["position"]);
+  const length = finiteNumber(value["length"]);
+  if (typeof kind !== "string" || kind.trim() === "") {
+    return undefined;
+  }
+  if (
+    position === null ||
+    length === null ||
+    !Number.isInteger(position) ||
+    !Number.isInteger(length) ||
+    position < 1 ||
+    length < position
+  ) {
+    return undefined;
+  }
+  return { kind: kindName(kind.trim()), position, length };
+}
+
+/**
+ * Reads the optional `demand` object of a building row.
+ *
+ * `ready` must be a real boolean. Each item needs a non-empty path and non-negative safe integer
+ * `need`/`have`; a malformed entry is dropped, and an object whose item list is unusable simply yields
+ * an empty list. `have` is clamped to `need`, the same rule the server applies, so the HUD cannot print a
+ * surplus as a shortage.
+ */
+function snapshotDemand(value: unknown): ProductionDemandView | undefined {
+  if (!isRecord(value) || typeof value["ready"] !== "boolean") {
+    return undefined;
+  }
+  const rawItems = value["items"];
+  if (!Array.isArray(rawItems)) {
+    return undefined;
+  }
+  const items: DemandItemView[] = [];
+  for (const rawItem of rawItems) {
+    if (!isRecord(rawItem)) {
+      continue;
+    }
+    const item = rawItem["item"];
+    const need = finiteNumber(rawItem["need"]);
+    const have = finiteNumber(rawItem["have"]);
+    const stock = optionalNonNegativeInteger(rawItem["stock"]);
+    if (typeof item !== "string" || item.trim() === "") {
+      continue;
+    }
+    if (
+      need === null ||
+      have === null ||
+      !Number.isSafeInteger(need) ||
+      !Number.isSafeInteger(have) ||
+      need < 0 ||
+      have < 0
+    ) {
+      continue;
+    }
+    items.push({
+      item: item.trim(),
+      need,
+      have: Math.min(have, need),
+      ...(stock === undefined ? {} : { stock }),
+    });
+  }
+  return { ready: value["ready"], items };
+}
+
+/**
+ * Reads the optional per-unit `pop` object.
+ *
+ * Both halves are required: a non-empty kind and a non-negative integer tick. A malformed object is
+ * absent, not fatal; the animation simply does not start.
+ */
+function snapshotPop(value: unknown): PopView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const kind = value["kind"];
+  const tick = finiteNumber(value["tick"]);
+  if (typeof kind !== "string" || kind.trim() === "" || tick === null) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(tick) || tick < 0) {
+    return undefined;
+  }
+  return { kind: kind.trim(), tick };
+}
+
+/**
  * Reads the optional `anchor` pair of one player row.
  *
  * Only a two-element array of safe integers is an anchor: the world is unbounded, so both halves may be
@@ -1014,6 +1185,12 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const queue = finiteNumber(rawEntity["queue"]);
     const queueTicks = finiteNumber(rawEntity["queueTicks"]);
     const queueItems = snapshotQueueItems(rawEntity["queueItems"]);
+    const producingNow = snapshotProducingNow(rawEntity["producingNow"]);
+    const demand = snapshotDemand(rawEntity["demand"]);
+    const taskValue = rawEntity["task"];
+    const task =
+      typeof taskValue === "string" && taskValue.trim() !== "" ? taskValue.trim() : undefined;
+    const pop = snapshotPop(rawEntity["pop"]);
     const contents = snapshotContents(rawEntity["contents"]);
     const upgrade = snapshotUpgrade(rawEntity["upgrade"]);
     const repairCost = snapshotBuildingCost(rawEntity["repair"]);
@@ -1036,6 +1213,10 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
         ? {}
         : { queueTicks }),
       ...(queueItems === undefined ? {} : { queueItems }),
+      ...(producingNow === undefined ? {} : { producingNow }),
+      ...(demand === undefined ? {} : { demand }),
+      ...(task === undefined ? {} : { task }),
+      ...(pop === undefined ? {} : { pop }),
       ...(contents === undefined ? {} : { contents }),
       ...(upgrade === undefined ? {} : { upgrade }),
       ...(repairCost === undefined ? {} : { repairCost }),

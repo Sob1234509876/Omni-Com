@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
@@ -16,10 +17,18 @@ import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.core.Tick;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
+import io.github.sob1234509876.oc.rts.event.Events;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
+import io.github.sob1234509876.oc.rts.order.BuildOrder;
+import io.github.sob1234509876.oc.rts.order.OrderContext;
+import io.github.sob1234509876.oc.rts.order.RepairOrder;
 
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -85,6 +94,9 @@ public final class WorldHostCheck {
         snapshotEntityDetails(check);
         snapshotContents(check);
         snapshotQueueTicks(check);
+        snapshotProductionViews(check);
+        snapshotEngineerTasks(check);
+        snapshotHaulPops(check);
         determinism(check);
         try {
             route(check);
@@ -751,9 +763,214 @@ public final class WorldHostCheck {
         }
     }
 
+    /**
+     * The {@code producingNow} and {@code demand} fields of a queued building row.
+     *
+     * <p>The fixture registers one producer and one recipe with one input. Two jobs are queued before any
+     * tick, so the queue is waiting for materials: {@code producingNow} must name position 1 of 2 and the
+     * produced unit, and {@code demand} must report the one input as short at zero held. Inserting exactly
+     * the recipe's input into the building buffer flips {@code ready} and {@code have} without a tick,
+     * which is the same comparison the engine makes before it starts. A warehouse row has no production
+     * queue and therefore carries neither object.
+     */
+    private static void snapshotProductionViews(Check check) {
+        check.section("快照：生产中位置与输入需求");
+        WorldHost host = new WorldHost(1L, new TaskContent());
+        try {
+            Building barracks = buildingOf(host, TaskContent.BARRACKS);
+            Building warehouse = buildingOf(host, TaskContent.WAREHOUSE);
+            check.that(barracks != null && warehouse != null, "测试内容里有兵营和仓库");
+            if (barracks == null) {
+                return;
+            }
+            List<Recipe> recipes = host.content().recipesFor(barracks.type());
+            check.that(!recipes.isEmpty(), "兵营有可生产的配方");
+            if (recipes.isEmpty()) {
+                return;
+            }
+            Recipe recipe = recipes.get(0);
+            check.equal(1, recipe.inputs().components().size(), "测试配方恰好有一个输入");
+            host.engine().world().production().enqueue(barracks, recipe, 2);
+            Map<?, ?> waiting = entityRow(MiniJson.parseObject(host.snapshotJson()), barracks.id().value());
+            Map<?, ?> producing = objectField(waiting, "producingNow");
+            check.that(producing != null, "有排队任务的建筑行带 producingNow");
+            check.equal(recipe.unitOutput().orElseThrow().key().path(), stringField(producing, "kind"),
+                    "producingNow.kind 是配方产出的单位路径");
+            check.equal(1L, longField(producing, "position"), "producingNow.position 从 1 开始");
+            check.equal(2L, longField(producing, "length"), "producingNow.length 是未完成任务数");
+
+            Map<?, ?> demand = objectField(waiting, "demand");
+            check.that(demand != null && Boolean.FALSE.equals(demand.get("ready")),
+                    "建筑缓冲区为空时 demand.ready 是 false");
+            List<?> items = listField(demand, "items");
+            check.equal(1L, (long) items.size(), "demand.items 只列出配方输入");
+            Map<?, ?> first = items.isEmpty() || !(items.get(0) instanceof Map<?, ?> map) ? null : map;
+            check.equal(TaskContent.GOLD, stringField(first, "item"), "demand.items[0].item 是配方输入路径");
+            check.equal(10L, longField(first, "need"), "need 是配方的输入数量");
+            check.equal(0L, longField(first, "have"), "have 是建筑自己持有的数量");
+            check.equal(500L, longField(first, "stock"), "stock 是仓库里可调拨的数量（Q10）");
+
+            ItemBundle inputs = recipe.inputs();
+            for (ItemBundle.Amount component : inputs.components()) {
+                barracks.inventory().insert(component.item(), component.amount());
+            }
+            Map<?, ?> suppliedRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
+                    barracks.id().value());
+            Map<?, ?> supplied = objectField(suppliedRow, "demand");
+            check.that(supplied != null && Boolean.TRUE.equals(supplied.get("ready")),
+                    "输入进入建筑缓冲区后 demand.ready 变成 true");
+            List<?> suppliedItems = listField(supplied, "items");
+            Map<?, ?> suppliedFirst = suppliedItems.isEmpty()
+                    || !(suppliedItems.get(0) instanceof Map<?, ?> map) ? null : map;
+            check.equal(10L, longField(suppliedFirst, "have"), "have 报告真实持有量");
+
+            Map<?, ?> warehouseRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
+                    warehouse.id().value());
+            check.that(warehouseRow != null && !warehouseRow.containsKey("demand")
+                            && !warehouseRow.containsKey("producingNow"),
+                    "没有生产队列的建筑同时省略 demand 与 producingNow");
+            validateSnapshot(check, host.snapshotJson(), "带生产视图的快照");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * The optional {@code task} line of an engineer row, and its absence on a non-engineer.
+     *
+     * <p>The fixture's engineer is a builder-tagged support unit. The check starts one real order at a
+     * time through the unit's own queue, so the snapshot text comes from the same order head a running
+     * game would have: idle, build, repair and haul, each naming the building by its display name. A
+     * combat unit must not gain the field.
+     */
+    private static void snapshotEngineerTasks(Check check) {
+        check.section("快照：工程师任务行");
+        WorldHost host = new WorldHost(1L, new TaskContent());
+        try {
+            World world = host.engine().world();
+            Unit engineer = unitOf(host, TaskContent.ENGINEER);
+            Unit soldier = unitOf(host, TaskContent.SOLDIER);
+            Building barracks = buildingOf(host, TaskContent.BARRACKS);
+            Building warehouse = buildingOf(host, TaskContent.WAREHOUSE);
+            check.that(engineer != null && soldier != null && barracks != null && warehouse != null,
+                    "测试内容里有工程师、士兵、兵营和仓库");
+            if (engineer == null || soldier == null || barracks == null || warehouse == null) {
+                return;
+            }
+            OrderContext context = new OrderContext(world, engineer,
+                    new Tick(world.tickNumber(), WorldHost.TICKS_PER_SECOND));
+            engineer.orders().clear(context);
+            check.equal("空闲", taskOf(host, engineer), "没有订单的工程师报告 空闲");
+
+            Building site = world.spawnBuilding(host.content().building(TaskContent.BARRACKS),
+                    host.player(), host.spawnAnchor().plus(10, 10));
+            site.restartConstruction();
+            engineer.orders().replace(context, new BuildOrder(site));
+            engineer.orders().tick(context);
+            check.equal("建造中 → " + site.displayName(), taskOf(host, engineer),
+                    "建造订单报告 建造中 → <建筑>");
+
+            warehouse.health().damage(100);
+            engineer.orders().replace(context, new RepairOrder(warehouse));
+            engineer.orders().tick(context);
+            check.equal("修理中 → " + warehouse.displayName(), taskOf(host, engineer),
+                    "修理订单报告 修理中 → <建筑>");
+
+            WarehouseLogistics logistics = WarehouseLogistics.of(host.player());
+            check.that(logistics != null, "样例玩家有仓库物流网络");
+            if (logistics != null) {
+                var job = logistics.requestDeliveryJob(barracks, ItemBundle.of(
+                        host.content().item(TaskContent.GOLD), 10));
+                check.that(job.isPresent(), "仓库能开出一次真实搬运任务");
+                if (job.isPresent()) {
+                    engineer.orders().replace(context, new HaulOrder(job.get()));
+                    engineer.orders().tick(context);
+                    check.equal("搬运中 → " + barracks.displayName(), taskOf(host, engineer),
+                            "搬运订单报告 搬运中 → <建筑>");
+                }
+            }
+
+            engineer.orders().clear(context);
+            check.equal("空闲", taskOf(host, engineer), "订单清空后工程师回到 空闲");
+            Map<?, ?> soldierRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
+                    soldier.id().value());
+            check.that(soldierRow != null && !soldierRow.containsKey("task"),
+                    "非工程师单位行省略 task");
+            validateSnapshot(check, host.snapshotJson(), "带任务行的快照");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * The {@code pop} field: the host must forward the engine's haul event and expire it.
+     *
+     * <p>Publishing a real {@link Events.ItemsHauled} on the world bus drives the same subscription a
+     * hauler would, without waiting for a multi-tick walk. The row must carry the kind and the simulator
+     * tick; after {@link WorldHost#POP_TTL_TICKS} more ticks the object must be gone, so a client never
+     * replays an old pickup forever. The engine's own event emission is covered by the engine scenario;
+     * this check pins the server seam and the wire shape.
+     */
+    private static void snapshotHaulPops(Check check) {
+        check.section("快照：搬运弹跳来源与过期");
+        WorldHost host = new WorldHost(1L, new TaskContent());
+        try {
+            Unit engineer = unitOf(host, TaskContent.ENGINEER);
+            check.that(engineer != null, "测试内容里有工程师");
+            if (engineer == null) {
+                return;
+            }
+            long eventTick = host.engine().world().tickNumber();
+            host.engine().world().events().publish(new Events.ItemsHauled(engineer,
+                    Events.HaulAction.PICKUP, ItemBundle.of(host.content().item(TaskContent.GOLD), 5),
+                    eventTick));
+            Map<?, ?> row = entityRow(MiniJson.parseObject(host.snapshotJson()), engineer.id().value());
+            Map<?, ?> pop = objectField(row, "pop");
+            check.that(pop != null, "引擎事件后单位行带 pop");
+            check.equal("pickup", stringField(pop, "kind"), "pop.kind 是 pickup");
+            check.equal(eventTick, longField(pop, "tick"), "pop.tick 是事件的模拟 tick");
+
+            host.step();
+            Map<?, ?> fresh = entityRow(MiniJson.parseObject(host.snapshotJson()), engineer.id().value());
+            check.that(objectField(fresh, "pop") != null, "事件后一个 tick 内 pop 仍在快照里");
+
+            for (int index = 0; index < WorldHost.POP_TTL_TICKS + 1; index++) {
+                host.step();
+            }
+            Map<?, ?> expired = entityRow(MiniJson.parseObject(host.snapshotJson()), engineer.id().value());
+            check.that(expired != null && !expired.containsKey("pop"),
+                    "超过 POP_TTL_TICKS 后省略过期的 pop");
+            validateSnapshot(check, host.snapshotJson(), "带搬运弹跳的快照");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** The {@code task} field of one unit row, or {@code null} when the row or field is absent. */
+    private static String taskOf(WorldHost host, Unit unit) {
+        return stringField(entityRow(MiniJson.parseObject(host.snapshotJson()), unit.id().value()), "task");
+    }
+
+    /** One object field of a parsed row, or {@code null} when it is absent or not an object. */
+    private static Map<?, ?> objectField(Map<?, ?> row, String key) {
+        Object raw = row == null ? null : row.get(key);
+        return raw instanceof Map<?, ?> object ? object : null;
+    }
+
+    /** One array field of a parsed object, or an empty list when it is absent or not an array. */
+    private static List<?> listField(Map<?, ?> row, String key) {
+        Object raw = row == null ? null : row.get(key);
+        return raw instanceof List<?> list ? list : List.of();
+    }
+
+    /** One string field of a parsed row, or {@code null} when it is absent or not a string. */
+    private static String stringField(Map<?, ?> row, String key) {
+        Object raw = row == null ? null : row.get(key);
+        return raw instanceof String text ? text : null;
+    }
+
     /** The first building of the loaded world with the given content path, or {@code null}. */
-    private static Building buildingOf(WorldHost host, String path) {
-        for (Building building : host.engine().world().buildings()) {
+    private static Building buildingOf(WorldHost host, String path) {        for (Building building : host.engine().world().buildings()) {
             if (building.type().key().path().equals(path)) {
                 return building;
             }
@@ -1485,6 +1702,62 @@ public final class WorldHostCheck {
                     .building(LUMBERCAMP).name("Lumber Camp").size(1, 1).health(100)
                     .buildTime(20).tag("lumbercamp").tag("wood_income_20")
                     .building(TOWER).name("Tower").size(1, 1).health(100).buildTime(20);
+        }
+    }
+
+    /**
+     * A producer, warehouse, engineer and soldier catalogue for the production-view, task and pop checks.
+     *
+     * <p>The producer's recipe has one real input (10 gold), so a queued job is honestly short until the
+     * gold reaches the building buffer; the warehouse starts with 500 gold through the normal host
+     * deposit path, which is also what lets the task check request a real delivery. The engineer carries
+     * the {@code builder} tag and a cargo hold, and the soldier is a combat unit without either.
+     */
+    private static final class TaskContent implements WorldContent {
+
+        private static final String GOLD = "gold";
+        private static final String ENGINEER = "unit.engineer";
+        private static final String SOLDIER = "unit.soldier";
+        private static final String WAREHOUSE = "building.warehouse";
+        private static final String BARRACKS = "building.barracks";
+
+        @Override
+        public String id() {
+            return "oc-world-host-check-task";
+        }
+
+        @Override
+        public String description() {
+            return "World host check content: a producer, warehouse, engineer and soldier for task/pop";
+        }
+
+        @Override
+        public String namespace() {
+            return "worldhostchecktask";
+        }
+
+        @Override
+        public StartingResources startingResources() {
+            return StartingResources.builder().add(GOLD, 500).build();
+        }
+
+        @Override
+        public void populate(ContentRegistry.Builder registry) {
+            Objects.requireNonNull(registry, "registry");
+            registry.terrain("grass").name("Grass").buildable().moveCost(1f)
+                    .sprite("terrain/grass").mapColor(0x5FA84F)
+                    .item(GOLD).name("Gold").maxStack(10_000)
+                    .unit(ENGINEER).name("Engineer").role(UnitRole.SUPPORT).health(60).speed(2.6f)
+                    .radius(0.32f).cost(GOLD, 10).buildTime(45).cargo(60).spriteSet(ENGINEER)
+                    .tag("builder")
+                    .unit(SOLDIER).name("Soldier").role(UnitRole.COMBAT).health(50).speed(2f)
+                    .radius(0.3f).cost(GOLD, 20).buildTime(60).spriteSet(SOLDIER)
+                    .building(WAREHOUSE).name("Warehouse").size(3, 3).health(500).cost(GOLD, 60)
+                    .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE)
+                    .building(BARRACKS).name("Barracks").size(2, 2).health(300).cost(GOLD, 50)
+                    .buildTime(40).storage(4).producer("barracks").spriteSet(BARRACKS)
+                    .recipe("recipe.train").name("Train").producer("barracks")
+                    .input(GOLD, 10).unitOutput(SOLDIER).duration(60);
         }
     }
 

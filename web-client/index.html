@@ -949,6 +949,45 @@
         line-height: 1.3;
       }
 
+      /* The running-job header: `生产中 1/3`, position among the unfinished jobs. */
+      .hud-queue-now {
+        color: #ffffff;
+        font-size: 11px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.3;
+      }
+
+      /* The demand icon beside the current queue row: a hollow check when ready, a warning when short.
+         Both are achromatic; the warning's title lists the missing inputs with need/have. */
+      .hud-queue-demand {
+        flex: 0 0 auto;
+        width: 1.5em;
+        color: #e6e6e6;
+        font-size: 12px;
+        line-height: 1;
+        text-align: center;
+      }
+
+      .hud-queue-demand.ready {
+        color: #c8c8c8;
+      }
+
+      .hud-queue-demand.warning {
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      /* The transferable warehouse amount beside the demand icon (Q10): a small achromatic number. */
+      .hud-queue-stock {
+        flex: 0 0 auto;
+        color: #c8c8c8;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
       .hud-queue-name {
         max-width: 18ch;
         overflow: hidden;

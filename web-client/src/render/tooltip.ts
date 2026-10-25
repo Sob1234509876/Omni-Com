@@ -18,7 +18,13 @@
  * captures a click meant for the world canvas.
  */
 
-import { formatProgressPercent, queueMarkerText, sizeLabel } from "./status.ts";
+import {
+  demandMissingText,
+  formatProgressPercent,
+  queueMarkerText,
+  sizeLabel,
+  unitTaskLabel,
+} from "./status.ts";
 import {
   isBuildingEntityKind,
   ownershipTag,
@@ -160,9 +166,21 @@ export function tooltipContent(
       lines.push(footprint);
     }
   }
-  const queue = queueMarkerText(entity.queue);
+  const queue = queueMarkerText(entity.queue, entity.producingNow);
   if (queue !== "") {
     lines.push(queue);
+  }
+  // An engineer's task is one short line from the server's order-derived `task`; an unknown or blank
+  // value is omitted rather than printed as an empty label.
+  const task = unitTaskLabel(entity.task);
+  if (task !== null) {
+    lines.push(task);
+  }
+  // The demand warning repeats the missing-inputs text of the queue row, so hovering the warning and
+  // hovering the entity explain the same shortage with the same numbers.
+  const shortage = demandMissingText(entity.demand);
+  if (shortage !== "") {
+    lines.push(shortage);
   }
   return { name, ownerTag: ownershipLabel, lines };
 }

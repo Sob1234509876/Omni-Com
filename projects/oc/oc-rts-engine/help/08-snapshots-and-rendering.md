@@ -123,7 +123,7 @@ public WorldSnapshot(long tick, int ticksPerSecond, TileRect bounds, TerrainType
 
 ## 四、`EntitySnapshot` 逐字段
 
-record 的 23 个分量，顺序即声明顺序：
+record 的 26 个分量，顺序即声明顺序：
 
 | # | 字段 | 类型 | 含义 |
 | --- | --- | --- | --- |
@@ -150,6 +150,9 @@ record 的 23 个分量，顺序即声明顺序：
 | 21 | `carrying` | `ItemBundle` | 单位是 `cargo().contents()`，建筑是 `inventory().contents()`，null 回退 `ItemBundle.EMPTY` |
 | 22 | `path` | `List<GridPos>` | 移动中单位**剩余路线**的瓦片点，最多 `SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS = 64` 个；空闲/停下时是空列表，永不 null |
 | 23 | `target` | `GridPos` | 当前移动命令的目标瓦片；不移动时为 null。路线被截断时它仍指向真正的终点 |
+| 24 | `producingNow` | `ProductionNow` | 生产队列当前任务的紧凑视图：产物内容路径、1 起的位置、未完成任务数；建筑无未完成任务时为 null |
+| 25 | `demand` | `ProductionDemand` | 当前任务的配方输入与建筑自身缓冲区的比较：`ready` 加每项 `need` / `have`（`have` 以 `need` 为上限）/ `stock`（所有者仓库未预留、可调拨的数量）；无当前任务时为 null |
+| 26 | `task` | `String` | 工程师的一行任务（`搬运中 → …` / `建造中 → …` / `修理中 → …` / `空闲`），其它实体为 null |
 
 构造期校验：`id`、`typeKey`、`position`、`anchorTile` 为 null 时抛 `IllegalArgumentException`；`path` 为 null 时归一成 `List.of()`。派生方法有五个：
 
@@ -166,6 +169,8 @@ entity.roleOrNull();    // 等同于 role()
 - 空闲单位、刚停下（`clearGoal()`）的单位、以及还在等 PathService 第一条路线的单位，`path` 为空且 `target == null`；
 - 路线很长时只带前 64 个点，`target` 仍是真实终点；客户端从实体位置连到这些点，再在 `target` 画目标点，得到一条可读的折线；
 - 这是纯表现数据，不参与移动：移动系统始终消费完整的 `Motion.waypoints()`。协议层（`WorldHost.snapshotJson`）用同样的 64 点上限序列化成 `path` / `target` 两个可选字段，旧客户端忽略即可。
+
+**生产视图与任务字段。** `SnapshotFactory` 对已完工建筑读取 `world.production().queue(building)`：有队列时 `producingNow` 来自 `ProductionQueue.producingNow()`，`demand` 来自 `ProductionQueue.demand()`。`demand` 只比较该建筑自己的 `inventory()`，因为引擎的生产就是先把材料送进这个缓冲区再消耗；已经进入 `PRODUCING` / `WAITING_OUTPUT` 的任务报告 `ready = true`，输入已经被消耗，不能再用缓冲区反推出缺料。单位行的 `task` 来自 `UnitTask.of(unit)`：它只看单位命令队列的队首，`BuildOrder` / `RepairOrder` / `HaulOrder` 分别映射成三种任务，其它单位（以及战斗单位和建筑）没有这个字段，普通移动也不会被解释成任务。协议层把这三个视图序列化成同名可选字段，见 `WorldHost.snapshotJson()`；旧客户端忽略即可。
 
 ## 五、`AsciiMapRenderer`：一个完整的消费示例
 
@@ -282,7 +287,7 @@ engine.dimension(DimensionId.of("moon")).focus(new Vec2(0f, 0f), 3); // 等价�
 | `WorldSnapshot.tick/elapsedSeconds/ticksPerSecond/bounds/width/height` | 时间与范围 |
 | `WorldSnapshot.entities/entityCount/unitCount/buildingCount/loadedChunks` | 内容清单 |
 | `WorldSnapshot.terrainAt/fallbackTerrain/entity/requireEntity/contains/entitiesOf/selectedEntities` | 查询 |
-| `EntitySnapshot` 23 个 record 分量 | 见第四节表格 |
+| `EntitySnapshot` 26 个 record 分量 | 见第四节表格 |
 | `EntitySnapshot.hasSprite/isDead/isCarrying/hasPath/roleOrNull` | 派生方法 |
 | `SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS` | 路径点上限 64；引擎快照与协议 `path` 用同一个数 |
 | `AsciiMapRenderer.render(WorldSnapshot)` / `symbolOf(EntitySnapshot)` / `symbolOf(TerrainType)` | 文本渲染与字符规则（图例行以 `dimension <键> (<展示名>)` 打头）；常量 `UNKNOWN_SYMBOL='?'`、`OTHER_SYMBOL='%'` |

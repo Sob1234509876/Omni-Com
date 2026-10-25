@@ -101,6 +101,11 @@ import {
   releaseFlashIds,
 } from "../src/render/sweep.ts";
 import {
+  STOCK_TAG_RADIUS_TILES,
+  demandIcon,
+  demandMissingText,
+  demandStockText,
+  demandStockTitle,
   formatProgressPercent,
   incomeSuffix,
   progressBarRatio,
@@ -108,9 +113,24 @@ import {
   queueMarkerText,
   queueProgressRatio,
   sizeLabel,
+  stockTagVisible,
   unitCargoLabel,
+  unitStockTagLabel,
+  unitTaskLabel,
   warehouseContentsLabel,
 } from "../src/render/status.ts";
+import {
+  POP_LIFETIME_MS,
+  POP_RISE_PX,
+  POP_THROTTLE_MS,
+  activePops,
+  popAlpha,
+  popProgress,
+  popRise,
+  prunePops,
+  registerSnapshotPops,
+  type PopRecord,
+} from "../src/render/pop.ts";
 import {
   CONTROL_GROUP_MAX,
   EMPTY_CONTROL_GROUPS,
@@ -5346,6 +5366,253 @@ check(
     buildingActionModel({ ...damagedBuilding, repairCost: undefined }, 3, servicePlayer,
       serviceEngineer) === null,
   "all null",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Producer status, engineer task, stock tags and haul pops
+// ---------------------------------------------------------------------------------------------
+
+const producingNow = { kind: "unit.melee.t1", position: 1, length: 3 };
+check(
+  "生产中标签用当前位置/队列长度（生产中 1/3）",
+  queueMarkerText(3, producingNow) === "生产中 1/3",
+  queueMarkerText(3, producingNow),
+);
+check(
+  "没有 producingNow 的旧快照仍用生产中 ×N",
+  queueMarkerText(3) === "生产中 ×3" && queueMarkerText(0) === "" && queueMarkerText(undefined) === "",
+  `"${queueMarkerText(3)}" / "${queueMarkerText(0)}"`,
+);
+check(
+  "非法 producingNow 回退到旧标记而不是打印 NaN",
+  queueMarkerText(2, { kind: "x", position: 0, length: 2 }) === "生产中 ×2" &&
+    queueMarkerText(2, { kind: "", position: 1, length: 2 }) === "生产中 ×2",
+  queueMarkerText(2, { kind: "x", position: 0, length: 2 }),
+);
+check(
+  "需求图标：ready 用空心勾，缺料用警告，没有 demand 不画",
+  demandIcon({ ready: true, items: [] }) === "✓" &&
+    demandIcon({ ready: false, items: [] }) === "⚠" &&
+    demandIcon(undefined) === "",
+  `${demandIcon({ ready: true, items: [] })}/${demandIcon({ ready: false, items: [] })}`,
+);
+const shortDemand = {
+  ready: false,
+  items: [
+    { item: "gold", need: 80, have: 50, stock: 500 },
+    { item: "wood", need: 20, have: 10, stock: 100 },
+  ],
+} as const;
+check(
+  "缺料提示列出缺的物品与 need/have",
+  demandMissingText(shortDemand) === "缺：金 80/50 · 木 20/10",
+  demandMissingText(shortDemand),
+);
+check(
+  "需求图标旁显示可调拨仓库量（Q10）",
+  demandStockText(shortDemand) === "仓 500/100" &&
+    demandStockTitle(shortDemand) === "仓库可调拨：金 500 · 木 100" &&
+    demandStockText({ ready: true, items: shortDemand.items }) === "" &&
+    demandStockText({ ready: false, items: [{ item: "gold", need: 5, have: 4 }] }) === "",
+  `${demandStockText(shortDemand)} / ${demandStockTitle(shortDemand)}`,
+);
+check(
+  "满足需求或没有缺项时没有缺料提示",
+  demandMissingText({ ready: true, items: shortDemand.items }) === "" &&
+    demandMissingText({ ready: false, items: [{ item: "gold", need: 5, have: 5 }] }) === "",
+  demandMissingText({ ready: true, items: shortDemand.items }),
+);
+check(
+  "未知物品在缺料提示里回退到内容路径",
+  demandMissingText({ ready: false, items: [{ item: "ore", need: 4, have: 1 }] }) === "缺：ore 4/1",
+  demandMissingText({ ready: false, items: [{ item: "ore", need: 4, have: 1 }] }),
+);
+
+const loadedUnit = {
+  id: 1,
+  kind: "unit.engineer",
+  x: 10,
+  y: 10,
+  contents: { gold: 80, wood: 40 },
+} as const;
+const singleCargoUnit = {
+  id: 2,
+  kind: "unit.engineer",
+  x: 10,
+  y: 10,
+  contents: { gold: 120 },
+} as const;
+check(
+  "库存标签显示首物品与总数（混合时加共 N）",
+  unitStockTagLabel(loadedUnit) === "金 80 · 共 120" &&
+    unitStockTagLabel(singleCargoUnit) === "金 120",
+  unitStockTagLabel(loadedUnit),
+);
+check(
+  "空货舱、建筑与旧快照不画库存标签",
+  unitStockTagLabel({ ...loadedUnit, contents: {} }) === null &&
+    unitStockTagLabel({ id: 3, kind: "building.warehouse", x: 0, y: 0, contents: { gold: 5 } }) ===
+      null &&
+    unitStockTagLabel({ id: 4, kind: "unit.engineer", x: 0, y: 0 }) === null,
+  String(unitStockTagLabel({ ...loadedUnit, contents: {} })),
+);
+check(
+  "库存标签只在选中、携带、且距镜头中心 6 格内显示",
+  stockTagVisible(loadedUnit, true, 10, 10) &&
+    stockTagVisible(loadedUnit, true, 16, 10) &&
+    !stockTagVisible(loadedUnit, true, 16.01, 10) &&
+    !stockTagVisible(loadedUnit, false, 10, 10) &&
+    !stockTagVisible({ ...loadedUnit, contents: {} }, true, 10, 10) &&
+    !stockTagVisible({ id: 5, kind: "building.warehouse", x: 10, y: 10, contents: { gold: 1 } }, true, 10, 10),
+  String(stockTagVisible(loadedUnit, true, 16.01, 10)),
+);
+check(
+  "库存标签半径常量是 6 格",
+  STOCK_TAG_RADIUS_TILES === 6,
+  String(STOCK_TAG_RADIUS_TILES),
+);
+check(
+  "工程师任务行带 任务： 前缀且忽略空白",
+  unitTaskLabel("搬运中 → 兵工厂") === "任务：搬运中 → 兵工厂" &&
+    unitTaskLabel("建造中 → 兵营") === "任务：建造中 → 兵营" &&
+    unitTaskLabel("修理中 → 仓库") === "任务：修理中 → 仓库" &&
+    unitTaskLabel("空闲") === "任务：空闲" &&
+    unitTaskLabel("") === null &&
+    unitTaskLabel(undefined) === null,
+  String(unitTaskLabel("搬运中 → 兵工厂")),
+);
+
+const tooltipEngineer = {
+  id: 9,
+  kind: "unit.engineer",
+  x: 1,
+  y: 2,
+  task: "修理中 → 兵工厂",
+  demand: shortDemand,
+  queue: 2,
+  queueItems: [
+    { kind: "unit.melee.t1", ticks: 10, total: 20 },
+    { kind: "unit.melee.t1", ticks: 20, total: 20 },
+  ],
+  producingNow,
+} as const;
+const engineerTooltip = tooltipContent("工程师", tooltipEngineer, "mine");
+check(
+  "提示框显示生产中 1/3、任务行和缺料行",
+  engineerTooltip.lines.includes("生产中 1/3") &&
+    engineerTooltip.lines.includes("任务：修理中 → 兵工厂") &&
+    engineerTooltip.lines.includes("缺：金 80/50 · 木 20/10"),
+  engineerTooltip.lines.join(" | "),
+);
+
+const parsedDetail = worldViewFromSnapshot({
+  tick: 3,
+  originX: 0,
+  originY: 0,
+  width: 1,
+  height: 1,
+  tiles: [["grass"]],
+  entities: [
+    {
+      id: 1,
+      kind: "building.barracks",
+      x: 0.5,
+      y: 0.5,
+      queue: 2,
+      producingNow: { kind: "unit.melee.t1", position: 1, length: 2 },
+      demand: { ready: false, items: [{ item: "gold", need: 10, have: 2, stock: 500 }] },
+      pop: { kind: "pickup", tick: 7 },
+      task: "搬运中 → 兵工厂",
+    },
+    {
+      id: 2,
+      kind: "unit.engineer",
+      x: 0.5,
+      y: 0.5,
+      task: "空闲",
+      producingNow: { kind: "x", position: 0, length: 0 },
+      demand: { ready: "yes", items: [] },
+      pop: { kind: "pickup", tick: -1 },
+    },
+  ],
+});
+const parsedFirst = parsedDetail?.entities[0];
+const parsedSecond = parsedDetail?.entities[1];
+check(
+  "快照解析 producingNow/demand/task/pop",
+  parsedFirst?.producingNow?.position === 1 &&
+    parsedFirst.producingNow.length === 2 &&
+    parsedFirst.demand?.ready === false &&
+    parsedFirst.demand.items[0]?.have === 2 &&
+    parsedFirst.demand.items[0]?.stock === 500 &&
+    parsedFirst.task === "搬运中 → 兵工厂" &&
+    parsedFirst.pop?.kind === "pickup" &&
+    parsedFirst.pop.tick === 7,
+  JSON.stringify(parsedFirst ?? null),
+);
+check(
+  "快照里非法的 producingNow/demand/pop 被忽略而不是拒绝整份世界",
+  parsedSecond !== undefined &&
+    parsedSecond.producingNow === undefined &&
+    parsedSecond.demand === undefined &&
+    parsedSecond.pop === undefined &&
+    parsedSecond.task === "空闲",
+  JSON.stringify(parsedSecond ?? null),
+);
+
+const popRecords = new Map<number, PopRecord>();
+registerSnapshotPops(popRecords, [{ id: 1, pop: { kind: "pickup", tick: 5 } }], 1_000);
+check(
+  "一次搬运事件开始一个弹跳",
+  popRecords.get(1)?.startedAt === 1_000 && activePops(popRecords, 1_001).length === 1,
+  JSON.stringify([...popRecords.values()]),
+);
+registerSnapshotPops(popRecords, [{ id: 1, pop: { kind: "pickup", tick: 5 } }], 1_400);
+check(
+  "同一事件 tick 的重复快照不重启动画",
+  popRecords.get(1)?.startedAt === 1_000,
+  String(popRecords.get(1)?.startedAt),
+);
+registerSnapshotPops(popRecords, [{ id: 1, pop: { kind: "dropoff", tick: 6 } }], 1_500);
+check(
+  "一秒内同一单位的第二个弹跳被节流",
+  popRecords.get(1)?.startedAt === 1_000 && popRecords.get(1)?.tick === 6,
+  `${popRecords.get(1)?.startedAt}/${popRecords.get(1)?.tick}`,
+);
+registerSnapshotPops(popRecords, [{ id: 1, pop: { kind: "dropoff", tick: 7 } }], 2_100);
+check(
+  "超过一秒后允许下一个弹跳",
+  popRecords.get(1)?.startedAt === 2_100 && popRecords.get(1)?.tick === 7,
+  String(popRecords.get(1)?.startedAt),
+);
+check(
+  "弹跳生命周期是 600ms，进度与上升曲线确定",
+  POP_LIFETIME_MS === 600 &&
+    POP_THROTTLE_MS === 1_000 &&
+    popProgress(2_100, 2_100) === 0 &&
+    popProgress(2_100, 2_400) === 0.5 &&
+    popProgress(2_100, 2_700) === 1 &&
+    popRise(1) === POP_RISE_PX &&
+    popAlpha(0) === 1 &&
+    popAlpha(POP_LIFETIME_MS) === 0,
+  `${popProgress(2_100, 2_400)}/${popRise(1)}/${popAlpha(600)}`,
+);
+check(
+  "弹跳在 600ms 后从活动列表消失，重复快照不会复活它",
+  activePops(popRecords, 2_699).length === 1 && activePops(popRecords, 2_700).length === 0,
+  String(activePops(popRecords, 2_700).length),
+);
+registerSnapshotPops(popRecords, [{ id: 1, pop: { kind: "dropoff", tick: 7 } }], 2_750);
+check(
+  "过期记录仍记住已见 tick，迟到的同一快照不会重新弹出",
+  activePops(popRecords, 2_751).length === 0,
+  String(activePops(popRecords, 2_751).length),
+);
+prunePops(popRecords, 2_100 + POP_LIFETIME_MS + POP_THROTTLE_MS + 1);
+check(
+  "超过生命周期加节流窗口后记录被清理",
+  popRecords.size === 0,
+  String(popRecords.size),
 );
 
 // ---------------------------------------------------------------------------------------------

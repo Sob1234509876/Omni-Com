@@ -61,14 +61,22 @@ import {
   drawOwnUnitOutline,
   drawOwnershipRing,
   drawQueueMarker,
+  drawResourcePop,
   drawSelectionRing,
   drawTerrainTile,
   drawTileGrid,
   drawUnitShape,
+  drawUnitStockTag,
   playerColor,
 } from "./fallback";
 import { FLASH_COLOR, FLASH_MS, flashIntensity, flashRingCount } from "./flash";
-import { queueMarkerText } from "./status";
+import { queueMarkerText, stockTagVisible, unitStockTagLabel } from "./status";
+import {
+  popAlpha,
+  popProgress,
+  popRise,
+  type ActivePop,
+} from "./pop";
 import {
   placementFillColor,
   placementStrokeColor,
@@ -237,6 +245,14 @@ export interface RenderOptions {
    * the loaded window is not drawn here; the minimap's white numbered arrow is what points at it.
    */
   readonly markers: readonly Marker[];
+  /**
+   * Haul pops active on this frame, from the per-unit snapshot `pop` objects.
+   *
+   * Each entry is a unit id, a wire kind and its client start time; the renderer draws one achromatic
+   * square that rises and fades over {@link import("./pop").POP_LIFETIME_MS}. The list is computed by
+   * `pop.ts` from the polling snapshots, so the renderer has no timer of its own.
+   */
+  readonly pops: readonly ActivePop[];
 }
 
 interface Size {
@@ -693,7 +709,7 @@ export class WorldRenderer {
             tileOnScreen,
           );
         }
-        const marker = queueMarkerText(entity.queue);
+        const marker = queueMarkerText(entity.queue, entity.producingNow);
         if (marker !== "") {
           drawQueueMarker(
             context,
@@ -703,6 +719,53 @@ export class WorldRenderer {
             tileOnScreen,
           );
         }
+      } else {
+        // A selected, loaded unit gets a compact stock tag above its health bar. The radius test is the
+        // pure `stockTagVisible` rule (selected only, carrying only, within 6 tiles of the camera
+        // centre); the camera centre is converted from world pixels back to tiles here.
+        const selected = entity.selected === true || selectedIds.has(entity.id);
+        const centreX = camera.centerX / tileSize;
+        const centreY = camera.centerY / tileSize;
+        if (stockTagVisible(entity, selected, centreX, centreY)) {
+          const tag = unitStockTagLabel(entity);
+          if (tag !== null) {
+            drawUnitStockTag(
+              context,
+              item.screenX,
+              item.screenY - tileOnScreen * 1.15,
+              tag,
+              tileOnScreen,
+            );
+          }
+        }
+      }
+    }
+
+    // Haul pop pass: one small achromatic mark per active pop, drawn above the sprite and its health
+    // bar. The entry list is already lifetime-filtered and per-unit throttled by `pop.ts`; this pass only
+    // maps an id to the prepared screen position and applies the shared rise/fade curve.
+    if (options.pops.length > 0) {
+      const byId = new Map<number, PreparedEntity>();
+      for (const item of prepared) {
+        byId.set(item.entity.id, item);
+      }
+      for (const pop of options.pops) {
+        const item = byId.get(pop.entityId);
+        if (item === undefined) {
+          continue;
+        }
+        const progress = popProgress(pop.startedAt, options.nowMs);
+        const alpha = popAlpha(progress);
+        if (alpha <= 0) {
+          continue;
+        }
+        drawResourcePop(
+          context,
+          item.screenX,
+          item.screenY - tileOnScreen * 1.55 - popRise(progress),
+          alpha,
+          tileOnScreen,
+        );
       }
     }
 

@@ -131,16 +131,28 @@ import {
   engineersForPlacement,
 } from "./render/selection";
 import {
+  demandIcon,
+  demandMissingText,
+  demandStockText,
+  demandStockTitle,
   formatProgressPercent,
   incomeSuffix,
   itemDisplayName,
   progressBarRatio,
   queueItemNumber,
+  queueMarkerText,
   queueProgressRatio,
   sizeLabel,
   unitCargoLabel,
+  unitTaskLabel,
   warehouseContentsLabel,
 } from "./render/status";
+import {
+  activePops,
+  prunePops,
+  registerSnapshotPops,
+  type PopRecord,
+} from "./render/pop";
 import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
@@ -1127,6 +1139,8 @@ let worldRequestInFlight = false;
 const snapshotRequests = new SnapshotRequestTracker();
 /** Five-second per-entity de-duplication for events derived from snapshot diffs. */
 const snapshotEventDedupe = new EventDeduplicator();
+/** Per-unit haul pops remembered from snapshot `pop` fields; see `render/pop.ts`. */
+const popRecords = new Map<number, PopRecord>();
 /** One log line when the server stops answering, instead of one per 500 ms poll. */
 let snapshotFailureLogged = false;
 /** Monotonic time of the last edge-triggered request, so a failing server is not retried per frame. */
@@ -1923,6 +1937,9 @@ function updateHud(force = false, now = performance.now()): void {
     only !== undefined && !isBuildingEntity(only) && isMine(only)
       ? unitCargoLabel(only, itemLabel)
       : null;
+  // The engineer's task line is part of the selection HUD. The server sends it only for engineers, so a
+  // combat unit or a building simply has no task to append.
+  const task = only !== undefined && !isBuildingEntity(only) ? unitTaskLabel(only.task) : null;
   void renderLatexInto(
     hudSelected,
     groupPrefix +
@@ -1933,7 +1950,8 @@ function updateHud(force = false, now = performance.now()): void {
           : `选中：e${only.id} ${contentLabel(only.kind)} ` +
             `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
             `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
-            (cargo === null ? "" : ` · ${cargo}`)),
+            (cargo === null ? "" : ` · ${cargo}`) +
+            (task === null ? "" : ` · ${task}`)),
   );
   let buildingText =
     only !== undefined && isBuildingEntity(only)
@@ -1997,6 +2015,13 @@ function renderQueueList(building: EntityView | undefined): void {
     return;
   }
   const rows: HTMLDivElement[] = [];
+  const headerText = queueMarkerText(building.queue, building.producingNow);
+  if (headerText !== "") {
+    const header = document.createElement("div");
+    header.className = "hud-queue-now";
+    header.textContent = headerText;
+    rows.push(header);
+  }
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (item === undefined) {
@@ -2004,7 +2029,31 @@ function renderQueueList(building: EntityView | undefined): void {
     }
     const row = document.createElement("div");
     row.className = "hud-queue-item";
-    row.title = `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick`;
+    const missing = index === 0 ? demandMissingText(building.demand) : "";
+    row.title = missing === ""
+      ? `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick`
+      : `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick · ${missing}`;
+    // The demand icon sits beside the current (first) row. A ready job gets the hollow check, a short one
+    // the warning mark; the warning's own title is the missing-inputs text, which is also on the entity
+    // tooltip, so both hovers explain the same shortage.
+    if (index === 0 && building.demand !== undefined) {
+      const icon = document.createElement("span");
+      icon.className = `hud-queue-demand ${building.demand.ready ? "ready" : "warning"}`;
+      icon.textContent = demandIcon(building.demand);
+      icon.title = missing === "" ? "材料充足" : `${missing}（需求/持有）`;
+      icon.setAttribute("aria-hidden", "true");
+      row.append(icon);
+      // Q10: the icon reads the building's own buffer, and the adjacent number says what a haul could
+      // still bring from the owner's unreserved warehouse stock.
+      const stockText = demandStockText(building.demand);
+      if (stockText !== "") {
+        const stock = document.createElement("span");
+        stock.className = "hud-queue-stock";
+        stock.textContent = stockText;
+        stock.title = demandStockTitle(building.demand, itemLabel);
+        row.append(stock);
+      }
+    }
     const name = document.createElement("span");
     name.className = "hud-queue-name";
     void renderLatexInto(name, contentLabel(item.kind));
@@ -3531,6 +3580,13 @@ function applySnapshot(snapshot: ServerWorldView): void {
   worldSource = "server";
   worldTick = snapshot.tick;
   const fetchedAt = performance.now();
+  if (wasDemo) {
+    // Demo ids are unrelated to server ids, so no demo pop may survive into the server world.
+    popRecords.clear();
+  }
+  // Register before the world swap: a pop is keyed by entity id and starts at this receipt time, so
+  // the first server frame already has it. Repeated polls of the same event tick are de-duplicated.
+  registerSnapshotPops(popRecords, snapshot.entities, fetchedAt);
   if (previous === null || !sameWindow) {
     // First snapshot, or a streamed window with different terrain: nothing sensible to slide from.
     previousFrame = null;
@@ -3695,6 +3751,9 @@ function animationFrame(now: number): void {
     if (crosshair !== null && now - crosshair.startedAt >= CROSSHAIR_MS) {
       crosshair = null;
     }
+    // Haul pops: drop records older than a repeat could replay, then hand the still-visible ones to the
+    // renderer. The animation clock is the same `now` the rest of the frame uses.
+    prunePops(popRecords, now);
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
@@ -3711,6 +3770,7 @@ function animationFrame(now: number): void {
       showPaths,
       pendingPath: pendingRoute,
       markers,
+      pops: activePops(popRecords, now),
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.

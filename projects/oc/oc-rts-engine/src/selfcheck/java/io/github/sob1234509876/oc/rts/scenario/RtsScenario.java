@@ -10,12 +10,12 @@ import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
+import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.UnitType;
-import io.github.sob1234509876.oc.rts.core.ChunkPos;
-import io.github.sob1234509876.oc.rts.core.EntityId;
+import io.github.sob1234509876.oc.rts.core.ChunkPos;import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -27,6 +27,8 @@ import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.Chunk;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
@@ -45,6 +47,7 @@ import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.order.RepairOrder;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ConstructionSystem;
+import io.github.sob1234509876.oc.rts.production.ProductionQueue;
 import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.rts.visual.AnimationClips;
@@ -53,6 +56,7 @@ import io.github.sob1234509876.oc.rts.visual.SnapshotFactory;
 import io.github.sob1234509876.oc.rts.visual.SpriteFrame;
 import io.github.sob1234509876.oc.rts.visual.SpriteSheet;
 import io.github.sob1234509876.oc.rts.visual.UnitAnimator;
+import io.github.sob1234509876.oc.rts.visual.UnitTask;
 import io.github.sob1234509876.oc.rts.visual.VisualLibrary;
 import io.github.sob1234509876.oc.rts.visual.WorldSnapshot;
 
@@ -96,6 +100,8 @@ public final class RtsScenario {
         checkItemsAndWarehouses(check, content);
         checkProduction(check, content);
         checkHaulerDelivery(check, content);
+        checkProductionViews(check, content);
+        checkUnitTasks(check, content);
         checkAnimationAndSnapshot(check, content);
         checkDeterminism(check, content);
         checkHugeNumbers(check);
@@ -697,9 +703,19 @@ public final class RtsScenario {
         check.that(hauler.type().canHaul(), "the worker can carry goods (" + hauler.type().cargoCapacity() + " units)");
 
         int unitsBefore = world.unitsOf(player).size();
+        List<Events.ItemsHauled> hauls = new ArrayList<>();
+        world.events().subscribe(Events.ItemsHauled.class, hauls::add);
         engine.production().enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
         boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() > unitsBefore, 6000);
         check.that(trained, "the barracks is supplied by a hauler and trains its soldier");
+        check.that(hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.PICKUP
+                        && !haul.items().isEmpty()),
+                "the engine emits a non-empty pickup fact when the hauler loads the goods");
+        check.that(hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.DROPOFF
+                        && !haul.items().isEmpty()),
+                "the engine emits a non-empty dropoff fact when the hauler unloads at the barracks");
+        check.that(hauls.stream().allMatch(haul -> haul.tick() >= 0 && haul.unit().equals(hauler)),
+                "every haul fact names the hauler and its simulation tick");
         check.note("pending deliveries after training: " + logistics.pendingDeliveries()
                 + ", hauler travelled " + round(hauler.motion().travelledDistance()) + " tiles");
         check.that(warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT))
@@ -714,6 +730,107 @@ public final class RtsScenario {
         engine.tick(2);
         check.equal(stocked.add(20), warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT)),
                 "goods carried by a destroyed hauler go back into storage instead of vanishing");
+    }
+
+    // ------------------------------------------------------------------ 5c) HUD production views
+
+    /**
+     * The two production views a HUD reads: {@code producingNow} and {@code demand}.
+     *
+     * <p>Both come from {@link ProductionQueue}, so this check reads the same object the snapshot
+     * serializer does. The queue has two jobs and a recipe with two inputs; the building starts empty, so
+     * the demand must report both inputs short; inserting exactly the recipe's inputs flips it to ready
+     * without a tick; ticking once lets the engine consume the inputs and the job stays ready because it
+     * has already started. The position and length come from the unfinished jobs only.
+     */
+    private static void checkProductionViews(Check check, ContentRegistry content) {
+        check.section("5c) HUD production views: producingNow position and input demand");
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 31L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        ItemType plank = content.item(ScenarioContent.PLANK);
+        Building barracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(20, 10));
+        Recipe recipe = content.recipe(ScenarioContent.TRAIN_SOLDIER);
+        engine.production().enqueue(barracks, recipe, 2);
+        ProductionQueue queue = engine.production().queueOf(barracks);
+
+        var demand = queue.demand().orElseThrow();
+        check.that(!demand.ready(), "an empty producer reports its queued job as not ready");
+        check.equal(recipe.inputs().components().size(), demand.items().size(),
+                "demand lists exactly the recipe's input kinds");
+        check.equal(iron.key().path(), demand.items().get(0).item(),
+                "the first demand item is the recipe's first input");
+        check.equal((long) recipe.inputs().amount(iron).toLongSaturated(), demand.items().get(0).need(),
+                "need is the recipe amount of that input");
+        check.equal(0L, demand.items().get(0).have(), "have is zero while the building holds nothing");
+        check.equal(0L, demand.items().get(0).stock(),
+                "stock is zero when the owner has no warehouse network");
+        check.that(demand.missingItems().size() == 2, "both recipe inputs are reported missing");
+
+        var now = queue.producingNow().orElseThrow();
+        check.equal(ProductionQueue.outputKind(recipe), now.kind(),
+                "producingNow kind is the produced unit's content path");
+        check.equal(1, now.position(), "the first unfinished job is position 1");
+        check.equal(2, now.length(), "length is the unfinished job count");
+
+        barracks.inventory().insert(iron, recipe.inputs().amount(iron));
+        barracks.inventory().insert(plank, recipe.inputs().amount(plank));
+        var supplied = queue.demand().orElseThrow();
+        check.that(supplied.ready(), "with the recipe inputs in the building buffer the job is ready");
+        check.equal((long) recipe.inputs().amount(iron).toLongSaturated(), supplied.items().get(0).have(),
+                "have reports the held amount, capped at need");
+
+        engine.tick(1);
+        var started = queue.demand().orElseThrow();
+        check.that(started.ready(), "a job the engine already started stays ready after consuming its inputs");
+        engine.production().cancel(barracks, 1);
+        check.equal(1, queue.producingNow().orElseThrow().length(),
+                "cancelling a waiting job shrinks the reported queue length");
+    }
+
+    // ------------------------------------------------------------------ 5d) engineer task strings
+
+    /**
+     * The four engineer task lines, derived from the order queue rather than from movement.
+     *
+     * <p>The check builds each order directly so the strings are pinned without a long simulation: a
+     * {@link BuildOrder} on a real unfinished site, a {@link RepairOrder} on a damaged building, a
+     * {@link HaulOrder} with a real reserved delivery job, and the idle case. It also asserts that a
+     * moving engineer with no economic order stays {@code 空闲} and that a non-engineer gets no task at all.
+     */
+    private static void checkUnitTasks(Check check, ContentRegistry content) {
+        check.section("5d) engineer task line: build, repair, haul and idle");
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 32L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        Building site = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(20, 10));
+        site.restartConstruction();
+        Building damaged = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(30, 10));
+        damaged.health().damage(100);
+        damaged.inventory().insert(iron, 50);
+        Unit engineer = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(6, 6).center());
+        check.that(UnitTask.isEngineer(engineer), "the scenario worker counts as an engineer");
+        check.equal(UnitTask.IDLE, UnitTask.of(engineer).orElseThrow(),
+                "an engineer with no order reads 空闲");
+        check.equal("建造中 → " + site.displayName(), UnitTask.describe(new BuildOrder(site)),
+                "a BuildOrder names its building after 建造中");
+        check.equal("修理中 → " + damaged.displayName(), UnitTask.describe(new RepairOrder(damaged)),
+                "a RepairOrder names its building after 修理中");
+        Logistics.Reservation reservation = player.logistics().reserveOrThrow(ItemBundle.of(iron, 10));
+        DeliveryJob job = new DeliveryJob(damaged, ItemBundle.of(iron, 10), reservation, world.tickNumber());
+        check.equal("搬运中 → " + damaged.displayName(), UnitTask.describe(new HaulOrder(job)),
+                "a HaulOrder names its delivery target after 搬运中");
+        Unit soldier = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new GridPos(8, 8).center());
+        check.that(UnitTask.of(soldier).isEmpty(), "a combat unit has no engineer task");
+        engineer.orders().push(new MoveOrder(new GridPos(30, 30).center()));
+        engine.tick(1);
+        check.equal(UnitTask.IDLE, UnitTask.of(engineer).orElseThrow(),
+                "a moving engineer without an economic order is still 空闲, not a movement task");
     }
 
     // ------------------------------------------------------------------ 6) sprites and animation
