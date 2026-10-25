@@ -159,7 +159,7 @@ Item 27 asks that "By clicking shift, you can add tasks for engineers to build, 
 - **Send one task to several engineers**: Shift-click broadcasts the same site or task to every selected engineer, which is a batch order rather than a queue.
 - **Two different modifiers** (plain click queues, Shift-click broadcasts), which needs a third gesture for "queue several" and is not what the item says.
 
-**Default while Q14 is unanswered:** queue several build tasks for the current engineer (the Rusted Warfare reading).
+**Default while Q14 is unanswered:** queue several build tasks for the current engineer (the Rusted Warfare reading). **Status: implemented with this default.** Item 27 ships `tryQueueBuild` + the wire token `BUILD ... queue`; the selection rule is still one BUILD per selected engineer per site, and the selected engineer's capped `orderQueue` is listed in the panel. See `AI TODO.md` item 27.
 
 ## Q15. Item 28: do turrets need population or power? — **open (new)**
 
@@ -169,7 +169,7 @@ Item 28 asks to "Add turrets for defending bases". The classic catalogue has nei
 - **A power requirement**, which needs a new resource, a generator building and a brown-out rule — a new economy system, not a turret.
 - **A population requirement**, which needs a population pool, housing and a cap — likewise a new system.
 
-**Default while Q15 is unanswered:** no population or power — gold and wood only, three tiers.
+**Default while Q15 is unanswered:** no population or power — gold and wood only, three tiers. **Status: implemented with this default.** Item 28 ships `building.turret.t1..t3` at 2×2 with gold/wood costs and the existing in-place upgrade ladder; no population or power system was added. See `AI TODO.md` item 28.
 
 ## Q16. Item 7: how far should the logistics surface go? — **open (new)**
 
@@ -179,4 +179,4 @@ Item 7 is the partial one: the warehouse exists and reports its contents, but th
 - **A manual transfer command now** (current default): send a hauler or engineer to move a chosen item between two warehouses, or between a warehouse and an arsenal, through an ordinary command line.
 - **Quotas and priorities later**: per-warehouse keep levels, "keep this arsenal fed first", automatic balancing. Powerful, but it needs a policy model, a UI and a deterministic scheduler, so it is deferred.
 
-**Default while Q16 is unanswered:** the first two now (single-warehouse view and a manual transfer command), quotas and priorities later.
+**Default while Q16 is unanswered:** the first two now (single-warehouse view and a manual transfer command), quotas and priorities later. **Status: implemented with this default.** Item 7 ships the per-warehouse panel view (capacity / used / free slots, inbound count, `全部/总计` toggle) and the `TRANSFER` command on the engine, server and client; per-warehouse quotas, priorities and automatic balancing remain deferred. Drag-and-drop between warehouses is deliberately not implemented. See `AI TODO.md` item 7.

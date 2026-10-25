@@ -1,13 +1,16 @@
 package io.github.sob1234509876.oc.server.net;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
+import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
@@ -50,6 +53,7 @@ import java.util.function.Supplier;
  * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
  * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; -&gt; OK | ERR &lt;reason&gt;
  * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
+ * TRANSFER &lt;sourceId&gt; &lt;targetId&gt; &lt;item&gt; &lt;amount|all&gt; -&gt; OK &lt;moved&gt; &lt;item&gt; | ERR &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
  * </pre>
@@ -111,6 +115,9 @@ public final class CommandDispatcher {
     /** A {@code TRAIN} whose unit path is not in the served catalogue. */
     public static final String ERR_UNKNOWN_UNIT = "ERR unknown unit";
 
+    /** A {@code TRANSFER} whose item path is not in the served catalogue. */
+    public static final String ERR_UNKNOWN_ITEM = "ERR unknown item";
+
     /** A gameplay command for a server that hosts no world ({@code --http-port 0} or {@code --world off}). */
     public static final String ERR_WORLD_NOT_AVAILABLE = "ERR world not available";
 
@@ -131,7 +138,8 @@ public final class CommandDispatcher {
 
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
-            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM");
+            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM",
+                    "TRANSFER");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -261,6 +269,7 @@ public final class CommandDispatcher {
             case "UPGRADE" -> upgrade(rest, session);
             case "REPAIR" -> repair(rest, session);
             case "RECLAIM" -> reclaim(rest, session);
+            case "TRANSFER" -> transfer(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
     }
@@ -619,6 +628,80 @@ public final class CommandDispatcher {
     }
 
     /**
+     * {@code TRANSFER <sourceId> <targetId> <item> <amount|all>}: move stock between two own warehouses.
+     *
+     * <p>Both ids are resolved on the world thread with the same existence and ownership rules every
+     * gameplay command uses, so a dead building answers {@code ERR unknown entity} and somebody else's
+     * answers {@code ERR not yours}. The item token is a content path without the namespace
+     * ({@code gold}, {@code wood}); an unknown path is {@link #ERR_UNKNOWN_ITEM} before the engine is
+     * asked. The amount is a positive decimal whole number, or the literal {@code all} (case-insensitive)
+     * for "everything the source can still give": the server resolves that to the source's current
+     * unreserved stock, and the engine clamps it again, so the answer names what really moves.
+     *
+     * <p>The transaction itself is {@link UnitDirector#transfer(Building, Building, ItemType, Natural)}:
+     * it enforces the same-player, same-dimension, finished-warehouse and reachability rules, takes a
+     * single-warehouse reservation and dispatches a real hauler. This method forwards the engine's
+     * readable refusal verbatim, so a client that paints {@code ERR ...} lines red shows the engine's own
+     * reason. The success answer is {@code OK <moved> <item>} (for example {@code OK 120 gold}); the
+     * amount is the clamped bundle that was dispatched, which is already reserved and on its way. A
+     * refusal charged nothing and left no reservation.
+     */
+    private PendingAnswer transfer(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length != 4) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong sourceId = parseId(tokens[0]);
+        OptionalLong targetId = parseId(tokens[1]);
+        String itemPath = tokens[2];
+        String amountToken = tokens[3];
+        boolean all = "all".equalsIgnoreCase(amountToken);
+        long requested = 0L;
+        if (!all) {
+            try {
+                requested = Long.parseLong(amountToken);
+            } catch (NumberFormatException malformed) {
+                return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+            }
+            if (requested < 0L) {
+                return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+            }
+        }
+        if (sourceId.isEmpty() || targetId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        long fixedAmount = requested;
+        return worldGameplay(session, (host, player) -> {
+            BuildingRef source = ownedBuilding(host.engine().world(), sourceId.getAsLong(), player);
+            if (source.error() != null) {
+                return source.error();
+            }
+            BuildingRef target = ownedBuilding(host.engine().world(), targetId.getAsLong(), player);
+            if (target.error() != null) {
+                return target.error();
+            }
+            ItemType item = itemType(host, itemPath);
+            if (item == null) {
+                return ERR_UNKNOWN_ITEM;
+            }
+            Natural amount;
+            if (all) {
+                WarehouseLogistics network = WarehouseLogistics.of(player);
+                amount = network == null
+                        ? Natural.ZERO
+                        : network.freeAmount(source.building(), item);
+            } else {
+                amount = Natural.of(fixedAmount);
+            }
+            UnitDirector.TransferResult result = host.engine().commands()
+                    .transfer(source.building(), target.building(), item, amount);
+            return result.transferred()
+                    ? "OK " + describe(result.moved())
+                    : "ERR " + result.refusal();
+        });
+    }
+
+    /**
      * Wraps a world-only action: checks login and world presence, resolves the connection's player and
      * submits the action to the host queue.
      *
@@ -711,6 +794,15 @@ public final class CommandDispatcher {
     private static UnitType unitType(WorldHost host, String path) {
         try {
             return host.content().unitOrNull(host.content().key(path));
+        } catch (IllegalArgumentException malformed) {
+            return null;
+        }
+    }
+
+    /** Looks up an item type by content path, treating a malformed path as unknown. */
+    private static ItemType itemType(WorldHost host, String path) {
+        try {
+            return host.content().itemOrNull(host.content().key(path));
         } catch (IllegalArgumentException malformed) {
             return null;
         }

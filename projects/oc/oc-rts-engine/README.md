@@ -47,15 +47,15 @@ Task oriented guides (written in Chinese, API names in English) live in [`help/`
 
 The scenario is a headless self check (no test framework, no network) that prints what it observed:
 terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbounded map with an LRU
-chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
-soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, buildings
-that take damage and die, a charged building site, an in-place building upgrade that keeps its footprint,
-owner and health fraction, several engineers raising one site faster, three Shift-queued builds running in
-order, a turret shooting the nearest hostile unit, and an ASCII picture of the world. A successful run ends
-with:
+chunk budget, a route around water, a squad forming up, warehouse gating of items, a manual warehouse
+transfer really carried out by a worker, a barracks training soldiers, animation frames advancing, three
+dimensions simulated side by side, a melee fight, buildings that take damage and die, a charged building
+site, an in-place building upgrade that keeps its footprint, owner and health fraction, several engineers
+raising one site faster, three Shift-queued builds running in order, a turret shooting the nearest hostile
+unit, and an ASCII picture of the world. A successful run ends with:
 
 ```text
-RTS engine scenario: all 720 checks passed.
+RTS engine scenario: all 760 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -75,6 +75,7 @@ What the scenario actually proves, section by section:
 | 5b hauling | with hauling enabled a worker really walks to the warehouse, loads ore and planks and delivers them before the barracks can train; the engine publishes a non-empty `ItemsHauled` pickup and dropoff fact, each naming the hauler and its simulation tick |
 | 5c production views | `ProductionQueue.producingNow()` names the produced unit, position 1 and the two unfinished jobs; `demand()` lists exactly the recipe's two inputs, reports both short with `have` 0 and `stock` 0 (no warehouse in the fixture), flips to ready when the buffer holds them, stays ready after the engine consumes them, and shrinks its length when a waiting job is cancelled |
 | 5d engineer tasks | an idle engineer reads `空闲`; a `BuildOrder`, `RepairOrder` and a real reserved `HaulOrder` read `建造中 → …`, `修理中 → …` and `搬运中 → …` with the building's display name; a combat unit has no task, and an engineer walking under a plain move order is still `空闲` |
+| 5e manual transfers | `UnitDirector.transfer` reserves on the named source only, dispatches the only free worker and the ordinary `HaulOrder` really carries 20 iron to the second warehouse; an oversized request is clamped to the source's free stock and `Natural.BEYOND` moves everything; same building, non-warehouse source/target, unknown item, no stock, another player, another dimension and no free engineer are refused with readable reasons; every refusal leaves the stock, the available amount and the pending-job count unchanged; a walled-in target is refused as `unreachable`; two identical worlds dispatch the same bundle to the same hauler and deliver the same stock |
 | 6 sprites and animation | a spawned unit plays `idle`, switches to `move` when ordered, advances frames, faces its direction of travel, and the snapshot resolves a concrete sprite frame with sheet and pixel rectangle |
 | 7 determinism | two runs with the same seed and the same commands produce bit identical unit positions |
 | 10 huge numbers | an item with a `10^5000` stack and a unit with `10↑↑10` hit points: 1000 damage does not dent it, `Natural.BEYOND` damage kills it, a vault reports `BEYOND` slots while an unlimited vault is still not full, and a four slot vault with the same structural amount is |
@@ -120,6 +121,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 9 | Several builders raising one site faster | `order.BuildOrder`, `order.UnitDirector.tryBuild(Unit, Building)`, `production.ConstructionSystem.MAX_BUILDERS_PER_SITE`, `entity.Building.builders()` |
 | 10 | Build order queueing (Shift-click) | `order.UnitDirector.tryQueueBuild`, `order.OrderQueue.push`, `visual.OrderLabels`, `visual.EntitySnapshot.orderQueue` |
 | 11 | Defensive buildings that shoot | `content.BuildingType.attackDamage/attackRange/attackCooldownTicks`, `combat.CombatSystem.nearestEnemyUnitInRange`, `entity.Building.targetId` |
+| 12 | Manual hauling between warehouses | `order.UnitDirector.transfer`, `order.CommandService.transfer`, `economy.WarehouseLogistics.reserveFrom/freeAmount`, `logistics.HaulingSystem.dispatchNearestHauler`, `logistics.DeliveryJob` |
 
 ## Architecture
 
@@ -206,6 +208,12 @@ System.out.println(engine.render(new GridPos(60, 40), 20));
   that are actually in storage.
 * **Nothing is created out of thin air.** A production job reserves its inputs, has them delivered into
   the factory, consumes them and only then produces; item output that does not fit stays in the buffer.
+* **Stock only moves between warehouses through a haul.** `UnitDirector.transfer(source, target, item, amount)`
+  takes a single-warehouse reservation, requires a free hauler at command time (the nearest idle one of the
+  owner, tie-broken by id), and lets the ordinary `HaulOrder` carry the goods; the command itself never
+  teleports or charges anything, and a refusal leaves no reservation, no job and no moved stock. The
+  amount is clamped to the source's unreserved stock and the target's room, so the reply names what really
+  moves.
 * **The engine never names an item.** All content is data in a `ContentRegistry`, so a scenario may
   define thirty items or three hundred without touching engine code.
 * **Quantities are arbitrary precision naturals.** Amounts, stack sizes, capacities, hit points and

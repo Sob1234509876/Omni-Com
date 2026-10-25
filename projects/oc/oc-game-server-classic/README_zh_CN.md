@@ -117,6 +117,15 @@
 `the construction site was reclaimed by its owner` 为理由失败，工地被移除，并且**恰好一半放置成本**存回仓库
 ——例如仓库工地返还 50 金币 + 20 木材。**已完工建筑不能回收**，拒绝文案会说明。命令本身不扣费。
 
+## 手动仓库调拨
+
+服务器命令 `TRANSFER <source> <target> <item> <amount|all>` 在经典世界里同样可用：把金币或木材从一座自己的
+已完工仓库送到另一座，由真实的工程师搬运。经典工程师调度池会关掉搬运系统的自动挑人
+（`setAutoHaulerAssignment(false)`），以便一次只服务一个兵营；但调拨命令不依赖那次搜索：它显式派最近的
+空闲工程师（`HaulingSystem.dispatchNearestHauler`）。所以没有空闲工程师时玩家会得到可读的
+`ERR no free engineer ...`，而不是一个永远等待的任务；调度池也只会给目标为兵营的任务派人，不会抢走调拨任务。
+仓库面板的单仓库视图与 `全部/总计` 开关是浏览器功能，不属于经典插件；见服务器与 web-client 的 README。
+
 ## 工程师调度池
 
 `ClassicEngineerPool` 是第三个世界 tick 钩子，也是"大部分工程师闲着、只有一两个在搬"的正式修复。它不给每个兵营固定分配一名工程师，而是每次通过都重新计算一支队伍：

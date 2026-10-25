@@ -323,6 +323,20 @@ private static void issueMove(OrderContext context, Vec2 destination) {
 
 `!job.isPending()` 的分支也走 `giveCargoBack`——那可能是 HaulingSystem 因目标被拆而终止了 job，也可能是生产建筑自己 `commit()` 了 claim。两条路都必须让在途货物回到"能被使用"的地方，否则它们会永远躺在一个没人看的背包里。
 
+### 手动调拨：`UnitDirector.transfer`
+
+`order.CommandService.transfer(Building source, Building target, ItemType item, Natural amount)` 是协议 `TRANSFER` 的引擎实现，返回 `UnitDirector.TransferResult`：成功时带已派出的 `moved` 与 `job`，失败时只有可读的 `refusal`。它不是瞬移，而是"点名来源的一次普通搬运"：
+
+1. **固定顺序、全部免费的检查**：两端非空、数量为正、不是同一座建筑、都存活且已完工、都是仓库、同属一个玩家、同一维度、都在该玩家的 `WarehouseLogistics` 里；来源的 `freeAmount(source, item)` 为 0 → `no stock`；目标的 `insertable(item, moved)` 为 0 → 不能存放；两侧入口 `world.pathFinder(dimension).isReachable(...)` 为假 → `unreachable`。
+2. **数量夹取**：`min(请求量, 来源未预留库存, 目标当前剩余空间)`。所以 `Natural.BEYOND` 天然表示"全部"，不需要第二个参数；填大了也不是错误，回答里的数字才是真正会移动的量。
+3. `WarehouseLogistics.reserveFrom(source, bundle)` 只在**点名的来源**上预留。普通的 `reserve(...)` 会按创建顺序跨仓库凑齐，那在这里是错的：玩家已经点名了来源。
+4. 用这个预订构造 `DeliveryJob`，交给 `HaulingSystem.dispatchNearestHauler(job)`：它用与自动 tick 完全相同的 `findHauler` 规则（同维度、能搬运、空闲、没有被别的待办 job 占用、装得下预留货物；最近优先，距离并列按实体 id），然后注册并 `assign`。**显式派工是关键**：经典插件会用 `setAutoHaulerAssignment(false)` 关掉自动搜索，如果这里只 `submit`，命令会回答 `OK` 而 job 永远停在 `WAITING_HAULER`；现在没有空闲搬运工就是一条可读拒绝，预订也会立刻释放。
+5. 之后完全走 `HaulOrder` 的两条腿；货在装货时离开来源、卸货时进入目标，失败/超时按既有规则回库。
+
+**失败不扣任何东西**：所有检查都在预留之前；`dispatchNearestHauler` 返回空时显式 `claim.release()`，因此库存、`available()` 与 `pendingDeliveries()` 都不变。确定性来自三点：单仓库预留的分配顺序固定、`findHauler` 的最近/id 破平、以及 `transfer` 不推进世界 tick。
+
+`TransferResult.moved()` 是"已派出"的量，不是已到货的量——目标库存要等 `HaulOrder` 卸货才增加；要立即观察搬运工，读 `job.hauler()`。
+
 ### 搬运工死在路上：recoverFromLostHauler
 
 搬运工可能背着已经从仓库取出的货死掉，那些单位既不在货架上也不在任何仓库里。`HaulingSystem` 因此在构造时订阅 `Events.EntityDestroyed`，用 `recoverFromLostHauler(Entity)` 分两种情况收拾：
@@ -620,11 +634,12 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 | `economy.Inventory` | `UNLIMITED`（= `Natural.BEYOND`）、`empty(name)`（全拒空壳）、`slotCount()`、`unitLimit()`、`accepts(item)`、`usedSlots()`（Σ ceil(数量/maxStack)，量级过大时为 `BEYOND`）、`freeSlots()`、`totalUnits()`、`amount(item)`、`isEmpty()`、`isFull()`、`contents()`、`capacityFor(item)`、`insertable(item, amount)`、`insert(item\|bundle)`、`canAcceptAll(bundle)`、`extract(item, amount)`、`extractUpTo(bundle)`、`extractAll()`、`describe()` | 仓库/缓冲区/背包共用；数量与返回类型都是 `Natural` |
 | `economy.Logistics` | `player()`、`warehouses()`、`stored()`、`amount`、`has`、`available`、`hasAvailable`、`reserve`、`reserveOrThrow`、`deposit`、`nearestWarehouse`、`warehousesAccepting`、`requestDelivery`、`pendingDeliveries` | 见本篇方法表 |
 | `economy.Logistics.Reservation` | `bundle()`、`source()`、`active()`、`commit()`、`release()` | 预订只是记账 |
-| `economy.WarehouseLogistics` | 构造函数 `(World, Player)`、静态 `of(Player)`、`store(bundle)`、`attachHauling(system)`、`hauling()`、`ownsWarehouse(b)`、`requestDeliveryReservation(target, bundle)`、`pickupWarehouses(res)`、`pendingPickup(res[, wh])`、`pickUp(res, wh, wanted)`、`abandonWarehouse(res, wh)`、`close()` | 事件驱动的仓库索引 |
+| `economy.WarehouseLogistics` | 构造函数 `(World, Player)`、静态 `of(Player)`、`store(bundle)`、`freeAmount(warehouse, item)`、`reserveFrom(warehouse, bundle)`、`attachHauling(system)`、`hauling()`、`ownsWarehouse(b)`、`requestDeliveryReservation(target, bundle)`、`pickupWarehouses(res)`、`pendingPickup(res[, wh])`、`pickUp(res, wh, wanted)`、`abandonWarehouse(res, wh)`、`close()` | 事件驱动的仓库索引；`reserveFrom` 只在一座仓库上预留，`freeAmount` 是未被别的预订占用的数量 |
 | `economy.LogisticsReservation` | `remaining()`、`allocationCount()`、`describe()`（构造器包内可见） | 内部机制 |
 | `economy.ReservationPool` | `allocate(...)`、`bundleOf(plan)`、`primaryOf(plan, order)`、`Allocation`（包内可见） | 纯计算，不移动物品 |
 | `logistics.DeliveryJob` | `State.{WAITING_HAULER,IN_TRANSIT,COMPLETED,FAILED}`、`state()`、`isPending()`、`isFinished()`、`pendingTicks()`、`delivered()`、`missing()`、`hauler()`、`target()`、`bundle()`、`reservation()`、`registeredTick()`、`assignedTick()`、`finishedTick()` | 一次运输的状态机 |
-| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；`tickHaulers` 只挑**与目标同维度**的搬运工，跨图的 job 先走 `tickShipped`（等待 `directDeliveryTicks × 跳数`，跳数由 `World.route(...)` 给出，无路线则等到超时失败）；订阅 `Events.EntityDestroyed`：死亡搬运工的货回库，作为目标的建筑被销毁时指向它的 job 立刻失败并释放预留 | 相位 700 |
+| `logistics.HaulingSystem` | `SYSTEM_ORDER = 700`、`DEFAULT_TIMEOUT_TICKS = 3000`、构造器 `(World, boolean, int)` 与 `(World)`、`submit(job)`、`dispatchNearestHauler(job)`、`assignHauler(job, unit)`、`setAutoHaulerAssignment(bool)`、`jobs()`、`pendingCount(player)`、`completedJobs()`、`failedJobs()`、`directDelivery()`、`directDeliveryTicks()`；`tickHaulers` 只挑**与目标同维度**的搬运工，跨图的 job 先走 `tickShipped`（等待 `directDeliveryTicks × 跳数`，跳数由 `World.route(...)` 给出，无路线则等到超时失败）；订阅 `Events.EntityDestroyed`：死亡搬运工的货回库，作为目标的建筑被销毁时指向它的 job 立刻失败并释放预留 | 相位 700 |
+| `order.UnitDirector` 的调拨面 | `transfer(source, target, item, amount)`、`TransferResult`（`transferred()`、`moved()`、`job()`、`refusal()`） | 只在来源预留、要求空闲搬运工、数量按来源库存与目标空间夹取；失败不扣任何东西 |
 | `logistics.HaulOrder` | `TIMEOUT_TICKS = 3000`、私有 `UNLOAD_WAIT_TICKS = 200`、`job()`、`name() == "haul"`、`Phase.{TO_PICKUP,TO_TARGET}` | 订单自己 `motion().setGoal()` |
 | `production.ProductionState` | 六个常量 + `isFinished()` | 只有 `COMPLETED`/`CANCELLED` 是终态 |
 | `production.ProductionJob` | `recipe()`、`state()`、`remainingTicks()`、`reservation()`、`baseline()`、`expected()`、`pendingOutput()`、`enteredStateTick()`、`stateTicks()`、`isFinished()`、`describe()`（修改方法包内可见） | 可变小记录 |
@@ -657,6 +672,8 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 15. **数量一旦离开精确区间，容量查询就变成近似。** 某种物品的数量超过 `Natural.EXACT_BIT_LIMIT = 4096` 位（约 1233 位十进制）后，`usedSlots()` 返回 `BEYOND`，半满堆叠的剩余空间按 0 算；格数有限的库存因此 `freeSlots()` 为 0、`isFull()` 为真，而 `slotCount` 是 `Inventory.UNLIMITED` 的库存不会被判满（`freeSlots()` 本身是 `BEYOND`）。小量的 `insert` / `extract` 仍然精确。要区分"真的满了"和"大得算不清"，请显式判断 `usedSlots().isBeyond()`（见 [12](12-numbers-and-googology.md)）。
 16. **把数量当 `int` 用。** `amount(item)`、`insert(...)`、`extract(...)`、`totalUnits()` 都返回 `Natural`：不能写 `>`、`==`、`+`，要用 `compareTo`、`equals`、`add`；`long` 重载只是"小字面量"的便利写法（`insert(item, 50)` 仍然编译）。
 17. **`WarehouseLogistics.close()` / `ProductionSystem.close()` 会被引擎自动调用。** 不会：整个 `src/main/java` 里只有定义处、没有调用处，`OcRtsEngine` 也没有 `close()`。管线和系统连接在引擎生命周期里一直存在，需要"结束比赛"的语义时得自己调。
+18. **以为 `TRANSFER` 会立刻改变目标库存。** `UnitDirector.transfer(...)` 只做预留与派工，回答 `OK <moved> <item>` 里的 `moved` 是"已派出"，目标要等 `HaulOrder` 卸货才增加；`moved` 还是按来源未预留库存与目标剩余空间夹取后的量。要断言"真的搬到了"，得 `tickUntil(target.inventory().amount(item) == moved, ...)`。
+19. **以为没有空闲搬运工时 `TRANSFER` 也会成功。** 不会：自动搜索可能被游戏策略关掉（`setAutoHaulerAssignment(false)`，经典插件正是如此），所以 `transfer` 用显式的 `dispatchNearestHauler(job)`，没有空闲搬运工就在预留之前拒绝并返回可读理由；否则 job 会永远停在 `WAITING_HAULER`，而命令已经回答过 `OK`。
 
 ## 相关文档
 
@@ -680,4 +697,4 @@ engine.tickUntil(e -> totalHeld(world, steel) >= 60, 3000);
 - 实体与内容定义：[Building.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Building.java)、[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)、[BuildingType.java](../src/main/java/io/github/sob1234509876/oc/rts/content/BuildingType.java)、[UnitType.java](../src/main/java/io/github/sob1234509876/oc/rts/content/UnitType.java)
 - 引擎装配与时钟：[OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)、[OcRtsEngine.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngine.java)、[World.java](../src/main/java/io/github/sob1234509876/oc/rts/World.java)、[Player.java](../src/main/java/io/github/sob1234509876/oc/rts/Player.java)、[SystemPipeline.java](../src/main/java/io/github/sob1234509876/oc/rts/sim/SystemPipeline.java)
 - 事件：[Events.java](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
-- 权威用例：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 4、5、5b 节）、[ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)
+- 权威用例：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 4、5、5b、5e 节）、[ScenarioContent.java](../src/main/java/io/github/sob1234509876/oc/rts/content/ScenarioContent.java)

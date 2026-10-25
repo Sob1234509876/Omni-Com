@@ -100,7 +100,7 @@ TCP 命令循环完全相同。因此这条端点上的命令、参数规则、�
 | `LOGIN <名字> <密码>` | `OK <文案>` / `ERR <文案>` | 成功后把**这条连接**标成已认证 |
 | `COUNT` | `OK <账号数>` | 跨连接共享 |
 | `REQ <名字> <base64 载荷>` | `OK <base64 载荷>` / `ERR <文案>` | 需要同一条连接上成功 `LOGIN` |
-| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` / `UPGRADE` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用；账号名就是身份，同名重连复用同一个玩家与基地 |
+| `WHOAMI` / `ORDER` / `BUILD` / `TRAIN` / `UPGRADE` / `REPAIR` / `RECLAIM` / `TRANSFER` | 见协议文档 | 需要同一条连接上成功 `LOGIN`；由 `WorldHost` 在下一步起点应用；账号名就是身份，同名重连复用同一个玩家与基地 |
 | `QUIT` | 先 `OK bye`，再关闭连接 | 关闭码是 `1000` |
 | 其它任何东西 | `ERR unknown command` | 空行也是这一条 |
 
@@ -320,6 +320,10 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
   "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前 `PRODUCING` 任务的引擎剩余
   tick；尚未开工的任务报告 `ticks === total`。`kind` 是产出的单位内容路径（只产物品的配方回落到配方路径）。
   旧客户端可以完全忽略它，继续用 `queue` 画 `生产中 ×N`。
+- `contents` 只出现在仓库建筑行上，键是物品路径、值是非负整数库存；空仓库省略。`storage` 出现在**每一个**
+  仓库行上（空仓库也有），形状 `{"slots": <整数>, "used": <整数>, "free": <整数>}`，是槽位容量 / 已用 / 空闲，
+  只有服务器知道每种物品的最大堆叠，所以客户端不得自己推算。`inbound` 在至少一个未完成搬运任务以该仓库为
+  目标时出现，是在途任务数；为零时省略。三者都是增量字段，旧服务器可以不带。
 - `upgrade` 只出现在**已完工**、且内容类型指定了存在于服务目录里的后继类型的建筑行上，形状是
   `{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}`；`gold` / `wood` 就是 `UPGRADE <id>` 会扣的成本。
   未完工工地、阶梯顶端与悬空目标都不带它。可负担性不编码：客户端拿自己的 `players` 行比较，付不起时把入口
@@ -350,6 +354,7 @@ GET /world/snapshot?cx=-100000&cy=50000&r=64
 `web-client/src/render/view.ts` 的 `fetchWorldSnapshot(baseUrl)` 把这份 JSON 转换成渲染器已有的 `WorldView`
 （地形字符串 -> `TerrainId`，`health` -> `healthRatio`，`player` -> `playerId`，`players` -> `PlayerView[]`，
 `w` / `h` -> `footprint`，`progress` / `queue` / `queueTicks` / `queueItems` -> 同名可选属性，
+`contents` / `storage` / `inbound` -> 仓库库存、容量槽位与在途任务数，
 `upgrade` -> `{to, gold, wood}` 可选升级入口，`goldPerMinute` / `woodPerMinute` -> 同名的可选玩家字段），
 结构不合法或实体越界时返回 `null`，页面继续使用确定性的 `demoWorld()` 占位地图。`players` 与
 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 都可以缺失：旧服务器没有这些字段时客户端

@@ -391,6 +391,35 @@ export function upgrade(buildingId: number): string {
   return `UPGRADE ${id}`;
 }
 
+/**
+ * `TRANSFER <sourceId> <targetId> <itemPath> <amount>`; the answer is `OK <moved> <item>` or `ERR ...`.
+ *
+ * <p>Both ids must be the local player's own finished warehouses; the item is a content path from the
+ * source's `contents` and the amount is a positive whole number, or the literal `all`. The server clamps
+ * the amount to the source's free stock (and the engine to the target's room), so a larger number is not
+ * an error - the answer names what really moved. A local guard still refuses a zero/negative or
+ * non-integer amount before a line can reach the socket, because that is a UI bug rather than a game
+ * rule. `all` is supported by the protocol and the pure planner; the form offers it through its `全部`
+ * shortcut.
+ */
+export function transfer(
+  sourceId: number,
+  targetId: number,
+  itemPath: string,
+  amount: number | "all",
+): string {
+  const source = requirePositiveInteger(sourceId, "来源仓库 id");
+  const target = requirePositiveInteger(targetId, "目标仓库 id");
+  const item = requireContentPath(itemPath, "物品路径");
+  if (amount === "all") {
+    return `TRANSFER ${source} ${target} ${item} all`;
+  }
+  if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw new Error(`调拨数量必须是正整数或 all，当前是 ${String(amount)}`);
+  }
+  return `TRANSFER ${source} ${target} ${item} ${amount}`;
+}
+
 /** The exact `WHOAMI` success answer; `playerId` is the engine player id of this connection. */
 const WHOAMI_ANSWER = /^OK player ([1-9][0-9]*)$/u;
 

@@ -1,7 +1,9 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
+import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -9,6 +11,7 @@ import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
 
 import java.util.Collection;
 import java.util.List;
@@ -299,6 +302,51 @@ public interface UnitDirector {
     UpgradeResult upgradeBuilding(Building building);
 
     /**
+     * Moves stock from one of the player's warehouses to another through the ordinary hauling path.
+     *
+     * <p>This is the engine half of the manual logistics command, and it is deliberately a <em>real
+     * haul</em>, not a teleport: the goods are reserved in the source warehouse, a free hauler is
+     * dispatched to pick them up and carry them to the target, and only the hauler's arrival puts them
+     * into the target inventory. The returned {@link TransferResult#moved() moved} bundle is therefore
+     * what was <em>dispatched</em>; the target's stock rises a few ticks later, exactly like a production
+     * delivery. Nothing is created or destroyed on the way, and a haul that fails puts the goods back into
+     * storage through {@link io.github.sob1234509876.oc.rts.logistics.HaulOrder}.
+     *
+     * <p><strong>Rules.</strong> Both buildings have to exist, be alive, be
+     * {@linkplain Building#isConstructed() finished} warehouses of the same player, and stand in the same
+     * dimension with a walkable route between their entrances. The item has to be one the source holds,
+     * and the amount has to be positive; it is clamped to the smaller of the source's
+     * <em>unreserved</em> stock ({@link io.github.sob1234509876.oc.rts.economy.WarehouseLogistics#freeAmount})
+     * and the target's current room, so the dispatch always fits and the answer names the amount that
+     * really moves. An amount of {@link Natural#BEYOND} is accepted as "as much as possible" for the same
+     * reason: the clamp makes it finite.
+     *
+     * <p><strong>The hauler.</strong> A free hauler must exist at command time: an own unit that can haul,
+     * stands in the same dimension, is idle and carries no other job. The nearest one wins, ties are
+     * broken by entity id, and the search is the hauling system's own
+     * ({@link io.github.sob1234509876.oc.rts.logistics.HaulingSystem#dispatchNearestHauler}). That
+     * explicit dispatch is what makes the command work in a game whose policy turned the automatic hauler
+     * search off, and it is why "no free engineer" is a readable refusal instead of a job that waits
+     * forever.
+     *
+     * <p><strong>Charges.</strong> A refusal charges nothing and leaves no reservation: every check runs
+     * before the claim is taken, and a claim that cannot be handed to a hauler is released again before
+     * this method returns. A success charges the moving goods - they leave the source and arrive at the
+     * target - and no gold, wood or other resource is spent on top.
+     *
+     * <p><strong>Determinism.</strong> The source reservation is single-warehouse, the hauler search is
+     * the existing nearest-idle rule, and the world is not ticked inside this call, so the same world state
+     * and the same arguments always produce the same dispatch.
+     *
+     * @param source the finished own warehouse the goods come from; may be {@code null}
+     * @param target the finished own warehouse the goods go to; may be {@code null}
+     * @param item   the item kind to move; may be {@code null}
+     * @param amount the requested amount; positive, clamped by the rules above
+     * @return the dispatched bundle and job, or the readable refusal reason; never {@code null}
+     */
+    TransferResult transfer(Building source, Building target, ItemType item, Natural amount);
+
+    /**
      * Outcome of one upgrade request: either the replacement building or a refusal reason.
      *
      * <p>At most one field is set. The replacement is a new entity with a new id; the old building is
@@ -476,6 +524,56 @@ public interface UnitDirector {
         /** Whether a site was reclaimed. */
         public boolean reclaimed() {
             return site != null;
+        }
+    }
+
+    /**
+     * Outcome of one manual warehouse transfer: the dispatched goods and job, or a refusal reason.
+     *
+     * <p>At most one of {@link #job()} and {@link #refusal()} is set. On success {@link #moved()} is the
+     * clamped bundle that was reserved and handed to a hauler; it is <em>in flight</em>, so the target's
+     * inventory does not hold it yet. On refusal every field is empty and nothing changed: no stock left
+     * the source, no reservation was left behind and no job was registered.
+     *
+     * <p>The job handle is exposed because it is the observable proof of the dispatch: its
+     * {@link DeliveryJob#target() target} is the destination, its
+     * {@link DeliveryJob#reservation() reservation} is the claim on the source, and
+     * {@link DeliveryJob#hauler()} names the unit that will carry it.
+     *
+     * @param moved   the bundle that was dispatched; empty on a refusal
+     * @param job     the registered hauling job, or {@code null} on a refusal
+     * @param refusal why nothing was dispatched, or {@code null} on success
+     */
+    record TransferResult(ItemBundle moved, DeliveryJob job, String refusal) {
+
+        public TransferResult {
+            moved = moved == null ? ItemBundle.EMPTY : moved;
+            if (job == null) {
+                if (!moved.isEmpty()) {
+                    throw new IllegalArgumentException("a refused transfer dispatched nothing");
+                }
+                if (refusal == null) {
+                    throw new IllegalArgumentException("a transfer result needs a job or a refusal");
+                }
+            } else if (refusal != null) {
+                throw new IllegalArgumentException("a dispatched transfer has no refusal");
+            }
+        }
+
+        /** The goods were dispatched to a hauler; {@code moved} is in flight, not delivered yet. */
+        public static TransferResult dispatched(ItemBundle moved, DeliveryJob job) {
+            return new TransferResult(Objects.requireNonNull(moved, "moved"),
+                    Objects.requireNonNull(job, "job"), null);
+        }
+
+        /** Nothing was dispatched, for the given readable reason. */
+        public static TransferResult refused(String reason) {
+            return new TransferResult(ItemBundle.EMPTY, null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether a hauling job is carrying the goods. */
+        public boolean transferred() {
+            return job != null;
         }
     }
 

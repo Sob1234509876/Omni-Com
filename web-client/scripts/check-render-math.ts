@@ -5,7 +5,7 @@
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `sweep.ts`, `flash.ts`,
  * `crosshair.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
- * `events.ts`, `resources.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `events.ts`, `resources.ts`, `logistics.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -35,6 +35,7 @@ import {
   train,
   trainBatch,
   trainableUnitsForBuilding,
+  transfer,
   upgrade,
   whoAmI,
 } from "../src/commands.ts";
@@ -345,6 +346,19 @@ import {
   toggleResourceMark,
   warehouseResourceTotals,
 } from "../src/render/resources.ts";
+import {
+  WAREHOUSE_MARK_NOTE,
+  WAREHOUSE_SCOPE_TOGGLE_SINGLE,
+  WAREHOUSE_SCOPE_TOGGLE_TOTAL,
+  ownWarehouses,
+  selectedOwnWarehouse,
+  transferAnswerLabel,
+  transferFormModel,
+  transferTargetLabel,
+  warehouseInboundLabel,
+  warehousePanelModel,
+  warehouseStorageLabel,
+} from "../src/render/logistics.ts";
 import {
   escapeHtml,
   plainTexFallback,
@@ -3520,6 +3534,336 @@ check(
   "未登录时完整资源页仍保留清单物品与两种货币，数量显式为 0",
   anonymousRows.map((row) => `${row.name}=${row.amount}`).join(",") === "木=0,金=0,银=0",
   anonymousRows.map((row) => `${row.name}=${row.amount}`).join(","),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Logistics: the per-warehouse view, its labels and the manual transfer form
+// ---------------------------------------------------------------------------------------------
+
+const logisticsWorld: WorldView = eventWorld([
+  {
+    id: 1,
+    kind: "building.warehouse",
+    x: 0.5,
+    y: 0.5,
+    playerId: 1,
+    progress: 1,
+    contents: { gold: 120, wood: 40 },
+    storage: { slots: 24, used: 2, free: 22 },
+    inbound: 1,
+  },
+  {
+    id: 2,
+    kind: "building.warehouse",
+    x: 10.5,
+    y: 0.5,
+    playerId: 1,
+    progress: 1,
+    contents: { gold: 30 },
+    storage: { slots: 24, used: 1, free: 23 },
+  },
+  {
+    id: 3,
+    kind: "building.warehouse",
+    x: 20.5,
+    y: 0.5,
+    playerId: 2,
+    progress: 1,
+    contents: { gold: 999 },
+  },
+  {
+    id: 4,
+    kind: "building.warehouse",
+    x: 30.5,
+    y: 0.5,
+    playerId: 1,
+    progress: 0.5,
+    storage: { slots: 24, used: 0, free: 24 },
+  },
+  { id: 5, kind: "building.armory.t1", x: 40.5, y: 0.5, playerId: 1, progress: 1 },
+  // A legacy warehouse without `storage` and `contents`, to prove the old-snapshot path.
+  { id: 6, kind: "building.warehouse", x: 50.5, y: 0.5, playerId: 1, progress: 1 },
+]);
+const warehouseOne = logisticsWorld.entities.find((entity) => entity.id === 1);
+const warehouseTwo = logisticsWorld.entities.find((entity) => entity.id === 2);
+const unfinishedWarehouse = logisticsWorld.entities.find((entity) => entity.id === 4);
+const legacyWarehouse = logisticsWorld.entities.find((entity) => entity.id === 6);
+const enemyWarehouse = logisticsWorld.entities.find((entity) => entity.id === 3);
+const ownArmory = logisticsWorld.entities.find((entity) => entity.id === 5);
+
+check(
+  "仓库视图：自己的仓库按 id 排列，敌方仓库与普通建筑不算",
+  ownWarehouses(logisticsWorld, 1).map((entity) => entity.id).join(",") === "1,2,4,6" &&
+    ownWarehouses(logisticsWorld, null).length === 0,
+  ownWarehouses(logisticsWorld, 1).map((entity) => entity.id).join(","),
+);
+const onlyOne = warehouseOne === undefined ? [] : [warehouseOne];
+const twoSelected =
+  warehouseOne === undefined || warehouseTwo === undefined ? [] : [warehouseOne, warehouseTwo];
+check(
+  "仓库视图：恰好选中一座自己的仓库才进入单仓库模式",
+  selectedOwnWarehouse(onlyOne, 1)?.id === 1 &&
+    selectedOwnWarehouse(twoSelected, 1) === null &&
+    selectedOwnWarehouse(enemyWarehouse === undefined ? [] : [enemyWarehouse], 1) === null &&
+    selectedOwnWarehouse(ownArmory === undefined ? [] : [ownArmory], 1) === null &&
+    selectedOwnWarehouse([], 1) === null,
+  String(selectedOwnWarehouse(onlyOne, 1)?.id),
+);
+
+const totalPanel = warehousePanelModel(logisticsWorld, 1, [], "single", fullLabel);
+check(
+  "总计模式：合计所有自己的建筑，表头是仓库数量，没有切换按钮",
+  totalPanel.scope === "total" &&
+    totalPanel.rows.map((row) => `${row.name}=${row.amount}`).join(",") === "木=40,金=150" &&
+    totalPanel.summary === "4 个仓库" &&
+    totalPanel.toggleLabel === null &&
+    totalPanel.note === "" &&
+    totalPanel.transferVisible === false,
+  `${totalPanel.scope} / ${totalPanel.summary} / ${totalPanel.rows.map((row) => row.name).join(",")}`,
+);
+
+const singlePanel = warehousePanelModel(logisticsWorld, 1, onlyOne, "single", fullLabel);
+check(
+  "单仓库模式：只显示这一座的库存，表头带容量、已用、空闲槽位和在途数",
+  singlePanel.scope === "single" &&
+    singlePanel.rows.map((row) => `${row.name}=${row.amount}`).join(",") === "木=40,金=120" &&
+    singlePanel.summary === "仓库 #1 · 容量 24 · 已用 2 · 空闲 22 · 在途 1" &&
+    singlePanel.toggleLabel === WAREHOUSE_SCOPE_TOGGLE_SINGLE &&
+    singlePanel.note === WAREHOUSE_MARK_NOTE &&
+    singlePanel.transferVisible === true &&
+    singlePanel.transferReady === true,
+  `${singlePanel.summary} / ${singlePanel.rows.map((row) => row.name).join(",")}`,
+);
+check(
+  "单仓库模式：目标列表是自己的其他已完工仓库，来源物品列表就是本仓库存",
+  singlePanel.targets.map((entity) => entity.id).join(",") === "2,6" &&
+    singlePanel.sourceItems.map((item) => item.path).join(",") === "wood,gold" &&
+    singlePanel.transferReason === "",
+  singlePanel.targets.map((entity) => entity.id).join(","),
+);
+
+const totalWithSingle = warehousePanelModel(logisticsWorld, 1, onlyOne, "total", fullLabel);
+check(
+  "总计偏好：同一座仓库选中时切回合计，表头说明总计，切换按钮回到单仓库",
+  totalWithSingle.scope === "total" &&
+    totalWithSingle.summary === "4 个仓库 · 总计" &&
+    totalWithSingle.toggleLabel === WAREHOUSE_SCOPE_TOGGLE_TOTAL &&
+    totalWithSingle.note === "" &&
+    totalWithSingle.transferVisible === false,
+  `${totalWithSingle.scope} / ${totalWithSingle.summary}`,
+);
+
+const legacyPanel = warehousePanelModel(
+  logisticsWorld,
+  1,
+  legacyWarehouse === undefined ? [] : [legacyWarehouse],
+  "single",
+  fullLabel,
+);
+check(
+  "旧快照没有 storage 时单仓库表头说容量未知，在途按 0 显示",
+  legacyPanel.summary === "仓库 #6 · 容量未知（旧快照） · 在途 0 · 暂无库存" &&
+    warehouseStorageLabel(legacyWarehouse ?? { id: 6, kind: "building.warehouse", x: 0, y: 0 }) ===
+      "容量未知（旧快照）" &&
+    legacyPanel.transferReady === false &&
+    legacyPanel.transferReason.includes("没有库存"),
+  legacyPanel.summary,
+);
+check(
+  "在途数标签：有任务时显示数量，没有字段时是 0",
+  warehouseInboundLabel(warehouseOne ?? { id: 1, kind: "building.warehouse", x: 0, y: 0 }) === "在途 1" &&
+    warehouseInboundLabel(warehouseTwo ?? { id: 2, kind: "building.warehouse", x: 0, y: 0 }) === "在途 0",
+  warehouseInboundLabel(warehouseTwo ?? { id: 2, kind: "building.warehouse", x: 0, y: 0 }),
+);
+
+const unfinishedPanel = warehousePanelModel(
+  logisticsWorld,
+  1,
+  unfinishedWarehouse === undefined ? [] : [unfinishedWarehouse],
+  "single",
+  fullLabel,
+);
+check(
+  "未完工仓库仍是单仓库视图，但不能调拨，表头说明原因",
+  unfinishedPanel.scope === "single" &&
+    unfinishedPanel.transferVisible === true &&
+    unfinishedPanel.transferReady === false &&
+    unfinishedPanel.transferReason.includes("尚未完工") &&
+    unfinishedPanel.summary.includes("暂无库存"),
+  unfinishedPanel.transferReason,
+);
+
+const noWarehouseWorld = eventWorld([
+  { id: 7, kind: "building.warehouse", x: 1, y: 1, playerId: 2, progress: 1 },
+]);
+const noWarehousePanel = warehousePanelModel(noWarehouseWorld, 1, [], "single", fullLabel);
+check(
+  "没有任何自己的仓库时面板回到 未发现自己的仓库",
+  noWarehousePanel.scope === "none" &&
+    noWarehousePanel.summary === "未发现自己的仓库" &&
+    noWarehousePanel.toggleLabel === null &&
+    noWarehousePanel.transferVisible === false &&
+    noWarehousePanel.rows.length === 0,
+  noWarehousePanel.summary,
+);
+const contentsOnlyWorld = eventWorld([
+  { id: 8, kind: "building.armory.t1", x: 1, y: 1, playerId: 1, progress: 1, contents: { gold: 5 } },
+]);
+const contentsOnlyPanel = warehousePanelModel(contentsOnlyWorld, 1, [], "single", fullLabel);
+check(
+  "只有带有 contents 的非仓库建筑时仍显示库存合计，而不是谎称没有仓库",
+  contentsOnlyPanel.scope === "total" &&
+    contentsOnlyPanel.summary === "未发现自己的仓库 · 库存合计" &&
+    contentsOnlyPanel.rows.map((row) => `${row.name}=${row.amount}`).join(",") === "金=5",
+  contentsOnlyPanel.summary,
+);
+
+// ---------------------------------------------------------------------------------------------
+// The manual transfer form and its answer labels
+// ---------------------------------------------------------------------------------------------
+
+const formSource =
+  warehouseOne ?? { id: 1, kind: "building.warehouse", x: 0, y: 0, playerId: 1, progress: 1 };
+const formTargets = singlePanel.targets;
+const goodForm = transferFormModel(formSource, formTargets, "gold", "50", 2);
+check(
+  "调拨表单：合法输入生成 TRANSFER 行，数量与目标都来自选择",
+  goodForm.ok && goodForm.line === "TRANSFER 1 2 gold 50" && goodForm.amount === 50 &&
+    goodForm.targetId === 2,
+  goodForm.line,
+);
+const allForm = transferFormModel(formSource, formTargets, "gold", "all", 2);
+check(
+  "调拨表单：amount 可以写 all，并按字面量发送",
+  allForm.ok && allForm.line === "TRANSFER 1 2 gold all" && allForm.amount === null,
+  allForm.line,
+);
+check(
+  "调拨表单：没选物品 / 选了不持有的物品都被拒绝",
+  transferFormModel(formSource, formTargets, "", "5", 2).refusal === "请选择要调拨的物品" &&
+    transferFormModel(formSource, formTargets, "ore", "5", 2).refusal === "来源仓库没有这件物品",
+  transferFormModel(formSource, formTargets, "ore", "5", 2).refusal,
+);
+check(
+  "调拨表单：空数量、零、负数、小数和非数字都被拒绝",
+  transferFormModel(formSource, formTargets, "gold", " ", 2).refusal === "请填写调拨数量" &&
+    transferFormModel(formSource, formTargets, "gold", "0", 2).refusal === "调拨数量必须是正整数" &&
+    transferFormModel(formSource, formTargets, "gold", "-2", 2).refusal === "调拨数量必须是正整数" &&
+    transferFormModel(formSource, formTargets, "gold", "1.5", 2).refusal === "调拨数量必须是正整数" &&
+    transferFormModel(formSource, formTargets, "gold", "many", 2).refusal === "调拨数量必须是正整数" &&
+    transferFormModel(formSource, formTargets, "gold", "9007199254740993", 2).refusal ===
+      "调拨数量必须是正整数",
+  transferFormModel(formSource, formTargets, "gold", "0", 2).refusal,
+);
+check(
+  "调拨表单：缺少目标、目标就是来源、目标不在自己其他仓库里都被拒绝",
+  transferFormModel(formSource, formTargets, "gold", "5", null).refusal === "请选择目标仓库" &&
+    transferFormModel(formSource, formTargets, "gold", "5", 1).refusal.includes("同一建筑") &&
+    transferFormModel(formSource, formTargets, "gold", "5", 3).refusal.includes("不可达") &&
+    transferFormModel(formSource, formTargets, "gold", "5", 99).refusal.includes("不可达"),
+  transferFormModel(formSource, formTargets, "gold", "5", 99).refusal,
+);
+const unfinishedTargetForm = transferFormModel(
+  formSource,
+  unfinishedWarehouse === undefined ? [] : [unfinishedWarehouse],
+  "gold",
+  "5",
+  4,
+);
+check(
+  "调拨表单：未完工的目标仓库按不可达/未完工被拒绝",
+  unfinishedTargetForm.ok === false && unfinishedTargetForm.refusal.includes("尚未完工"),
+  unfinishedTargetForm.refusal,
+);
+const unfinishedSourceForm = transferFormModel(
+  unfinishedWarehouse ?? formSource,
+  unfinishedWarehouse === undefined ? [] : [unfinishedWarehouse],
+  "gold",
+  "5",
+  4,
+);
+check(
+  "调拨表单：未完工的来源仓库不能调拨",
+  unfinishedSourceForm.ok === false && unfinishedSourceForm.refusal.includes("尚未完工"),
+  unfinishedSourceForm.refusal,
+);
+check(
+  "TRANSFER 命令行生成器：数字与 all 两种数量，非法数量在本地抛中文错误",
+  transfer(1, 2, "gold", 50) === "TRANSFER 1 2 gold 50" &&
+    transfer(1, 2, "gold", "all") === "TRANSFER 1 2 gold all" &&
+    throwsChinese(() => transfer(1, 2, "gold", 0)) &&
+    throwsChinese(() => transfer(1, 2, "gold", -1)) &&
+    throwsChinese(() => transfer(1, 2, "gold", 1.5)),
+  transfer(1, 2, "gold", 50),
+);
+check(
+  "目标仓库选项标签是实体 id，状态行与命令里的 id 一致",
+  transferTargetLabel(formSource) === "#1" &&
+    transferTargetLabel(warehouseTwo ?? formSource) === "#2",
+  transferTargetLabel(warehouseTwo ?? formSource),
+);
+check(
+  "调拨回答：OK <数量> <物品> 读成 已调拨，ERR 保留引擎理由，未知回答原样显示",
+  transferAnswerLabel("OK 120 gold", fullLabel).ok &&
+    transferAnswerLabel("OK 120 gold", fullLabel).text === "已调拨：120 金" &&
+    transferAnswerLabel("WHAT 12 gold").text.startsWith("调拨回答") &&
+    transferAnswerLabel("ERR no stock of gold").ok === false &&
+    transferAnswerLabel("ERR no stock of gold").text === "调拨失败：no stock of gold" &&
+    transferAnswerLabel("OK").text === "已调拨" &&
+    transferAnswerLabel("ERR").text === "调拨失败",
+  transferAnswerLabel("OK 120 gold", fullLabel).text,
+);
+
+const logisticsSnapshot = worldViewFromSnapshot({
+  tick: 1,
+  width: 3,
+  height: 3,
+  tiles: [
+    ["grass", "grass", "grass"],
+    ["grass", "grass", "grass"],
+    ["grass", "grass", "grass"],
+  ],
+  entities: [
+    {
+      id: 1,
+      kind: "building.warehouse",
+      x: 0.5,
+      y: 0.5,
+      player: 1,
+      health: 1,
+      w: 3,
+      h: 3,
+      progress: 1,
+      contents: { gold: 120 },
+      storage: { slots: 24, used: 2, free: 22 },
+      inbound: 1,
+    },
+    {
+      id: 2,
+      kind: "building.warehouse",
+      x: 1.5,
+      y: 0.5,
+      player: 1,
+      health: 1,
+      w: 3,
+      h: 3,
+      progress: 1,
+      storage: { slots: -1, used: 0, free: 0 },
+      inbound: -2,
+    },
+  ],
+});
+const parsedStorageRow = logisticsSnapshot?.entities.find((entity) => entity.id === 1);
+const malformedStorageRow = logisticsSnapshot?.entities.find((entity) => entity.id === 2);
+check(
+  "快照解析：storage 与 inbound 被读成可选字段，负数/畸形值被丢弃",
+  parsedStorageRow?.storage?.slots === 24 &&
+    parsedStorageRow?.storage?.used === 2 &&
+    parsedStorageRow?.storage?.free === 22 &&
+    parsedStorageRow?.inbound === 1 &&
+    malformedStorageRow?.storage === undefined &&
+    malformedStorageRow?.inbound === undefined,
+  JSON.stringify(parsedStorageRow?.storage),
 );
 
 // ---------------------------------------------------------------------------------------------

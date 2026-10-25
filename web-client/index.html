@@ -226,7 +226,7 @@
       .warehouse-panel {
         width: max-content;
         min-width: 148px;
-        max-width: min(220px, 100%);
+        max-width: min(320px, 100%);
         padding: 7px 9px;
         border: 1px solid #5a5a5a;
         border-radius: 4px;
@@ -321,6 +321,71 @@
         flex: 0 0 auto;
         color: #ffffff;
         font-variant-numeric: tabular-nums;
+      }
+
+      /* The marking note: only the single-warehouse view needs it, because there the rows are one
+         warehouse's stock while the marked HUD line stays the all-warehouse total. */
+      .warehouse-note {
+        margin: 4px 0 0;
+        color: #9a9a9a;
+        font-size: 10px;
+      }
+
+      /* The manual transfer form: one compact row per field, same greyscale chrome as the panel. */
+      .warehouse-transfer {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 6px;
+        padding-top: 5px;
+        border-top: 1px solid #4a4a4a;
+      }
+
+      .warehouse-transfer[hidden] {
+        display: none;
+      }
+
+      .warehouse-transfer-row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .warehouse-transfer-row > span {
+        flex: 0 0 26px;
+        color: #9a9a9a;
+        font-size: 10px;
+      }
+
+      .warehouse-transfer select,
+      .warehouse-transfer input {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 1px 2px;
+        border: 1px solid #5a5a5a;
+        border-radius: 3px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #e6e6e6;
+        font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+      }
+
+      .warehouse-transfer-status {
+        margin: 4px 0 0;
+        color: #c8c8c8;
+        font-size: 10px;
+        word-break: break-word;
+      }
+
+      .warehouse-transfer-status[data-state="ok"] {
+        color: #b9f6ca;
+      }
+
+      .warehouse-transfer-status[data-state="error"] {
+        color: #ffb4b4;
+      }
+
+      .warehouse-transfer-status[data-state="busy"] {
+        color: #ffe08a;
       }
 
       /* The personal marker panel: the translucent list the `标记` button opens. Same greyscale chrome
@@ -1792,12 +1857,50 @@
             <div class="warehouse-head">
               <h2>仓库库存</h2>
               <span class="warehouse-actions">
+                <button
+                  id="warehouse-scope"
+                  type="button"
+                  hidden
+                  title="显示全部仓库的合计"
+                >全部/总计</button>
                 <button id="warehouse-mark-all" type="button" title="标记下面列出的全部物品">标记全部</button>
                 <button id="warehouse-clear-marks" type="button" title="清除全部标记">清除</button>
               </span>
             </div>
             <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
+            <p id="warehouse-note" class="warehouse-note" hidden></p>
             <ul id="warehouse-items" class="warehouse-items" hidden></ul>
+            <form id="warehouse-transfer" class="warehouse-transfer" hidden>
+              <div class="warehouse-transfer-row">
+                <span>物品</span>
+                <select id="warehouse-transfer-item" aria-label="要调拨的物品"></select>
+              </div>
+              <div class="warehouse-transfer-row">
+                <span>数量</span>
+                <input
+                  id="warehouse-transfer-amount"
+                  inputmode="numeric"
+                  type="number"
+                  min="1"
+                  step="1"
+                  aria-label="要调拨的数量"
+                />
+                <button
+                  id="warehouse-transfer-all"
+                  type="button"
+                  title="把数量填成来源仓库现有的全部数量"
+                >全部</button>
+              </div>
+              <div class="warehouse-transfer-row">
+                <span>目标</span>
+                <select id="warehouse-transfer-target" aria-label="调拨的目标仓库"></select>
+              </div>
+              <div class="warehouse-transfer-row">
+                <span></span>
+                <button id="warehouse-transfer-send" type="submit" disabled>调拨</button>
+              </div>
+            </form>
+            <p id="warehouse-transfer-status" class="warehouse-transfer-status" hidden></p>
           </aside>
 
           <aside id="marker-panel" class="marker-panel" aria-label="我的标记" hidden>
@@ -1993,6 +2096,12 @@
                 <button id="continue-build-button" type="button" disabled>继续建造</button>
                 <button id="repair-button" type="button" disabled>修理</button>
                 <button id="reclaim-button" type="button" disabled>回收</button>
+                <button
+                  id="transfer-focus"
+                  type="button"
+                  disabled
+                  title="在仓库面板里从这座仓库调拨物品"
+                >调拨…</button>
               </div>
             </section>
             <div id="hud-queue" class="hud-queue" hidden></div>

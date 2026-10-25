@@ -599,6 +599,156 @@ public final class PlayerCommandCheck {
         check.that(!entityRow(host.snapshotJson(), mover.id().value()).contains("\"path\""),
                 "停下的单位快照不再带 path");
 
+        check.section("玩家命令：TRANSFER 在自有仓库之间调拨");
+        // A flat corridor keeps the two fixture warehouses reachable on the noise terrain.
+        for (int x = 2; x <= 20; x++) {
+            for (int y = 28; y <= 40; y++) {
+                world.map().setTerrain(new GridPos(x, y), host.content().terrain("grass"));
+            }
+        }
+        Building transferSource = world.spawnBuilding(host.content().building(WAREHOUSE), human,
+                new GridPos(4, 30));
+        Building transferTarget = world.spawnBuilding(host.content().building(WAREHOUSE), human,
+                new GridPos(14, 30));
+        check.equal(Natural.of(300), transferSource.inventory().insert(gold, 300),
+                "调拨用的来源仓库收下 300 金");
+        Unit porter = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(9, 32));
+
+        Natural availableBeforeTransfer = human.logistics().available().amount(gold);
+        String transferAnswer = run(dispatcher, host, first,
+                "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value() + " gold 120");
+        check.equal("OK 120 gold", transferAnswer,
+                "TRANSFER 成功回答 OK <moved> <item>");
+        check.equal(Natural.of(300), transferSource.inventory().amount(gold),
+                "调拨命令本身不立刻搬走货物，只预留");
+        check.equal(availableBeforeTransfer.subtractClamped(Natural.of(120)),
+                human.logistics().available().amount(gold),
+                "被调拨的 120 金不再算作可动用库存");
+        String inFlight = entityRow(host.snapshotJson(), transferTarget.id().value());
+        check.that(inFlight.contains("\"storage\":{\"slots\":24,\"used\":0,\"free\":24}"),
+                "仓库快照带 storage 的容量/已用/空闲槽位（空仓库也有）: " + inFlight);
+        check.that(inFlight.contains("\"inbound\":1"),
+                "在途调拨让目标仓库快照带 inbound 1: " + inFlight);
+        for (int step = 0; step < 1200
+                && transferTarget.inventory().amount(gold).compareTo(Natural.of(120)) < 0; step++) {
+            host.step();
+        }
+        host.step();
+        host.step();
+        check.equal(Natural.of(120), transferTarget.inventory().amount(gold),
+                "搬运工把 120 金真的送到目标仓库");
+        check.equal(Natural.of(180), transferSource.inventory().amount(gold),
+                "正好 120 金离开来源仓库");
+        String delivered = entityRow(host.snapshotJson(), transferTarget.id().value());
+        check.that(delivered.contains("\"storage\":{\"slots\":24,\"used\":1,\"free\":23}")
+                        && delivered.contains("\"contents\":{\"gold\":120}")
+                        && !delivered.contains("\"inbound\""),
+                "送达后快照显示已用 1 槽、120 金库存，且不再有在途任务: " + delivered);
+
+        // `all` is supported: the server resolves it to the source's free stock and the engine clamps it.
+        Building allSource = world.spawnBuilding(host.content().building(WAREHOUSE), human,
+                new GridPos(4, 38));
+        Building allTarget = world.spawnBuilding(host.content().building(WAREHOUSE), human,
+                new GridPos(12, 38));
+        check.equal(Natural.of(7), allSource.inventory().insert(gold, 7), "全部调拨的来源仓库收下 7 金");
+        String allAnswer = run(dispatcher, host, first,
+                "TRANSFER " + allSource.id().value() + " " + allTarget.id().value() + " gold all");
+        check.equal("OK 7 gold", allAnswer, "amount 为 all 时回答全部可调拨的数量");
+        for (int step = 0; step < 1200
+                && allTarget.inventory().amount(gold).compareTo(Natural.of(7)) < 0; step++) {
+            host.step();
+        }
+        host.step();
+        host.step();
+        check.equal(Natural.of(7), allTarget.inventory().amount(gold),
+                "all 的调拨同样由搬运工送达");
+
+        Natural refusalSource = transferSource.inventory().amount(gold);
+        Natural refusalTarget = transferTarget.inventory().amount(gold);
+        Natural refusalAvailable = human.logistics().available().amount(gold);
+        int refusalJobs = human.logistics().pendingDeliveries();
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "TRANSFER " + enemyBuilding.id().value() + " " + transferTarget.id().value()
+                                + " gold 5"),
+                "来源不是自己的仓库时回答 ERR not yours");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + enemyBuilding.id().value()
+                                + " gold 5"),
+                "目标不是自己的仓库时回答 ERR not yours");
+        check.equal("ERR unknown entity", run(dispatcher, host, first,
+                        "TRANSFER 999999 " + transferTarget.id().value() + " gold 5"),
+                "来源不存在时回答 ERR unknown entity");
+        check.equal("ERR unknown entity", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " 999999 gold 5"),
+                "目标不存在时回答 ERR unknown entity");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                                + " gold"),
+                "参数不足时回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                                + " gold 1 2"),
+                "参数过多时回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                                + " gold nope"),
+                "数量不是整数时回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                                + " gold -5"),
+                "负数数量按语法错误回答 ERR bad arguments");
+        check.equal("ERR unknown item", run(dispatcher, host, first,
+                        "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                                + " item.nope 5"),
+                "未知物品回答 ERR unknown item");
+        String sameBuilding = run(dispatcher, host, first,
+                "TRANSFER " + transferSource.id().value() + " " + transferSource.id().value()
+                        + " gold 5");
+        check.that(sameBuilding.startsWith("ERR ") && sameBuilding.contains("same building"),
+                "同一个建筑作为两端时说明是同一座建筑: " + sameBuilding);
+        String notWarehouse = run(dispatcher, host, first,
+                "TRANSFER " + newArmoryId + " " + transferTarget.id().value() + " gold 5");
+        check.that(notWarehouse.startsWith("ERR ") && notWarehouse.contains("not a warehouse"),
+                "来源不是仓库时说明不是仓库: " + notWarehouse);
+        String noStock = run(dispatcher, host, first,
+                "TRANSFER " + transferSource.id().value() + " " + transferTarget.id().value()
+                        + " wood 5");
+        check.that(noStock.startsWith("ERR ") && noStock.contains("no stock"),
+                "来源没有该物品时说明没有库存: " + noStock);
+        check.equal(refusalSource, transferSource.inventory().amount(gold),
+                "失败的调拨没有搬走来源的金");
+        check.equal(refusalTarget, transferTarget.inventory().amount(gold),
+                "失败的调拨没有增加目标的金");
+        check.equal(refusalAvailable, human.logistics().available().amount(gold),
+                "失败的调拨没有留下预留");
+        check.equal(refusalJobs, human.logistics().pendingDeliveries(),
+                "失败的调拨没有登记搬运任务");
+
+        // No free engineer is a refusal, not a job that waits forever.
+        for (Unit unit : new java.util.ArrayList<>(world.unitsOf(human))) {
+            world.destroy(unit);
+        }
+        host.step();
+        check.that(world.unitsOf(human).isEmpty(), "调拨检查清空了玩家的所有单位");
+        Natural withoutEngineerSource = transferTarget.inventory().amount(gold);
+        Natural withoutEngineerAvailable = human.logistics().available().amount(gold);
+        int withoutEngineerJobs = human.logistics().pendingDeliveries();
+        String noEngineer = run(dispatcher, host, first,
+                "TRANSFER " + transferTarget.id().value() + " " + transferSource.id().value()
+                        + " gold 5");
+        check.that(noEngineer.startsWith("ERR ") && noEngineer.contains("no free engineer"),
+                "没有空闲工程师时明确拒绝，而不是让任务无限等待: " + noEngineer);
+        check.equal(withoutEngineerSource, transferTarget.inventory().amount(gold),
+                "没有工程师的拒绝没有搬走金");
+        check.equal(withoutEngineerAvailable, human.logistics().available().amount(gold),
+                "没有工程师的拒绝没有留下预留");
+        check.equal(withoutEngineerJobs, human.logistics().pendingDeliveries(),
+                "没有工程师的拒绝没有登记任务");
+        check.note("调拨检查补了一个站在来源旁的工程师 e" + porter.id().value()
+                + "；实际搬运工仍由最近的空闲单位规则选出");
+        // The truly unreachable case (a walled-in target) needs impassable terrain; the engine scenario
+        // covers it, and this catalogue has no impassable terrain to build the fixture from.
+
         check.section("玩家命令：运行中的世界也会经由同一队列作答");
         host.start();
         try {

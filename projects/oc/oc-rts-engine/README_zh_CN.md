@@ -43,11 +43,11 @@
 ./gradlew :projects:oc:oc-rts-engine:scenario
 ```
 
-该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一个单位在带 LRU 区块预算的无界地图上真的走 2000 格、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一座兵营训练士兵、动画帧推进、三个维度并排模拟、一场近战、建筑受伤并死亡、一次建造扣费、一次保留占地/所有者/血量比例的原地建筑升级、多名工程师合作加快同一工地、三个按顺序执行的 Shift 排队建造、一座哨塔射击最近的敌对单位，以及一幅世界的 ASCII 图。
+该场景是一个无头自检（无测试框架、无网络），会打印它观察到的内容：地形按区块流入和流出、一个单位在带 LRU 区块预算的无界地图上真的走 2000 格、一条绕开水域的路线、一个小队集结、仓库对物品的准入控制、一次由搬运工完成的手动仓库调拨、一座兵营训练士兵、动画帧推进、三个维度并排模拟、一场近战、建筑受伤并死亡、一次建造扣费、一次保留占地/所有者/血量比例的原地建筑升级、多名工程师合作加快同一工地、三个按顺序执行的 Shift 排队建造、一座哨塔射击最近的敌对单位，以及一幅世界的 ASCII 图。
 成功运行以以下内容结束：
 
 ```text
-RTS engine scenario: all 720 checks passed.
+RTS engine scenario: all 760 checks passed.
 ```
 
 自检是一个程序，而不是基于框架的测试套件，因此它位于自己的 `selfCheck` 源集（`src/selfcheck/java`）中；`src/test/java` 保持为空，留给以后真正的单元测试。
@@ -66,6 +66,7 @@ RTS engine scenario: all 720 checks passed.
 | 5b 搬运 | 启用搬运后，工人真的会走到仓库，装载矿石和木板，并在兵营能够训练之前把它们送达；引擎会发布非空的 `ItemsHauled` 取货与卸货事实，并带上搬运单位和模拟 tick |
 | 5c 生产视图 | `ProductionQueue.producingNow()` 给出产物、位置 1 和两个未完成任务；`demand()` 只列出配方的两种输入，在缓冲区为空时报告两者都缺且 `have` 与 `stock` 都是 0（该 fixture 没有仓库），输入进入缓冲区后变成 ready，引擎消耗后仍保持 ready，取消一个等待任务后长度缩短 |
 | 5d 工程师任务 | 空闲工程师读作 `空闲`；`BuildOrder`、`RepairOrder` 和真实的预留 `HaulOrder` 分别读作 `建造中 → …`、`修理中 → …`、`搬运中 → …`，并带建筑显示名；战斗单位没有任务，而在普通移动命令下行走的工程师仍然是 `空闲` |
+| 5e 手动调拨 | `UnitDirector.transfer` 只在点名的来源仓库上预留，把任务交给唯一的空闲工人，由普通的 `HaulOrder` 真的把 20 铁送到第二座仓库；超额请求被夹到来源的未预留库存，`Natural.BEYOND` 搬走全部；同一建筑、非仓库来源/目标、未知物品、无库存、别的玩家、别的维度、没有空闲工程师都以可读理由拒绝；每次拒绝都不改变库存、可动用量和待办任务数；被围死的目标以 `unreachable` 拒绝；两个完全相同的世界把同一批货交给同一个搬运工并送达相同的库存 |
 | 6 精灵与动画 | 生成的单位播放 `idle`，接到命令后切换到 `move`，推进帧，面向其移动方向，快照会解析出一个具体的精灵帧，包含图集和像素矩形 |
 | 7 确定性 | 相同种子和相同命令的两次运行产生逐位相同的单位位置 |
 | 10 巨大数值 | 一个物品堆叠为 `10^5000`，一个单位拥有 `10↑↑10` 生命值：1000 点伤害伤不到它，`Natural.BEYOND` 伤害能杀死它，一个宝库报告 `BEYOND` 个槽位，而无上限的宝库仍然未满，同样结构数量的四槽宝库则已满 |
@@ -107,6 +108,7 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 7 | 通过网关在地图之间旅行 | `World.addGateway`、`World.route`、`order.TransferOrder`、`order.UnitDirector.travel`、`event.Events.EntityTransferred` |
 | 8 | 会自己开战的单位 | `combat.CombatSystem`、`combat.CombatStats`、`order.AttackOrder`、`order.AttackMoveOrder`、`event.Events.DamageDealt`、`event.Events.EntityKilled` |
 | 9 | 多名建造者合作加快同一工地 | `order.BuildOrder`、`order.UnitDirector.tryBuild(Unit, Building)`、`production.ConstructionSystem.MAX_BUILDERS_PER_SITE`、`entity.Building.builders()` |
+| 10 | 手动仓库调拨 | `order.UnitDirector.transfer`、`order.CommandService.transfer`、`economy.WarehouseLogistics.reserveFrom/freeAmount`、`logistics.HaulingSystem.dispatchNearestHauler`、`logistics.DeliveryJob` |
 
 ## 架构
 
@@ -186,6 +188,7 @@ System.out.println(engine.render(new GridPos(60, 40), 20));
 
 * **物品只能从仓库使用。** `Logistics`（可通过 `player.logistics()` 访问）是所有被标记为 `warehouse()` 的建筑类型的库存之并。工厂缓冲区、搬运工货舱或地面上的货物都不算数；没有实际存放在库存中的材料时，生产拒绝开始。
 * **没有东西凭空产生。** 生产任务会预留其输入，让它们被送进工厂，消耗它们，然后才生产；放不下的物品产出留在缓冲区中。
+* **仓库之间的库存只能靠搬运移动。** `UnitDirector.transfer(source, target, item, amount)` 只在一座仓库上预留，并要求命令下达时有空闲搬运工（所有者最近的一个，距离并列按 id），然后由普通的 `HaulOrder` 把货送过去；命令本身不瞬移、不扣费，拒绝时不留预留、不登记任务、不移动库存。数量会被夹到来源的未预留库存与目标剩余空间，所以回答里的数字就是真正会移动的数量。
 * **引擎从不硬编码物品名称。** 所有内容都是 `ContentRegistry` 中的数据，因此一个场景可以定义三十种或三百种物品，而无需改动引擎代码。
 * **数量是任意精度的自然数。** 数量、堆叠大小、容量、生命值和伤害都是 `Natural` 值（`io.github.sob1234509876.oc.googology`）：当一个值最多需要 4096 位时是精确整数，超出后则是诸如 `10^5000` 或 `10↑↑10` 的超运算塔。那里的算术按设计是近似的，就像浮点数对极小分数是近似的一样；排序保持忠实，因此比较和排序仍然可靠。位置、速度和 tick 时长有意保持为 `float`/`int`。
 * **模拟是确定性的。** 固定时间步、不依赖墙上时钟、无多线程、带种子的 `DeterministicRandom`、稳定的迭代顺序：相同的种子和相同的命令可以精确重放。

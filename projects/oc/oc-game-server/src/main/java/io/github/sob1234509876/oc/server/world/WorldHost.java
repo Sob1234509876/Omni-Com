@@ -20,11 +20,14 @@ import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
@@ -41,6 +44,7 @@ import io.github.sob1234509876.oc.rts.visual.UnitTask;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1465,6 +1469,29 @@ public final class WorldHost {
     }
 
     /**
+     * The hauling system the engine attached to the players' warehouse networks, or {@code null} when no
+     * network is attached yet.
+     *
+     * <p>The engine owns the system but keeps it off its public facade; every network exposes it instead
+     * (they all share one instance for one world), so the snapshot reads it from the first player that has
+     * one. This is a read per snapshot, not per entity, and it never creates anything: before the first
+     * player joins there is simply no hauling to report.
+     */
+    private HaulingSystem haulingSystem() {
+        for (Player player : engine.world().players()) {
+            WarehouseLogistics network = WarehouseLogistics.of(player);
+            if (network == null) {
+                continue;
+            }
+            Optional<HaulingSystem> system = network.hauling();
+            if (system.isPresent()) {
+                return system.get();
+            }
+        }
+        return null;
+    }
+
+    /**
      * The least-recently-used chunk budget of the unbounded terrain.
      *
      * <p>This is a memory ceiling, not a world size: it is the {@code --chunks N} value the host was built
@@ -1559,6 +1586,18 @@ public final class WorldHost {
      * selection HUD. It is read from {@link Building#inventory()} for a warehouse and
      * {@link Unit#cargo()} for a unit, the same sources the logistics network uses, so the two cannot
      * disagree about a stored or carried item.
+     *
+     * <p><strong>Warehouse capacity and inbound transfers.</strong> Every warehouse row also carries
+     * {@code "storage":{"slots":24,"used":2,"free":22}}, the slot count, the slots in use and the free
+     * slots read from the building's {@link io.github.sob1234509876.oc.rts.economy.Inventory}. Unlike
+     * {@code contents}, the object is written for an empty warehouse too, because capacity is exactly what
+     * an empty store's logistics readout needs; the three amounts are saturated to {@link Long#MAX_VALUE}
+     * exactly like every other amount in the document, which an unlimited inventory reaches through
+     * {@link io.github.sob1234509876.oc.googology.Natural#BEYOND}. {@code "inbound":1} is
+     * written when at least one pending hauling job currently targets the building - the count of
+     * transports in flight towards it, the manual {@code TRANSFER} command being the usual source - and is
+     * omitted for zero. Both fields are additive: an older server omits them and the client must fall back
+     * to a total-only view.
      *
      * <p><strong>Combat identity and the order queue.</strong> A unit row always carries {@code role}
      * ({@code combat} / {@code worker} / {@code support}); a unit or building whose content declares a weapon
@@ -1759,6 +1798,20 @@ public final class WorldHost {
         ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
         ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
 
+        // How many pending hauling jobs name each building as their destination. A transfer is the only
+        // command that delivers between two warehouses today, but any delivery into a warehouse counts;
+        // the jobs live in the one hauling system the engine attached to the players' networks, so the
+        // count is read from there instead of being tracked twice.
+        HaulingSystem hauling = haulingSystem();
+        Map<Building, Integer> inbound = new IdentityHashMap<>();
+        if (hauling != null) {
+            for (DeliveryJob job : hauling.jobs()) {
+                if (job.isPending()) {
+                    inbound.merge(job.target(), 1, Integer::sum);
+                }
+            }
+        }
+
         int capacity = 96 + size * size * 8 + entities.size() * 320;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
@@ -1796,7 +1849,9 @@ public final class WorldHost {
                     .append(",\"player\":").append(entity.owner().id().value())
                     .append(",\"health\":").append(twoDecimals(entity.health().fraction()));
             appendFootprintProgressAndQueue(json, entity, production);
-            appendContents(json, entity);
+            appendContents(json, entity, entity instanceof Building building
+                    ? inbound.getOrDefault(building, 0)
+                    : 0);
             appendUpgradeOffer(json, entity, goldItem, woodItem);
             appendBuildingServices(json, entity, goldItem, woodItem);
             appendCombat(json, entity);
@@ -1995,22 +2050,45 @@ public final class WorldHost {
      * object only components with a non-zero amount are written, in the inventory's own insertion order
      * (deterministic for a given command stream), and the field is omitted entirely for an empty
      * warehouse or an empty cargo hold. Amounts saturate exactly like the player row's.
+     *
+     * <p><strong>Warehouse capacity and inbound transfers.</strong> Every warehouse row - including an
+     * empty one - additionally carries {@code storage}, the three slot numbers a logistics surface needs:
+     * {@code {"slots":24,"used":2,"free":22}}, read from {@link Inventory#slotCount()},
+     * {@link Inventory#usedSlots()} and {@link Inventory#freeSlots()}. An unlimited inventory reports the
+     * saturated {@link Long#MAX_VALUE} that {@link io.github.sob1234509876.oc.googology.Natural#BEYOND}
+     * becomes on the wire, the same saturation the amount fields use. {@code inbound} is written when at
+     * least one pending hauling job currently names this building as its destination: it is the count of
+     * transports in flight towards it, a manual {@code TRANSFER} being the normal source. A zero count omits
+     * the field, so the client reads a missing value as "nothing inbound"; an older server omits both fields
+     * and the client must keep working without them.
      */
-    private static void appendContents(StringBuilder json, Entity entity) {
-        ItemBundle contents;
+    private static void appendContents(StringBuilder json, Entity entity, int inbound) {
         if (entity instanceof Building building) {
             if (!building.type().isWarehouse()) {
                 return;
             }
-            contents = building.inventory().contents();
-        } else if (entity instanceof Unit unit) {
-            if (!unit.isCarryingItems()) {
-                return;
+            appendStoredContents(json, building.inventory().contents());
+            Inventory inventory = building.inventory();
+            json.append(",\"storage\":{\"slots\":").append(inventory.slotCount().toLongSaturated())
+                    .append(",\"used\":").append(inventory.usedSlots().toLongSaturated())
+                    .append(",\"free\":").append(inventory.freeSlots().toLongSaturated())
+                    .append('}');
+            if (inbound > 0) {
+                json.append(",\"inbound\":").append(inbound);
             }
-            contents = unit.cargo().contents();
-        } else {
             return;
         }
+        if (!(entity instanceof Unit unit)) {
+            return;
+        }
+        if (!unit.isCarryingItems()) {
+            return;
+        }
+        appendStoredContents(json, unit.cargo().contents());
+    }
+
+    /** Writes the compact {@code ,"contents":{...}} object, or nothing when the bundle is empty. */
+    private static void appendStoredContents(StringBuilder json, ItemBundle contents) {
         boolean first = true;
         for (ItemBundle.Amount component : contents.components()) {
             if (component.amount().isZero()) {

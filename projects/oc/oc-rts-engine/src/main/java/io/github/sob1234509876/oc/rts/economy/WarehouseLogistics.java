@@ -214,6 +214,63 @@ public final class WarehouseLogistics implements Logistics {
         return Optional.of(reservation);
     }
 
+    /**
+     * Reserves a bundle out of one named warehouse instead of letting the network choose.
+     *
+     * <p>The ordinary {@link #reserve(ItemBundle)} spreads a request over the network in creation order,
+     * which is right for production but wrong for a manual transfer: the player named the source, and a
+     * haul that quietly loaded part of the bundle somewhere else would move stock the command never
+     * mentioned. This method therefore allocates from that one warehouse only and reports empty when it
+     * cannot cover the whole bundle, so the caller can refuse with a readable reason.
+     *
+     * <p>The promise bookkeeping is exactly the same as {@link #reserve(ItemBundle)}: the goods stay on
+     * the shelf, the warehouse reports a smaller {@link #available()}, and the claim is released or
+     * committed through the returned {@link Reservation}. The source must already be a member of this
+     * network (owned, a warehouse and finished); an unknown building answers empty.
+     *
+     * @param warehouse the warehouse the goods have to come from
+     * @param bundle    the bundle to reserve; an empty bundle answers empty
+     * @return the claim on that warehouse, or empty when it cannot cover the bundle
+     */
+    public Optional<Reservation> reserveFrom(Building warehouse, ItemBundle bundle) {
+        Objects.requireNonNull(warehouse, "warehouse");
+        Objects.requireNonNull(bundle, "bundle");
+        Warehouse entry = byBuilding.get(warehouse);
+        if (entry == null || bundle.isEmpty()) {
+            return Optional.empty();
+        }
+        List<Building> order = List.of(warehouse);
+        List<ReservationPool.Allocation> plan =
+                ReservationPool.allocate(order, bundle, this::freeUnits);
+        if (plan == null) {
+            return Optional.empty();
+        }
+        for (ReservationPool.Allocation allocation : plan) {
+            entry.promise(allocation.item(), allocation.amount());
+        }
+        LogisticsReservation reservation = new LogisticsReservation(this, bundle, plan, warehouse);
+        reservations.add(reservation);
+        return Optional.of(reservation);
+    }
+
+    /**
+     * Stock of one item in one warehouse that no reservation has spoken for, or zero for a building that
+     * is not part of this network.
+     *
+     * <p>This is the amount a manual transfer may promise from that warehouse; it is deliberately not
+     * {@link Inventory#amount(ItemType)} because another job's reservation has to be respected. A
+     * warehouse that holds the item but owes all of it to production answers zero.
+     *
+     * @param warehouse the warehouse to inspect
+     * @param item      the item kind
+     * @return the free amount, never negative
+     */
+    public Natural freeAmount(Building warehouse, ItemType item) {
+        Objects.requireNonNull(item, "item");
+        Warehouse entry = warehouse == null ? null : byBuilding.get(warehouse);
+        return entry == null ? Natural.ZERO : entry.free(item);
+    }
+
     @Override
     public Reservation reserveOrThrow(ItemBundle bundle) {
         return reserve(bundle).orElseThrow(() -> new IllegalStateException(

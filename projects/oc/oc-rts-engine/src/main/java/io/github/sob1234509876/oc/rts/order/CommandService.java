@@ -15,12 +15,15 @@ import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationPlan;
 import io.github.sob1234509876.oc.rts.formation.FormationPlanner;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.Motion;
@@ -747,6 +750,128 @@ public final class CommandService implements UnitDirector {
             insertInto(replacement.inventory(), leftover);
         }
         return UpgradeResult.upgraded(replacement);
+    }
+
+    /**
+     * The implementation of the manual warehouse transfer documented on
+     * {@link UnitDirector#transfer(Building, Building, ItemType, Natural)}.
+     *
+     * <p>The checks run in a fixed order and every one of them is free: identity of the two buildings,
+     * ownership, warehouse kind, completion, dimension, membership of the owner's network, the item's
+     * presence, the clamps, and the path between the two entrances. Only after all of them pass is the
+     * claim reserved. The hauler is dispatched explicitly through
+     * {@link HaulingSystem#dispatchNearestHauler(DeliveryJob)} because a game policy may have switched the
+     * automatic search off; when no hauler exists the claim is released again before returning, so a
+     * refusal leaves no reservation, no job and no moved stock behind.
+     *
+     * <p>The clamped amount is the smaller of the amount the source can still promise (its stock minus
+     * other jobs' reservations) and the room the target currently offers for that item. Clamping on the
+     * target side as well means the dispatched haul can always be committed when it arrives, instead of
+     * delivering a part and abandoning the rest.
+     */
+    @Override
+    public TransferResult transfer(Building source, Building target, ItemType item, Natural amount) {
+        if (source == null) {
+            return TransferResult.refused("no source warehouse to transfer from");
+        }
+        if (target == null) {
+            return TransferResult.refused("no target warehouse to transfer to");
+        }
+        if (item == null) {
+            return TransferResult.refused("unknown item");
+        }
+        if (amount == null || amount.isZero()) {
+            return TransferResult.refused("the amount must be positive");
+        }
+        if (source == target) {
+            return TransferResult.refused("cannot transfer within the same building: "
+                    + source.id().value());
+        }
+        if (!source.isAlive()) {
+            return TransferResult.refused("cannot transfer from building " + source.id().value()
+                    + ": it is gone");
+        }
+        if (!target.isAlive()) {
+            return TransferResult.refused("cannot transfer to building " + target.id().value()
+                    + ": it is gone");
+        }
+        if (!source.isWarehouse()) {
+            return TransferResult.refused("cannot transfer from " + source.type().key().path()
+                    + " at " + source.origin() + ": it is not a warehouse");
+        }
+        if (!target.isWarehouse()) {
+            return TransferResult.refused("cannot transfer to " + target.type().key().path()
+                    + " at " + target.origin() + ": it is not a warehouse");
+        }
+        if (!source.isConstructed()) {
+            return TransferResult.refused("cannot transfer from " + source.type().key().path()
+                    + " at " + source.origin() + ": it is still under construction");
+        }
+        if (!target.isConstructed()) {
+            return TransferResult.refused("cannot transfer to " + target.type().key().path()
+                    + " at " + target.origin() + ": it is still under construction");
+        }
+        if (!source.owner().equals(target.owner())) {
+            return TransferResult.refused("cannot transfer between warehouses of different players: "
+                    + source.id().value() + " belongs to " + source.owner().name() + ", "
+                    + target.id().value() + " to " + target.owner().name());
+        }
+        if (!source.dimensionId().equals(target.dimensionId())) {
+            return TransferResult.refused("cannot transfer between warehouses in different dimensions ("
+                    + source.dimensionId().key() + " and " + target.dimensionId().key() + ")");
+        }
+        Player owner = source.owner();
+        WarehouseLogistics network = WarehouseLogistics.of(owner);
+        if (network == null) {
+            return TransferResult.refused("cannot transfer for " + owner.name()
+                    + ": the player has no warehouse network");
+        }
+        if (!network.ownsWarehouse(source)) {
+            return TransferResult.refused("cannot transfer from building " + source.id().value()
+                    + ": it is not part of " + owner.name() + "'s warehouse network");
+        }
+        if (!network.ownsWarehouse(target)) {
+            return TransferResult.refused("cannot transfer to building " + target.id().value()
+                    + ": it is not part of " + owner.name() + "'s warehouse network");
+        }
+        Natural free = network.freeAmount(source, item);
+        if (free.isZero()) {
+            return TransferResult.refused("no stock of " + item.key().path() + " in "
+                    + source.type().key().path() + " #" + source.id().value());
+        }
+        Natural moved = amount.min(free);
+        Natural room = target.inventory().insertable(item, moved);
+        if (room.isZero()) {
+            return TransferResult.refused("the target warehouse cannot store " + item.key().path()
+                    + " (it is full or refuses that item)");
+        }
+        moved = moved.min(room);
+        GridPos from = world.dimensionOf(source).entranceTile(source);
+        GridPos to = world.dimensionOf(target).entranceTile(target);
+        if (!world.pathFinder(source.dimensionId()).isReachable(from, to)) {
+            return TransferResult.refused("no walkable route from " + source.type().key().path() + " #"
+                    + source.id().value() + " to " + target.type().key().path() + " #"
+                    + target.id().value() + ": unreachable");
+        }
+        ItemBundle bundle = ItemBundle.of(item, moved);
+        Optional<Logistics.Reservation> claim = network.reserveFrom(source, bundle);
+        if (claim.isEmpty()) {
+            return TransferResult.refused("no stock of " + item.key().path() + " in "
+                    + source.type().key().path() + " #" + source.id().value());
+        }
+        HaulingSystem hauling = network.hauling().orElse(null);
+        if (hauling == null) {
+            claim.get().release();
+            return TransferResult.refused("cannot transfer for " + owner.name()
+                    + ": no hauling system is attached to the warehouse network");
+        }
+        DeliveryJob job = new DeliveryJob(target, bundle, claim.get(), world.tickNumber());
+        Optional<Unit> hauler = hauling.dispatchNearestHauler(job);
+        if (hauler.isEmpty()) {
+            claim.get().release();
+            return TransferResult.refused("no free engineer is available to haul " + describe(bundle));
+        }
+        return TransferResult.dispatched(bundle, job);
     }
 
     /** Inserts as much of the bundle as the inventory accepts and returns the remainder. */

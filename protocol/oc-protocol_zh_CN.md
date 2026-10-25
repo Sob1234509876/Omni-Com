@@ -9,8 +9,9 @@
 - 传输：WebSocket 路径、一个文本帧一条命令、`HELLO 1` 版本握手，以及空闲超时与服务端心跳。
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
-- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR` 与 `RECLAIM`，账号名身份规则、登录与所有权规则，以及世界步边界。
+- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM` 与 `TRANSFER`，账号名身份规则、登录与所有权规则，以及世界步边界。
 - 维修、继续建造与回收：每点血量的费用、维修速率、一半返还，以及各种拒绝。
+- 手动仓库调拨：`TRANSFER` 语法、单仓库预留、空闲搬运工规则、`all`，以及数量夹取。
 - 快照里的单位路径，以及客户端的路径点交互（`Shift`+右键，`路径` 开关）。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
 - 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
@@ -91,6 +92,7 @@ OK OC/1
 | `UPGRADE ...` | `OK <newBuildingId>` 或 `ERR <reason>` | 把属于自己的已完工建筑替换成下一级；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `REPAIR ...` | `OK` 或 `ERR <reason>` | 派自己的工程师修理自己的受损完工建筑；需要 `LOGIN` 与所有权 |
 | `RECLAIM ...` | `OK <refund>` 或 `ERR <reason>` | 取消自己的未完工工地并返还一半放置成本；需要 `LOGIN` 与所有权 |
+| `TRANSFER ...` | `OK <moved> <item>` 或 `ERR <reason>` | 在玩家自己的两座已完工仓库之间搬运库存；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `QUIT` | `OK bye` | 服务器先回这一行，然后关闭连接 |
 
 `REGISTER` 与 `LOGIN` 的 `<message>` 是给人看的文本，客户端只能依赖开头的 `OK` / `ERR` 判断成败，
@@ -111,7 +113,7 @@ OK OC/1
 成功时回答 `OK <base64-payload>`。服务器只把请求载荷的 base64 解码成**不透明字节**交给处理器，
 再把处理器返回的字节 base64 编码回送；它不解析载荷、不记录载荷内容，也不认识 `oc-debug` 的信封。
 
-`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
+`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
 
 `hello` 是 `oc-hello` 插件提供的示例请求：载荷是普通 UTF-8 名字（不是 `oc-debug` 那样的信封），回答也是普通 UTF-8 文本。
 
@@ -133,6 +135,7 @@ TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (需要
 UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (需要 LOGIN，建筑必须属于该玩家)
 REPAIR <engineerId> <buildingId>            -> OK | ERR ...              (需要 LOGIN，工程师与建筑都必须属于该玩家)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要 LOGIN，建筑必须属于该玩家)
+TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (需要 LOGIN，两座建筑都必须属于该玩家)
 ```
 
 - `<entityId>`、`<targetId>` 与 `<buildingId>` 是 `/world/snapshot` 里的十进制实体 id。`UPGRADE` 成功回答里的
@@ -144,6 +147,11 @@ RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要
   （`waypoint k of n`）。
 - `<buildingPath>` 与 `<unitPath>` 是不带命名空间的内容路径，例如 `building.armory.t1` 或
   `unit.melee.t4`。
+- `TRANSFER` 的 `<item>` 是不带命名空间的物品路径（`gold`、`wood`），`<amount>` 是正整数或字面量
+  `all`（大小写不敏感）。负数数量回 `ERR bad arguments`；`0` 会交给引擎并以
+  `ERR the amount must be positive` 拒绝。`all` 表示“来源还能给出的全部”：服务器把它解析成来源当前
+  未被预留的库存，引擎再夹一次。数量最终被夹到来源未预留库存与目标当前剩余空间，所以填大了不算错误，
+  回答里的数字就是真正会移动的数量。
 - 命令字与其它命令一样大小写不敏感；`ORDER` 的子命令也大小写不敏感（`MOVE` 与 `move` 等价）。
   内容路径与参数不做大小写折叠。
 
@@ -191,6 +199,12 @@ RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要
 | `REPAIR` 无法从玩家仓库付款 | `ERR cannot afford the repair (needs <cost>)` |
 | `RECLAIM` 指向已完工建筑 | `ERR ... already finished, and a finished building cannot be reclaimed` |
 | `RECLAIM` 指向死亡/不存在的建筑，或别人的建筑 | 按常规 `ERR unknown entity` / `ERR not yours` |
+| `TRANSFER` 的物品路径不在服务器提供的内容里 | `ERR unknown item` |
+| `TRANSFER` 的来源与目标是同一座建筑 | `ERR cannot transfer within the same building: <id>` |
+| `TRANSFER` 的来源或目标不是已完工仓库 | `ERR ... it is not a warehouse` / `ERR ... it is still under construction` |
+| `TRANSFER` 的两座仓库属于不同玩家、在不同维度，或之间没有可走路线 | `ERR ... different players / different dimensions / ... unreachable` |
+| `TRANSFER` 的来源没有该物品的未预留库存，或目标无法存放 | `ERR no stock of <item> in ...` / `ERR the target warehouse cannot store <item> ...` |
+| `TRANSFER` 下达时没有空闲搬运工 | `ERR no free engineer is available to haul <amount> <item>` |
 
 ### 成本、生产与世界步
 
@@ -236,6 +250,25 @@ RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要
 精确整数运算，基准是放置时记录的成本，而不是当前目录价。命令本身不扣任何其它费用。**已完工建筑不能回收**，
 拒绝文案会明确说明。成功回答是 `OK <refund>`，`<refund>` 是可读的资源列表，例如 `OK 50 gold, 20 wood`
 （没有返还时就是 `OK`）；未授权或非法请求回 `ERR <reason>`。
+
+### 手动仓库调拨
+
+`TRANSFER <sourceId> <targetId> <item> <amount|all>` 是物流命令：把库存从自己的一座仓库搬到另一座，走的是
+**普通搬运路径**。两端建筑必须存在、属于该玩家、是**已完工的仓库**，并且位于**同一个维度**；物品必须是
+来源持有的；数量为正，并被夹到“来源未预留库存”与“目标当前剩余空间”中较小者。命令不瞬移任何东西：
+它只在**点名的来源仓库**上预留（不同于生产的多仓库预留），要求下达命令时存在**空闲搬运工**——自己的、
+能搬运、同维度、空闲且没有别的任务，最近者优先、距离并列按实体 id——然后派出与生产完全相同的搬运任务。
+货物在工人装货时离开来源、在卸货时进入目标，所以成功回答 `OK <moved> <item>`（例如 `OK 120 gold`）说的是
+**正在路上**的数量，不是目标已经持有的数量。
+
+每一次拒绝都是可读的 `ERR <reason>`，并且**不扣任何东西**：不移动库存、不留预留、不登记搬运任务。情况包括：
+别人的建筑（`ERR not yours`）、死亡或不存在的 id（`ERR unknown entity`）、不是仓库、两端是同一座建筑、
+未知物品路径、来源没有未预留库存、目标无法存放、两个维度、两个入口之间没有可走路线（`ERR ... unreachable`），
+以及下达时没有空闲搬运工（`ERR no free engineer is available to haul <amount> <item>`）。最后一条正是那种
+否则会让任务无限等待的情况，所以在预留之前就判定。
+
+支持 `all`，因为“全部搬走”是最自然的物流动作，而夹取规则已经定义了它的含义；浏览器表单保留具体数字
+（带 `全部` 快捷按钮），这样它自己的校验仍然能拒绝 0。
 
 ### 兼容性
 
@@ -324,7 +357,7 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 | `ERR bad arguments` | 游戏命令参数个数不对，或 id/坐标不是十进制数字 |
 | `ERR unknown entity` | 游戏命令指向不存在、已死亡或种类不对的实体/建筑 |
 | `ERR not yours` | 游戏命令指向另一个玩家的实体/建筑 |
-| `ERR unknown building` / `ERR unknown unit` | `BUILD`/`TRAIN` 的内容路径不在服务器提供的目录里 |
+| `ERR unknown building` / `ERR unknown unit` / `ERR unknown item` | `BUILD`/`TRAIN`/`TRANSFER` 的内容路径不在服务器提供的目录里 |
 | `ERR world not available` / `ERR world not running` / `ERR world stopped` / `ERR world full` / `ERR world busy` | 没有托管世界、世界没有在 tick、世界在应用命令前停止、没有空余玩家位、或世界没有及时应用命令 |
 | `ERR <message>` / `ERR <reason>` | `REGISTER`、`LOGIN`、`REQ` 与游戏命令的其它拒绝，文案由服务器、引擎或处理器给出 |
 
@@ -390,7 +423,8 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
     {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
-     "w": 3, "h": 3, "progress": 1.00, "queue": 0, "contents": {"gold": 120, "wood": 40}},
+     "w": 3, "h": 3, "progress": 1.00, "queue": 0, "contents": {"gold": 120, "wood": 40},
+     "storage": {"slots": 24, "used": 2, "free": 22}, "inbound": 1},
     {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
      "w": 1, "h": 1, "progress": 1.00, "queue": 0,
      "path": [[-10, 12], [-8, 12], [-6, 12], [-4, 12]], "target": [-4, 12],
@@ -431,23 +465,25 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 - `pop` 在引擎发出搬运事实后最多**一秒**内出现在单位行上：`{"kind": "pickup" | "dropoff", "tick": <模拟 tick>}`。`kind` 表示货物进入还是离开该单位的货舱，`tick` 是引擎事件的 tick，客户端用它让同一次事件即使被两次轮询都带上也只播放一次。事件超过 `WorldHost.POP_TTL_TICKS`（20 tick = 1 秒）后省略，旧服务器也不带；不认识它的客户端忽略。
 - `queueItems` 出现在有生产队列的建筑行上，单位或从未有过队列的建筑省略该数组；`queue` 就是它的长度。它按队列顺序列出未完成任务，每项是 `{"kind": ..., "ticks": ..., "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前正在 `PRODUCING` 的任务的引擎剩余 tick（`ProductionJob.remainingTicks()`）。尚未开工的任务——等待材料、运输中、排在当前任务之后——报告 `ticks === total`；`WAITING_OUTPUT` 任务虽然仍未完成但已经不再生产，也按同样方式报告。`kind` 是配方产出的单位内容路径（`unit.melee.t1`）；只产出物品的配方回落到配方自己的路径。客户端用清单把 `kind` 解析成显示名；旧客户端可以完全忽略这个数组，继续用 `queue` 画 `生产中 ×N` 标记。
 - `contents` 只出现在内容类型被标记为仓库的建筑行上，并且只列出数量非零的物品；空仓库省略该对象。键是物品内容路径（`gold`、`wood`），值是非负整数，和 `players` 的金额一样会饱和。它是仓库自己的库存，与玩家行求和的是同一个来源，因此客户端可以在选中 HUD 里显示 `库存：金 120 · 木 40`。非仓库建筑永远不带它：生产建筑的私有缓冲不属于物流网络。
+- `storage` 出现在**每一个**仓库行上（空仓库也有）：`{"slots": <整数>, "used": <整数>, "free": <整数>}`。`slots` 是内容的槽位容量（经典仓库是 `24`），`used` 是当前库存占用的槽位数——每 `ItemType.maxStack()` 个单位占一个槽，所以同一种物品超过一叠就会占多个槽——`free` 是剩余量。无上限库存按 `Long.MAX_VALUE` 饱和报告。数字来自引擎的 `Inventory`，因为只有服务器知道每种物品的最大堆叠；客户端不得自己推算容量。浏览器单仓库表头显示 `容量 24 · 已用 2 · 空闲 22`。
+- `inbound` 在至少一个**未完成**搬运任务把它当作目标时出现在仓库行上：一个非负整数，表示在途任务数（手动 `TRANSFER` 是常见来源）。数量为零时省略，所以客户端把缺失读作“没有在途”；浏览器单仓库表头追加 `· 在途 N`。
 - `upgrade` 只出现在**已完工**、且内容类型指定了一个存在于服务目录里的后继类型的建筑行上，表示这座建筑可以用 `UPGRADE <id>` 升级。形状是 `{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}`：`to` 是后继类型的内容路径，`gold` / `wood` 是命令会扣的两种资源（源类型的 `upgradeCost()`）。未完工工地、阶梯顶端、没有后继的类型和悬空的后继引用都不带它，所以客户端不会显示一个命令必然拒绝的升级入口。可负担性**故意不编码**：客户端拿自己的 `players` 行比较成本，资源不足时把入口显示为禁用，而不是隐藏。旧客户端会忽略这个字段。
 - `repair` 只出现在**已完工**、受损、且内容声明了维修价的建筑行上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是把**当前缺失血量**全部修满的总价（内容每点血量价 × 缺失血量，`Building.repairCost()`）。满血建筑、未完工工地和 `repairCostPerHealth()` 为空的内容都不带它，所以客户端不会显示命令必然拒绝的维修。可负担性不编码，客户端自己拿 `players` 行比较。旧客户端忽略。
 - `reclaim` 只出现在**未完工**工地上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是 `RECLAIM <id>` 会存入仓库的返还：放置时记录成本的一半（向下取整，`CommandService.reclaimRefund`）。即使两项都是 `0` 也存在，因为动作仍然会移除工地；已完工建筑不带它。旧客户端忽略。
 - `path` / `target` 只出现在**移动中且已经有路线**的单位行上。`path` 是 `[x, y]` 绝对世界瓦片对数组，表示**剩余**折线（已经走过的点不发送），最多 **64 个点**；`target` 是当前移动命令的目标瓦片 `[x, y]`。空闲或停下的单位、还在等待第一条路线的单位、以及旧服务器都省略这两个字段。坐标与实体的 `x` / `y` 一样是绝对瓦片索引，可以为负，并且不按快照窗口裁剪。路线超过上限时，`path` 只带前 64 个点，`target` 仍然指向真正的目标，客户端据此画线并画目标小圆点。字段纯属表现层、可增量；旧客户端忽略。
-- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不播搬运弹跳、不显示库存行、不显示升级/维修/回收入口、不画路径）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`pop`、`contents`、`upgrade`、`repairCost`、`reclaim`、`path` 与 `pathTarget`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
+- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不播搬运弹跳、不显示库存行、不显示容量与在途数、不显示升级/维修/回收入口、不画路径）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`pop`、`contents`、`storage`、`inbound`、`upgrade`、`repairCost`、`reclaim`、`path` 与 `pathTarget`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名、两种开局资源与两种收入速率，全部是非负整数。每行还可以带 `anchor`：可选的 `[x, y]` **绝对整数瓦片**对，表示该阵营的出生位置。玩家 1 报告样例场景铺开的出生锚点，加入的真人报告确定的基地槽位锚点（不是最终仓库原点），经典机器人报告它开局基地搜索的确定性锚点。值来自 `Player.anchor()`，没人发布时省略；它是**已知的出生位置**，不是实时单位位置，也不是战争迷雾揭示，所以客户端可以用它画方向/距离读数和地图边缘箭头，而不揭示地形或实体。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。`goldPerMinute` / `woodPerMinute` 是该玩家**存活且已完工**的建筑上内容标签 `income_<n>` / `wood_income_<n>` 之和，与 `ClassicEconomy` 发放时用的是同一套约定：在建工地、被摧毁的建筑和没有匹配标签的类型都不计入，所以不发布任何标签的内容两项都报 `0`。每座建筑第一枚匹配标签生效，与发放钩子一致。这些字段也是增量的：旧服务器可以不带，客户端必须在没有它们时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币、木材与收入速率；还没有这一行时显示破折号。它把每个敌对行的 `anchor` 读进顶部敌方行和小地图边缘箭头，畸形对直接忽略。
 - 默认 64×64 窗口的 JSON 约 32 KB（不含路径叠加），最大 128×128 窗口约 130 KB；每个移动中的单位最多增加 64 个瓦片对加一个目标点（约 0.7 KB）。读取窗口也会把引擎焦点移到窗口中心（同一把锁内），让区块流式加载只保留相机附近的区块。
 - 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
 - `--world` 默认 `on`，`--seed` 默认 `1`，`--chunks` 默认 `4096`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
-- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
+- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `storage` / `inbound` 画仓库面板的单仓库表头（容量、已用/空闲槽位与在途调拨数），用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
 
 ## 版本兼容
 
 **本文的版本号就是协议的版本号。** 当前版本是 `1`，线上写作 `HELLO 1` 与 `OK OC/1`。
 
 - 本文改动已有帧规则、已有命令、任一已有回答、base64 约定、信封布局、密钥长度、窗口长度或 magic 时，版本号必须增加（`2`、`OK OC/2`，以此类推），并同步修改本文、服务器与客户端。
-- 增加一条旧客户端永远不会发送的新命令是向后兼容的，本身不需要增加版本号。游戏命令——包括 `REPAIR`、`RECLAIM`，以及 `ORDER MOVE` 的可选多路径点——就是这样的增量：它们保持 OC/1，并让每一条已有命令的字节保持不变。已有的 `ORDER MOVE <id> <x> <y>` 仍然精确是那一行，也仍然只表示一个目标。
+- 增加一条旧客户端永远不会发送的新命令是向后兼容的，本身不需要增加版本号。游戏命令——包括 `REPAIR`、`RECLAIM`、`TRANSFER`，以及 `ORDER MOVE` 的可选多路径点——就是这样的增量：它们保持 OC/1，并让每一条已有命令的字节保持不变。已有的 `ORDER MOVE <id> <x> <y>` 仍然精确是那一行，也仍然只表示一个目标。
 - 版本号是两端判断兼容性的**唯一**依据；不要用“字段看起来还在”“字符串能解析”来猜兼容。
 - 只增加报告字段、或只改 `REGISTER`/`LOGIN` 的人读文案，不算协议变化；客户端本来就不应依赖这些内容。
 - 旧客户端遇到新版本会收到非 `OK OC/1` 的握手回答，并按握手规则断开；新客户端遇到旧服务器同理。这是刻意的失败方式：拒绝比半兼容更安全。

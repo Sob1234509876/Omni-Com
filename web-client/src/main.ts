@@ -118,13 +118,22 @@ import {
   clearResourceMarks,
   fullResourceList,
   inventoryTotals,
+  isWarehouseKind,
   markAllResources,
   markedSummaryLabel,
   toggleResourceMark,
-  warehouseResourceTotals,
   type ResourceMarks,
   type WarehouseTotals,
 } from "./render/resources";
+import {
+  WAREHOUSE_TRANSFER_ALL_LABEL,
+  transferAnswerLabel,
+  transferFormModel,
+  transferTargetLabel,
+  warehousePanelModel,
+  type WarehousePanelModel,
+  type WarehouseScope,
+} from "./render/logistics";
 import {
   doubleClickSelection,
   engineerForPlacement,
@@ -260,8 +269,18 @@ const hudQueue = required<HTMLDivElement>("#hud-queue");
 const hudOrders = required<HTMLDivElement>("#hud-orders");
 const warehouseSummary = required<HTMLParagraphElement>("#warehouse-summary");
 const warehouseItems = required<HTMLUListElement>("#warehouse-items");
+const warehouseScopeButton = required<HTMLButtonElement>("#warehouse-scope");
+const warehouseNote = required<HTMLParagraphElement>("#warehouse-note");
 const warehouseMarkAllButton = required<HTMLButtonElement>("#warehouse-mark-all");
 const warehouseClearMarksButton = required<HTMLButtonElement>("#warehouse-clear-marks");
+const warehouseTransferForm = required<HTMLFormElement>("#warehouse-transfer");
+const warehouseTransferItem = required<HTMLSelectElement>("#warehouse-transfer-item");
+const warehouseTransferAmount = required<HTMLInputElement>("#warehouse-transfer-amount");
+const warehouseTransferAllButton = required<HTMLButtonElement>("#warehouse-transfer-all");
+const warehouseTransferTarget = required<HTMLSelectElement>("#warehouse-transfer-target");
+const warehouseTransferSend = required<HTMLButtonElement>("#warehouse-transfer-send");
+const warehouseTransferStatus = required<HTMLParagraphElement>("#warehouse-transfer-status");
+const transferFocusButton = required<HTMLButtonElement>("#transfer-focus");
 const inventorySummary = required<HTMLParagraphElement>("#inventory-summary");
 const inventoryItems = required<HTMLUListElement>("#inventory-items");
 const inventoryTotal = required<HTMLParagraphElement>("#inventory-total");
@@ -500,6 +519,10 @@ function clearGameplayIdentity(): void {
   // rebuilt so no stale checkbox stays ticked.
   resourceMarks = EMPTY_RESOURCE_MARKS;
   warehousePanelSignature = "";
+  warehouseTransferSignature = "";
+  warehouseScope = "single";
+  warehouseTransferLastAnswer = null;
+  setWarehouseTransferStatus("", "idle", false);
   updateHud(true);
   updateGameplayPanel();
 }
@@ -1424,41 +1447,53 @@ function myPlayerRow(): PlayerView | undefined {
 /** Last DOM signature of the warehouse panel; avoids rebuilding the tiny list on every HUD tick. */
 let warehousePanelSignature = "";
 
-/**
- * Rebuilds the warehouse total plus its client-side marking controls in the top-right corner.
- *
- * The pure aggregation lives in `resources.ts`: every own building's `contents` is summed, items are
- * labelled from the manifest first and the classic `金` / `木` table second, and rows are sorted by
- * display name. Each row carries a checkbox that writes the client mark set (no command is sent), and
- * the header has the "mark all" / "clear" pair. With no own warehouse the summary says so instead of
- * showing an empty list.
- */
-function updateWarehousePanel(totals: WarehouseTotals): void {
-  const signature =
-    `${totals.warehouseCount}|` +
-    totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
-  if (signature === warehousePanelSignature) {
-    return;
-  }
-  warehousePanelSignature = signature;
+/** Last DOM signature of the transfer form's option sets, so typing is never interrupted. */
+let warehouseTransferSignature = "";
 
-  if (totals.warehouseCount === 0 && totals.items.length === 0) {
-    warehouseSummary.textContent = "未发现自己的仓库";
+/** The view the player last picked; it only applies while exactly one own warehouse is selected. */
+let warehouseScope: WarehouseScope = "single";
+
+/** The last transfer answer, kept so a snapshot tick does not erase it from the status line. */
+let warehouseTransferLastAnswer: { text: string; state: "ok" | "error" } | null = null;
+
+/** The model the form's click handlers read, refreshed on every HUD tick. */
+let lastWarehouseModel: WarehousePanelModel | null = null;
+
+/**
+ * Rebuilds the warehouse panel from the pure `warehousePanelModel`.
+ *
+ * The panel follows the requirement's two views: exactly one own warehouse selected shows that building's
+ * own contents plus its capacity / used / free slots and its inbound transfer count, and the
+ * `全部/总计` toggle returns to the sum. The totals half is still computed in both views because the
+ * marked HUD line is item-level and always reads the all-warehouse total; the single-view note says so.
+ * Checkboxes therefore keep working in both views, and "mark all" marks what is currently listed.
+ */
+function updateWarehousePanel(model: WarehousePanelModel): void {
+  lastWarehouseModel = model;
+  const signature =
+    `${model.scope}|${model.single?.id ?? "none"}|${model.summary}|${model.note}|` +
+    model.rows.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
+  if (signature !== warehousePanelSignature) {
+    warehousePanelSignature = signature;
+    renderWarehouseRows(model);
+  }
+  warehouseSummary.textContent = model.summary;
+  warehouseNote.hidden = model.note === "";
+  warehouseNote.textContent = model.note;
+  warehouseScopeButton.hidden = model.toggleLabel === null;
+  warehouseScopeButton.textContent = model.toggleLabel ?? "";
+  warehouseScopeButton.title = model.toggleTitle;
+  renderWarehouseTransfer(model);
+}
+
+/** Draws the panel's item rows, each with the client-side mark checkbox. */
+function renderWarehouseRows(model: WarehousePanelModel): void {
+  if (model.scope === "none") {
     warehouseItems.hidden = true;
     warehouseItems.replaceChildren();
     return;
   }
-  if (totals.items.length === 0) {
-    warehouseSummary.textContent = `${totals.warehouseCount} 个仓库：暂无库存`;
-    warehouseItems.hidden = true;
-    warehouseItems.replaceChildren();
-    return;
-  }
-  // A building that reports contents is what matters, even if its kind is not one the client knows
-  // as a warehouse; the count line then also names that the total is not backed by a known warehouse.
-  warehouseSummary.textContent =
-    totals.warehouseCount === 0 ? "未发现自己的仓库 · 库存合计" : `${totals.warehouseCount} 个仓库`;
-  const rows = totals.items.map((item) => {
+  const rows = model.rows.map((item) => {
     const row = document.createElement("li");
     row.className = "warehouse-item";
     row.dataset["path"] = item.path;
@@ -1466,11 +1501,12 @@ function updateWarehousePanel(totals: WarehouseTotals): void {
     box.type = "checkbox";
     box.dataset["path"] = item.path;
     box.checked = resourceMarks.has(item.path);
-    box.title = `标记 ${item.name}：只在客户端记住，用来在 HUD 上显示总量`;
+    box.title =
+      `标记 ${item.name}：只在客户端记住这个物品，HUD 的已标记行显示全部仓库合计`;
     box.setAttribute("aria-label", `标记 ${item.name}`);
     box.addEventListener("change", () => {
       resourceMarks = toggleResourceMark(resourceMarks, item.path);
-      refreshMarkViews(totals);
+      refreshMarkViews();
     });
     const name = document.createElement("span");
     name.className = "warehouse-item-name";
@@ -1482,8 +1518,112 @@ function updateWarehousePanel(totals: WarehouseTotals): void {
     return row;
   });
   warehouseItems.replaceChildren(...rows);
-  warehouseItems.hidden = false;
+  warehouseItems.hidden = rows.length === 0;
   syncWarehouseMarkBoxes();
+}
+
+/**
+ * Paints the transfer form for the current model: options only when their set changed, so a player typing
+ * an amount is not interrupted by the 500 ms snapshot poll.
+ */
+function renderWarehouseTransfer(model: WarehousePanelModel): void {
+  warehouseTransferForm.hidden = !model.transferVisible;
+  if (!model.transferVisible) {
+    warehouseTransferStatus.hidden = true;
+    return;
+  }
+  const signature =
+    `${model.single?.id ?? "none"}|` +
+    model.sourceItems.map((item) => `${item.path}:${item.name}:${item.amount}`).join(",") +
+    `|${model.targets.map((target) => target.id).join(",")}`;
+  if (signature !== warehouseTransferSignature) {
+    warehouseTransferSignature = signature;
+    const previousItem = warehouseTransferItem.value;
+    const itemOptions = model.sourceItems.map((item) => {
+      const option = document.createElement("option");
+      option.value = item.path;
+      option.textContent = `${item.name} · ${item.amount}`;
+      return option;
+    });
+    if (itemOptions.length === 0) {
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "（来源仓库没有库存）";
+      itemOptions.push(none);
+    }
+    warehouseTransferItem.replaceChildren(...itemOptions);
+    if (model.sourceItems.some((item) => item.path === previousItem)) {
+      warehouseTransferItem.value = previousItem;
+    }
+
+    const previousTarget = warehouseTransferTarget.value;
+    const targetOptions = model.targets.map((target) => {
+      const option = document.createElement("option");
+      option.value = String(target.id);
+      option.textContent = transferTargetLabel(target);
+      return option;
+    });
+    if (targetOptions.length === 0) {
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "（没有其他自己的仓库）";
+      targetOptions.push(none);
+    }
+    warehouseTransferTarget.replaceChildren(...targetOptions);
+    if (model.targets.some((target) => String(target.id) === previousTarget)) {
+      warehouseTransferTarget.value = previousTarget;
+    }
+  }
+  warehouseTransferAllButton.disabled = model.sourceItems.length === 0;
+  warehouseTransferAllButton.textContent = WAREHOUSE_TRANSFER_ALL_LABEL;
+  refreshWarehouseTransferState(model);
+}
+
+/** Recomputes the send button and the status line from the live form values and the model. */
+function refreshWarehouseTransferState(model: WarehousePanelModel): void {
+  const itemPath = warehouseTransferItem.value;
+  const held = model.sourceItems.find((item) => item.path === itemPath)?.amount;
+  warehouseTransferAllButton.disabled = held === undefined;
+  warehouseTransferAllButton.title =
+    held === undefined ? "来源仓库没有可调拨的物品" : `把数量填成 ${held}`;
+  const targetId = Number(warehouseTransferTarget.value);
+  const form = transferFormModel(
+    model.single,
+    model.targets,
+    itemPath,
+    warehouseTransferAmount.value,
+    Number.isSafeInteger(targetId) && targetId > 0 ? targetId : null,
+  );
+  warehouseTransferSend.disabled = !form.ok;
+  if (model.transferReason !== "") {
+    setWarehouseTransferStatus(model.transferReason, "idle", false);
+  } else if (warehouseTransferLastAnswer !== null) {
+    setWarehouseTransferStatus(
+      warehouseTransferLastAnswer.text,
+      warehouseTransferLastAnswer.state,
+      false,
+    );
+  } else {
+    setWarehouseTransferStatus("", "idle", false);
+  }
+}
+
+/**
+ * Sets the panel's own status line. `keep` records the text as the last answer so a later HUD tick can
+ * restore it; transient busy/refusal texts pass `false` because they describe a moment, not an answer.
+ */
+function setWarehouseTransferStatus(
+  text: string,
+  state: "idle" | "ok" | "error" | "busy",
+  keep: boolean,
+): void {
+  warehouseTransferStatus.hidden = text === "";
+  warehouseTransferStatus.textContent = text;
+  warehouseTransferStatus.dataset.state = state;
+  if (keep) {
+    warehouseTransferLastAnswer =
+      state === "ok" || state === "error" ? { text, state } : null;
+  }
 }
 
 /** Paints the current mark set onto the checkbox rows that already exist. */
@@ -1499,17 +1639,23 @@ function syncWarehouseMarkBoxes(): void {
   }
 }
 
-/** The compact marked-resource HUD line, always derived from the same warehouse totals. */
+/** The compact marked-resource HUD line, always derived from the all-warehouse totals. */
 function updateMarkedHud(totals: WarehouseTotals): void {
   void renderLatexInto(hudMarked, markedSummaryLabel(resourceMarks, totals, itemLabel));
   hudMarked.classList.toggle("has-marks", resourceMarks.size > 0);
 }
 
+/** Rebuilds the panel model from the current snapshot, selection and scope preference. */
+function currentWarehouseModel(): WarehousePanelModel {
+  return warehousePanelModel(world, myPlayerId, selectedEntities(), warehouseScope, itemLabel);
+}
+
 /** Refreshes every surface that shows the marks after one checkbox / button action. */
-function refreshMarkViews(totals: WarehouseTotals): void {
-  updateMarkedHud(totals);
+function refreshMarkViews(): void {
+  const model = currentWarehouseModel();
+  updateMarkedHud(model.total);
   syncWarehouseMarkBoxes();
-  warehouseMarkAllButton.disabled = totals.items.length === 0;
+  warehouseMarkAllButton.disabled = model.rows.length === 0;
   warehouseClearMarksButton.disabled = resourceMarks.size === 0;
   if (!resourcesOverlay.hidden) {
     updateResourcePage();
@@ -1659,18 +1805,156 @@ document.addEventListener(
 );
 
 warehouseMarkAllButton.addEventListener("click", () => {
-  const totals = warehouseResourceTotals(world, myPlayerId, itemLabel);
+  const model = currentWarehouseModel();
   resourceMarks = markAllResources(
     resourceMarks,
-    totals.items.map((item) => item.path),
+    model.rows.map((item) => item.path),
   );
-  refreshMarkViews(totals);
+  refreshMarkViews();
 });
 
 warehouseClearMarksButton.addEventListener("click", () => {
   resourceMarks = clearResourceMarks();
-  refreshMarkViews(warehouseResourceTotals(world, myPlayerId, itemLabel));
+  refreshMarkViews();
 });
+
+/**
+ * The `全部/总计` toggle: switches between the selected warehouse's own contents and the all-warehouse
+ * sum. It is only meaningful with exactly one own warehouse selected, which the model already checks.
+ */
+warehouseScopeButton.addEventListener("click", () => {
+  warehouseScope = warehouseScope === "single" ? "total" : "single";
+  const model = currentWarehouseModel();
+  updateWarehousePanel(model);
+  updateMarkedHud(model.total);
+  setStatus(
+    model.scope === "single" ? "仓库面板：只看选中的仓库" : "仓库面板：全部仓库合计",
+    "idle",
+  );
+});
+
+/** Fills the amount with everything the selected source item holds, so `全部` needs no typing. */
+warehouseTransferAllButton.addEventListener("click", () => {
+  const model = lastWarehouseModel;
+  if (model === null) {
+    return;
+  }
+  const held = model.sourceItems.find(
+    (item) => item.path === warehouseTransferItem.value,
+  )?.amount;
+  if (held === undefined) {
+    setWarehouseTransferStatus("来源仓库没有这件物品", "error", false);
+    return;
+  }
+  warehouseTransferAmount.value = String(held);
+  refreshWarehouseTransferState(model);
+});
+
+warehouseTransferItem.addEventListener("change", () => {
+  if (lastWarehouseModel !== null) {
+    refreshWarehouseTransferState(lastWarehouseModel);
+  }
+});
+warehouseTransferTarget.addEventListener("change", () => {
+  if (lastWarehouseModel !== null) {
+    refreshWarehouseTransferState(lastWarehouseModel);
+  }
+});
+warehouseTransferAmount.addEventListener("input", () => {
+  if (lastWarehouseModel !== null) {
+    refreshWarehouseTransferState(lastWarehouseModel);
+  }
+});
+
+warehouseTransferForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  doWarehouseTransfer();
+});
+
+/**
+ * The selection panel's `调拨…` entry point: it arms the single-warehouse view and focuses the form, so
+ * the same action is reachable from the building panel without duplicating the form's state.
+ */
+function focusWarehouseTransfer(): void {
+  const single = singleSelectedEntity();
+  if (single === undefined || !isMine(single) || !isWarehouseKind(single.kind)) {
+    refuse("先选中自己的一座仓库，再从建筑面板调拨");
+    return;
+  }
+  if (underConstruction(single)) {
+    refuse("仓库尚未完工：完工后才能调拨");
+    return;
+  }
+  warehouseScope = "single";
+  const model = currentWarehouseModel();
+  updateWarehousePanel(model);
+  updateMarkedHud(model.total);
+  warehouseTransferItem.focus({ preventScroll: true });
+  if (!model.transferReady) {
+    setWarehouseTransferStatus(model.transferReason, "error", false);
+    setStatus(model.transferReason, "error");
+    return;
+  }
+  setStatus(`调拨：从 e${single.id} 选择物品、数量与目标仓库`, "idle");
+}
+
+transferFocusButton.addEventListener("click", focusWarehouseTransfer);
+
+/**
+ * Sends one `TRANSFER` line and paints the answer in the panel's own status line.
+ *
+ * The pure planner validates the form first; a client-side refusal never reaches the socket. The
+ * server's answer is shown verbatim after `调拨失败：`, and a success wears the item's own label.
+ */
+function doWarehouseTransfer(): void {
+  const model = lastWarehouseModel;
+  if (model === null) {
+    return;
+  }
+  const targetId = Number(warehouseTransferTarget.value);
+  const form = transferFormModel(
+    model.single,
+    model.targets,
+    warehouseTransferItem.value,
+    warehouseTransferAmount.value,
+    Number.isSafeInteger(targetId) && targetId > 0 ? targetId : null,
+  );
+  if (!form.ok) {
+    setWarehouseTransferStatus(form.refusal, "error", false);
+    refuse(form.refusal);
+    return;
+  }
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const active = socket;
+  if (active === null) {
+    refuse("还没有连接");
+    return;
+  }
+  setWarehouseTransferStatus(`等待 TRANSFER 的回答…`, "busy", false);
+  log("send", form.line);
+  void active
+    .send(form.line)
+    .then((answer) => {
+      log("recv", answer);
+      const parsed = transferAnswerLabel(answer, itemLabel);
+      setWarehouseTransferStatus(parsed.text, parsed.ok ? "ok" : "error", true);
+      toastExchange(form.line, answer);
+      setStatus(parsed.text, parsed.ok ? "ok" : "error");
+      if (parsed.ok) {
+        // The reservation already changed; refresh now instead of waiting for the next poll.
+        void pollWorldSnapshot();
+      }
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      log("error", message);
+      setWarehouseTransferStatus(message, "error", true);
+      toastMessage(message, "error");
+      setStatus(message, "error");
+    });
+}
 
 /**
  * Refreshes the top-chrome enemy line from the current snapshot's player anchors and the camera centre.
@@ -1997,11 +2281,18 @@ function updateHud(force = false, now = performance.now()): void {
   // The context zone has a panel background only while it has a TRAIN/BUILD section or queue rows.
   updateCommandContextVisibility();
   // One warehouse aggregation per HUD tick feeds the item rows, the marked line and the resource page,
-  // so those surfaces cannot disagree about an amount.
-  const warehouseTotals = warehouseResourceTotals(world, myPlayerId, itemLabel);
-  updateWarehousePanel(warehouseTotals);
-  updateMarkedHud(warehouseTotals);
-  warehouseMarkAllButton.disabled = warehouseTotals.items.length === 0;
+  // so those surfaces cannot disagree about an amount. The panel model adds the single-warehouse view
+  // (capacity / used / free / inbound) on top of the same totals.
+  const warehouseModel = warehousePanelModel(
+    world,
+    myPlayerId,
+    selection,
+    warehouseScope,
+    itemLabel,
+  );
+  updateWarehousePanel(warehouseModel);
+  updateMarkedHud(warehouseModel.total);
+  warehouseMarkAllButton.disabled = warehouseModel.rows.length === 0;
   warehouseClearMarksButton.disabled = resourceMarks.size === 0;
   updateInventoryPanel();
   if (!resourcesOverlay.hidden) {
@@ -2456,12 +2747,15 @@ function updateGameplayPanel(): void {
     upgradeButton.disabled = !(gameplayReady && upgradeOffer.affordable);
   }
 
-  // Building services: 继续建造 / 修理 / 回收. The pure rule decides which entries exist and what
+  // Building services: 继续建造 / 修理 / 回收 / 调拨. The pure rule decides which entries exist and what
   // they cost; this half only paints the buttons and keeps the engineer-less case visible but disabled.
   const buildingActions = selectedBuildingActions();
+  const ownWarehouseSelected =
+    single !== undefined && isMine(single) && isWarehouseKind(single.kind);
   const showBuildingActions =
-    buildingActions !== null
-    && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim);
+    (buildingActions !== null
+      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim))
+    || ownWarehouseSelected;
   buildingActionsSection.hidden = !showBuildingActions;
   if (!showBuildingActions || buildingActions === null) {
     continueBuildButton.hidden = true;
@@ -2470,7 +2764,15 @@ function updateGameplayPanel(): void {
     continueBuildButton.disabled = true;
     repairButton.disabled = true;
     reclaimButton.disabled = true;
-    void renderLatexInto(buildingActionsTarget, "");
+    if (ownWarehouseSelected) {
+      const selected = singleSelectedEntity();
+      void renderLatexInto(
+        buildingActionsTarget,
+        selected === undefined ? "" : `· e${selected.id} ${contentLabel(selected.kind)}`,
+      );
+    } else {
+      void renderLatexInto(buildingActionsTarget, "");
+    }
   } else {
     const selected = singleSelectedEntity();
     void renderLatexInto(
@@ -2503,6 +2805,12 @@ function updateGameplayPanel(): void {
       `RECLAIM ${buildingActions.buildingId}：移除未完工工地，返还 ${buildingActions.reclaimLabel ?? "一半成本"}`;
     void renderLatexInto(reclaimButton, buildingActions.reclaimLabel ?? "回收");
   }
+  transferFocusButton.hidden = !ownWarehouseSelected;
+  transferFocusButton.disabled = !ownWarehouseSelected;
+  transferFocusButton.title =
+    ownWarehouseSelected && single !== undefined && underConstruction(single)
+      ? "调拨：仓库完工后才可用"
+      : "在仓库面板里从这座仓库调拨物品";
 
   renderSelectionChips(resolved);
   void renderLatexInto(gameplayNote, commandBarNote(model));

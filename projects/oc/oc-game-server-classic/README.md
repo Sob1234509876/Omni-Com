@@ -171,6 +171,18 @@ with the reason `the construction site was reclaimed by its owner`, the site is 
 site, for example. A **finished building cannot be reclaimed**; the refusal says so. The command itself
 charges nothing.
 
+## Manual warehouse transfers
+
+The server's `TRANSFER <source> <target> <item> <amount|all>` works in a classic world: send gold or wood
+from one of your finished warehouses to another, and a real engineer carries it. The classic engineer pool
+turns the hauling system's automatic hauler search off (`setAutoHaulerAssignment(false)`) so it can serve
+one arsenal at a time, but the transfer command does not depend on that search: it dispatches the nearest
+free engineer explicitly (`HaulingSystem.dispatchNearestHauler`). A player with no free engineer therefore
+gets a readable `ERR no free engineer ...` instead of a job that waits forever, and the pool only ever
+assigns jobs whose target is the arsenal, so it never steals a transfer job. The warehouse panel's
+single-warehouse view with its `全部/总计` toggle is a browser feature, not a classic-plugin one; see the
+server and web-client READMEs.
+
 ## The engineer crew policy
 
 `ClassicEngineerPool` is the third world tick hook and the owner-facing answer to "most engineers idle while

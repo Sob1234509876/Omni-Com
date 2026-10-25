@@ -4,18 +4,18 @@ A handoff list of **29 items**. The long sentences after each item are the **spe
 
 **Status legend** — `[x]` done and verified · `[ ]` not done, **including a partial item**: a partial item stays unticked and its italic note says exactly what is missing. The checkbox is the state. The owner's original markers were `(Y)`, `(X/Y)` and `(X)`.
 
-Current totals in the working tree (2026-10-25) against the module and client READMEs: googology **698**, engine **720**, game server **1182**, debug **85**, hello **126**, classic **649**, client **474**. The root `TODO.md` is now a redirect to this list; the READMEs are the current source.
+Current totals in the working tree (2026-10-25) against the module and client READMEs: googology **698**, engine **760**, game server **1215**, debug **85**, hello **126**, classic **649**, client **496**. The root `TODO.md` is now a redirect to this list; the READMEs are the current source.
 
 | Group | Done | Partial | Not started | Items |
 | --- | --- | --- | --- | --- |
 | A. Ordinals and the googology library | 3 | 0 | 0 | 1–3 |
 | B. Bots and enemy AI | 2 | 0 | 0 | 4–5 |
-| C. Gameplay systems | 1 | 1 | 0 | 6–7 |
+| C. Gameplay systems | 2 | 0 | 0 | 6–7 |
 | D. Interface and HUD | 6 | 0 | 0 | 8–13 |
 | E. Interaction | 3 | 0 | 0 | 14–16 |
 | F. Units and orders | 3 | 0 | 0 | 17–19 |
 | G. New goals | 10 | 0 | 0 | 20–29 |
-| **Total** | **28** | **1** | **0** | **29** |
+| **Total** | **29** | **0** | **0** | **29** |
 
 The counts use the checkbox: `Done` is `[x]`; `Partial` and `Not started` are both `[ ]`. An unticked item with an italic note is `Partial` (the note says exactly what is missing); an unticked item without one is `Not started`.
 
@@ -35,7 +35,7 @@ The counts use the checkbox: `Done` is `[x]`; `Partial` and `Not started` are bo
 ## C. Gameplay systems
 
 - [x] **6. Upgrade options.** Fix a bug: the arsenals and factory and stuffs can not be upgraded because the upgrade options can not be seen in the client. — *the two armory levels, three mines and three lumber camps upgrade in place through `CommandService.upgradeBuilding`: same footprint, owner and health fraction, old production queue cancelled, cost exactly the difference between the two catalogue prices. The snapshot carries an `upgrade` object for a finished, upgradable building and the context panel shows `升级` with its cost.*
-- [ ] **7. Warehouses and logistics.** Engineers can build warehouses and the user can manage logistics. — *partial: the warehouse is buildable (100 gold + 40 wood, 24 storage slots), reports its contents in the snapshot, and its totals feed the warehouse panel and the full resource page; what is still missing is a real logistics surface: routine hauling controls (the engine's `HaulingSystem` has no command or UI), a per-warehouse inventory view (the panel sums all own buildings rather than showing one), and any client-side logistics management.*
+- [x] **7. Warehouses and logistics.** Engineers can build warehouses and the user can manage logistics. — *shipped with Q16's default: the warehouse panel switches to a single selected warehouse's own inventory with its `容量 / 已用 / 空闲` slots, its `在途` transfer count and a `全部/总计` toggle back to the sum; the engine gained `UnitDirector.transfer` (single-warehouse reservation, real `HaulOrder` haul, free-hauler requirement, source/target clamps, readable refusals that charge nothing), the server the `TRANSFER <source> <target> <item> <amount|all>` command with the same login/ownership rules, and the client a transfer form (item / amount with `全部` / target) plus a `调拨…` entry in the selection panel. Drag-and-drop and per-warehouse quotas remain deferred (Q16).*
 
 ## D. Interface and HUD
 

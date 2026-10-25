@@ -426,6 +426,42 @@ public final class HaulingSystem implements SimulationSystem {
         job.assign(hauler.id(), now);
     }
 
+    /**
+     * Registers a freshly built job and assigns the nearest free hauler to it in one step.
+     *
+     * <p>This is the explicit-dispatch form of {@link #submit(DeliveryJob)} plus an automatic
+     * {@link #assignHauler(DeliveryJob, Unit)}. It exists for a command that has to answer "can this
+     * transport start at all" <em>now</em>, before any tick: the manually ordered warehouse transfer is
+     * the current caller. Waiting for {@link #tick(World, Tick)} is not an option there, because a game
+     * policy can have turned the automatic hauler search off with
+     * {@link #setAutoHaulerAssignment(boolean)} - the classic engineer pool does exactly that - and the
+     * job would then sit in {@link DeliveryJob.State#WAITING_HAULER} with nobody assigned while the
+     * command had already answered {@code OK}.
+     *
+     * <p>The hauler search is the same deterministic rule the automatic tick uses
+     * ({@link #findHauler(DeliveryJob)}): nearest idle unit of the job's owner that can haul, stands in
+     * the target's dimension, can carry the reserved goods and is not already carrying another job; ties
+     * are broken by entity id. A job that is already registered, finished or assigned is refused, and
+     * nothing changes in that case.
+     *
+     * @param job the job to register and dispatch
+     * @return the hauler that now carries the job, or empty when no free hauler exists; a job that is
+     *     refused here is not registered, so the caller still has to release its reservation
+     */
+    public Optional<Unit> dispatchNearestHauler(DeliveryJob job) {
+        Objects.requireNonNull(job, "job");
+        if (jobs.contains(job) || !job.isPending() || job.hauler().isPresent()) {
+            return Optional.empty();
+        }
+        Unit hauler = findHauler(job);
+        if (hauler == null) {
+            return Optional.empty();
+        }
+        jobs.add(job);
+        assign(job, hauler, world.tickNumber());
+        return Optional.of(hauler);
+    }
+
     private Unit findHauler(DeliveryJob job) {
         Vec2 anchor = pickupAnchor(job);
         Unit best = null;

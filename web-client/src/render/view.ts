@@ -61,6 +61,21 @@ export interface BuildingCostView {
 /** Largest number of path points one snapshot row may carry; the server caps at the same number. */
 export const MAX_SNAPSHOT_PATH_POINTS = 64;
 
+/**
+ * The slot accounting of a warehouse, from the snapshot's optional `storage` object.
+ *
+ * `slots` is the warehouse's capacity in slots, `used` is how many slots the current stock occupies and
+ * `free` is what is left. The engine counts one slot per `ItemType.maxStack()` units of one kind, so a
+ * kind holding more than one stack occupies more than one slot; the server reports the three numbers
+ * instead of the client having to know every item's stack size. A snapshot from before the field existed
+ * omits it, which the panel renders as `容量未知` rather than inventing a capacity.
+ */
+export interface WarehouseStorageView {
+  readonly slots: number;
+  readonly used: number;
+  readonly free: number;
+}
+
 export interface EntityView {
   /** Stable entity id; the demo uses small numbers, the server will use its own ids. */
   readonly id: number;
@@ -191,6 +206,23 @@ export interface EntityView {
    * empty cargo hold.
    */
   readonly contents?: Readonly<Record<string, number>>;
+  /**
+   * Slot accounting of a warehouse row, from the snapshot's optional `storage` object.
+   *
+   * Present on every warehouse row the current server sends, including an empty one, because the
+   * logistics panel's header prints capacity / used / free slots. A non-warehouse building, a unit and an
+   * older snapshot omit it; the panel then says the capacity is unknown instead of showing `0/0`.
+   */
+  readonly storage?: WarehouseStorageView;
+  /**
+   * Number of pending hauling jobs whose destination is this building, from the snapshot's optional
+   * `inbound` field.
+   *
+   * The server writes it only when at least one transport is in flight towards the building, so a missing
+   * value means "nothing inbound". A manual `TRANSFER` is the normal source; the header appends
+   * `· 在途 N` in the single-warehouse view.
+   */
+  readonly inbound?: number;
   /**
    * Optional in-place upgrade offer from the snapshot's `upgrade` object.
    *
@@ -801,6 +833,36 @@ function snapshotContents(value: unknown): Readonly<Record<string, number>> | un
 }
 
 /**
+ * Reads the optional `storage` object of a warehouse row.
+ *
+ * Missing or malformed means the snapshot predates the field (or the row is not a warehouse), which the
+ * logistics panel renders as "capacity unknown". All three numbers have to be non-negative safe integers;
+ * a half-parsed object is dropped instead of displayed as a broken capacity.
+ */
+function snapshotStorage(value: unknown): WarehouseStorageView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const slots = finiteNumber(value["slots"]);
+  const used = finiteNumber(value["used"]);
+  const free = finiteNumber(value["free"]);
+  if (slots === null || used === null || free === null) {
+    return undefined;
+  }
+  if (
+    !Number.isSafeInteger(slots) ||
+    !Number.isSafeInteger(used) ||
+    !Number.isSafeInteger(free) ||
+    slots < 0 ||
+    used < 0 ||
+    free < 0
+  ) {
+    return undefined;
+  }
+  return { slots, used, free };
+}
+
+/**
  * Reads the optional `upgrade` object of a building row.
  *
  * `to` must be a non-empty content path and both amounts non-negative safe integers; otherwise the whole
@@ -1099,9 +1161,10 @@ function snapshotAnchor(value: unknown): TileCoord | undefined {
  * The optional entity detail fields are additive for the same reason: `w` / `h` become `footprint`,
  * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
  * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, `contents` becomes a
- * validated object of positive integer amounts, `role` / `attackDamage` become the optional marquee
- * priority metadata, `upgrade` becomes a validated `{to, gold, wood}` offer, and a player row's optional
- * `anchor` becomes a signed `TileCoord`. A snapshot without any of them (an older server, the demo
+ * validated object of positive integer amounts, `storage` becomes a validated `{slots, used, free}`
+ * warehouse capacity, `inbound` becomes a non-negative integer, `role` / `attackDamage` become the
+ * optional marquee priority metadata, `upgrade` becomes a validated `{to, gold, wood}` offer, and a player
+ * row's optional `anchor` becomes a signed `TileCoord`. A snapshot without any of them (an older server, the demo
  * world, every check fixture written before these fields existed) converts exactly as it did before,
  * with all of those properties `undefined`; a player row similarly keeps the optional
  * `goldPerMinute` / `woodPerMinute` or leaves them `undefined`. A malformed optional field is ignored
@@ -1233,6 +1296,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       typeof taskValue === "string" && taskValue.trim() !== "" ? taskValue.trim() : undefined;
     const pop = snapshotPop(rawEntity["pop"]);
     const contents = snapshotContents(rawEntity["contents"]);
+    const storage = snapshotStorage(rawEntity["storage"]);
+    const inbound = optionalNonNegativeInteger(rawEntity["inbound"]);
     const upgrade = snapshotUpgrade(rawEntity["upgrade"]);
     const repairCost = snapshotBuildingCost(rawEntity["repair"]);
     const reclaim = snapshotBuildingCost(rawEntity["reclaim"]);
@@ -1261,6 +1326,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(orderQueue === undefined ? {} : { orderQueue }),
       ...(pop === undefined ? {} : { pop }),
       ...(contents === undefined ? {} : { contents }),
+      ...(storage === undefined ? {} : { storage }),
+      ...(inbound === undefined ? {} : { inbound }),
       ...(upgrade === undefined ? {} : { upgrade }),
       ...(repairCost === undefined ? {} : { repairCost }),
       ...(reclaim === undefined ? {} : { reclaim }),

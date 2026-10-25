@@ -21,15 +21,18 @@ import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
 import io.github.sob1234509876.oc.rts.dimension.Gateway;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.Logistics;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.formation.FormationShape;
 import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
 import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
+import io.github.sob1234509876.oc.rts.map.AStarPathFinder;
 import io.github.sob1234509876.oc.rts.map.BiomeTable;
 import io.github.sob1234509876.oc.rts.map.Chunk;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
@@ -105,6 +108,7 @@ public final class RtsScenario {
         checkHaulerDelivery(check, content);
         checkProductionViews(check, content);
         checkUnitTasks(check, content);
+        checkWarehouseTransfer(check, content);
         checkAnimationAndSnapshot(check, content);
         checkDeterminism(check, content);
         checkHugeNumbers(check);
@@ -836,6 +840,208 @@ public final class RtsScenario {
         engine.tick(1);
         check.equal(UnitTask.IDLE, UnitTask.of(engineer).orElseThrow(),
                 "a moving engineer without an economic order is still 空闲, not a movement task");
+    }
+
+    // ------------------------------------------------------------------ 5e) manual warehouse transfers
+
+    /**
+     * The manual logistics command:
+     * {@link UnitDirector#transfer(Building, Building, ItemType, Natural)}.
+     *
+     * <p>The fixture is a real-haul world (no direct delivery): two finished player warehouses, one idle
+     * worker and a stock in the source. The transfer must reserve on the source only, hand the job to that
+     * worker and let the ordinary {@link HaulOrder} carry the goods, so the assertions are about stock
+     * really moving rather than a teleport. Every refusal is checked against unchanged stock, an unchanged
+     * available amount and an unchanged pending-delivery count, which is what "charges nothing on failure"
+     * means for this command. A second pair of identical worlds proves the dispatch is deterministic.
+     */
+    private static void checkWarehouseTransfer(Check check, ContentRegistry content) {
+        check.section("5e) a manual transfer really hauls stock from one warehouse to another");
+        TransferFixture fixture = transferFixture(content, 41L);
+        OcRtsEngine engine = fixture.engine();
+        Player player = fixture.player();
+        World world = fixture.world();
+        Building source = fixture.source();
+        Building target = fixture.target();
+        Unit hauler = fixture.hauler();
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        ItemType plank = content.item(ScenarioContent.PLANK);
+        UnitDirector commands = engine.commands();
+        Logistics logistics = player.logistics();
+
+        UnitDirector.TransferResult first = commands.transfer(source, target, iron, Natural.of(20));
+        check.that(first.transferred(), "a transfer between two own finished warehouses starts: "
+                + first.refusal());
+        check.equal(20, first.moved().amount(iron), "the dispatched bundle is the requested iron");
+        check.that(first.job() != null && first.job().hauler().orElseThrow().equals(hauler.id()),
+                "the only free worker is the hauler of the dispatched job");
+        check.equal(0L, engine.tickNumber(), "the command itself does not advance the world");
+        check.equal(30, source.inventory().amount(iron), "a reservation does not remove stock from the shelf");
+        check.equal(10, logistics.available().amount(iron),
+                "the dispatched goods are no longer available to other jobs");
+        boolean delivered = engine.tickUntil(
+                e -> target.inventory().amount(iron).compareTo(Natural.of(20)) >= 0, 4000);
+        engine.tick(3);
+        check.that(delivered, "the hauler carries the iron to the target warehouse");
+        check.that(first.job().isFinished(), "the hauling job is finished once the goods arrived");
+        check.equal(10, source.inventory().amount(iron), "exactly the dispatched 20 iron left the source");
+        check.equal(20, target.inventory().amount(iron), "exactly the dispatched 20 iron arrived at the target");
+
+        UnitDirector.TransferResult clamped = commands.transfer(source, target, iron, Natural.of(1000));
+        check.that(clamped.transferred(), "an oversized amount is clamped instead of refused: "
+                + clamped.refusal());
+        check.equal(10, clamped.moved().amount(iron), "the amount is clamped to the source's free stock");
+        engine.tickUntil(e -> target.inventory().amount(iron).compareTo(Natural.of(30)) >= 0, 4000);
+        engine.tick(3);
+        check.equal(0, source.inventory().amount(iron), "the clamped transfer emptied the source");
+        check.equal(30, target.inventory().amount(iron), "the clamped transfer delivered the remaining 10 iron");
+
+        UnitDirector.TransferResult everything = commands.transfer(source, target, plank, Natural.BEYOND);
+        check.that(everything.transferred(), "an amount of BEYOND dispatches everything the source can give: "
+                + everything.refusal());
+        check.equal(5, everything.moved().amount(plank), "BEYOND moved the whole five plank stack");
+        engine.tickUntil(e -> target.inventory().amount(plank).compareTo(Natural.of(5)) >= 0, 4000);
+        engine.tick(3);
+        check.equal(0, source.inventory().amount(plank), "the source no longer holds planks");
+
+        // A second dimension, a foreign player and a non-warehouse building, all set up before the block
+        // of refusals so those refusals can be compared against one unchanged state.
+        DimensionId moon = DimensionId.of("moon");
+        TerrainMap moonMap = new ChunkedMap(new FlatChunkGenerator(content.terrain("grass")));
+        world.addDimension(moon, DimensionProfile.moon(), moonMap);
+        world.setPathFinder(moon, new AStarPathFinder(moonMap));
+        Building moonWarehouse = world.spawnBuilding(moon, content.building(ScenarioContent.WAREHOUSE),
+                player, new GridPos(6, 6));
+        Player enemyPlayer = Player.of(2, "Enemy", 0xff3355ff);
+        world.addPlayer(enemyPlayer);
+        enemyPlayer.attachLogistics(new WarehouseLogistics(world, enemyPlayer));
+        Building enemyWarehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE),
+                enemyPlayer, new GridPos(6, 30));
+        Building barracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(40, 20));
+
+        Natural sourceIron = source.inventory().amount(iron);
+        Natural targetIron = target.inventory().amount(iron);
+        Natural availableIron = logistics.available().amount(iron);
+        int pendingJobs = logistics.pendingDeliveries();
+
+        UnitDirector.TransferResult same = commands.transfer(source, source, iron, Natural.of(1));
+        check.that(!same.transferred() && same.refusal().contains("same building"),
+                "a transfer to the same building is refused as such: " + same.refusal());
+        UnitDirector.TransferResult notWarehouse = commands.transfer(barracks, target, iron, Natural.of(1));
+        check.that(!notWarehouse.transferred() && notWarehouse.refusal().contains("not a warehouse"),
+                "a non-warehouse source is refused as not a warehouse: " + notWarehouse.refusal());
+        UnitDirector.TransferResult notWarehouseTarget = commands.transfer(source, barracks, iron, Natural.of(1));
+        check.that(!notWarehouseTarget.transferred()
+                        && notWarehouseTarget.refusal().contains("not a warehouse"),
+                "a non-warehouse target is refused as not a warehouse: "
+                        + notWarehouseTarget.refusal());
+        UnitDirector.TransferResult unknownItem = commands.transfer(source, target, null, Natural.of(1));
+        check.that(!unknownItem.transferred() && unknownItem.refusal().contains("unknown item"),
+                "a missing item kind is refused as unknown item: " + unknownItem.refusal());
+        UnitDirector.TransferResult noAmount = commands.transfer(source, target, iron, Natural.ZERO);
+        check.that(!noAmount.transferred() && noAmount.refusal().contains("must be positive"),
+                "a zero amount is refused as not positive: " + noAmount.refusal());
+        Building unfinishedWarehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE),
+                player, new GridPos(52, 30));
+        unfinishedWarehouse.restartConstruction();
+        UnitDirector.TransferResult fromSite = commands.transfer(unfinishedWarehouse, target, iron,
+                Natural.of(1));
+        check.that(!fromSite.transferred() && fromSite.refusal().contains("under construction"),
+                "an unfinished source warehouse is refused: " + fromSite.refusal());
+        UnitDirector.TransferResult toSite = commands.transfer(source, unfinishedWarehouse, iron,
+                Natural.of(1));
+        check.that(!toSite.transferred() && toSite.refusal().contains("under construction"),
+                "an unfinished target warehouse is refused: " + toSite.refusal());
+        UnitDirector.TransferResult noStock = commands.transfer(source, target, iron, Natural.of(1));
+        check.that(!noStock.transferred() && noStock.refusal().contains("no stock"),
+                "an item the source does not hold is refused as no stock: " + noStock.refusal());
+        UnitDirector.TransferResult foreign = commands.transfer(source, enemyWarehouse, iron, Natural.of(1));
+        check.that(!foreign.transferred() && foreign.refusal().contains("different players"),
+                "a target warehouse of another player is refused: " + foreign.refusal());
+        UnitDirector.TransferResult crossDimension = commands.transfer(source, moonWarehouse, iron, Natural.of(1));
+        check.that(!crossDimension.transferred()
+                        && crossDimension.refusal().contains("different dimensions"),
+                "a warehouse in another dimension is refused: " + crossDimension.refusal());
+
+        for (Unit unit : new ArrayList<>(world.unitsOf(player))) {
+            world.destroy(unit);
+        }
+        engine.tick(1);
+        check.that(world.unitsOf(player).isEmpty(), "the fixture has no worker left for the next transfer");
+        UnitDirector.TransferResult noEngineer = commands.transfer(target, source, iron, Natural.of(1));
+        check.that(!noEngineer.transferred() && noEngineer.refusal().contains("no free engineer"),
+                "without a free engineer the transfer is refused before anything is reserved: "
+                        + noEngineer.refusal());
+        check.equal(sourceIron, source.inventory().amount(iron),
+                "every refusal left the source stock unchanged");
+        check.equal(targetIron, target.inventory().amount(iron),
+                "every refusal left the target stock unchanged");
+        check.equal(availableIron, logistics.available().amount(iron),
+                "every refusal left no reservation behind");
+        check.equal(pendingJobs, logistics.pendingDeliveries(),
+                "every refusal registered no hauling job");
+
+        // Unreachable: wall in the target's footprint and its two-tile ring, so no route exists at all.
+        source.inventory().insert(iron, 7);
+        Natural beforeUnreachable = source.inventory().amount(iron);
+        TileRect walled = target.occupiedTiles().expanded(2);
+        for (GridPos tile : walled.tiles()) {
+            world.map().setTerrain(tile, content.terrain("water"));
+        }
+        UnitDirector.TransferResult unreachable = commands.transfer(source, target, iron, Natural.of(3));
+        check.that(!unreachable.transferred() && unreachable.refusal().contains("unreachable"),
+                "a walled-off target is refused as unreachable: " + unreachable.refusal());
+        check.equal(beforeUnreachable, source.inventory().amount(iron),
+                "the unreachable refusal kept the source stock");
+
+        // Determinism: two identically built worlds dispatch the same bundle to the same hauler and
+        // deliver the same stock after the same number of ticks.
+        TransferFixture left = transferFixture(content, 77L);
+        TransferFixture right = transferFixture(content, 77L);
+        UnitDirector.TransferResult leftTransfer =
+                left.engine().commands().transfer(left.source(), left.target(), iron, Natural.of(12));
+        UnitDirector.TransferResult rightTransfer =
+                right.engine().commands().transfer(right.source(), right.target(), iron, Natural.of(12));
+        check.that(leftTransfer.transferred() && rightTransfer.transferred(),
+                "two identical worlds both accept the same transfer");
+        check.equal(leftTransfer.moved(), rightTransfer.moved(),
+                "identical worlds dispatch an identical bundle");
+        check.equal(leftTransfer.job().hauler().orElseThrow(), rightTransfer.job().hauler().orElseThrow(),
+                "identical worlds choose the same hauler");
+        left.engine().tick(200);
+        right.engine().tick(200);
+        check.equal(left.source().inventory().amount(iron), right.source().inventory().amount(iron),
+                "identical worlds keep the same remaining source stock");
+        check.equal(left.target().inventory().amount(iron), right.target().inventory().amount(iron),
+                "identical worlds deliver the same target stock");
+    }
+
+    /** One real-haul transfer fixture: two finished warehouses ten tiles apart, a worker and a stock. */
+    private static TransferFixture transferFixture(ContentRegistry content, long seed) {
+        OcRtsEngine engine = OcRtsEngine.builder(content)
+                .seed(seed)
+                .generator(new FlatChunkGenerator(content.terrain("grass")))
+                .chunkSize(CHUNK_SIZE)
+                .viewRadiusChunks(3)
+                .directDelivery(false)
+                .build();
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building source = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(6, 6));
+        Building target = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(24, 6));
+        source.inventory().insert(content.item(ScenarioContent.IRON_INGOT), 30);
+        source.inventory().insert(content.item(ScenarioContent.PLANK), 5);
+        Unit hauler = world.spawnUnit(content.unit(ScenarioContent.WORKER), player,
+                new GridPos(10, 9).center());
+        return new TransferFixture(engine, player, world, source, target, hauler);
+    }
+
+    /** One transfer fixture's handles; the record exists only to keep the check readable. */
+    private record TransferFixture(OcRtsEngine engine, Player player, World world, Building source,
+            Building target, Unit hauler) {
     }
 
     // ------------------------------------------------------------------ 6) sprites and animation
