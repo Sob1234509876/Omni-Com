@@ -664,6 +664,39 @@
         font-weight: 600;
       }
 
+      /* The enemy anchor line: one clickable chip under the HUD. It names the hostile factions whose
+         starting anchors are published and points at the nearest one; it is pointer-transparent only
+         when hidden, so it never covers the canvas otherwise. Colours stay greyscale like the chrome;
+         the red direction lives on the minimap arrow, not in this text. */
+      #enemy-line {
+        pointer-events: auto;
+        display: inline-flex;
+        align-items: center;
+        max-width: 100%;
+        padding: 2px 7px;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+
+      #enemy-line[hidden] {
+        display: none;
+      }
+
+      #enemy-line:hover,
+      #enemy-line:focus-visible {
+        border-color: #ffffff;
+        color: #ffffff;
+      }
+
       /* The dedicated inventory HUD, directly under the chips. Read-only and pointer-transparent like
          the chips, so it never blocks the canvas; it is always reachable without hovering. */
       .inventory-panel {
@@ -1535,6 +1568,8 @@
               </span>
             </span>
           </div>
+
+          <button id="enemy-line" class="enemy-line" type="button" hidden></button>
 
           <aside id="inventory-panel" class="inventory-panel" aria-label="选中单位的库存">
             <h2>单位库存</h2>

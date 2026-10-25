@@ -312,6 +312,10 @@ public final class ClassicAi implements WorldTickHook {
                 // Another catalogue owns this world; there is no classic enemy to play.
                 return;
             }
+        } else if (enemy.anchor().isEmpty()) {
+            // A player created by another path still publishes this controller's deterministic anchor, so
+            // the snapshot's compass readout can always answer where the bot started.
+            enemy.setAnchor(baseAnchor);
         }
         if (tick % DECISION_INTERVAL_TICKS != 0) {
             return;
@@ -795,6 +799,9 @@ public final class ClassicAi implements WorldTickHook {
             return null;
         }
         Player enemy = new Player(PlayerId.of(playerId), playerName, playerColor, playerId, false);
+        // Publish the faction anchor before the opening exists: a snapshot taken on the bootstrap tick
+        // then already reports where this bot started, not where its search happened to land.
+        enemy.setAnchor(baseAnchor);
         world.addPlayer(enemy);
         enemy.attachLogistics(new WarehouseLogistics(world, enemy));
         joinHauling(world, enemy);

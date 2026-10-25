@@ -55,6 +55,12 @@ import {
 } from "./render/atlas";
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord, type TileRange } from "./render/camera";
+import {
+  anchorCameraTarget,
+  enemyAnchorEntries,
+  enemyLineText,
+  type EnemyAnchorEntry,
+} from "./render/enemy";
 import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
 import { pruneFlashes, startFlash } from "./render/flash";
 import {
@@ -179,6 +185,7 @@ const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudWindow = required<HTMLSpanElement>("#hud-window");
 const hudPlayer = required<HTMLSpanElement>("#hud-player");
+const enemyLine = required<HTMLButtonElement>("#enemy-line");
 const hudResources = required<HTMLSpanElement>("#hud-resources");
 const hudMarked = required<HTMLSpanElement>("#hud-marked");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
@@ -1045,6 +1052,8 @@ let hoverTile: TileCoord | null = null;
 let viewHidden = false;
 let worldSource: WorldSource = "demo";
 let worldTick = 0;
+/** The hostile anchored players behind the current top-chrome line, nearest first. */
+let enemyLineEntries: EnemyAnchorEntry[] = [];
 /**
  * The last two server snapshots, oldest first. Every animation frame draws between them so a 500 ms
  * poll looks continuous; both are null while the demo world is shown, which has no snapshots to
@@ -1554,6 +1563,29 @@ warehouseClearMarksButton.addEventListener("click", () => {
   refreshMarkViews(warehouseResourceTotals(world, myPlayerId, itemLabel));
 });
 
+/**
+ * Refreshes the top-chrome enemy line from the current snapshot's player anchors and the camera centre.
+ *
+ * <p>The line is the answer to "which way is the enemy base" without a fog-of-war reveal: the anchor is
+ * a published starting position, so it is known even when it is thousands of tiles away. The text is
+ * rebuilt from the current camera tile each HUD tick, which is why the distance and sector update while
+ * the owner pans. The entries are kept so a click can jump to the nearest anchor without recomputing.
+ *
+ * <p>A world with no hostile anchored player (the demo, a sandbox, or a snapshot from an older server)
+ * hides the line instead of showing an empty "敌方".
+ */
+function updateEnemyLine(centre: TileCoord): void {
+  const entries = enemyAnchorEntries(world.players, myPlayerId, centre);
+  enemyLineEntries = entries;
+  const text = enemyLineText(entries);
+  enemyLine.hidden = text === "";
+  enemyLine.textContent = text;
+  enemyLine.title =
+    entries.length === 0
+      ? ""
+      : `点击把镜头移到最近的敌方锚点 (${entries[0]!.anchor.x},${entries[0]!.anchor.y})`;
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -1583,6 +1615,7 @@ function updateHud(force = false, now = performance.now()): void {
         ? "玩家：获取 id 中…"
         : `玩家：${myPlayerId}`,
   );
+  updateEnemyLine(focus);
   const resources = myPlayerRow();
   void renderLatexInto(
     hudResources,
@@ -2878,6 +2911,23 @@ function jumpCameraToMinimap(event: PointerEvent): void {
   camera.setCenter(target.x, target.y);
   updateHud(true);
 }
+
+/**
+ * Centres the camera on the nearest hostile anchor named by the top-chrome line.
+ *
+ * <p>This is a navigation shortcut, not a reveal: the snapshot published the anchor, and the click only
+ * moves the camera to that known starting tile. The same `anchorCameraTarget` rule the check asserts is
+ * used here, so a click on `敌方 2：锚点 (192,192)` centres the camera on tile 192,192 exactly.
+ */
+enemyLine.addEventListener("click", () => {
+  const nearest = enemyLineEntries[0];
+  if (nearest === undefined) {
+    return;
+  }
+  const target = anchorCameraTarget(nearest.anchor, camera.tileSize);
+  camera.setCenter(target.x, target.y);
+  updateHud(true);
+});
 
 function releaseMinimapPointer(): void {
   minimapPointerId = null;

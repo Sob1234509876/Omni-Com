@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1014 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1071 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,16 +33,16 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 1014 checks passed.
+game server self check: all 1071 checks passed.
 ```
 
-1014 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+1071 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
 (upgrade, the version handshake, frame rules, origin rules, the configurable idle timeout and the server
 heartbeat), `HttpCheck` 47 (static files, traversal, caching, a missing static root), `PluginAssetsCheck` 80
-(manifest merging and the asset route over real plugin jars), `WorldHostCheck` 338 (the daemon tick thread,
+(manifest merging and the asset route over real plugin jars), `WorldHostCheck` 348 (the daemon tick thread,
 the unbounded `InfiniteTerrainMap` and its 4096-chunk budget, the world starting without a map edge, the
 buildable spawn anchor found from `(0,0)` inside a 64-tile bound, the windowed snapshot and its `cx` / `cy` /
 `r` parameters including negative and huge origins, seed determinism, the `/world/snapshot` 200/503/405
@@ -109,6 +109,24 @@ and the browser's automatic pong keeps the read timeout from expiring; the idle 
 default and `--ws-idle N` changes it. It is a plain HTTP/WS listener with no TLS, meant for a local machine or
 behind a reverse proxy, and `--http-port 0` removes it entirely (and with it the world).
 
+**The player rows carry a faction anchor.** Every row of the snapshot's `players` array carries an optional
+`anchor` pair, `[x, y]` in absolute integer tiles: the tile the faction started from. Player 1 reports the
+spawn anchor the sample scene was laid out around, a joining account reports its deterministic base-slot
+anchor (not the final warehouse origin), and a classic bot reports the deterministic anchor its opening base
+search started from. The value comes from `Player.anchor()`, which the host and the plugin publish when they
+create the player; the snapshot never invents one, and a player whose anchor nobody published omits the
+field. It is a **known starting position**, not a live unit position and not a fog-of-war reveal: the browser
+uses it for the top-chrome enemy line and the minimap edge arrow, which reveal no terrain, entity or current
+position. The values are documented in the protocol document and in the `WorldHost#snapshotJson` Javadoc.
+
+**Who owns the sample scene.** Player 1 owns the world host's sample scene (one melee of each tier and one of
+each building), and the classic bot system's first bot owns player 2 with only the opening base
+`ClassicBots` gives it. A logged-in human account still takes ids 3 through 8, so from a human's point of view
+player 1 is **not** a hostile faction: the browser classifies the scene player as neutral (and as `我` when
+the local id really is 1), which is what fixes the reported "the display units are enemy units" defect. The
+server truth is pinned twice: `WorldHostCheck` asserts the scene's entity ids and `player` field are 1, and
+`ClassicCheck` asserts the scene is 1 and the bot base is 2 by entity id and on the wire.
+
 **The plugin loader.** `PluginLoader` scans `plugins/*.jar` in file name order and gives each jar its own
 `URLClassLoader`. The URL list is that jar first, then every other jar in the folder, sorted by file name, so
 dropping a library jar next to a plugin installs the dependency, and a plugin that bundles its own copy of a
@@ -174,7 +192,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 1014 check self check program
+src/selfcheck/java/.../server/check/    the 1071 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

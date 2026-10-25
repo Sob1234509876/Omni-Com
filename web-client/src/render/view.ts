@@ -215,7 +215,9 @@ export interface WorldView {
   readonly players?: readonly PlayerView[];
 }
 
-/** One player row of a server snapshot: the two starting resources plus the display name. */
+/**
+ * One player row of a server snapshot: the two starting resources plus the display name.
+ */
 export interface PlayerView {
   /** Engine player id, the same number as `EntityView.playerId`. */
   readonly id: number;
@@ -225,6 +227,15 @@ export interface PlayerView {
   readonly gold: number;
   /** Wood in the player's warehouses, as a non-negative integer. */
   readonly wood: number;
+  /**
+   * Absolute tile the faction started from, from the snapshot's optional `anchor` pair.
+   *
+   * The server publishes this as a known starting position (the sample scene's spawn anchor, a human
+   * base-slot anchor, or a bot's deterministic spawn anchor), never as a live unit position. A snapshot
+   * from before the field existed omits it, and a player whose host never published an anchor omits it
+   * too; both are ordinary, not malformed.
+   */
+  readonly anchor?: TileCoord;
   /**
    * Gold income in gold per minute, summed from the player's alive, constructed buildings' content
    * tags, when the server reports it.
@@ -264,17 +275,39 @@ export function localPlayerIdFromRoster(
 export type Ownership = "mine" | "enemy" | "neutral";
 
 /**
+ * Engine player id of the world host's sample scene, the human anchor the whole starting area is laid
+ * out around.
+ *
+ * <p>Player 1 is not a hostile faction: on the default server it owns the sample scene (one melee of
+ * each tier and one of each building) and its stock lives in the scene's warehouse, while human accounts
+ * are assigned ids 3 through 8 and the classic bot owns player 2. Treating "not my id" as "enemy" made
+ * the scene read as an enemy army to a logged-in human - the reported defect. Player 1 is therefore
+ * **neutral** to a human whose id is not 1, and `mine` to a local player whose id *is* 1. The server
+ * still pins the scene's owner as player 1; this rule only stops the client from painting a showroom as
+ * hostile. See `README.md` for the identity rule.
+ */
+export const SCENE_PLAYER_ID = 1;
+
+/**
  * Classifies an entity's owner against the player id answered by `WHOAMI`.
  *
  * A missing `myPlayerId` (the demo world, or the moment before `LOGIN`) and a missing or non-positive
  * entity owner are deliberately `neutral`: the renderer then draws the grey ownership ring, which is
- * also what the demo world shows.
+ * also what the demo world shows. The sample-scene player ({@link SCENE_PLAYER_ID}) is neutral to every
+ * other local player for the same visual reason - it is the host's display scene, not an enemy faction -
+ * and is `mine` when the local player really is player 1.
  */
 export function ownershipOf(playerId: number | undefined, myPlayerId: number | null): Ownership {
   if (myPlayerId === null || playerId === undefined || !Number.isFinite(playerId) || playerId <= 0) {
     return "neutral";
   }
-  return playerId === myPlayerId ? "mine" : "enemy";
+  if (playerId === myPlayerId) {
+    return "mine";
+  }
+  if (playerId === SCENE_PLAYER_ID) {
+    return "neutral";
+  }
+  return "enemy";
 }
 
 /** The one-character HUD tag for an ownership, as shown next to the selected entity's kind. */
@@ -810,6 +843,25 @@ function optionalNonNegativeInteger(value: unknown): number | undefined {
 }
 
 /**
+ * Reads the optional `anchor` pair of one player row.
+ *
+ * Only a two-element array of safe integers is an anchor: the world is unbounded, so both halves may be
+ * negative, and a malformed pair is simply absent rather than a reason to reject the whole world. A
+ * missing anchor is the documented older-server shape, not an error.
+ */
+function snapshotAnchor(value: unknown): TileCoord | undefined {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return undefined;
+  }
+  const x = finiteNumber(value[0]);
+  const y = finiteNumber(value[1]);
+  if (x === null || y === null || !Number.isSafeInteger(x) || !Number.isSafeInteger(y)) {
+    return undefined;
+  }
+  return { x, y };
+}
+
+/**
  * Converts `/world/snapshot` JSON into the model the renderer already consumes.
  *
  * The server sends terrain content paths (`grass`, `oc:grass`, ...): they are normalized to the
@@ -822,10 +874,10 @@ function optionalNonNegativeInteger(value: unknown): number | undefined {
  * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
  * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, `contents` becomes a
  * validated object of positive integer amounts, `role` / `attackDamage` become the optional marquee
- * priority metadata, and `upgrade` becomes a validated `{to, gold, wood}`
- * offer. A snapshot without any of them (an older server, the
- * demo world, every check fixture written before these fields existed) converts exactly as it did
- * before, with all of those properties `undefined`; a player row similarly keeps the optional
+ * priority metadata, `upgrade` becomes a validated `{to, gold, wood}` offer, and a player row's optional
+ * `anchor` becomes a signed `TileCoord`. A snapshot without any of them (an older server, the demo
+ * world, every check fixture written before these fields existed) converts exactly as it did before,
+ * with all of those properties `undefined`; a player row similarly keeps the optional
  * `goldPerMinute` / `woodPerMinute` or leaves them `undefined`. A malformed optional field is ignored
  * rather than rejecting the whole world, because these fields are presentation detail: a bad `progress`
  * must not blank the map. A footprint is kept only when both `w` and `h` are positive integers, because
@@ -993,6 +1045,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       const wood = finiteNumber(rawPlayer["wood"]);
       const goldPerMinute = optionalNonNegativeInteger(rawPlayer["goldPerMinute"]);
       const woodPerMinute = optionalNonNegativeInteger(rawPlayer["woodPerMinute"]);
+      const anchor = snapshotAnchor(rawPlayer["anchor"]);
       if (
         id === null ||
         gold === null ||
@@ -1021,6 +1074,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
         wood,
         ...(goldPerMinute === undefined ? {} : { goldPerMinute }),
         ...(woodPerMinute === undefined ? {} : { woodPerMinute }),
+        ...(anchor === undefined ? {} : { anchor }),
       });
     }
   }

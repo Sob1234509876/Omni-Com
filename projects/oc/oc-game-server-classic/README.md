@@ -18,7 +18,7 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (458 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (522 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x128 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -295,10 +295,10 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 458 checks passed.
+classic plugin self check: all 522 checks passed.
 ```
 
-458 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
+522 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
 STOP must be followed by an applicable move and build against a real `CommandService`, and each of the
 nine classic buildings must own a distinct atlas cell. The gate section is the strict part: it proves
@@ -306,6 +306,13 @@ against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`
 says so; the upgrade section proves the same ladders are executable in a real engine, the AI section proves
 the enemy really reaches tier 2 through the command, and the bots section proves the default one-bot world is
 byte-for-byte the old one while two bots differ and a different seed moves their bases.
+
+The ownership section pins the reported defect by entity id **and** by the snapshot's `player` field: the
+sample scene (six units, nine buildings) belongs to player 1, and the bot's opening base (warehouse, tier one
+armory, tier one mine) belongs to player 2 - never the other way round. It also pins the published faction
+anchors: player 1 reports the host's spawn anchor and player 2 reports the `ClassicBots` anchor (`(192,192)`
+on the default seed), so the browser's enemy line and minimap edge arrow have a real source. The anchor is a
+known starting position, not a fog-of-war reveal.
 
 ## Module layout
 
@@ -321,7 +328,7 @@ byte-for-byte the old one while two bots differ and a different seed moves their
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x128 unit and building atlas (one 32x32 cell per building kind) |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 458 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 522 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

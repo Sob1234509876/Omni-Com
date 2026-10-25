@@ -1802,6 +1802,7 @@ public final class ClassicCheck {
         botRules(check);
         zeroBots(check);
         oneBotReproducesTheOldEnemy(check);
+        sceneAndBotOwnership(check);
         twoBots(check);
         botDeterminismAndSeeds(check);
     }
@@ -1897,6 +1898,129 @@ public final class ClassicCheck {
         check.that(legacyRun.snapshot().equals(botRun.snapshot()),
                 "1 个机器人的 600 tick 快照与旧版 AI 逐字节相同");
         check.equal(legacyRun.snapshot().length(), botRun.snapshot().length(), "两份 600 tick 快照长度相同");
+    }
+
+    /**
+     * Who owns what in the default one-bot world, pinned by entity id **and** by the snapshot's
+     * {@code player} field: the sample scene (one melee of each tier and one of each building) is player
+     * 1's, and the bot's opening base (warehouse, tier one armory, tier one mine, engineer) is player 2's.
+     *
+     * <p>This is the regression guard for the owner's "the display units are actually enemy units"
+     * report. The server truth must not drift to "the bot owns the scene" or "the scene is player 2's";
+     * whichever way a future change goes, this check fails and names the offending ids. It also pins the
+     * published faction anchors: player 1 reports the host's spawn anchor and player 2 reports the
+     * {@link ClassicBots} anchor, so the client's compass readout has a real source.
+     */
+    private static void sceneAndBotOwnership(Check check) {
+        ClassicBots bots = new ClassicBots(1);
+        WorldHost host = new WorldHost(1L, new ClassicContent(),
+                List.of(new ClassicEconomy(), bots));
+        try {
+            for (int tick = 0; tick < 5; tick++) {
+                host.step();
+            }
+            Player scene = host.player();
+            Player bot = host.findPlayer(ClassicAi.PLAYER_ID).orElse(null);
+            check.equal(1, scene.id().value(), "样例场景的玩家 id 是 1（世界的锚点玩家）");
+            check.that(bot != null, "默认一机器人世界存在玩家 2 的机器人基地");
+            if (bot == null) {
+                return;
+            }
+            check.equal(2, bot.id().value(), "机器人拥有玩家 2（不是样例场景的玩家 1）");
+
+            World world = host.engine().world();
+            Map<Long, Entity> sceneById = new LinkedHashMap<>();
+            for (Entity entity : world.entities()) {
+                if (entity.isAlive() && entity.owner().equals(scene)) {
+                    sceneById.put(entity.id().value(), entity);
+                }
+            }
+            Map<Long, Entity> botBaseById = new LinkedHashMap<>();
+            for (Building building : world.buildingsOf(bot)) {
+                if (building.isAlive()) {
+                    botBaseById.put(building.id().value(), building);
+                }
+            }
+            // One melee of each tier plus the engineer = six units; nine buildings in ClassicContent.
+            check.equal(15, sceneById.size(), "样例场景仍是 6 个单位 + 9 座建筑，全部属于玩家 1");
+            check.equal(3, botBaseById.size(), "机器人开局基地恰好是仓库、一级兵工厂、一级矿井三座建筑");
+            Set<String> botKinds = new LinkedHashSet<>();
+            for (Entity building : botBaseById.values()) {
+                botKinds.add(building.typeKey().path());
+            }
+            check.that(botKinds.contains(ClassicContent.WAREHOUSE)
+                            && botKinds.contains(ClassicContent.ARMORY_T1)
+                            && botKinds.contains(ClassicContent.MINE_T1),
+                    "机器人基地的实体 id 分别对应仓库 / 一级兵工厂 / 一级矿井: " + botKinds);
+            check.that(java.util.Collections.disjoint(sceneById.keySet(), botBaseById.keySet()),
+                    "样例场景与机器人基地没有共用实体 id");
+
+            // Ownership in the live world, by entity id.
+            boolean sceneOwnersCorrect = true;
+            for (Entity entity : sceneById.values()) {
+                sceneOwnersCorrect &= entity.owner().id().value() == 1;
+            }
+            boolean botOwnersCorrect = true;
+            for (Entity entity : botBaseById.values()) {
+                botOwnersCorrect &= entity.owner().id().value() == 2;
+            }
+            check.that(sceneOwnersCorrect, "样例场景的每个实体 id 在引擎里都属于玩家 1");
+            check.that(botOwnersCorrect, "机器人基地的每个实体 id 在引擎里都属于玩家 2");
+
+            // Ownership on the wire, by entity id and by the snapshot's `player` field.
+            Map<String, Object> document = object(Json.parse(host.snapshotJson()));
+            Map<Long, Map<?, ?>> rows = new LinkedHashMap<>();
+            for (Object raw : array(document.get("entities"))) {
+                if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number id) {
+                    rows.put(id.longValue(), row);
+                }
+            }
+            boolean sceneWireCorrect = true;
+            for (Long id : sceneById.keySet()) {
+                Map<?, ?> row = rows.get(id);
+                sceneWireCorrect &= row != null && longOf(row.get("player")) == 1L;
+            }
+            boolean botWireCorrect = true;
+            for (Long id : botBaseById.keySet()) {
+                Map<?, ?> row = rows.get(id);
+                botWireCorrect &= row != null && longOf(row.get("player")) == 2L;
+            }
+            check.that(sceneWireCorrect,
+                    "快照按实体 id 报告样例场景的 player 字段全是 1");
+            check.that(botWireCorrect,
+                    "快照按实体 id 报告机器人基地的 player 字段全是 2");
+
+            // The published faction anchors: the host's spawn anchor for player 1, the bot system's
+            // deterministic anchor for player 2 (the historical (192,192) on the default seed).
+            Map<Long, Map<?, ?>> playerRows = new LinkedHashMap<>();
+            for (Object raw : array(document.get("players"))) {
+                if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number id) {
+                    playerRows.put(id.longValue(), row);
+                }
+            }
+            check.equal(List.of((long) host.spawnAnchor().x(), (long) host.spawnAnchor().y()),
+                    anchorOf(playerRows.get(1L)),
+                    "玩家 1 的 snapshot anchor 就是世界的出生锚点 " + host.spawnAnchor());
+            GridPos botAnchor = bots.factions().get(0).spawnAnchor();
+            check.equal(new GridPos(192, 192), botAnchor, "默认机器人的阵营锚点仍是历史 (192,192)");
+            check.equal(List.of((long) botAnchor.x(), (long) botAnchor.y()),
+                    anchorOf(playerRows.get(2L)),
+                    "玩家 2 的 snapshot anchor 是机器人系统的出生锚点 " + botAnchor);
+            check.equal(botAnchor, bot.anchor().orElse(null),
+                    "玩家 2 的 Player.anchor() 与 ClassicBots 的锚点一致");
+            check.equal(host.spawnAnchor(), scene.anchor().orElse(null),
+                    "玩家 1 的 Player.anchor() 是样例场景的出生锚点");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /** One player row's `anchor` as a two-long list, or {@code null} when absent or malformed. */
+    private static List<Long> anchorOf(Map<?, ?> playerRow) {
+        if (playerRow == null || !(playerRow.get("anchor") instanceof List<?> pair) || pair.size() != 2) {
+            return null;
+        }
+        return List.of(longOf(pair.get(0)), longOf(pair.get(1)));
     }
 
     /** Two bots own two different bases, differ in style, and both work inside 600 ticks. */

@@ -465,6 +465,9 @@ public final class WorldHost {
                 .player(player)
                 .build();
         this.spawnAnchor = findSpawnAnchor(engine.world());
+        // Player 1 is the sample-scene / human anchor. Its faction anchor is the tile the whole scene was
+        // laid out around, so a snapshot can report where the human side started without inventing one.
+        this.player.setAnchor(spawnAnchor);
         engine.focus(spawnAnchor.center());
         spawnScene(this.content, player);
         ItemBundle leftover = depositStartingResources(this.worldContent, this.content, player,
@@ -728,8 +731,15 @@ public final class WorldHost {
      * order is slot order (id 3, 4, 5 in the top row; 6, 7, 8 in the bottom row), so two joins of different
      * accounts always start from different anchors; the ring searches still make the final base positions
      * collision free on noisy terrain.
+     *
+     * <p>This is also the player row's published {@code anchor}: the tile the base search starts from, not
+     * the final warehouse origin. It is a pure function of the player id and the world, so a check can
+     * assert it without reading the live entities.
+     *
+     * @param playerId a human player id, normally {@value #FIRST_HUMAN_PLAYER_ID}..{@value #MAX_PLAYERS}
+     * @return the absolute base-slot anchor of that id
      */
-    private GridPos baseAnchor(int playerId) {
+    public GridPos baseAnchor(int playerId) {
         int slot = Math.floorMod(playerId - FIRST_HUMAN_PLAYER_ID, BASE_SLOT_COUNT);
         int column = slot % BASE_ANCHOR_COLUMNS;
         int row = slot / BASE_ANCHOR_COLUMNS;
@@ -1294,6 +1304,10 @@ public final class WorldHost {
             }
             String displayName = name == null || name.isBlank() ? "Player " + id : name;
             Player joined = new Player(candidateId, displayName, colorFor(id), id, true);
+            // The faction anchor is the slot anchor the base search starts from, not the final warehouse
+            // origin: it is stable across a crowded or watery map, and it is the tile the compass readout
+            // and the minimap arrow point at.
+            joined.setAnchor(baseAnchor(id));
             engine.world().addPlayer(joined);
             joined.attachLogistics(new WarehouseLogistics(engine.world(), joined));
             joinHauling(engine.world(), joined);
@@ -1453,8 +1467,10 @@ public final class WorldHost {
      *               "w":3,"h":3,"progress":1.00,"queue":2,
      *               "queueItems":[{"kind":"unit.melee.t1","ticks":87,"total":120},
      *                             {"kind":"unit.melee.t1","ticks":120,"total":120}]}, ...],
-     *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0,"goldPerMinute":210,"woodPerMinute":140},
-     *             {"id":3,"name":"alice","gold":300,"wood":60,"goldPerMinute":0,"woodPerMinute":0}]}
+     *  "players":[{"id":1,"name":"Player 1","gold":0,"wood":0,"goldPerMinute":210,"woodPerMinute":140,
+     *              "anchor":[3,2]},
+     *             {"id":3,"name":"alice","gold":300,"wood":60,"goldPerMinute":0,"woodPerMinute":0,
+     *              "anchor":[-21,-46]}]}
      * }</pre>
      *
      * <p>{@code width} and {@code height} are the <em>window</em> size; the document deliberately carries no
@@ -1557,6 +1573,16 @@ public final class WorldHost {
      * not a measured remainder: it is the same number the classic hook adds to the warehouse every 60
      * ticks. The two fields are additive: an older server may omit them and a client must keep working
      * without them.
+     *
+     * <p><strong>Each player row carries the faction anchor.</strong> {@code anchor} is an optional
+     * {@code [x,y]} pair of absolute integer tiles: the tile the faction started from. For player 1 it is
+     * the spawn anchor the sample scene was laid out around, for a joining account it is the deterministic
+     * base-slot anchor (not the final warehouse origin), and for a classic bot it is the deterministic
+     * anchor its opening search started from. The values come from {@link Player#anchor()}, which the host
+     * and the plugin set when they create the player; the snapshot never invents one. The field is
+     * additive - a client that does not know it ignores it, and a player whose anchor nobody published
+     * omits it. It is a known starting position, so a client may show it without any fog-of-war reveal;
+     * see the browser client's enemy line and minimap edge arrow.
      *
      * <p>Amounts are emitted as JSON integers saturated to {@link Long#MAX_VALUE}; the browser could not
      * use more precision than a number anyway, and a stock that large is already far past playable.
@@ -1750,8 +1776,13 @@ public final class WorldHost {
             json.append(",\"gold\":").append(availableAmount(available, goldItem))
                     .append(",\"wood\":").append(availableAmount(available, woodItem))
                     .append(",\"goldPerMinute\":").append(goldPerMinute)
-                    .append(",\"woodPerMinute\":").append(woodPerMinute)
-                    .append('}');
+                    .append(",\"woodPerMinute\":").append(woodPerMinute);
+            // The optional faction anchor. Every player the host or the classic plugin creates has one,
+            // but the field stays optional so a world hosted by another embedding can omit it rather than
+            // invent a coordinate.
+            worldPlayer.anchor().ifPresent(anchor -> json.append(",\"anchor\":[")
+                    .append(anchor.x()).append(',').append(anchor.y()).append(']'));
+            json.append('}');
         }
         json.append("]}");
         return json.toString();

@@ -134,6 +134,7 @@ import {
   ownershipOf,
   ownershipTag,
   ownershipTagFor,
+  SCENE_PLAYER_ID,
   snapshotOrDemo,
   snapshotUrl,
   TERRAIN_IDS,
@@ -203,13 +204,25 @@ import {
   type Footprint,
 } from "../src/render/placement.ts";
 import {
+  MINIMAP_ARROW_INSET,
   MINIMAP_DOT_SIZE,
   MINIMAP_PANEL_SIZE,
   minimapCameraTarget,
+  minimapEdgeArrow,
   minimapLayout,
+  minimapNearestEdgeArrow,
   minimapPointForTile,
   minimapTileAt,
 } from "../src/render/minimap.ts";
+import {
+  COMPASS_SECTORS,
+  anchorCameraTarget,
+  compassSector,
+  enemyAnchorEntries,
+  enemyLineText,
+  formatEnemyAnchor,
+  tileDistance,
+} from "../src/render/enemy.ts";
 import {
   doubleClickSelection,
   engineerForPlacement,
@@ -1098,8 +1111,16 @@ check(
 const playersSnapshot = worldViewFromSnapshot({
   ...validSnapshot,
   players: [
-    { id: 1, name: "Player 1", gold: 0, wood: 0 },
-    { id: 3, name: "alice", gold: 300, wood: 60, goldPerMinute: 30, woodPerMinute: 20 },
+    { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] },
+    {
+      id: 3,
+      name: "alice",
+      gold: 300,
+      wood: 60,
+      goldPerMinute: 30,
+      woodPerMinute: 20,
+      anchor: [-21, -46],
+    },
   ],
 });
 check(
@@ -1123,6 +1144,26 @@ check(
     playersSnapshot?.players?.[0]?.goldPerMinute === undefined &&
     playersSnapshot?.players?.[0]?.woodPerMinute === undefined,
   JSON.stringify(aliceRow),
+);
+check(
+  "players 行保留可选 anchor（绝对整数格），缺失或畸形时是 undefined",
+  playersSnapshot?.players?.[0]?.anchor?.x === 3 &&
+    playersSnapshot?.players?.[0]?.anchor?.y === 2 &&
+    aliceRow?.anchor?.x === -21 &&
+    aliceRow?.anchor?.y === -46 &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0 }],
+    })?.players?.[0]?.anchor === undefined &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1] }],
+    })?.players?.[0]?.anchor === undefined &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1.5, 2] }],
+    })?.players?.[0]?.anchor === undefined,
+  JSON.stringify(playersSnapshot?.players),
 );
 const malformedRateSnapshot = worldViewFromSnapshot({
   ...validSnapshot,
@@ -3756,6 +3797,215 @@ check(
     ownershipTagFor(3, null) === "未登录",
   `${unknownDecision.kind} / ${unknownDecision.tag}`,
 );
+
+// The inverse mapping: a snapshot with the sample-scene player 1 and the bot player 2, viewed by a
+// logged-in human whose id is 1. The scene's units and buildings must tag as 我 (not 敌), and the bot's
+// base must stay 敌. This is the owner's report in the one world where the human really is player 1.
+const sceneSnapshot = worldViewFromSnapshot({
+  ...validSnapshot,
+  players: [
+    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
+    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [192, 192] },
+  ],
+  entities: [
+    { id: 11, kind: "unit.melee.t1", x: 1, y: 1, player: 1 },
+    { id: 12, kind: "building.warehouse", x: 2, y: 2, player: 1 },
+    { id: 20, kind: "building.warehouse", x: 3, y: 3, player: 2 },
+  ],
+});
+const sceneEntityIds = [11, 12];
+const sceneEntitiesOfPlayerOne =
+  sceneSnapshot?.entities.filter((entity) => sceneEntityIds.includes(entity.id)) ?? [];
+const botBaseEntity = sceneSnapshot?.entities.find((entity) => entity.id === 20);
+check(
+  "逆向归属：players 1+2、登录玩家 id=1 时，样例场景的实体按 id 全部是 我，不是 敌",
+  sceneSnapshot !== null &&
+    SCENE_PLAYER_ID === 1 &&
+    sceneEntitiesOfPlayerOne.length === 2 &&
+    sceneEntitiesOfPlayerOne.every(
+      (entity) =>
+        entity.playerId === 1 &&
+        ownershipOf(entity.playerId, 1) === "mine" &&
+        ownershipTagFor(entity.playerId, 1) === "我",
+    ) &&
+    sceneEntitiesOfPlayerOne.every((entity) => ownershipTagFor(entity.playerId, 1) !== "敌"),
+  JSON.stringify(sceneEntitiesOfPlayerOne),
+);
+check(
+  "逆向归属：同一快照里玩家 2 的基地是 敌，场景玩家 1 不是",
+  botBaseEntity?.playerId === 2 &&
+    ownershipOf(botBaseEntity.playerId, 1) === "enemy" &&
+    ownershipTagFor(botBaseEntity.playerId, 1) === "敌" &&
+    ownershipTagFor(1, 1) === "我",
+  JSON.stringify(botBaseEntity),
+);
+check(
+  "样例场景是展示阵营：真人不是 1 时它显示 中立（不是 敌），真正的敌人玩家 2 仍然是 敌",
+  ownershipOf(SCENE_PLAYER_ID, 3) === "neutral" &&
+    ownershipTagFor(SCENE_PLAYER_ID, 3) === "中立" &&
+    ownershipTagFor(SCENE_PLAYER_ID, 3) !== "敌" &&
+    ownershipTagFor(2, 3) === "敌" &&
+    ownershipOf(2, 3) === "enemy",
+  `${ownershipTagFor(SCENE_PLAYER_ID, 3)} / ${ownershipTagFor(2, 3)}`,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Enemy anchors: eight compass sectors, the exact readout, the edge arrow and the click target
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "八方向字符串与顺序固定：北,东北,东,东南,南,西南,西,西北",
+  COMPASS_SECTORS.length === 8 &&
+    COMPASS_SECTORS.join(",") === "北,东北,东,东南,南,西南,西,西北",
+  COMPASS_SECTORS.join(","),
+);
+check(
+  "八方向判定：北/东北/东/东南/南/西南/西/西北，零位移没有方向",
+  compassSector(0, -1) === "北" &&
+    compassSector(1, -1) === "东北" &&
+    compassSector(1, 0) === "东" &&
+    compassSector(1, 1) === "东南" &&
+    compassSector(0, 1) === "南" &&
+    compassSector(-1, 1) === "西南" &&
+    compassSector(-1, 0) === "西" &&
+    compassSector(-1, -1) === "西北" &&
+    compassSector(0, 0) === null &&
+    compassSector(Number.NaN, 1) === null,
+  `${COMPASS_SECTORS.map((_, index) => {
+    const directions: readonly [number, number][] = [
+      [0, -1],
+      [1, -1],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+      [-1, 1],
+      [-1, 0],
+      [-1, -1],
+    ];
+    return compassSector(directions[index]![0], directions[index]![1]);
+  }).join(",")}`,
+);
+const arrowWorld = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: 0,
+  originY: 0,
+  width: 64,
+  height: 64,
+  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+  players: [
+    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
+    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [192, 192] },
+  ],
+});
+const arrowCamera = new Camera(16, 1, 32 * 16, 32 * 16);
+const arrowEntries =
+  arrowWorld === null ? [] : enemyAnchorEntries(arrowWorld.players, 3, { x: 39, y: 39 });
+check(
+  "敌方锚点行：只列敌对且带 anchor 的玩家，按距离排序，格式为 敌方 2：锚点 (192,192)，距 216 格，东南",
+  arrowEntries.length === 1 &&
+    arrowEntries[0]?.playerId === 2 &&
+    arrowEntries[0]?.distance === 216 &&
+    arrowEntries[0]?.sector === "东南" &&
+    tileDistance({ x: 39, y: 39 }, { x: 192, y: 192 }) === 216 &&
+    formatEnemyAnchor(arrowEntries[0]!) === "敌方 2：锚点 (192,192)，距 216 格，东南" &&
+    enemyLineText(arrowEntries) === "敌方 2：锚点 (192,192)，距 216 格，东南",
+  enemyLineText(arrowEntries),
+);
+check(
+  "敌方锚点行：未登录 / 旧快照 / 展示阵营不出现在敌方行里",
+  enemyAnchorEntries(undefined, 3, { x: 0, y: 0 }).length === 0 &&
+    enemyAnchorEntries(
+      [
+        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] },
+        { id: 2, name: "Enemy", gold: 0, wood: 0 },
+      ],
+      3,
+      { x: 0, y: 0 },
+    ).length === 0 &&
+    enemyAnchorEntries(
+      [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] }],
+      null,
+      { x: 0, y: 0 },
+    ).length === 0,
+  JSON.stringify(
+    enemyAnchorEntries(
+      [
+        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] },
+        { id: 2, name: "Enemy", gold: 0, wood: 0 },
+      ],
+      3,
+      { x: 0, y: 0 },
+    ),
+  ),
+);
+const edgeArrow =
+  arrowWorld === null ? null : minimapNearestEdgeArrow(arrowWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE);
+check(
+  "小地图边缘箭头：窗口外的敌方锚点在东南，箭头落在面板右下边缘并带距离",
+  edgeArrow !== null &&
+    edgeArrow.playerId === 2 &&
+    edgeArrow.sector === "东南" &&
+    edgeArrow.distance === 226 &&
+    edgeArrow.x > MINIMAP_PANEL_SIZE / 2 &&
+    edgeArrow.y > MINIMAP_PANEL_SIZE / 2 &&
+    edgeArrow.x <= MINIMAP_PANEL_SIZE - MINIMAP_ARROW_INSET + 0.001 &&
+    edgeArrow.y <= MINIMAP_PANEL_SIZE - MINIMAP_ARROW_INSET + 0.001,
+  JSON.stringify(edgeArrow),
+);
+const westWorld = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: 0,
+  originY: 0,
+  width: 64,
+  height: 64,
+  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+  players: [
+    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
+    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [-192, 32] },
+  ],
+});
+const westArrow =
+  westWorld === null ? null : minimapNearestEdgeArrow(westWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE);
+check(
+  "小地图边缘箭头：西边的锚点落在面板左边缘，扇区是 西",
+  westArrow !== null &&
+    westArrow.sector === "西" &&
+    westArrow.x < MINIMAP_PANEL_SIZE / 2 &&
+    Math.abs(westArrow.y - MINIMAP_PANEL_SIZE / 2) < MINIMAP_PANEL_SIZE / 2,
+  JSON.stringify(westArrow),
+);
+const insideWorld = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: 0,
+  originY: 0,
+  width: 64,
+  height: 64,
+  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+  players: [{ id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [32, 32] }],
+});
+check(
+  "小地图边缘箭头：锚点在已载入窗口内时不画边缘箭头",
+  insideWorld !== null &&
+    minimapNearestEdgeArrow(insideWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE) === null,
+);
+const clickTarget = anchorCameraTarget({ x: 192, y: 192 }, 16);
+check(
+  "点击敌方行得到镜头中心目标：锚点格中心 (192.5,192.5) → 世界像素 (3080,3080)",
+  clickTarget.x === 3080 &&
+    clickTarget.y === 3080 &&
+    Math.floor(clickTarget.x / 16) === 192 &&
+    Math.floor(clickTarget.y / 16) === 192 &&
+    anchorCameraTarget({ x: -1, y: -1 }, 16).x === -8 &&
+    anchorCameraTarget({ x: -1, y: -1 }, 16).y === -8,
+  JSON.stringify(clickTarget),
+);
+check(
+  "点击敌方行：未登录或没有 anchors 时没有可跳转的最近锚点",
+  arrowWorld !== null &&
+    enemyAnchorEntries(arrowWorld.players, null, { x: 0, y: 0 }).length === 0 &&
+    enemyAnchorEntries(undefined, 1, { x: 0, y: 0 }).length === 0,
+);
+
 check(
   "WHOAMI 丢失时用 players 里的账号名恢复玩家 id；名字不匹配则不猜",
   localPlayerIdFromRoster(

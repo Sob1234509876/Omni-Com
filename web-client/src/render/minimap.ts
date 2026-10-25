@@ -19,9 +19,16 @@
  */
 
 import { CAMERA_SAFETY_BOUND_TILES, type Camera, type Point, type TileCoord } from "./camera.ts";
+import {
+  compassSector,
+  enemyAnchorEntries,
+  tileDistance,
+  type CompassSector,
+  type EnemyAnchorEntry,
+} from "./enemy.ts";
 import { terrainColor } from "./fallback.ts";
 import type { WindowBounds } from "./stream.ts";
-import { entityInWindow, ownershipColor, type WorldView } from "./view.ts";
+import { entityInWindow, ownershipColor, tileInWindow, type WorldView } from "./view.ts";
 
 /** Side of the minimap panel in CSS pixels; the CSS in `index.html` uses the same 180px square. */
 export const MINIMAP_PANEL_SIZE = 180;
@@ -152,6 +159,127 @@ export function minimapCameraTarget(
 
 function clampNumber(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+/** Distance in panel pixels between the terrain border and an edge arrow's centre. */
+export const MINIMAP_ARROW_INSET = 11;
+
+/** Side of the arrow triangle in panel pixels. */
+export const MINIMAP_ARROW_SIZE = 9;
+
+/**
+ * One edge arrow of the minimap: where it sits, which way it points, and what it says.
+ *
+ * <p>The arrow is only produced when the anchor lies **outside the loaded window**, because the minimap
+ * can only draw the loaded window. If the anchor is inside, the ordinary terrain area already answers
+ * "where"; the top-chrome line still answers "how far". The angle is in radians for the canvas, with
+ * `0` pointing east and positive angles turning clockwise (screen y grows down).
+ */
+export interface MinimapEdgeArrow {
+  /** Panel CSS x of the arrow centre. */
+  readonly x: number;
+  /** Panel CSS y of the arrow centre. */
+  readonly y: number;
+  /** Canvas rotation in radians; `0` points east. */
+  readonly angle: number;
+  /** Eight-sector compass direction from the camera centre to the anchor. */
+  readonly sector: CompassSector;
+  /** Rounded distance from the camera centre to the anchor, in tiles. */
+  readonly distance: number;
+  /** The hostile player whose anchor this arrow marks. */
+  readonly playerId: number;
+}
+
+/**
+ * The edge arrow for one hostile anchor, or `null` when the anchor is inside the loaded window.
+ *
+ * <p>The ray starts at the centre of the terrain area and runs toward the anchor's (possibly far
+ * outside) minimap point; the arrow is placed where that ray meets the terrain border, inset by
+ * {@link MINIMAP_ARROW_INSET} so the triangle and its distance label stay inside the panel. The sector
+ * comes from the world delta, not from the clipped pixel delta, so an anchor far to the south-east still
+ * answers `东南` even when the clipped arrow happens to sit on the right edge.
+ *
+ * <p>Pure and DOM-free, so the render check can assert the sector and the side of the panel.
+ */
+export function minimapEdgeArrow(
+  world: WorldView,
+  camera: Camera,
+  entry: EnemyAnchorEntry,
+  panelSize = MINIMAP_PANEL_SIZE,
+): MinimapEdgeArrow | null {
+  if (tileInWindow(world, entry.anchor.x, entry.anchor.y)) {
+    return null;
+  }
+  const layout = minimapLayout(world, panelSize);
+  if (layout.contentWidth <= 0 || layout.contentHeight <= 0) {
+    return null;
+  }
+  const centreX = layout.offsetX + layout.contentWidth / 2;
+  const centreY = layout.offsetY + layout.contentHeight / 2;
+  const target = minimapPointForTile(world, entry.anchor.x, entry.anchor.y, panelSize);
+  const dx = target.x - centreX;
+  const dy = target.y - centreY;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) {
+    return null;
+  }
+  const inset = Math.min(
+    MINIMAP_ARROW_INSET,
+    Math.max(0, layout.contentWidth / 2 - 1),
+    Math.max(0, layout.contentHeight / 2 - 1),
+  );
+  const halfWidth = Math.max(0, layout.contentWidth / 2 - inset);
+  const halfHeight = Math.max(0, layout.contentHeight / 2 - inset);
+  const scaleX = dx === 0 ? Number.POSITIVE_INFINITY : halfWidth / Math.abs(dx);
+  const scaleY = dy === 0 ? Number.POSITIVE_INFINITY : halfHeight / Math.abs(dy);
+  const scale = Math.min(scaleX, scaleY);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return null;
+  }
+  const x = clampNumber(
+    centreX + dx * scale,
+    layout.offsetX + inset,
+    layout.offsetX + layout.contentWidth - inset,
+  );
+  const y = clampNumber(
+    centreY + dy * scale,
+    layout.offsetY + inset,
+    layout.offsetY + layout.contentHeight - inset,
+  );
+  const centre = camera.centerTile();
+  const sector = compassSector(entry.anchor.x - centre.x, entry.anchor.y - centre.y);
+  if (sector === null) {
+    return null;
+  }
+  return {
+    x,
+    y,
+    angle: Math.atan2(dy, dx),
+    sector,
+    distance: tileDistance(centre, entry.anchor),
+    playerId: entry.playerId,
+  };
+}
+
+/**
+ * The nearest hostile edge arrow, or `null` when every known hostile anchor is inside the window.
+ *
+ * <p>Nearest first, so two hostile bases on opposite sides do not fight over the single edge arrow; the
+ * top-chrome line still names both.
+ */
+export function minimapNearestEdgeArrow(
+  world: WorldView,
+  camera: Camera,
+  myPlayerId: number | null,
+  panelSize = MINIMAP_PANEL_SIZE,
+): MinimapEdgeArrow | null {
+  const entries = enemyAnchorEntries(world.players, myPlayerId, camera.centerTile());
+  for (const entry of entries) {
+    const arrow = minimapEdgeArrow(world, camera, entry, panelSize);
+    if (arrow !== null) {
+      return arrow;
+    }
+  }
+  return null;
 }
 
 /**
@@ -308,5 +436,51 @@ export class MinimapRenderer {
       Math.max(0, right - left - 1),
       Math.max(0, bottom - top - 1),
     );
+
+    // The edge arrow answers "which way" when the nearest hostile anchor is outside this window. The
+    // distance label is drawn on the inward side of the arrow so it can never fall off the panel.
+    const arrow = minimapNearestEdgeArrow(world, camera, myPlayerId, panelSize);
+    if (arrow !== null) {
+      this.drawEdgeArrow(arrow, panelSize);
+    }
+  }
+
+  /** Draws one red edge arrow with its distance in tiles underneath (inward when at the border). */
+  private drawEdgeArrow(arrow: MinimapEdgeArrow, panelSize: number): void {
+    const context = this.context;
+    context.save();
+    context.translate(arrow.x, arrow.y);
+    context.rotate(arrow.angle);
+    context.beginPath();
+    context.moveTo(MINIMAP_ARROW_SIZE, 0);
+    context.lineTo(-MINIMAP_ARROW_SIZE + 2, MINIMAP_ARROW_SIZE - 2);
+    context.lineTo(-MINIMAP_ARROW_SIZE + 4, 0);
+    context.lineTo(-MINIMAP_ARROW_SIZE + 2, -(MINIMAP_ARROW_SIZE - 2));
+    context.closePath();
+    context.fillStyle = "#ef4444";
+    context.fill();
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1;
+    context.stroke();
+    context.restore();
+
+    context.save();
+    context.font = "10px ui-monospace, \"Cascadia Code\", Consolas, monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = "#ffffff";
+    context.strokeStyle = "rgba(0, 0, 0, 0.72)";
+    context.lineWidth = 3;
+    const label = `${arrow.distance} 格`;
+    const textX = clampNumber(arrow.x, 18, panelSize - 18);
+    const below = arrow.y + 14;
+    const textY = clampNumber(
+      below <= panelSize - 6 ? below : arrow.y - 14,
+      6,
+      panelSize - 6,
+    );
+    context.strokeText(label, textX, textY);
+    context.fillText(label, textX, textY);
+    context.restore();
   }
 }

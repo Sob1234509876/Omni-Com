@@ -54,7 +54,7 @@ owner and health fraction, several engineers raising one site faster, and an ASC
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 515 checks passed.
+RTS engine scenario: all 655 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own

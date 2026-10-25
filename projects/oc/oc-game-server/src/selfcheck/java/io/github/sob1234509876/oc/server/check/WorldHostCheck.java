@@ -221,6 +221,36 @@ public final class WorldHostCheck {
                 everySceneUnit &= first.engine().world().map().isBuildable(unit.position().tile());
             }
             check.that(everySceneUnit, "样例场景的每个单位都落在可建造地形上");
+
+            // Who owns the sample scene: player 1, by engine entity id and by the snapshot's `player`
+            // field. This pins the server truth behind the owner's "the display units are enemy units"
+            // report: the host builds the scene for player 1, never for the classic bot's player 2.
+            Map<Long, Long> sceneOwners = new LinkedHashMap<>();
+            for (Entity entity : first.engine().world().entities()) {
+                if (entity.isAlive()) {
+                    sceneOwners.put(entity.id().value(), (long) entity.owner().id().value());
+                }
+            }
+            check.that(!sceneOwners.isEmpty(), "样例场景至少有一个实体用于归属断言");
+            check.that(sceneOwners.values().stream().allMatch(owner -> owner == 1L),
+                    "样例场景的每个实体 id 在引擎里都属于玩家 1: " + sceneOwners);
+            check.that(!sceneOwners.containsValue(2L), "样例场景里没有玩家 2（经典机器人）的实体");
+
+            Map<String, Object> sceneDocument = MiniJson.parseObject(wide);
+            Map<Long, Long> wireOwners = new LinkedHashMap<>();
+            for (Object raw : (List<?>) sceneDocument.get("entities")) {
+                if (raw instanceof Map<?, ?> row && row.get("id") instanceof Number id
+                        && row.get("player") instanceof Number player) {
+                    wireOwners.put(id.longValue(), player.longValue());
+                }
+            }
+            check.equal(sceneOwners, wireOwners,
+                    "快照按实体 id 报告的 player 字段与引擎归属一致（样例场景全是玩家 1）");
+            check.equal(1L, longField(playerRow(sceneDocument, 1), "id"),
+                    "样例场景的玩家行 id 是 1");
+            check.equal(List.of((double) anchor.x(), (double) anchor.y()),
+                    anchorField(playerRow(sceneDocument, 1)),
+                    "玩家 1 的玩家行 anchor 就是世界的出生锚点 " + anchor);
         } finally {
             first.stop();
             second.stop();
@@ -389,15 +419,28 @@ public final class WorldHostCheck {
                 check.equal("alice", alice.get("name"), "alice 的行带账号名");
                 check.equal(300L, longField(alice, "gold"), "alice 的金币是经典开局的 300");
                 check.equal(60L, longField(alice, "wood"), "alice 的木材是经典开局的 60");
+                GridPos aliceAnchor = host.baseAnchor(WorldHost.FIRST_HUMAN_PLAYER_ID);
+                check.equal(List.of((double) aliceAnchor.x(), (double) aliceAnchor.y()),
+                        anchorField(alice),
+                        "真人 alice 的玩家行 anchor 是她的基地槽位出生锚点 " + aliceAnchor);
             }
             Map<?, ?> bob = playerRow(players, WorldHost.FIRST_HUMAN_PLAYER_ID + 1);
             check.equal(300L, bob == null ? -1L : longField(bob, "gold"),
                     "bob 也有自己的 300 金币（存档按玩家各自读取）");
+            GridPos bobAnchor = host.baseAnchor(WorldHost.FIRST_HUMAN_PLAYER_ID + 1);
+            check.equal(List.of((double) bobAnchor.x(), (double) bobAnchor.y()),
+                    anchorField(bob),
+                    "真人 bob 的玩家行 anchor 是另一个基地槽位锚点 " + bobAnchor);
 
             Map<?, ?> scene = playerRow(players, 1);
             check.that(scene != null && longField(scene, "gold") == 300L
                             && longField(scene, "wood") == 60L,
                     "样例玩家 1 也在同一份开局资源里（300 金币、60 木材）");
+            check.equal(List.of((double) host.spawnAnchor().x(), (double) host.spawnAnchor().y()),
+                    anchorField(scene),
+                    "样例玩家 1 的 anchor 是世界的出生锚点 " + host.spawnAnchor());
+            check.that(anchorField(alice) != null && anchorField(bob) != null,
+                    "快照里的真人与样例玩家行都带 anchor");
         } finally {
             host.stop();
         }
@@ -809,6 +852,17 @@ public final class WorldHostCheck {
     /** Reads an integer field of a parsed row; a missing or non-numeric field reports {@code -1}. */
     private static long longField(Map<?, ?> row, String key) {
         return row != null && row.get(key) instanceof Number number ? number.longValue() : -1L;
+    }
+
+    /** Reads a player row's optional `anchor` pair as two numbers, or {@code null} when absent. */
+    private static List<Double> anchorField(Map<?, ?> row) {
+        if (row == null || !(row.get("anchor") instanceof List<?> pair) || pair.size() != 2) {
+            return null;
+        }
+        if (!(pair.get(0) instanceof Number x) || !(pair.get(1) instanceof Number y)) {
+            return null;
+        }
+        return List.of(x.doubleValue(), y.doubleValue());
     }
 
     /** The same seed must reproduce the same tiles and document; another seed must not. */
