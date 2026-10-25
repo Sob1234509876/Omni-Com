@@ -34,6 +34,7 @@ import {
   UNIT_PATHS,
   MAX_MOVE_POINTS,
   build,
+  buildBatch,
   orderAttack,
   orderAttackMove,
   orderMoveRoute,
@@ -115,6 +116,7 @@ import {
   doubleClickSelection,
   engineerForPlacement,
   engineerSelection,
+  engineersForPlacement,
 } from "./render/selection";
 import {
   formatProgressPercent,
@@ -140,7 +142,14 @@ import {
   tooltipIdleExpired,
   tooltipThumbnail,
 } from "./render/tooltip";
-import { upgradeEntry } from "./render/upgrade";
+import {
+  UPGRADE_ALL_ACTION_LABEL,
+  upgradeBatchPlan,
+  upgradeBatchSummary,
+  upgradeEntry,
+  upgradeSkipText,
+  type UpgradeBatchPlan,
+} from "./render/upgrade";
 import { buildingActionModel } from "./render/buildingActions";
 import {
   demoWorld,
@@ -1137,7 +1146,12 @@ function selectedOwnUnits(): EntityView[] {
   return selectedEntities().filter((entity) => isMine(entity) && !isBuildingEntity(entity));
 }
 
-/** The selected engineer group's first engineer when the whole selection is own engineers. */
+/** The selected engineer group when the whole selection is own engineers; empty otherwise. */
+function placementEngineers(): EntityView[] {
+  return engineersForPlacement(selectedEntities(), myPlayerId);
+}
+
+/** The first engineer of the placement group, or undefined when the selection is not engineers. */
 function placementEngineer(): EntityView | undefined {
   return engineerForPlacement(selectedEntities(), myPlayerId);
 }
@@ -2250,13 +2264,31 @@ function updateGameplayPanel(): void {
 
   // The upgrade entry is the visible fix for the reported bug: a selected own building with an
   // `upgrade` field always shows it, and it is only disabled when the local player cannot pay or is not
-  // connected. The pure rule (ownership, field presence, affordability, label) lives in upgrade.ts.
-  const upgradeOffer = upgradeEntry(single, myPlayerId, myPlayerRow(), contentLabel);
-  upgradeSection.hidden = upgradeOffer === null;
-  if (upgradeOffer === null) {
+  // connected. A same-kind group of two or more own buildings gets the `升级全部` batch instead: one
+  // click sends one UPGRADE line per building in selection order and reports skipped buildings with
+  // their reason. The pure rules live in upgrade.ts.
+  const batchUpgrade =
+    sameKindOwnBuildings && selectedOwnBuildings.length > 1
+      ? upgradeBatchPlan(selectedOwnBuildings, myPlayerId, myPlayerRow())
+      : null;
+  const upgradeOffer =
+    batchUpgrade === null ? upgradeEntry(single, myPlayerId, myPlayerRow(), contentLabel) : null;
+  upgradeSection.hidden = batchUpgrade === null && upgradeOffer === null;
+  if (batchUpgrade === null && upgradeOffer === null) {
     upgradeButton.disabled = true;
     void renderLatexInto(upgradeTarget, "");
-  } else {
+  } else if (batchUpgrade !== null) {
+    const kindLabel = contentLabel(selectedOwnBuildings[0]?.kind ?? "");
+    const skipDetail = batchUpgrade.skipped
+      .map((skip) => `e${skip.buildingId} ${upgradeSkipText(skip.reason)}`)
+      .join("、");
+    void renderLatexInto(upgradeTarget, `· ${selectedOwnBuildings.length} 座 ${kindLabel}`);
+    void renderLatexInto(upgradeButton, UPGRADE_ALL_ACTION_LABEL);
+    upgradeButton.title =
+      `${batchUpgrade.summary}：${batchUpgrade.lines.join("、")}` +
+      (skipDetail === "" ? "" : `；跳过 ${skipDetail}`);
+    upgradeButton.disabled = !(gameplayReady && batchUpgrade.lines.length > 0);
+  } else if (upgradeOffer !== null) {
     void renderLatexInto(upgradeTarget, `· e${upgradeOffer.buildingId} ${upgradeOffer.targetName}`);
     void renderLatexInto(upgradeButton, upgradeOffer.label);
     upgradeButton.title = upgradeOffer.affordable
@@ -2473,6 +2505,93 @@ function doUpgrade(): void {
   );
 }
 
+/** `升级全部`: one UPGRADE line per eligible building of a same-kind own building selection. */
+function doUpgradeAll(): void {
+  const plan = upgradeBatchPlan(selectedEntities(), myPlayerId, myPlayerRow());
+  if (plan === null) {
+    refuse("先选中自己的同类型建筑（可以多座），再升级全部");
+    return;
+  }
+  if (plan.lines.length === 0) {
+    refuse(`没有可升级的建筑：${upgradeSkipDetail(plan)}`);
+    return;
+  }
+  void sendUpgradeBatch(plan);
+}
+
+/** Dispatches the single and the batch upgrade entry from one button. */
+function doUpgradeAction(): void {
+  if (selectedEntities().length > 1) {
+    doUpgradeAll();
+    return;
+  }
+  doUpgrade();
+}
+
+/** `e5 未完工、e6 资源不足`, or an empty string when nothing was skipped. */
+function upgradeSkipDetail(plan: UpgradeBatchPlan): string {
+  return plan.skipped
+    .map((skip) => `e${skip.buildingId} ${upgradeSkipText(skip.reason)}`)
+    .join("、");
+}
+
+/**
+ * Sends a batch upgrade plan through the ordinary command path and reports a summary.
+ *
+ * <p>Every line is logged on send and its answer is logged on receipt, exactly like a single
+ * `UPGRADE`; a server refusal (a snapshot race, for example) counts as rejected instead of stopping the
+ * remaining lines, so one stale building can never block the rest of the batch. Buildings the planner
+ * skipped are logged with their reason too, and the final status line is
+ * `已发送 N 条升级 / M 条被拒绝`, where M includes both planner skips and `ERR` answers.
+ */
+async function sendUpgradeBatch(plan: UpgradeBatchPlan): Promise<void> {
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  const active = socket;
+  if (active === null) {
+    refuse("还没有连接");
+    return;
+  }
+  setStatus(`等待批量 UPGRADE 的回答…`, "busy");
+  const answers: string[] = [];
+  let rejected = plan.skipped.length;
+  for (const line of plan.lines) {
+    log("send", line);
+    try {
+      const answer = await active.send(line);
+      answers.push(answer);
+      log("recv", answer);
+      if (isErrorAnswer(answer)) {
+        rejected += 1;
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      log("error", message);
+      toastConsole.push({
+        tone: "error",
+        command: plan.lines.join(" · "),
+        answer: [...answers, message].join(" · "),
+      });
+      setStatus(message, "error");
+      return;
+    }
+  }
+  for (const skip of plan.skipped) {
+    log("info", `跳过 e${skip.buildingId}：${upgradeSkipText(skip.reason)}`);
+  }
+  toastConsole.push({
+    tone: rejected > 0 ? "error" : "info",
+    command: plan.lines.join(" · "),
+    answer: answers.join(" · "),
+  });
+  const summary = upgradeBatchSummary(plan.lines.length, rejected);
+  const detail = upgradeSkipDetail(plan);
+  log("info", detail === "" ? summary : `${summary}（${detail}）`);
+  setStatus(summary, rejected > 0 ? "error" : "ok");
+  void pollWorldSnapshot();
+}
+
 /**
  * The service state for the single selected building, or null when the panel offers nothing.
  *
@@ -2670,7 +2789,8 @@ function doLeftClick(tile: TileCoord): boolean {
     return false;
   }
   const path = placementPath;
-  const engineer = placementEngineer();
+  const engineers = placementEngineers();
+  const engineer = engineers[0];
   if (engineer === undefined) {
     placementPath = null;
     updateGameplayPanel();
@@ -2679,21 +2799,36 @@ function doLeftClick(tile: TileCoord): boolean {
     return true;
   }
   // The ghost and the click share one verdict. An illegal site keeps the mode armed and names the
-  // reason instead of sending a BUILD the server is guaranteed to refuse.
+  // reason instead of sending a BUILD the server is guaranteed to refuse. A joinable own site is legal
+  // by the same rule, which is what lets several engineers build together.
   const preview = buildPlacementPreview(world, path, tile, engineer);
   if (preview.state !== "legal") {
     refuse(`BUILD 未发送：${placementReasonText(preview.reason)}`);
     updateHud(true);
     return true;
   }
+  let lines: string[];
+  try {
+    // One line per engineer, all with the same footprint. The server places the first site, charges it
+    // once and attaches every other engineer to it through the join path.
+    lines = buildBatch(
+      engineers.map((selected) => selected.id),
+      path,
+      tile.x,
+      tile.y,
+    );
+  } catch (error: unknown) {
+    refuse(error instanceof Error ? error.message : String(error));
+    return true;
+  }
   placementPath = null;
   updateGameplayPanel();
   updateHud(true);
-  void sendGameplayCommand(
-    "BUILD",
-    build(engineer.id, path, tile.x, tile.y),
-    `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`,
-  );
+  const confirmation =
+    engineers.length === 1
+      ? `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`
+      : `${engineers.length} 个工兵在 ${tile.x},${tile.y} 建造 ${labelledContent(path)}（第一个放置，其余加入）`;
+  void sendGameplayBatch("BUILD", lines, lines, confirmation);
   return true;
 }
 
@@ -3581,7 +3716,7 @@ attackMoveButton.addEventListener("click", () => {
     armAttackMove();
   }
 });
-upgradeButton.addEventListener("click", doUpgrade);
+upgradeButton.addEventListener("click", doUpgradeAction);
 continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);

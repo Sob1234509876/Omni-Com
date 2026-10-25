@@ -1,4 +1,4 @@
-English | [简体中文](README_zh_CN.md)
+﻿English | [简体中文](README_zh_CN.md)
 
 # Omni Com RTS Engine
 
@@ -54,7 +54,7 @@ owner and health fraction, several engineers raising one site faster, and an ASC
 A successful run ends with:
 
 ```text
-RTS engine scenario: all 655 checks passed.
+RTS engine scenario: all 657 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own

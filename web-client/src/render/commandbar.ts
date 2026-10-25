@@ -239,7 +239,7 @@ export function commandBarModel(
       actions: [...unitActions(), ...pathActions("build", buildingPaths, labelForPath)],
       hint:
         `已选 ${engineerCount} 个工兵：停止 / 攻击移动；右下角 ${buildingPaths.length} 个 BUILD 条目，` +
-        "点条目后左键放置",
+        "点条目后左键放置；多个工兵会对同一工地各发一条 BUILD（第一个放置，其余加入）",
     };
   }
 

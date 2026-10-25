@@ -1970,6 +1970,12 @@ public final class RtsScenario {
         var repeatAgain = repeatEngine.commands().tryBuild(repeatSecond, hut, new GridPos(16, 10));
         check.that(repeatAgain.placed() && repeatAgain.site() == repeatPlaced.site(),
                 "the same build command on the unfinished site joins it instead of being refused");
+        repeatEngine.tick();
+        check.equal(2, repeatPlaced.site().builderCount(),
+                "two engineers ordered with the ordinary placement command both attach to the same site");
+        check.that(repeatFirst.orders().current() instanceof BuildOrder
+                        && repeatSecond.orders().current() instanceof BuildOrder,
+                "both engineers really run the build order of that one site");
         check.equal(2, repeatWorld.buildingsOf(repeatPlayer).size(),
                 "the join path still leaves exactly one site (depot plus site)");
         check.equal(Natural.of(90), repeatPlayer.logistics().amount(content.item("gold")),
@@ -2604,9 +2610,13 @@ public final class RtsScenario {
         Natural goldAfterPlacement = player.logistics().amount(content.item("gold"));
         boolean joined = true;
         for (int index = 1; index < builders.size(); index++) {
-            var join = engine.commands().tryBuild(builders.get(index), run.site);
+            // The wire path: the server's BUILD resolves the type and origin and the engine's
+            // unfinishedSiteAt then recognises the same-kind site and joins it. This is exactly the
+            // command a second engineer sends when the client batches one BUILD per engineer.
+            var join = engine.commands().tryBuild(builders.get(index), content.building(COOP_HUT),
+                    new GridPos(16, 10));
             joined &= join.placed();
-            check.that(join.placed(), "builder " + (index + 1)
+            check.that(join.placed() && join.site() == run.site, "builder " + (index + 1)
                     + " joins the existing site instead of placing another: " + join.refusal());
         }
         if (!joined) {

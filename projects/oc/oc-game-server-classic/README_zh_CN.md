@@ -1,4 +1,4 @@
-[English](README.md) | 简体中文
+﻿[English](README.md) | 简体中文
 
 # Omni Com Classic 世界插件
 
@@ -105,6 +105,18 @@
 `the construction site was reclaimed by its owner` 为理由失败，工地被移除，并且**恰好一半放置成本**存回仓库
 ——例如仓库工地返还 50 金币 + 20 木材。**已完工建筑不能回收**，拒绝文案会说明。命令本身不扣费。
 
+## 工程师调度池
+
+`ClassicEngineerPool` 是第三个世界 tick 钩子，也是"大部分工程师闲着、只有一两个在搬"的正式修复。它不给每个兵营固定分配一名工程师，而是每次通过都重新计算一支队伍：
+
+- **半径。** 只有当一名己方、活着、能搬运、与兵营同维度、且距兵营不超过 `ClassicEngineerPool.RECRUIT_RADIUS_TILES = 24` 格的工程师**订单队列为空**时，它才进入队伍。正在移动、建造、维修、战斗或已经在搬运的工程师不会被打断；队列清空后下一次通过才有资格。
+- **一次一个兵营。** 每名玩家一次只服务**最近的未满足**生产建筑：按到玩家最老建筑的平方距离排序，距离相同按建筑 id。只要兵营还有待办送货或付得起的待料配方，它就一直算"未满足"，队伍不会在它的货送到一半时跑去第二个兵营。
+- **不粘性。** 一次搬运结束后订单队列为空，下一次通过就可以接下一个需求。任何待办 job 已经点名的工程师会被排除，所以一名工程师永远不会同时服务两个兵营。
+- **新工程师自动入池。** 池每 `ClassicEngineerPool.POOL_INTERVAL_TICKS = 5` tick 通过一次，所以第 `t` tick 产出的单位会在 `t` 之后第一次通过时被考虑；没有名册、没有入伍命令，玩家中途加入也不需要重启。
+- **一个兵营可以有多名搬运工。** 引擎只为当前正在等待的配方建一个送货 job；池会通过 `WarehouseLogistics.requestDeliveryJob(...)` 把队列后面配方的缺口也预排成 job，每个空闲工程师一个，于是一条四件的生产队列可以让四名工程师同时服务同一个兵营。货物照常预订、照常搬运，生产系统仍从自己的缓冲区消费它们。
+
+经典世界通过 `HaulingSystem.setAutoHaulerAssignment(false)` 关掉引擎自己的"最近空闲搬运工"搜索；池自己挑人并调用 `HaulingSystem.assignHauler(job, unit)`。引擎搬运系统的其余部分（预订、货物、死亡回收、3000 tick 超时）完全不变。非经典世界、直送模式、没有仓库的玩家、以及没有可负担需求的生产建筑都不会被这个钩子碰到。
+
 ## 开局资源与开局
 
 新玩家收到 **300 金币 + 60 木材**，由 `ClassicContent.STARTING_RESOURCES` 声明一次。世界创建时由宿主把这笔库存存进玩家的仓库。
@@ -205,10 +217,10 @@ projects/oc/oc-googology/build/libs/oc-googology-2.0a.jar
 自检末尾打印一行：
 
 ```text
-classic plugin self check: all 522 checks passed.
+classic plugin self check: all 542 checks passed.
 ```
 
-522 条来自原来的十六节，外加这次按 owner 报告补的回归：默认单机器人世界必须在 600 tick 内至少训练出六个战斗单位并下达攻击命令，STOP 之后对真实 `CommandService` 下达的移动与建造都必须生效，九个经典建筑必须各自拥有不同的图集纹理格。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级，机器人那一节则证明默认单机器人世界与旧版逐字节相同，而两个机器人彼此不同、换种子会移动基地。
+542 条来自原来的十六节，外加这次按 owner 报告补的回归：默认单机器人世界必须在 600 tick 内至少训练出六个战斗单位并下达攻击命令，STOP 之后对真实 `CommandService` 下达的移动与建造都必须生效，九个经典建筑必须各自拥有不同的图集纹理格，工程师调度池必须在 24 格半径内一次服务一个兵营、让新工兵自动入池并且不把一名工兵派给两个兵营。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级，机器人那一节则证明默认单机器人世界与旧版逐字节相同，而两个机器人彼此不同、换种子会移动基地。
 
 归属那一节把上报的缺陷按实体 id 与快照 `player` 字段同时钉住：样例场景（六个单位、九座建筑）属于玩家 1，机器人开局基地（仓库、一级兵营、一级矿场）属于玩家 2，绝不会反过来。它还钉住公开的阵营锚点：玩家 1 报告世界的出生锚点，玩家 2 报告 `ClassicBots` 的锚点（默认种子是 `(192,192)`），浏览器的敌方行与小地图边缘箭头因此有真实来源。锚点是已知出生位置，不是战争迷雾揭示。
 
@@ -220,9 +232,10 @@ classic plugin self check: all 522 checks passed.
 | `src/main/java/.../classic/ClassicEconomy.java` | 每 60 tick 支付矿场与伐木场收益的世界 tick 钩子 |
 | `src/main/java/.../classic/ClassicAi.java` | 单个机器人玩家的确定性控制器（无参形式就是旧版的单个敌人） |
 | `src/main/java/.../classic/ClassicBots.java` | 机器人玩家系统：数量、阵营种子、出生锚点与每个机器人一个控制器 |
+| `src/main/java/.../classic/ClassicEngineerPool.java` | 工程师调度池：24 格半径、一次一个兵营、预排队列需求 |
 | `src/main/java/.../classic/BotFaction.java` | 一个机器人的玩家 id、阵营种子、策略与出生锚点 |
 | `src/main/java/.../classic/BotStrategy.java` | 每个机器人的策略记录、取值范围与确定性派生 |
-| `src/main/java/.../classic/ClassicPlugin.java` | 插件本体：注册目录与两个钩子，从插件选项读取 `--bots` |
+| `src/main/java/.../classic/ClassicPlugin.java` | 插件本体：注册目录与三个钩子，从插件选项读取 `--bots` |
 | `src/main/resources/omnicom-plugin.properties` | 描述文件：`id=oc-classic`、`version=1.0`、`main`、`description` |
 | `src/main/resources/assets/manifest.json` | 服务器要合并的图集清单 |
 | `src/main/resources/assets/atlas.png` | 96x128 的单位与建筑图集（每种建筑一个 32x32 格） |

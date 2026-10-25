@@ -1,4 +1,4 @@
-English | [简体中文](README_zh_CN.md)
+﻿English | [简体中文](README_zh_CN.md)
 
 # oc-web-client
 
@@ -141,8 +141,16 @@ the **日志** history overlay work in either view. (The page's own interface is
   that kind offers and the production queue list (the same per-item `ticks / total` rows as before); only the
   armory trains units, while a selected mine, lumber camp or warehouse shows no TRAIN section at all. With several
   same-kind buildings selected, one click queues the same unit in **every** selected building and they produce in
-  parallel; the hint says `一次点击各排一个`. For a selected engineer group it shows the **BUILD** entries;
-  otherwise it stays empty. A building's queue is still shown for an enemy building, because it is read-only
+  parallel; the hint says `一次点击各排一个`. The same group also gets **`升级全部`** when at least one building
+  offers an upgrade: one click sends one `UPGRADE <id>` per affordable building in selection order (the budget is
+  reduced as it plans, so the second of two 140-gold upgrades is skipped when only 200 gold is left), logs every
+  answer, and reports `已发送 N 条升级 / M 条被拒绝`; an unfinished site, a top-tier building and an unaffordable
+  one are skipped with their reason while the rest still go. A single selected building keeps the single `升级`
+  entry. For a selected engineer group it shows the **BUILD** entries; a click sends **one `BUILD` line per
+  engineer** for the same footprint, so the first engineer places the site and the rest join it and the site rises
+  at `min(engineers, 4)` construction points per tick. The ghost treats an own unfinished site of the same kind as
+  joinable (green, not "位置被占用"), which is what lets a second engineer aim at an existing site. Otherwise the
+  context zone stays empty. A building's queue is still shown for an enemy building, because it is read-only
   information rather than an action.
 
 **Mixed selections.** A selection that contains at least one own unit **and** an own building offers the unit actions
@@ -417,7 +425,7 @@ footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, o
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 413 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 422 passing checks.
 
 ## hello plugin demo
 

@@ -9,14 +9,14 @@ import java.util.Objects;
 
 /**
  * The {@code oc-classic} plugin: it claims the server's world with {@link ClassicContent} and then plays
- * that world with two tick hooks.
+ * that world with three tick hooks.
  *
  * <p><strong>What it does.</strong> Two things, in {@link #onLoad(PluginContext)}: it hands its catalogue to
- * the server through {@link PluginContext#registerWorldContent}, and it attaches the game's two
+ * the server through {@link PluginContext#registerWorldContent}, and it attaches the game's three
  * {@link io.github.sob1234509876.oc.server.world.WorldTickHook}s through
- * {@link PluginContext#registerWorldTickHook} - {@link ClassicEconomy} first, then {@link ClassicBots}. That
- * is the whole plugin. It registers no request, opens no file, starts no thread and keeps no reference to
- * the server.
+ * {@link PluginContext#registerWorldTickHook} - {@link ClassicEconomy} first, then {@link ClassicBots},
+ * then {@link ClassicEngineerPool}. That is the whole plugin. It registers no request, opens no file,
+ * starts no thread and keeps no reference to the server.
  *
  * <p><strong>How many bots.</strong> {@link ClassicBots} reads the server's {@code --bots} option from
  * {@link PluginContext#options()} (key {@value ClassicBots#OPTION_BOTS}). Absent means
@@ -24,10 +24,11 @@ import java.util.Objects;
  * accepted and anything else refuses the plugin load instead of silently playing the wrong world.
  *
  * <p><strong>Why the order matters.</strong> The hooks run in registration order after every fixed world
- * step, so the economy pays a player's mines before the AI takes its decision for the same tick. Both hooks
- * are registered even though the server may serve a different plugin's world (the content seam is
- * first-one-wins): each hook checks that the world really is {@code oc-classic} and does nothing otherwise,
- * so a classic jar in a folder cannot break another game's world.
+ * step, so the economy pays a player's mines before the AI takes its decision for the same tick, and the
+ * engineer pool sees any queue the bots just created. All three hooks are registered even though the
+ * server may serve a different plugin's world (the content seam is first-one-wins): each hook checks that
+ * the world really is {@code oc-classic} and does nothing otherwise, so a classic jar in a folder cannot
+ * break another game's world.
  *
  * <p><strong>What happens next is the server's decision, not the plugin's.</strong> A server serves the
  * first world content registered in load order and falls back to the engine's sample catalogue when none
@@ -56,6 +57,9 @@ public final class ClassicPlugin implements Plugin {
 
     /** The bot player system, one per loaded plugin (and therefore one per world). */
     private ClassicBots bots = new ClassicBots(ClassicBots.DEFAULT_BOTS);
+
+    /** The engineer crew policy, registered after the bots so a bot's new queue is visible to it. */
+    private final ClassicEngineerPool engineerPool = new ClassicEngineerPool();
 
     /** Creates the plugin; the loader uses the implicit public no-argument constructor it sees here. */
     public ClassicPlugin() {
@@ -96,6 +100,7 @@ public final class ClassicPlugin implements Plugin {
         bots = new ClassicBots(count);
         context.registerWorldTickHook(economy);
         context.registerWorldTickHook(bots);
+        context.registerWorldTickHook(engineerPool);
     }
 
     /** The catalogue this plugin registered; exposed so the self check can assert it is the same object. */
@@ -113,8 +118,13 @@ public final class ClassicPlugin implements Plugin {
         return bots;
     }
 
+    /** The engineer crew policy, in registration order after the bots. */
+    public ClassicEngineerPool engineerPool() {
+        return engineerPool;
+    }
+
     /** The hooks this plugin registers, in registration order; the same list {@link #onLoad} adds. */
     public List<WorldTickHook> worldTickHooks() {
-        return List.of(economy, bots);
+        return List.of(economy, bots, engineerPool);
     }
 }

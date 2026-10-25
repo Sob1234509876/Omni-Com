@@ -271,6 +271,26 @@ public final class WarehouseLogistics implements Logistics {
      * so that it can commit the claim once they arrived in its buffer.
      */
     public Optional<Reservation> requestDeliveryReservation(Building target, ItemBundle bundle) {
+        Optional<DeliveryJob> job = requestDeliveryJob(target, bundle);
+        return job.map(DeliveryJob::reservation);
+    }
+
+    /**
+     * Reserves a bundle and returns the delivery job that now carries it.
+     *
+     * <p>This is the job-returning form of {@link #requestDeliveryReservation(Building, ItemBundle)}.
+     * It exists for a game policy that wants to own hauler assignment: the classic plugin's engineer
+     * pool uses it to pre-stage the demand of a queued production job and then hand the job to a
+     * specific engineer through {@link HaulingSystem#assignHauler(DeliveryJob, Unit)}. The reservation,
+     * the job and its registration in the hauling system are exactly the same as production's own
+     * delivery request; only the caller keeps the job handle.
+     *
+     * @param target the finished, owned building that receives the goods
+     * @param bundle the bundle to move; an empty bundle produces no job
+     * @return the registered job, or empty when the goods cannot be reserved or no hauling system is
+     *     attached
+     */
+    public Optional<DeliveryJob> requestDeliveryJob(Building target, ItemBundle bundle) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(bundle, "bundle");
         if (bundle.isEmpty()) {
@@ -287,8 +307,9 @@ public final class WarehouseLogistics implements Logistics {
         if (reservation.isEmpty()) {
             return Optional.empty();
         }
-        system.submit(new DeliveryJob(target, bundle, reservation.get(), world.tickNumber()));
-        return reservation;
+        DeliveryJob job = new DeliveryJob(target, bundle, reservation.get(), world.tickNumber());
+        system.submit(job);
+        return Optional.of(job);
     }
 
     @Override

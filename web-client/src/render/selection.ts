@@ -29,28 +29,44 @@ import {
 } from "./view.ts";
 
 /**
- * The engineer a BUILD placement should use, or `undefined` when the selection is not an engineer-only
- * group.
+ * The engineers a BUILD placement should use, in selection order, or an empty list when the selection is
+ * not an engineer-only group.
  *
- * <p>The panel offers BUILD for one **or several** selected engineers; the first engineer in selection
- * order receives the order and the others stay selected, so the owner can keep a group of builders and
- * place several buildings without re-selecting one after every site. A mixed group (an engineer plus a
- * combat unit) deliberately has no placement engineer: BUILD needs one builder and silently picking one
- * out of a mixed order would be misleading.
+ * <p>The panel offers BUILD for one **or several** selected engineers. Item 26 is the cooperative case:
+ * one click sends one `BUILD` line per engineer, all for the same footprint, so the first engineer
+ * places the site (and pays for it) and every other engineer joins that unfinished site. The whole
+ * selection is returned in selection order so the first line is the placement and the rest are joins.
+ * A mixed group (an engineer plus a combat unit) deliberately returns nothing: BUILD needs builders and
+ * silently picking some of a mixed order would be misleading.
+ */
+export function engineersForPlacement(
+  selection: readonly EntityView[],
+  myPlayerId: number | null,
+): EntityView[] {
+  if (selection.length === 0) {
+    return [];
+  }
+  for (const entity of selection) {
+    if (ownershipOf(entity.playerId, myPlayerId) !== "mine" || !isEngineerKind(entity.kind)) {
+      return [];
+    }
+  }
+  return [...selection];
+}
+
+/**
+ * The first engineer a BUILD placement should use, or `undefined` when the selection is not an
+ * engineer-only group.
+ *
+ * <p>This stays the "who does the ghost judge reach for" accessor, and the single-engineer form of the
+ * placement command. The wire order itself is built from {@link engineersForPlacement}, which keeps
+ * every engineer in the group so a two-engineer selection produces two BUILD lines.
  */
 export function engineerForPlacement(
   selection: readonly EntityView[],
   myPlayerId: number | null,
 ): EntityView | undefined {
-  if (selection.length === 0) {
-    return undefined;
-  }
-  for (const entity of selection) {
-    if (ownershipOf(entity.playerId, myPlayerId) !== "mine" || !isEngineerKind(entity.kind)) {
-      return undefined;
-    }
-  }
-  return selection[0];
+  return engineersForPlacement(selection, myPlayerId)[0];
 }
 
 /**

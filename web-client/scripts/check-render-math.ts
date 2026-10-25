@@ -18,6 +18,7 @@ import {
   UNIT_PATHS,
   MAX_MOVE_POINTS,
   build,
+  buildBatch,
   buildingContent,
   orderAttack,
   orderAttackMove,
@@ -150,6 +151,9 @@ import {
 } from "../src/render/view.ts";
 import {
   UPGRADE_ACTION_LABEL,
+  UPGRADE_ALL_ACTION_LABEL,
+  upgradeBatchPlan,
+  upgradeBatchSummary,
   upgradeCostLabel,
   upgradeEntry,
 } from "../src/render/upgrade.ts";
@@ -244,6 +248,7 @@ import {
   doubleClickSelection,
   engineerForPlacement,
   engineerSelection,
+  engineersForPlacement,
   isEngineerKind,
   selectByPriority,
 } from "../src/render/selection.ts";
@@ -2397,6 +2402,69 @@ check(
     ) &&
     placementReasonText(occupiedPreview.reason) === "位置被占用",
 );
+
+/** An own unfinished armory site at (5,5), i.e. exactly the footprint a second engineer aims at. */
+const joinSite: EntityView = {
+  id: 30,
+  kind: "building.armory.t1",
+  x: 6.5,
+  y: 6.5,
+  playerId: 1,
+  footprint: { width: 3, height: 3 },
+  progress: 0.4,
+};
+const joinWorld: WorldView = {
+  ...placementFixture,
+  entities: [joinSite, PLACEMENT_ENGINEER],
+};
+const joinPreview = buildPlacementPreview(
+  joinWorld,
+  "building.armory.t1",
+  { x: 5, y: 5 },
+  PLACEMENT_ENGINEER,
+);
+check(
+  "自己的同类型未完工工地被认作可加入：幽灵 legal 并带 joinSiteId，而不是位置被占用",
+  joinPreview.state === "legal" &&
+    joinPreview.joinSiteId === joinSite.id &&
+    joinPreview.tiles.every((tile) => tile.state === "legal"),
+  `${joinPreview.state}/${joinPreview.joinSiteId}`,
+);
+check(
+  "敌方工地、已完工建筑与不同种类的工地都不算可加入",
+  buildPlacementPreview(
+    { ...joinWorld, entities: [{ ...joinSite, playerId: 2 }, PLACEMENT_ENGINEER] },
+    "building.armory.t1",
+    { x: 5, y: 5 },
+    PLACEMENT_ENGINEER,
+  ).joinSiteId === null &&
+    buildPlacementPreview(
+      { ...joinWorld, entities: [{ ...joinSite, progress: 1 }, PLACEMENT_ENGINEER] },
+      "building.armory.t1",
+      { x: 5, y: 5 },
+      PLACEMENT_ENGINEER,
+    ).joinSiteId === null &&
+    buildPlacementPreview(
+      joinWorld,
+      "building.mine.t1",
+      { x: 5, y: 5 },
+      PLACEMENT_ENGINEER,
+    ).joinSiteId === null,
+  "all null",
+);
+const farJoinPreview = buildPlacementPreview(
+  joinWorld,
+  "building.armory.t1",
+  { x: 5, y: 5 },
+  { id: 31, kind: "unit.engineer", x: 40.5, y: 40.5, playerId: 1, footprint: { width: 1, height: 1 } },
+);
+check(
+  "可加入工地也遵守 16 格射程：太远时报超出工兵范围而不是合法",
+  farJoinPreview.state === "out-of-reach" &&
+    farJoinPreview.joinSiteId === joinSite.id &&
+    farJoinPreview.tiles.every((tile) => tile.state === "out-of-reach"),
+  `${farJoinPreview.state}/${farJoinPreview.reason}`,
+);
 const windowPreview = buildPlacementPreview(
   placementFixture,
   "building.warehouse",
@@ -3585,6 +3653,90 @@ check(
     throwsChinese(() => upgrade(-3)),
 );
 
+const batchPlayer = { id: 1, name: "Player 1", gold: 300, wood: 100 };
+const batchBuildings = [
+  upgradeBuilding(50, 140, 40),
+  upgradeBuilding(51, 140, 40),
+  upgradeBuilding(52, 140, 40),
+];
+const batchPlan = upgradeBatchPlan(batchBuildings, 1, batchPlayer);
+check(
+  "升级全部：按选择顺序每个买得起的建筑一条 UPGRADE，余额不足的那个跳过并给原因",
+  batchPlan !== null &&
+    UPGRADE_ALL_ACTION_LABEL === "升级全部" &&
+    batchPlan.lines.join(",") === "UPGRADE 50,UPGRADE 51" &&
+    batchPlan.buildingIds.join(",") === "50,51" &&
+    batchPlan.skipped.length === 1 &&
+    batchPlan.skipped[0]?.buildingId === 52 &&
+    batchPlan.skipped[0]?.reason === "unaffordable" &&
+    batchPlan.skipped[0]?.text === "资源不足" &&
+    batchPlan.summary === "已发送 2 条升级 / 1 条被拒绝" &&
+    upgradeBatchSummary(2, 1) === "已发送 2 条升级 / 1 条被拒绝",
+  batchPlan?.summary ?? "null",
+);
+check(
+  "升级全部的预算会随计划递减：金 150 只能计划一条 140 的升级",
+  upgradeBatchPlan(
+    [upgradeBuilding(53, 140, 40), upgradeBuilding(54, 140, 40)],
+    1,
+    { ...batchPlayer, gold: 150 },
+  )?.lines.join(",") === "UPGRADE 53",
+);
+check(
+  "升级全部跳过未完工与没有后续等级的建筑，其余照常发送",
+  (() => {
+    const unfinished: EntityView = {
+      id: 55,
+      kind: "building.armory.t1",
+      x: 55,
+      y: 55,
+      playerId: 1,
+      progress: 0.3,
+      upgrade: { to: "building.armory.t2", gold: 140, wood: 40 },
+    };
+    const topTier: EntityView = {
+      id: 56,
+      kind: "building.armory.t1",
+      x: 56,
+      y: 56,
+      playerId: 1,
+      progress: 1,
+    };
+    const plan = upgradeBatchPlan(
+      [unfinished, topTier, upgradeBuilding(57, 140, 40)],
+      1,
+      batchPlayer,
+    );
+    return plan !== null &&
+      plan.lines.join(",") === "UPGRADE 57" &&
+      plan.skipped.map((skip) => `${skip.buildingId}:${skip.reason}`).join(",") ===
+        "55:unfinished,56:no-successor" &&
+      plan.summary === "已发送 1 条升级 / 2 条被拒绝";
+  })(),
+);
+check(
+  "升级全部只接受自己的同类型建筑组；不同种类、敌方、单位或空选择都没有入口",
+  upgradeBatchPlan([], 1, batchPlayer) === null &&
+    upgradeBatchPlan(
+      [upgradeBuilding(58, 140, 40), { ...upgradeBuilding(59, 140, 40), kind: "building.mine.t1" }],
+      1,
+      batchPlayer,
+    ) === null &&
+    upgradeBatchPlan([upgradeBuilding(60, 140, 40, 2)], 1, batchPlayer) === null &&
+    upgradeBatchPlan([upgradeUnit], 1, batchPlayer) === null,
+  "all null",
+);
+check(
+  "没有玩家行时升级全部计划为空，但每个建筑仍带被拒绝原因",
+  (() => {
+    const plan = upgradeBatchPlan([upgradeBuilding(61, 140, 40)], 1, undefined);
+    return plan !== null &&
+      plan.lines.length === 0 &&
+      plan.skipped.length === 1 &&
+      plan.summary === "已发送 0 条升级 / 1 条被拒绝";
+  })(),
+);
+
 const upgradeSnapshot = worldViewFromSnapshot({
   tick: 5,
   width: 1,
@@ -4326,10 +4478,27 @@ check(
   `${multiEngineerCommand.kind} / ${engineerBuildActions.map((action) => action.path).join(",")}`,
 );
 check(
-  "多个工兵时用选中的第一个工兵放置，混合单位组不选工兵",
+  "多个工兵时用选中的第一个工兵判断幽灵射程，但整组都进入放置顺序；混合单位组不选工兵",
   engineerForPlacement([engineerA, engineerB, engineerC], 3)?.id === engineerA.id &&
-    engineerForPlacement([engineerA, ownUnitFixture], 3) === undefined,
-  String(engineerForPlacement([engineerA, engineerB], 3)?.id),
+    engineersForPlacement([engineerA, engineerB, engineerC], 3)
+      .map((engineer) => engineer.id)
+      .join(",") === "41,42,43" &&
+    engineersForPlacement([engineerA, ownUnitFixture], 3).length === 0 &&
+    engineersForPlacement([], 3).length === 0,
+  engineersForPlacement([engineerA, engineerB], 3)
+    .map((engineer) => engineer.id)
+    .join(","),
+);
+check(
+  "两个工兵选中后同一次放置生成两条 BUILD，全部指向同一个足迹",
+  (() => {
+    const lines = buildBatch([engineerA.id, engineerB.id], "building.armory.t1", 5, 6);
+    return lines.length === 2 &&
+      lines[0] === "BUILD 41 building.armory.t1 5 6" &&
+      lines[1] === "BUILD 42 building.armory.t1 5 6" &&
+      throwsChinese(() => buildBatch([], "building.armory.t1", 5, 6));
+  })(),
+  buildBatch([engineerA.id, engineerB.id], "building.armory.t1", 5, 6).join(" | "),
 );
 check(
   "工程师的 BUILD 目录与面板一致，四个路径都可以生成 BUILD 命令",

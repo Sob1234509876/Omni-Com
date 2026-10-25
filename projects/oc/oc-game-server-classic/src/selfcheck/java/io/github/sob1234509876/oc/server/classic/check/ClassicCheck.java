@@ -17,10 +17,13 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
+import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
@@ -38,6 +41,7 @@ import io.github.sob1234509876.oc.server.classic.ClassicAi;
 import io.github.sob1234509876.oc.server.classic.ClassicBots;
 import io.github.sob1234509876.oc.server.classic.ClassicContent;
 import io.github.sob1234509876.oc.server.classic.ClassicEconomy;
+import io.github.sob1234509876.oc.server.classic.ClassicEngineerPool;
 import io.github.sob1234509876.oc.server.classic.ClassicPlugin;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
@@ -152,6 +156,7 @@ public final class ClassicCheck {
         enemyAi(check, classic, registry);
         deterministicWorld(check);
         bots(check);
+        engineerPool(check, classic, registry);
         pluginSeam(check, classic, registry);
         loaderSeam(check);
         check.summary("classic plugin self check");
@@ -2142,7 +2147,134 @@ public final class ClassicCheck {
         return count;
     }
 
-    // ------------------------------------------------------------------ 8) the plugin seam
+    // ------------------------------------------------------------------ 8) the engineer pool
+
+    /**
+     * The item 29 crew policy: a radius, one arsenal at a time, no sticky assignment, new engineers.
+     *
+     * <p>The fixture is a flat classic world with one warehouse, a near armory, a far armory, three
+     * idle engineers around the near armory and four queued melee recipes at the near armory plus one
+     * at the far one. The engine's own hauler search is switched off by the pool's install step; the
+     * assertions then read the delivery jobs the pool produced and the units they name.
+     */
+    private static void engineerPool(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("工程师调度池：半径内全员、一次一个兵营、新工兵自动入池");
+        OcRtsEngine engine = OcRtsEngine.builder(registry)
+                .seed(7L)
+                .chunkSize(16)
+                .viewRadiusChunks(2)
+                .generator(new FlatChunkGenerator(registry.terrain(GRASS)))
+                // The default: real engineers carry the goods. Direct delivery has no hauler at all.
+                .build();
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        Building warehouse = warehouse(world, registry, player, new GridPos(10, 10));
+        stock(check, registry, player, warehouse);
+        Building near = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(16, 10));
+        Building far = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(22, 16));
+        List<Unit> engineers = new ArrayList<>();
+        for (int index = 0; index < 3; index++) {
+            engineers.add(world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player,
+                    new GridPos(14, 12 + index)));
+        }
+        for (int index = 0; index < 2; index++) {
+            engine.production().enqueue(near, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 1);
+        }
+        engine.production().enqueue(far, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 1);
+
+        WarehouseLogistics logistics = WarehouseLogistics.of(player);
+        HaulingSystem hauling = logistics == null ? null : logistics.hauling().orElse(null);
+        check.that(hauling != null, "测试世界挂着搬运系统");
+        if (hauling == null) {
+            return;
+        }
+        ClassicEngineerPool pool = new ClassicEngineerPool();
+        check.that(!pool.installed(), "池在第一次 tick 前还没有接管");
+        pool.install(world);
+        check.that(pool.installed(), "install 之后池已接管该世界");
+        check.that(!hauling.autoHaulerAssignment(),
+                "接管后引擎不再自己挑搬运工（autoHaulerAssignment = false）");
+
+        engine.tick();
+        pool.tick(world, ClassicEngineerPool.POOL_INTERVAL_TICKS);
+        List<DeliveryJob> nearJobs = pendingJobsFor(hauling, near);
+        List<DeliveryJob> farJobs = pendingJobsFor(hauling, far);
+        check.equal(2, nearJobs.size(),
+                "三个工兵、两个需求：池为一个引擎需求加一个预排需求各建一个 job");
+        check.that(nearJobs.stream().allMatch(job -> job.hauler().isPresent()),
+                "两个需求都由半径内的空闲工兵承担");
+        check.equal(2, distinctHaulers(nearJobs), "两个需求由两个不同的工兵承担");
+        check.equal(1L, world.unitsOf(player).stream()
+                        .filter(engineer -> engineer.orders().isEmpty()).count(),
+                "第三个空闲工兵留在池里，没有需求和它匹配");
+        check.that(farJobs.size() == 1 && farJobs.get(0).hauler().isEmpty(),
+                "远处兵营的需求在近处兵营未满足前不被服务（一次只服务最近的兵营）");
+        check.that(engineers.stream().allMatch(engineer ->
+                        engineer.position().distanceSquared(near.position())
+                                <= ClassicEngineerPool.RECRUIT_RADIUS_TILES
+                                        * ClassicEngineerPool.RECRUIT_RADIUS_TILES),
+                "被征用的工兵都在 " + ClassicEngineerPool.RECRUIT_RADIUS_TILES + " 格半径内");
+
+        // A busy engineer is not interrupted: a move order keeps it out of the next pass. Two more
+        // recipes give the newly produced engineer a demand of its own.
+        engine.production().enqueue(near, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 2);
+        Unit busy = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player,
+                new GridPos(14, 15));
+        world.director().move(busy, new GridPos(30, 15));
+        Unit newcomer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player,
+                new GridPos(14, 16));
+        pool.tick(world, ClassicEngineerPool.POOL_INTERVAL_TICKS * 2L);
+        nearJobs = pendingJobsFor(hauling, near);
+        check.that(!busy.orders().isEmpty() && nearJobs.stream()
+                        .noneMatch(job -> job.hauler().map(id -> id.equals(busy.id())).orElse(false)),
+                "正在移动的工兵不会被池打断，也不会被记到需求上");
+        check.that(nearJobs.size() == 4 && nearJobs.stream().anyMatch(job ->
+                        job.hauler().map(id -> id.equals(newcomer.id())).orElse(false)),
+                "新产出的工兵在下一次池通过时自动加入，并接到第四个需求");
+        check.equal(4, distinctHaulers(nearJobs),
+                "四个需求由四个不同的工兵承担，没有工兵同时服务两个兵营");
+        check.that(pendingJobsFor(hauling, far).stream().allMatch(job -> job.hauler().isEmpty()),
+                "近处兵营仍待办时，远处兵营仍然没有搬运工");
+
+        // Assignment is not sticky: losing the near armory frees the crew for the next demand.
+        world.destroy(near);
+        world.flush();
+        // One engine tick lets the haul orders that named the lost armory observe the failed job and
+        // finish, so their engineers are idle again when the next pool pass runs.
+        engine.tick();
+        pool.tick(world, ClassicEngineerPool.POOL_INTERVAL_TICKS * 3L);
+        List<DeliveryJob> afterLoss = pendingJobsFor(hauling, far);
+        check.that(afterLoss.size() == 1 && afterLoss.get(0).hauler().isPresent(),
+                "近处兵营失去后，空闲工兵回到池里并接下远处兵营的需求");
+        check.that(afterLoss.stream().allMatch(job -> job.hauler().isPresent()),
+                "远处兵营的需求最终由池派出工兵");
+        check.that(ClassicEngineerPool.POOL_INTERVAL_TICKS == 5,
+                "池每 5 tick 通过一次（新工兵最迟 5 tick 内入池）");
+    }
+
+    /** Pending delivery jobs currently targeting one building, in registration order. */
+    private static List<DeliveryJob> pendingJobsFor(HaulingSystem hauling, Building target) {
+        List<DeliveryJob> jobs = new ArrayList<>();
+        for (DeliveryJob job : hauling.jobs()) {
+            if (job.isPending() && job.target() == target) {
+                jobs.add(job);
+            }
+        }
+        return jobs;
+    }
+
+    /** Number of distinct hauler ids among the jobs (a unit listed twice would lower the count). */
+    private static int distinctHaulers(List<DeliveryJob> jobs) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (DeliveryJob job : jobs) {
+            job.hauler().ifPresent(id -> ids.add(id.value()));
+        }
+        return ids.size();
+    }
+
+    // ------------------------------------------------------------------ 9) the plugin seam
 
     private static void pluginSeam(Check check, ClassicContent classic, ContentRegistry registry) {
         check.section("插件接口");
@@ -2160,10 +2292,12 @@ public final class ClassicCheck {
             check.equal(1, context.worldContents().size(), "onLoad 注册了一份世界内容");
             check.equal(ClassicContent.ID, context.worldContents().get(0).id(), "注册的内容 id 是 oc-classic");
             check.that(context.worldContents().get(0) == plugin.content(), "注册的就是插件自己的目录对象");
-            check.equal(2, context.worldTickHooks().size(), "onLoad 同时注册了两个世界 tick 钩子");
+            check.equal(3, context.worldTickHooks().size(), "onLoad 同时注册了三个世界 tick 钩子");
             check.that(context.worldTickHooks().get(0) == plugin.economy(),
                     "第一个钩子是矿场收益（先发钱，后做决策）");
             check.that(context.worldTickHooks().get(1) == plugin.bots(), "第二个钩子是机器人系统，按注册顺序");
+            check.that(context.worldTickHooks().get(2) == plugin.engineerPool(),
+                    "第三个钩子是工程师调度池，排在机器人之后");
             check.equal(ClassicBots.DEFAULT_BOTS, plugin.bots().botCount(),
                     "上下文没有 --bots 时插件默认一个机器人");
             check.that(context.options().isEmpty(), "四参数上下文没有服务器选项");
@@ -2176,7 +2310,9 @@ public final class ClassicCheck {
             configuredPlugin.onLoad(configured);
             check.equal(2, configuredPlugin.bots().botCount(), "--bots 2 通过插件选项到达机器人系统");
             check.that(configured.worldTickHooks().get(1) == configuredPlugin.bots(),
-                    "带机器人数量的插件仍按 收益→机器人 的顺序注册两个钩子");
+                    "带机器人数量的插件仍按 收益→机器人→工兵池 的顺序注册三个钩子");
+            check.that(configured.worldTickHooks().get(2) == configuredPlugin.engineerPool(),
+                    "配置过的插件同样注册工兵池，且排在最后");
 
             WorldContent registered = context.worldContents().get(0);
             ContentRegistry throughSeam = registryOf(registered);
@@ -2268,8 +2404,8 @@ public final class ClassicCheck {
                     "worldContents() 按加载顺序收集注册内容");
             check.equal(ClassicContent.ID, OcGameServer.selectWorldContent(loader.worldContents()).id(),
                     "服务器从加载器的注册列表里选中第一份内容");
-            check.equal(2, loader.worldTickHooks().size(),
-                    "经典插件的两个 tick 钩子通过加载器注册进来（第二个插件不注册钩子）");
+            check.equal(3, loader.worldTickHooks().size(),
+                    "经典插件的三个 tick 钩子通过加载器注册进来（第二个插件不注册钩子）");
             check.that(loader.problems().isEmpty(), "两个 jar 都没有报告问题: " + loader.problems());
 
             loader.unloadAll();

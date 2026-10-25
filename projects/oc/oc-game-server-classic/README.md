@@ -1,4 +1,4 @@
-English | [简体中文](README_zh_CN.md)
+﻿English | [简体中文](README_zh_CN.md)
 
 # Omni Com Classic World Plugin
 
@@ -151,6 +151,37 @@ with the reason `the construction site was reclaimed by its owner`, the site is 
 site, for example. A **finished building cannot be reclaimed**; the refusal says so. The command itself
 charges nothing.
 
+## The engineer crew policy
+
+`ClassicEngineerPool` is the third world tick hook and the owner-facing answer to "most engineers idle while
+one hauls". It does not give every engineer a fixed arsenal; it recomputes a crew for every pass:
+
+- **Radius.** An own, living engineer joins the crew only while its order queue is **empty**, it can haul, it
+  stands in the arsenal's dimension and it is within `ClassicEngineerPool.RECRUIT_RADIUS_TILES = 24` tiles of
+  the arsenal. A busy engineer (moving, building, repairing, fighting or already hauling) is never
+  interrupted; it becomes eligible again once its queue is empty.
+- **One arsenal at a time.** Each player is served at only the **nearest unsatisfied** producer, ordered by
+  squared distance from the player's oldest living building and then by building id. An arsenal stays
+  "unsatisfied" while it has a pending delivery or an affordable waiting recipe, so the crew does not move on
+  to a second arsenal halfway through the first one's shipments.
+- **No sticky assignment.** After a haul finishes its order queue is empty again and the next pass may hand
+  it the next demand. An engineer named by any pending job is excluded, so one unit never serves two
+  arsenals at once.
+- **New engineers join by existing.** The pass runs every `ClassicEngineerPool.POOL_INTERVAL_TICKS = 5`
+  ticks, so a unit produced on tick `t` is considered on the first pass on or after `t`; there is no roster
+  and no enlist command. The pool also kicks in without a restart after a player joins.
+- **More than one haul per arsenal.** The engine creates one delivery for the recipe currently waiting. The
+  pool pre-stages the missing inputs of the queued recipes behind it through
+  `WarehouseLogistics.requestDeliveryJob(...)`, one job per idle engineer, so a queue of four recipes can
+  keep four engineers busy at the same arsenal. The goods are reserved and carried normally; production
+  consumes them from its buffer exactly as before.
+
+The engine's own nearest-idle search is switched off for a classic world by
+`HaulingSystem.setAutoHaulerAssignment(false)`; the pool picks the unit and calls
+`HaulingSystem.assignHauler(job, unit)`. Everything else in the engine's hauling system - reservations,
+cargo, recovery and the 3000-tick timeout - is unchanged. A non-classic world, direct delivery, a player
+without warehouses and a producer with no affordable demand are left alone.
+
 ## Starting resources and the opening
 
 A new player receives **300 gold and 60 wood**, declared once by `ClassicContent.STARTING_RESOURCES`. The host
@@ -295,13 +326,15 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 522 checks passed.
+classic plugin self check: all 542 checks passed.
 ```
 
-522 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
+542 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
-STOP must be followed by an applicable move and build against a real `CommandService`, and each of the
-nine classic buildings must own a distinct atlas cell. The gate section is the strict part: it proves
+STOP must be followed by an applicable move and build against a real `CommandService`, each of the nine
+classic buildings must own a distinct atlas cell, and the engineer pool must serve one arsenal at a time
+from a 24-tile crew, enrol a newly produced engineer without a restart and never assign one engineer to
+two arsenals. The gate section is the strict part: it proves
 against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
 says so; the upgrade section proves the same ladders are executable in a real engine, the AI section proves
 the enemy really reaches tier 2 through the command, and the bots section proves the default one-bot world is
@@ -322,9 +355,10 @@ known starting position, not a fog-of-war reveal.
 | `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine and lumber camp income once per 60 ticks |
 | `src/main/java/.../classic/ClassicAi.java` | the deterministic controller of one bot player (the no-argument form is the historical single enemy) |
 | `src/main/java/.../classic/ClassicBots.java` | the bot player system: count, faction seeds, spawn anchors and one controller per bot |
+| `src/main/java/.../classic/ClassicEngineerPool.java` | the engineer crew policy: a 24-tile radius, one arsenal at a time, pre-staged queue demand |
 | `src/main/java/.../classic/BotFaction.java` | one bot's player id, faction seed, style and spawn anchor |
 | `src/main/java/.../classic/BotStrategy.java` | the per-bot strategy record, its ranges and the deterministic deriver |
-| `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the two hooks, reads `--bots` from the plugin options |
+| `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the three hooks, reads `--bots` from the plugin options |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x128 unit and building atlas (one 32x32 cell per building kind) |

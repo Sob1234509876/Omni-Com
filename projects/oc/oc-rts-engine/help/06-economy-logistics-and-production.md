@@ -259,6 +259,8 @@ OcRtsEngine engine = OcRtsEngine.builder(content)
 
 被选中后执行 `hauler.orders().push(new HaulOrder(job))` 并 `job.assign(hauler.id(), now)`。**注意是 `push` 而不是 `replace`**：源码注释明确写了，在这里替换队列会取消正在进行的搬运，正是它曾经导致过的死锁。
 
+**把挑人权交给游戏策略。** 默认的"最近空闲搬运工"可以被关掉：`HaulingSystem.setAutoHaulerAssignment(false)` 之后，`tickHaulers` 仍然照常完成、失败、发运和超时 job，只是不再自己挑人；游戏策略对想服务的 job 调用 `HaulingSystem.assignHauler(job, unit)`，这个入口会检查 job 仍在本系统、仍在 `WAITING_HAULER`、单位属于该玩家且能搬运、同维度、没有被别的待办 job 点名，然后执行与自动搜索完全相同的 `push(HaulOrder)` 与 `job.assign(...)`。经典插件正是用这个接缝实现 `ClassicEngineerPool` 的"一次一个兵营"策略。配套的 `WarehouseLogistics.requestDeliveryJob(target, bundle)` 是 `requestDeliveryReservation(...)` 的 job 返回形式：它照常预订并注册 job，但把 job 句柄交给调用方，于是策略可以为生产队列**后面**的配方预排需求（`WarehouseLogistics.requestDeliveryReservation` 仍然返回预订，生产系统不受影响）。
+
 系统把真正的走动完全交给 `HaulOrder`，所以新推入的订单要**下一 tick 的相位 200** 才开始执行（`OrderSystem` 在本 tick 的 700 之前早就跑完了）。
 
 ### 跨维度的货：shipping（门链路发运）

@@ -234,6 +234,31 @@ export function build(engineerId: number, buildingPath: string, x: number, y: nu
   return `BUILD ${id} ${path} ${tileX} ${tileY}`;
 }
 
+/**
+ * One `BUILD` line per selected engineer, all aimed at the same footprint.
+ *
+ * <p>The server's grammar has one engineer per line. The first line places the site and charges it;
+ * every following line names another own engineer and the same building path and origin, so the
+ * engine's join path attaches that engineer to the unfinished site instead of placing a second one or
+ * refusing the occupied tile. That is how "engineers build together" reaches the wire (item 26): the
+ * client-side group order is a batch, not a second command kind.
+ *
+ * <p>An empty list is a programming error and throws, exactly like {@link trainBatch}. The ids stay in
+ * selection order so the log reads like the click the owner made and the first engineer is the one who
+ * places the site.
+ */
+export function buildBatch(
+  engineerIds: readonly number[],
+  buildingPath: string,
+  x: number,
+  y: number,
+): string[] {
+  if (engineerIds.length === 0) {
+    throw new Error("批量 BUILD 至少需要一个工兵");
+  }
+  return engineerIds.map((engineerId) => build(engineerId, buildingPath, x, y));
+}
+
 /** `TRAIN <buildingId> <unitPath>`. */
 export function train(buildingId: number, unitPath: string): string {
   const id = requirePositiveInteger(buildingId, "建筑 id");

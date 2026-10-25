@@ -24,10 +24,13 @@ import type { TileCoord } from "./camera.ts";
 import {
   entityCoversTile,
   entityFootprintHeight,
+  entityFootprintOrigin,
   entityFootprintWidth,
+  isBuildingEntityKind,
   kindName,
   terrainAt,
   tileInWindow,
+  underConstruction,
   type EntityView,
   type TerrainId,
   type WorldView,
@@ -226,6 +229,15 @@ export interface PlacementPreview {
   readonly footprint: Footprint;
   readonly origin: TileCoord;
   readonly tiles: readonly PlacementTile[];
+  /**
+   * The id of an own unfinished site of the same kind the click would join, or `null` for a fresh site.
+   *
+   * <p>The engine's `tryBuild` looks for exactly this before placing anything: an unfinished site of
+   * the same type and owner whose footprint intersects the requested one is joined for free. The ghost
+   * paints such a site green instead of red, because the same click is legal and is how a second
+   * engineer is told to cooperate.
+   */
+  readonly joinSiteId: number | null;
 }
 
 /**
@@ -300,6 +312,50 @@ export function placementStrokeColor(state: PlacementTileState): string {
 }
 
 /**
+ * The own unfinished site a BUILD at `origin` would join, or `undefined` for a fresh placement.
+ *
+ * <p>This mirrors `CommandService.unfinishedSiteAt`: the engine joins when a building of the requested
+ * type, owned by the same player, is still under construction and its footprint <em>intersects</em> the
+ * requested footprint (not only when the origins are equal). Comparing kinds ignores the namespace the
+ * same way the rest of the client does. A finished building, an enemy site and a site of another kind
+ * are ordinary obstacles and are not returned here.
+ *
+ * <p>The client only uses this for the ghost and for deciding how many BUILD lines to send; the server
+ * still makes the final decision, so a stale snapshot can only produce a readable refusal, never a
+ * wrong placement.
+ */
+export function joinableSiteAt(
+  world: WorldView,
+  buildingPath: string,
+  origin: TileCoord,
+  engineer: EntityView,
+): EntityView | undefined {
+  if (engineer.playerId === undefined) {
+    return undefined;
+  }
+  const footprint = footprintForKind(buildingPath);
+  for (const entity of world.entities) {
+    if (entity.playerId !== engineer.playerId || !isBuildingEntityKind(entity.kind)) {
+      continue;
+    }
+    if (!underConstruction(entity) || kindName(entity.kind) !== kindName(buildingPath)) {
+      continue;
+    }
+    const siteOrigin = entityFootprintOrigin(entity);
+    const overlapX =
+      origin.x < siteOrigin.x + entityFootprintWidth(entity) &&
+      siteOrigin.x < origin.x + footprint.width;
+    const overlapY =
+      origin.y < siteOrigin.y + entityFootprintHeight(entity) &&
+      siteOrigin.y < origin.y + footprint.height;
+    if (overlapX && overlapY) {
+      return entity;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Builds the full ghost for one armed BUILD at `origin` (the tile under the cursor, taken as the
  * footprint's top-left tile - exactly what `BUILD <id> <path> <x> <y>` sends).
  *
@@ -307,6 +363,12 @@ export function placementStrokeColor(state: PlacementTileState): string {
  * at all, an entity standing there is certain, and the terrain is the remaining test. The site reason
  * is the reason of the first blocked tile in row-major order, which makes it deterministic; if nothing
  * is blocked the site is out of reach only when the engineer is too far from every footprint tile.
+ *
+ * <p>A joinable own unfinished site changes the answer: the engine ignores occupancy, terrain and the
+ * potential duplicate placement for a join and only requires reach, so every footprint tile is legal
+ * (or out of reach) and the preview carries the site id in {@link PlacementPreview#joinSiteId}. This
+ * is what lets a multi-engineer selection aim at an existing site instead of being refused as
+ * "位置被占用".
  */
 export function buildPlacementPreview(
   world: WorldView,
@@ -317,11 +379,16 @@ export function buildPlacementPreview(
   const footprint = footprintForKind(buildingPath);
   const engineerTile = entityTile(engineer);
   const reachable = isWithinBuildReach(engineerTile, origin, footprint);
+  const joinSite = joinableSiteAt(world, buildingPath, origin, engineer);
   const tiles: PlacementTile[] = [];
   for (const tile of footprintTiles(origin, footprint)) {
     let state: PlacementTileState;
     let reason: PlacementReason;
-    if (!tileInWindow(world, tile.x, tile.y)) {
+    if (joinSite !== undefined) {
+      // Joining is free and placement-independent: the engine only tests reach and ownership.
+      state = reachable ? "legal" : "out-of-reach";
+      reason = reachable ? "legal" : "out-of-reach";
+    } else if (!tileInWindow(world, tile.x, tile.y)) {
       state = "blocked";
       reason = "blocked-window";
     } else if (tileOccupiedByEntities(world.entities, tile.x, tile.y)) {
@@ -349,5 +416,13 @@ export function buildPlacementPreview(
   } else {
     reason = "legal";
   }
-  return { state, reason, buildingPath, footprint, origin, tiles };
+  return {
+    state,
+    reason,
+    buildingPath,
+    footprint,
+    origin,
+    tiles,
+    joinSiteId: joinSite?.id ?? null,
+  };
 }

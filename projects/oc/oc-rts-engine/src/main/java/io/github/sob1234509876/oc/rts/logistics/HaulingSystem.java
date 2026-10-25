@@ -38,6 +38,16 @@ import java.util.Optional;
  * <p>The system never creates or destroys items. It moves them between a warehouse inventory and a
  * building buffer and, when something does not fit, puts it back into the warehouses, which is the only
  * way "goods can only be used from a warehouse" stays true.
+ *
+ * <h2>Who chooses the hauler</h2>
+ *
+ * <p>By default the system searches for the nearest idle hauler of the job's owner
+ * ({@link #findHauler(DeliveryJob)}). A game that wants its own crew policy can turn that search off
+ * with {@link #setAutoHaulerAssignment(boolean)} and call {@link #assignHauler(DeliveryJob, Unit)} for
+ * the job and unit it picked; the rest of this class - reservations, the haul order, cargo recovery and
+ * the timeout - is unchanged. The classic plugin uses exactly that seam so its engineer pool can serve
+ * one arsenal at a time. A job the policy never assigns simply stays in
+ * {@link DeliveryJob.State#WAITING_HAULER}; the engine does not second-guess the policy.
  */
 public final class HaulingSystem implements SimulationSystem {
 
@@ -53,6 +63,7 @@ public final class HaulingSystem implements SimulationSystem {
     private final List<DeliveryJob> jobs = new ArrayList<>();
     private long completedJobs;
     private long failedJobs;
+    private boolean autoHaulerAssignment = true;
 
     /**
      * Creates the hauling system.
@@ -339,12 +350,72 @@ public final class HaulingSystem implements SimulationSystem {
             if (job.state() == DeliveryJob.State.IN_TRANSIT) {
                 continue;
             }
+            if (!autoHaulerAssignment) {
+                // A game policy owns the choice: the job stays WAITING_HAULER until it calls assignHauler.
+                continue;
+            }
             Unit hauler = findHauler(job);
             if (hauler == null) {
                 continue;
             }
             assign(job, hauler, now);
         }
+    }
+
+    /**
+     * Whether this system still searches for a hauler on its own.
+     *
+     * @return {@code true} by default; {@code false} after {@link #setAutoHaulerAssignment(boolean)}
+     *     handed the choice to a game policy
+     */
+    public boolean autoHaulerAssignment() {
+        return autoHaulerAssignment;
+    }
+
+    /**
+     * Hands the hauler choice to a game policy, or takes it back.
+     *
+     * <p>With automatic assignment off, {@link #tick(World, Tick)} still completes, fails, ships and
+     * times out jobs; it only stops picking a unit. A policy then calls
+     * {@link #assignHauler(DeliveryJob, Unit)} for the jobs it wants served. This is the smallest seam
+     * that lets a game own the crew policy without duplicating the reservation, cargo and timeout rules.
+     *
+     * @param enabled {@code true} restores the historical nearest-idle search
+     */
+    public void setAutoHaulerAssignment(boolean enabled) {
+        this.autoHaulerAssignment = enabled;
+    }
+
+    /**
+     * Assigns one specific hauler to a waiting job the caller has already chosen.
+     *
+     * <p>This is the explicit-assignment entry point for a game policy. It applies only to a job that
+     * is still registered with this system, pending, in {@link DeliveryJob.State#WAITING_HAULER} and
+     * not yet assigned. The unit has to be alive, owned by the job's player, able to haul, in the
+     * target's dimension and not already carrying another pending job here; otherwise nothing changes.
+     * The assignment pushes a {@link HaulOrder} exactly like the automatic search does, so the unit
+     * walks, loads, delivers and recovers cargo by the same rules.
+     *
+     * @param job    the waiting delivery job
+     * @param hauler the unit the policy picked
+     * @return whether the assignment was applied
+     */
+    public boolean assignHauler(DeliveryJob job, Unit hauler) {
+        Objects.requireNonNull(job, "job");
+        Objects.requireNonNull(hauler, "hauler");
+        if (!jobs.contains(job) || !job.isPending()
+                || job.state() != DeliveryJob.State.WAITING_HAULER
+                || job.hauler().isPresent()) {
+            return false;
+        }
+        if (!hauler.isAlive() || !hauler.owner().equals(job.player())
+                || !hauler.type().canHaul()
+                || !hauler.dimensionId().equals(job.target().dimensionId())
+                || isAssigned(hauler)) {
+            return false;
+        }
+        assign(job, hauler, world.tickNumber());
+        return true;
     }
 
     private void assign(DeliveryJob job, Unit hauler, long now) {
