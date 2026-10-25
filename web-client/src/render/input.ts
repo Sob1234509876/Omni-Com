@@ -8,8 +8,12 @@
  * Selection model (see the READMEs for the user-facing table):
  * - a plain left click replaces the selection with the entity under the cursor;
  * - Shift+left click adds or removes one unit;
- * - a left drag that starts on empty ground draws a marquee and selects the own units inside it;
+ * - a left drag that starts on empty ground draws a marquee and selects the own units inside it; the
+ *   page receives the zero-area pointerdown baseline so entities already under the start point wait for
+ *   the release flash instead of counting as swept;
  * - a left drag that starts on an entity still selects that entity;
+ * - a right click captures the canvas-relative pointer before dispatching the order, which is where the
+ *   page draws the 350 ms order crosshair;
  * - the middle button, or Space held with the left button, pans the camera. A left drag on empty
  *   ground is deliberately no longer a camera pan, because that gesture is the marquee;
  * - Ctrl+1..9 assigns the selection, Shift+1..9 adds to it, and 1..9 recalls it. The pure model is
@@ -73,8 +77,23 @@ export interface InputHooks {
   readonly isMarqueeEnabled?: () => boolean;
   readonly onHoverChange?: (tile: TileCoord | null) => void;
   readonly onCameraChange?: () => void;
-  /** A right click on a world tile; `targetId` is the entity under the cursor, if any, and `shift` requests a waypoint. */
-  readonly onRightClick?: (tile: TileCoord, targetId: number | null, shift: boolean) => void;
+  /**
+   * A right click on a world tile; `targetId` is the entity under the cursor, if any, and `shift` requests
+   * a waypoint. `screen` is the pointer position in CSS pixels relative to the canvas, captured before
+   * the page dispatches the order so an order crosshair starts at the pixel the mouse was on.
+   */
+  readonly onRightClick?: (
+    tile: TileCoord,
+    targetId: number | null,
+    shift: boolean,
+    screen: ScreenPoint,
+  ) => void;
+  /**
+   * A marquee drag has just crossed the drag threshold. `range` is the zero-area tile range at the
+   * pointer-down point: the candidates inside it were already in the box before the drag started, so
+   * the page uses them as the sweep's baseline (they flash on release, not on entry).
+   */
+  readonly onMarqueeStart?: (range: TileRange) => void;
   /**
    * A second click on the same entity (or on empty ground) within the double-click window. The page
    * replaces the selection with the whole-world same-kind rule, or with a single clicked building.
@@ -113,7 +132,8 @@ export interface InputHooks {
   readonly onControlGroup?: (group: number, mode: ControlGroupMode) => void;
 }
 
-interface ScreenPoint {
+/** A point in CSS pixels relative to the canvas (not the client viewport). */
+export interface ScreenPoint {
   readonly x: number;
   readonly y: number;
 }
@@ -450,6 +470,20 @@ export class InputController {
       this.dragging = true;
       // A drag is never half of a double click; drop any first click that came before it.
       this.resetDoubleClick();
+      if (this.dragMode === "marquee") {
+        // The baseline is the zero-area box at the pointer-down point, not the first moved frame:
+        // an entity already under the starting point was inside the box before the drag started and
+        // must flash on release rather than count as swept.
+        this.hooks.onMarqueeStart?.(
+          marqueeTileRange(
+            this.camera,
+            screenRectBetween(
+              { x: this.downX, y: this.downY },
+              { x: this.downX, y: this.downY },
+            ),
+          ),
+        );
+      }
     }
     if (this.dragMode === "camera" && this.dragging) {
       // On the frame that crosses the threshold, apply the whole movement since pointerdown; later
@@ -523,13 +557,18 @@ export class InputController {
     }
   };
 
-  /** Emits a right click with its tile, the entity body under the cursor and the Shift waypoint flag. */
+  /** Emits a right click with its tile, the entity body under the cursor, the Shift flag and the pointer. */
   private emitRightClick(screenX: number, screenY: number, shift: boolean): void {
     const tile = this.hoverTileValue;
     if (tile === null) {
       return;
     }
-    this.hooks.onRightClick?.(tile, this.pickEntity(screenX, screenY), shift);
+    this.hooks.onRightClick?.(
+      tile,
+      this.pickEntity(screenX, screenY),
+      shift,
+      { x: screenX, y: screenY },
+    );
   }
 
   private readonly handleContextMenu = (event: MouseEvent): void => {

@@ -609,8 +609,9 @@ export function drawOwnershipRing(
  * The brief selection flash: a bright achromatic halo over the sprite, below the gold selection ring.
  *
  * `intensity` is 0..1 and scales the halo's alpha, so the same drawing fades as the timer runs out.
- * There is no shadow blur and no per-frame allocation: two ellipses are enough to read as "these units
- * were just selected" without tinting the scene.
+ * `rings` is 1 for the ordinary sweep/release halo and 2 for the stronger click halo, which adds a
+ * wider concentric ring at lower alpha. There is no shadow blur and no per-frame allocation: a handful
+ * of ellipses is enough to read as "these units were just selected" without tinting the scene.
  */
 export function drawFlashHalo(
   context: CanvasRenderingContext2D,
@@ -620,6 +621,7 @@ export function drawFlashHalo(
   building: boolean,
   color: string,
   intensity: number,
+  rings = 1,
 ): void {
   const alpha = clamp(intensity, 0, 1);
   if (alpha <= 0) {
@@ -643,6 +645,93 @@ export function drawFlashHalo(
   context.lineWidth = Math.max(1.5, tilePixels * 0.055);
   context.beginPath();
   context.ellipse(screenX, centreY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.stroke();
+  if (rings > 1) {
+    // The click's stronger variant: one more concentric ring, wider and fainter, so a deliberate click
+    // reads more strongly than a sweep touch without introducing a second colour or a glow.
+    context.globalAlpha = alpha * 0.55;
+    context.lineWidth = Math.max(2.25, tilePixels * 0.085);
+    context.beginPath();
+    context.ellipse(screenX, centreY, radiusX * 1.32, radiusY * 1.32, 0, 0, Math.PI * 2);
+    context.stroke();
+  }
+  context.restore();
+}
+
+/**
+ * One order crosshair: two concentric crosses plus short ticks, drawn in canvas **backing pixels**.
+ *
+ * The renderer resets the DPR transform for this pass, so every length here is a physical pixel and
+ * `devicePixelRatio` only scales the line widths and tick length. `radius` is already the animated,
+ * edge-clamped outer radius from `crosshair.ts`. The mark is deliberately achromatic, has no shadow
+ * blur and no glow: it is canvas feedback, and the surrounding chrome is greyscale.
+ */
+export function drawCrosshair(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  radius: number,
+  alpha: number,
+  devicePixelRatio: number,
+  color: string,
+): void {
+  const opacity = clamp(alpha, 0, 1);
+  if (opacity <= 0 || radius <= 0) {
+    return;
+  }
+  const ratio =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const gap = radius * 0.34;
+  const tick = Math.max(2, radius * 0.16);
+  context.save();
+  context.strokeStyle = color;
+  context.lineCap = "butt";
+
+  // Outer cross: four arms with a gap around the exact pointer so the centre stays readable.
+  context.globalAlpha = opacity * 0.95;
+  context.lineWidth = Math.max(1, 1.6 * ratio);
+  context.beginPath();
+  context.moveTo(screenX - radius, screenY);
+  context.lineTo(screenX - gap, screenY);
+  context.moveTo(screenX + gap, screenY);
+  context.lineTo(screenX + radius, screenY);
+  context.moveTo(screenX, screenY - radius);
+  context.lineTo(screenX, screenY - gap);
+  context.moveTo(screenX, screenY + gap);
+  context.lineTo(screenX, screenY + radius);
+  context.stroke();
+
+  // Inner cross: the same centre, rotated 45 degrees, at a lower alpha. Two concentric crosses read as
+  // a deliberate target without adding a second colour.
+  const diagonal = radius * 0.46;
+  const diagonalGap = radius * 0.2;
+  const step = diagonal / Math.SQRT2;
+  const stepGap = diagonalGap / Math.SQRT2;
+  context.globalAlpha = opacity * 0.6;
+  context.lineWidth = Math.max(1, 1.2 * ratio);
+  context.beginPath();
+  context.moveTo(screenX - step, screenY - step);
+  context.lineTo(screenX - stepGap, screenY - stepGap);
+  context.moveTo(screenX + stepGap, screenY + stepGap);
+  context.lineTo(screenX + step, screenY + step);
+  context.moveTo(screenX + step, screenY - step);
+  context.lineTo(screenX + stepGap, screenY - stepGap);
+  context.moveTo(screenX - stepGap, screenY + stepGap);
+  context.lineTo(screenX - step, screenY + step);
+  context.stroke();
+
+  // The short tick pattern: a perpendicular dash on each outer arm tip.
+  context.globalAlpha = opacity * 0.8;
+  context.lineWidth = Math.max(1, 1.4 * ratio);
+  context.beginPath();
+  context.moveTo(screenX - radius, screenY - tick);
+  context.lineTo(screenX - radius, screenY + tick);
+  context.moveTo(screenX + radius, screenY - tick);
+  context.lineTo(screenX + radius, screenY + tick);
+  context.moveTo(screenX - tick, screenY - radius);
+  context.lineTo(screenX + tick, screenY - radius);
+  context.moveTo(screenX - tick, screenY + radius);
+  context.lineTo(screenX + tick, screenY + radius);
   context.stroke();
   context.restore();
 }

@@ -8,9 +8,10 @@
  * Draw order is terrain, tile grid (fallback only), the hover tile or the build-placement ghost, ground
  * shadows, enemy unit base tints, ownership rings, entities sorted by y so lower entities overlap higher
  * ones, own-unit white outlines, their health bars and the greyscale construction bar / `生产中 ×N`
- * marker above buildings, the brief achromatic selection flash halo, one gold selection ring per
- * selected entity, the personal marker squares with their numbers, and finally the marquee rectangle.
- * Ownership rings are thinner than selection rings
+ * marker above buildings, the brief achromatic selection flash halo (drawn for a swept entity even before
+ * the release selects it, and with a second ring for a deliberate click), one gold selection ring per
+ * selected entity, the personal marker squares with their numbers, the marquee rectangle, and finally
+ * the order crosshair at the pointer. Ownership rings are thinner than selection rings
  * and are drawn first, so every gold selection ring always stays on top. The enemy base tint is the one
  * extra hostile mark, and the white own-unit outline is deliberately achromatic; both live on the
  * canvas, while the surrounding chrome stays greyscale. The flash halo is drawn over the sprite but
@@ -42,8 +43,17 @@ import type { Camera, TileCoord } from "./camera";
 import type { Marker } from "./markers.ts";
 import type { ScreenRect } from "./marquee";
 import {
+  CROSSHAIR_COLOR,
+  clampCrosshairToCanvas,
+  crosshairAlpha,
+  crosshairFrame,
+  crosshairRadius,
+  type CrosshairState,
+} from "./crosshair.ts";
+import {
   drawBuildingProgressBar,
   drawBuildingShape,
+  drawCrosshair,
   drawEnemyBaseTint,
   drawFlashHalo,
   drawGroundShadow,
@@ -57,7 +67,7 @@ import {
   drawUnitShape,
   playerColor,
 } from "./fallback";
-import { FLASH_COLOR, FLASH_MS, flashIntensity } from "./flash";
+import { FLASH_COLOR, FLASH_MS, flashIntensity, flashRingCount } from "./flash";
 import { queueMarkerText } from "./status";
 import {
   placementFillColor,
@@ -183,10 +193,32 @@ export interface RenderOptions {
   /**
    * Entity id -> `performance.now()` when that entity's selection flash started.
    *
-   * Only entities a player action newly selected have an entry; the map is pruned once per frame, so
-   * it stays tiny. The renderer draws a halo only for an entry that is both active and selected.
+   * Only entities a player action newly selected or swept have an entry; the map is pruned once per
+   * frame, so it stays tiny. The renderer draws a halo only for an entry that is both active and either
+   * currently selected or in `sweepFlashIds`.
    */
   readonly flashStarts: ReadonlyMap<number, number>;
+  /**
+   * Entity ids whose current flash was started by a deliberate click and therefore uses the stronger
+   * two-ring halo. Sweep and release flashes keep the ordinary one-ring shape.
+   */
+  readonly strongFlashIds: ReadonlySet<number>;
+  /**
+   * Entity ids the in-progress marquee sweep has already touched.
+   *
+   * A swept entity flashes before the release changes the selection, so its halo is drawn even while it
+   * is not selected yet. Once the drag ends this set is empty again and the normal selected-only rule
+   * applies.
+   */
+  readonly sweepFlashIds: ReadonlySet<number>;
+  /**
+   * The live order crosshair in canvas backing pixels, or null.
+   *
+   * It is drawn last, above the terrain, sprites, rings and marquee, but still inside the canvas and
+   * therefore below every DOM chrome panel. The renderer only reads it: the page owns the one-entry
+   * lifetime, and a second order simply replaces the state.
+   */
+  readonly crosshair: CrosshairState | null;
   /** Monotonic milliseconds on the same clock as the values in `flashStarts`. */
   readonly nowMs: number;
   /**
@@ -674,14 +706,17 @@ export class WorldRenderer {
       }
     }
 
-    // Selection flash pass: one achromatic halo per entity that a player action just selected, drawn
-    // above its sprite. The intensity comes from the shared timer, so the halo fades out in place and
-    // adds no per-entity state to the renderer. A deselected entity may keep its map entry until the
-    // timer expires, but no halo is drawn unless it is currently selected.
+    // Selection flash pass: one achromatic halo per entity that a player action just touched, drawn
+    // above its sprite. A swept entity is drawn before the release selects it
+    // (`options.sweepFlashIds`); otherwise a halo is drawn only while the entity is selected, so a
+    // deselected entity's still-running entry never leaves a stale halo behind. A click's entry uses
+    // the stronger two-ring shape. The intensity comes from the shared timer, so the halo fades out in
+    // place and adds no per-entity state to the renderer.
     if (options.flashStarts.size > 0) {
       for (const item of prepared) {
         const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
-        if (!selected) {
+        const swept = options.sweepFlashIds.has(item.entity.id);
+        if (!selected && !swept) {
           continue;
         }
         const startedAt = options.flashStarts.get(item.entity.id);
@@ -700,6 +735,9 @@ export class WorldRenderer {
           isBuildingEntityKind(item.entity.kind),
           FLASH_COLOR,
           intensity,
+          flashRingCount(
+            options.strongFlashIds.has(item.entity.id) ? "strong" : "normal",
+          ),
         );
       }
     }
@@ -734,8 +772,8 @@ export class WorldRenderer {
       );
     }
 
-    // Marquee last, so the rectangle is visible over terrain, rings and sprites. It is in CSS pixels
-    // because the context was already scaled for the device pixel ratio.
+    // Marquee last among the map marks, so the rectangle is visible over terrain, rings and sprites. It
+    // is in CSS pixels because the context was already scaled for the device pixel ratio.
     if (options.marquee !== null) {
       const marquee = options.marquee;
       context.save();
@@ -751,6 +789,35 @@ export class WorldRenderer {
         Math.max(0, marquee.height - 1),
       );
       context.restore();
+    }
+
+    // Order crosshair last: above every map mark, still canvas content and therefore below the DOM
+    // chrome. It is stored in backing pixels, so this one pass resets the DPR transform and draws in
+    // physical pixels; the edge clamp keeps the whole mark visible when the order was near a border.
+    if (options.crosshair !== null) {
+      const frame = crosshairFrame(options.crosshair.startedAt, options.nowMs);
+      if (frame.visible) {
+        const placement = clampCrosshairToCanvas(
+          { x: options.crosshair.x, y: options.crosshair.y },
+          crosshairRadius(frame.progress, size.devicePixelRatio),
+          this.canvas.width,
+          this.canvas.height,
+        );
+        if (placement.radius > 0) {
+          context.save();
+          context.setTransform(1, 0, 0, 1, 0, 0);
+          drawCrosshair(
+            context,
+            placement.x,
+            placement.y,
+            placement.radius,
+            crosshairAlpha(frame.progress),
+            size.devicePixelRatio,
+            CROSSHAIR_COLOR,
+          );
+          context.restore();
+        }
+      }
     }
   }
 }

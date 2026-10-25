@@ -2,9 +2,10 @@
  * Offline checks for the pure render math.
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
- * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `toast.ts`, `atlas.ts`,
+ * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `sweep.ts`, `flash.ts`,
+ * `crosshair.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
- * `events.ts`, `flash.ts`, `resources.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `events.ts`, `resources.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -69,12 +70,36 @@ import {
   terrainColor,
 } from "../src/render/fallback.ts";
 import {
+  CLICK_FLASH_STRENGTH,
   FLASH_COLOR,
   FLASH_MS,
+  SWEEP_FLASH_STRENGTH,
+  clickFlashIds,
   flashIntensity,
+  flashRingCount,
   pruneFlashes,
   startFlash,
 } from "../src/render/flash.ts";
+import {
+  CROSSHAIR_BASE_RADIUS_PX,
+  CROSSHAIR_COLOR,
+  CROSSHAIR_EDGE_INSET_PX,
+  CROSSHAIR_MS,
+  CROSSHAIR_SCALE_END,
+  CROSSHAIR_SCALE_START,
+  clampCrosshairToCanvas,
+  crosshairAlpha,
+  crosshairFrame,
+  crosshairProgress,
+  crosshairRadius,
+  crosshairScale,
+  screenToBackingPixels,
+} from "../src/render/crosshair.ts";
+import {
+  MarqueeSweep,
+  marqueeCoveredIds,
+  releaseFlashIds,
+} from "../src/render/sweep.ts";
 import {
   formatProgressPercent,
   incomeSuffix,
@@ -2011,7 +2036,7 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 /** Whether the builder throws an Error carrying a Chinese explanation, which is the UI contract. */
-function throwsChinese(action: () => string): boolean {
+function throwsChinese(action: () => unknown): boolean {
   try {
     action();
     return false;
@@ -3864,8 +3889,8 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 check(
-  "选中闪烁时长是 250ms：够感觉到，又短到不会让选择拖影",
-  FLASH_MS === 250,
+  "选中闪烁时长是 300ms：够感觉到，又短到不会让选择拖影",
+  FLASH_MS === 300,
   String(FLASH_MS),
 );
 check(
@@ -3923,11 +3948,11 @@ check(
 );
 
 const pruningMap = new Map<number, number>([
-  [1, 1_000], // exactly finished at now=1250
+  [1, 1_000], // exactly finished at now=1300 (FLASH_MS = 300)
   [2, 1_100], // still active
   [3, 1_400], // future-dated by a clock step; keep until it has had its duration
 ]);
-pruneFlashes(pruningMap, 1_250);
+pruneFlashes(pruningMap, 1_300);
 check(
   "pruneFlashes：删掉已经结束的条目，保留进行中与尚未到期的条目",
   pruningMap.size === 2 && !pruningMap.has(1) && pruningMap.has(2) && pruningMap.has(3),
@@ -3937,6 +3962,224 @@ check(
   "闪烁颜色是无彩色（纯白），与灰阶外壳一致且不与金色选择环抢色",
   isGreyscaleHex(FLASH_COLOR) && FLASH_COLOR === "#ffffff",
   FLASH_COLOR,
+);
+
+check(
+  "单击空地闪烁为空，单击实体只闪该实体",
+  clickFlashIds(null).length === 0 && JSON.stringify(clickFlashIds(7)) === JSON.stringify([7]),
+  `${JSON.stringify(clickFlashIds(null))} / ${JSON.stringify(clickFlashIds(7))}`,
+);
+check(
+  "单击闪光比扫过闪光更强：单击两环、扫过一环",
+  CLICK_FLASH_STRENGTH === "strong" &&
+    SWEEP_FLASH_STRENGTH === "normal" &&
+    flashRingCount(CLICK_FLASH_STRENGTH) === 2 &&
+    flashRingCount(SWEEP_FLASH_STRENGTH) === 1,
+  `${flashRingCount(CLICK_FLASH_STRENGTH)} / ${flashRingCount(SWEEP_FLASH_STRENGTH)}`,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Marquee sweep flash: candidates, entered-ids set, the leaves-and-re-enters rule, release rule
+// ---------------------------------------------------------------------------------------------
+
+const sweepCandidateIds = marqueeCoveredIds(marqueeWorld, marqueeSquare, 1);
+check(
+  "扫过候选与释放候选同规则：己方单位与己方建筑、且在窗口内",
+  JSON.stringify(sweepCandidateIds) === JSON.stringify([1, 2, 4, 7]) &&
+    !sweepCandidateIds.includes(3) &&
+    !sweepCandidateIds.includes(5) &&
+    !sweepCandidateIds.includes(6),
+  sweepCandidateIds.join(","),
+);
+check(
+  "窗口外实体与未登录身份都不进入扫过候选",
+  marqueeCoveredIds(
+    { ...marqueeWorld, originX: 100, originY: 100, width: 2, height: 2 },
+    marqueeSquare,
+    1,
+  ).length === 0 &&
+    marqueeCoveredIds(marqueeWorld, marqueeSquare, null).length === 0,
+);
+
+const dragSweep = new MarqueeSweep();
+check(
+  "扫过第一帧：框内实体都算首次进入",
+  JSON.stringify(dragSweep.frame([1, 2])) === JSON.stringify([1, 2]),
+  JSON.stringify([...dragSweep.flashedIds]),
+);
+check(
+  "扫过下一帧：只返回新进入的实体，仍在框内的不重复",
+  JSON.stringify(dragSweep.frame([2, 3])) === JSON.stringify([3]),
+  JSON.stringify([...dragSweep.flashedIds]),
+);
+check(
+  "同一拖拽里离开再进入不再闪烁（已进入 id 集合记住它）",
+  JSON.stringify(dragSweep.frame([2])) === JSON.stringify([]) &&
+    JSON.stringify(dragSweep.frame([2, 3])) === JSON.stringify([]) &&
+    JSON.stringify([...dragSweep.flashedIds]) === JSON.stringify([1, 2, 3]),
+  JSON.stringify([...dragSweep.flashedIds]),
+);
+check(
+  "拖拽起点框内（基线）的实体不算进入，留给释放闪烁",
+  (() => {
+    const baselineSweep = new MarqueeSweep([1]);
+    return (
+      JSON.stringify(baselineSweep.frame([1, 2])) === JSON.stringify([2]) &&
+      JSON.stringify([...baselineSweep.coveredIds]) === JSON.stringify([1, 2]) &&
+      !baselineSweep.flashedIds.has(1)
+    );
+  })(),
+);
+check(
+  "释放不重复闪已扫过的实体",
+  JSON.stringify(releaseFlashIds([2], [], [2])) === JSON.stringify([]) &&
+    JSON.stringify(releaseFlashIds([1, 2, 3], [1], [2])) === JSON.stringify([3]),
+  JSON.stringify(releaseFlashIds([1, 2, 3], [1], [2])),
+);
+check(
+  "释放仍闪起点框内且未被扫过的实体",
+  JSON.stringify(releaseFlashIds([1], [], [])) === JSON.stringify([1]) &&
+    JSON.stringify(releaseFlashIds([1, 2], [], [2])) === JSON.stringify([1]),
+  JSON.stringify(releaseFlashIds([1, 2], [], [2])),
+);
+check(
+  "扫过 + 释放整合：扫过的战斗单位不在释放时再闪，起点建筑也未误闪",
+  (() => {
+    const baselineIds = marqueeCoveredIds(
+      marqueeWorld,
+      { minX: 2, minY: 2, maxX: 2, maxY: 2 },
+      1,
+    );
+    const integrated = new MarqueeSweep(baselineIds);
+    const first = integrated.frame(marqueeCoveredIds(marqueeWorld, marqueeSquare, 1));
+    const back = integrated.frame(
+      marqueeCoveredIds(marqueeWorld, { minX: 2, minY: 2, maxX: 2, maxY: 2 }, 1),
+    );
+    const released = releaseFlashIds([2], [], integrated.flashedIds);
+    return (
+      JSON.stringify(baselineIds) === JSON.stringify([1, 4]) &&
+      JSON.stringify(first) === JSON.stringify([2, 7]) &&
+      back.length === 0 &&
+      released.length === 0
+    );
+  })(),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Order crosshair: 350 ms lifetime curve, scale/alpha, CSS -> backing pixels, edge clamp, colour
+// ---------------------------------------------------------------------------------------------
+
+const crosshairStart = 10_000;
+check(
+  "准星寿命 350ms：起点 0、半程 0.5、终点及之后都是 1（时钟回退为 0）",
+  CROSSHAIR_MS === 350 &&
+    crosshairProgress(crosshairStart, crosshairStart) === 0 &&
+    near(crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS / 2), 0.5) &&
+    crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS) === 1 &&
+    crosshairProgress(crosshairStart, crosshairStart + 10_000) === 1 &&
+    crosshairProgress(crosshairStart, crosshairStart - 1) === 0 &&
+    crosshairProgress(crosshairStart, crosshairStart, 0) === 1,
+  `${crosshairProgress(crosshairStart, crosshairStart)} / ` +
+    `${crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS / 2)} / ` +
+    `${crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS)}`,
+);
+check(
+  "准星缩放从 0.6 到 1.4，半程正好 1.0",
+  CROSSHAIR_SCALE_START === 0.6 &&
+    CROSSHAIR_SCALE_END === 1.4 &&
+    near(crosshairScale(0), 0.6) &&
+    near(crosshairScale(0.5), 1.0) &&
+    near(crosshairScale(1), 1.4),
+  `${crosshairScale(0)} / ${crosshairScale(0.5)} / ${crosshairScale(1)}`,
+);
+check(
+  "准星透明度从 1 线性降到 0，并夹在 0..1",
+  crosshairAlpha(0) === 1 &&
+    near(crosshairAlpha(0.5), 0.5) &&
+    crosshairAlpha(1) === 0 &&
+    crosshairAlpha(-2) === 1 &&
+    crosshairAlpha(2) === 0,
+  `${crosshairAlpha(0)} / ${crosshairAlpha(0.5)} / ${crosshairAlpha(1)}`,
+);
+check(
+  "准星帧只在 350ms 内可见，结束时 alpha 为 0",
+  (() => {
+    const startFrame = crosshairFrame(crosshairStart, crosshairStart);
+    const midFrame = crosshairFrame(
+      crosshairStart,
+      crosshairStart + CROSSHAIR_MS / 2,
+    );
+    const endFrame = crosshairFrame(
+      crosshairStart,
+      crosshairStart + CROSSHAIR_MS,
+    );
+    return (
+      startFrame.visible &&
+      midFrame.visible &&
+      !endFrame.visible &&
+      near(startFrame.alpha, 1) &&
+      near(midFrame.alpha, 0.5) &&
+      endFrame.alpha === 0
+    );
+  })(),
+);
+check(
+  "指针 CSS 像素 -> 画布后备像素：1x 不变、2x 翻倍，非法 DPR 按 1x",
+  (() => {
+    const point = { x: 137.5, y: 42.25 };
+    const atOne = screenToBackingPixels(point, 1);
+    const atTwo = screenToBackingPixels(point, 2);
+    const invalid = screenToBackingPixels(point, Number.NaN);
+    return (
+      near(atOne.x, 137.5) &&
+      near(atOne.y, 42.25) &&
+      near(atTwo.x, 275) &&
+      near(atTwo.y, 84.5) &&
+      near(invalid.x, atOne.x) &&
+      near(invalid.y, atOne.y)
+    );
+  })(),
+);
+check(
+  "准星半径按 DPR 放大：1x 起点 0.6 倍、2x 终点 1.4 倍",
+  near(crosshairRadius(0, 1), CROSSHAIR_BASE_RADIUS_PX * 0.6) &&
+    near(crosshairRadius(1, 2), CROSSHAIR_BASE_RADIUS_PX * 1.4 * 2) &&
+    near(crosshairRadius(0.5, 1), CROSSHAIR_BASE_RADIUS_PX),
+  `${crosshairRadius(0, 1)} / ${crosshairRadius(1, 2)}`,
+);
+check(
+  "画布中央的准星不移动也不缩小",
+  (() => {
+    const placed = clampCrosshairToCanvas({ x: 400, y: 300 }, 30, 800, 600);
+    return near(placed.x, 400) && near(placed.y, 300) && near(placed.radius, 30);
+  })(),
+);
+check(
+  "贴边准星不被裁剪：中心内移 ≤ 2px，半径缩到剩余空间且仍可见（1x / 2x）",
+  (() => {
+    const atOne = clampCrosshairToCanvas({ x: 0, y: 0 }, 30, 800, 600);
+    const atTwo = clampCrosshairToCanvas({ x: 0, y: 0 }, 60, 1_600, 1_200);
+    const fits = (placed: { x: number; y: number; radius: number }, width: number, height: number) =>
+      placed.radius > 0 &&
+      placed.x - placed.radius >= -1e-9 &&
+      placed.y - placed.radius >= -1e-9 &&
+      placed.x + placed.radius <= width + 1e-9 &&
+      placed.y + placed.radius <= height + 1e-9;
+    return (
+      near(atOne.x, CROSSHAIR_EDGE_INSET_PX) &&
+      near(atOne.y, CROSSHAIR_EDGE_INSET_PX) &&
+      near(atTwo.x, CROSSHAIR_EDGE_INSET_PX) &&
+      near(atTwo.y, CROSSHAIR_EDGE_INSET_PX) &&
+      fits(atOne, 800, 600) &&
+      fits(atTwo, 1_600, 1_200) &&
+      fits(clampCrosshairToCanvas({ x: 800, y: 300 }, 30, 800, 600), 800, 600)
+    );
+  })(),
+);
+check(
+  "准星颜色只有白色（灰阶），没有第二种色相",
+  isGreyscaleHex(CROSSHAIR_COLOR) && CROSSHAIR_COLOR === "#ffffff",
+  CROSSHAIR_COLOR,
 );
 
 // ---------------------------------------------------------------------------------------------

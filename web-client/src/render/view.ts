@@ -604,6 +604,31 @@ export function entityInMarquee(
 }
 
 /**
+ * Every own unit and own building the marquee rectangle covers inside the loaded window.
+ *
+ * This is the candidate rule a release uses **before** its priority pass: ownership and the inclusive
+ * geometry decide membership here, enemy and neutral entities never qualify, and an entity outside the
+ * window is invisible to the marquee exactly as it is invisible to the renderer. The sweep flash reuses
+ * this rule (see `sweep.ts`), so the box touches the same entities the release considers.
+ */
+export function marqueeCandidates(
+  world: WorldView,
+  range: TileRange,
+  myPlayerId: number | null,
+): EntityView[] {
+  const candidates: EntityView[] = [];
+  for (const entity of world.entities) {
+    if (!entityInWindow(world, entity)) {
+      continue;
+    }
+    if (entityInMarquee(entity, range, myPlayerId)) {
+      candidates.push(entity);
+    }
+  }
+  return candidates;
+}
+
+/**
  * Every own entity the rectangle covers, selected by the marquee priority rule.
  *
  * The rectangle contributes every own unit and own building inside it, both inside the loaded window.
@@ -615,16 +640,7 @@ export function marqueeSelection(
   range: TileRange,
   myPlayerId: number | null,
 ): number[] {
-  const candidates: EntityView[] = [];
-  for (const entity of world.entities) {
-    if (!entityInWindow(world, entity)) {
-      continue;
-    }
-    if (entityInMarquee(entity, range, myPlayerId)) {
-      candidates.push(entity);
-    }
-  }
-  return selectByPriority(candidates, myPlayerId);
+  return selectByPriority(marqueeCandidates(world, range, myPlayerId), myPlayerId);
 }
 
 /** Entity lookup for the HUD and the selection ring. */

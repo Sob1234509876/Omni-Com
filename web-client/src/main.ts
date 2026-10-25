@@ -78,7 +78,19 @@ import {
   type Marker,
 } from "./render/markers";
 import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
-import { pruneFlashes, startFlash } from "./render/flash";
+import {
+  CLICK_FLASH_STRENGTH,
+  SWEEP_FLASH_STRENGTH,
+  pruneFlashes,
+  startFlash,
+  type FlashStrength,
+} from "./render/flash";
+import {
+  CROSSHAIR_MS,
+  screenToBackingPixels,
+  type CrosshairState,
+} from "./render/crosshair";
+import { MarqueeSweep, marqueeCoveredIds, releaseFlashIds } from "./render/sweep";
 import {
   InputController,
   type ControlGroupMode,
@@ -86,7 +98,7 @@ import {
   type SelectionMode,
 } from "./render/input";
 import { alphaFor, interpolate, type Frame } from "./render/interpolate";
-import { toggleSelection } from "./render/marquee";
+import { marqueeTileRange, toggleSelection } from "./render/marquee";
 import { MinimapRenderer, minimapCameraTarget } from "./render/minimap";
 import {
   buildPlacementPreview,
@@ -1077,6 +1089,19 @@ let selectedIds: number[] = [];
  * animation loop prunes finished entries, so it stays as small as the recent selection.
  */
 const flashes = new Map<number, number>();
+/**
+ * The subset of {@link flashes} that a deliberate click started.
+ *
+ * Click flashes use the stronger two-ring halo; sweep and release flashes stay one-ring. An id leaves
+ * this set when its flash entry is pruned, or when a later sweep/release restarts it at normal strength.
+ */
+const strongFlashes = new Set<number>();
+/** The in-progress marquee sweep state, or null outside a marquee drag. */
+let sweep: MarqueeSweep | null = null;
+/** The one live order crosshair, in canvas backing pixels; a second order replaces it. */
+let crosshair: CrosshairState | null = null;
+/** Shared empty set for renderer options outside a marquee drag (no per-frame allocation). */
+const NO_FLASH_IDS: ReadonlySet<number> = new Set<number>();
 /** Control groups 1..9; the pure model lives in `controlGroups.ts`. */
 let controlGroups: ControlGroups = EMPTY_CONTROL_GROUPS;
 /** The group the current selection was recalled from, or null after a click/marquee/order. */
@@ -1290,23 +1315,51 @@ function pruneSelection(): void {
 }
 
 /**
+ * Starts one flash for each id at one strength, and keeps the strong-id bookkeeping in step.
+ *
+ * Restarting an id at normal strength deliberately clears it from {@link strongFlashes}: the latest
+ * player action decides the halo shape, so a sweep touch cannot leave an old click's stronger ring
+ * behind. Entries are never removed here; {@link pruneFlashes} is the only cleanup.
+ */
+function startFlashFor(ids: Iterable<number>, now: number, strength: FlashStrength): void {
+  const list = [...ids];
+  if (list.length === 0) {
+    return;
+  }
+  startFlash(flashes, list, now);
+  if (strength === CLICK_FLASH_STRENGTH) {
+    for (const id of list) {
+      strongFlashes.add(id);
+    }
+  } else {
+    for (const id of list) {
+      strongFlashes.delete(id);
+    }
+  }
+}
+
+/**
  * Starts the brief selection flash for the entities a player action has just newly selected.
  *
  * `previous` is the selection from before the action, so an entity that was already selected keeps its
- * existing timer instead of strobing again. Only the player-action paths call this; {@link
- * pruneSelection}, `useWorld` and the snapshot handlers deliberately do not, which is what keeps
- * programmatic selection changes silent.
+ * existing timer instead of strobing again. `strength` is `strong` only for a deliberate click; every
+ * other player action (marquee release, double click, chip, control-group recall, `工兵`) uses the
+ * ordinary one-ring halo. Only the player-action paths call this; {@link pruneSelection}, `useWorld`
+ * and the snapshot handlers deliberately do not, which is what keeps programmatic selection changes
+ * silent.
  */
-function flashNewSelection(previous: ReadonlySet<number>, now = performance.now()): void {
+function flashNewSelection(
+  previous: ReadonlySet<number>,
+  now = performance.now(),
+  strength: FlashStrength = SWEEP_FLASH_STRENGTH,
+): void {
   const added: number[] = [];
   for (const id of selectedIds) {
     if (!previous.has(id)) {
       added.push(id);
     }
   }
-  if (added.length > 0) {
-    startFlash(flashes, added, now);
-  }
+  startFlashFor(added, now, strength);
 }
 
 /**
@@ -2696,6 +2749,20 @@ function cancelPlacement(showStatus: boolean): void {
 }
 
 /**
+ * Replaces the live order crosshair with one at the click's screen pixel.
+ *
+ * The point passed in is the pointer position the input controller captured **before** dispatching the
+ * order, in CSS pixels relative to the canvas. Converting it here (and storing only the backing-pixel
+ * result) means the animation is fixed at the pixel the mouse was on, not at the ordered tile's centre,
+ * and a second order simply overwrites the one state.
+ */
+function startOrderCrosshair(screen: { readonly x: number; readonly y: number }): void {
+  const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  const backing = screenToBackingPixels(screen, devicePixelRatio);
+  crosshair = { x: backing.x, y: backing.y, startedAt: performance.now() };
+}
+
+/**
  * Applies one right click: a waypoint, an order, or a move route.
  *
  * <p>Shift+right-click only appends a pending waypoint to the current selection's route; a plain
@@ -2704,8 +2771,17 @@ function cancelPlacement(showStatus: boolean): void {
  * so the interaction is unchanged for a player who never uses waypoints. A plain right-click on an enemy
  * still issues `ORDER ATTACK` and clears any pending route; Shift+right-click on the same enemy adds a
  * waypoint instead, because Shift is the mode modifier.
+ *
+ * <p>`point` is the pointer's canvas-relative CSS position captured on the pointerup, before any line is
+ * sent. Every committed move/attack order spawns the crosshair there, before `sendGameplayBatch`, so the
+ * visual feedback belongs to the same click that issued the order.
  */
-function doRightClick(tile: TileCoord, targetId: number | null, shift: boolean): void {
+function doRightClick(
+  tile: TileCoord,
+  targetId: number | null,
+  shift: boolean,
+  point: { readonly x: number; readonly y: number },
+): void {
   if (placementPath !== null) {
     setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置，Esc 取消`, "busy");
     return;
@@ -2741,6 +2817,8 @@ function doRightClick(tile: TileCoord, targetId: number | null, shift: boolean):
       units.length === 1
         ? `已攻击 ${describeEntity(target)}`
         : `${units.length} 个单位攻击 ${describeEntity(target)}`;
+    // Spawn the crosshair before the order leaves the client; `point` was captured on pointerup.
+    startOrderCrosshair(point);
     void sendGameplayBatch("ORDER ATTACK", lines, lines, confirmation);
     updateGameplayPanel();
     updateHud(true);
@@ -2769,6 +2847,9 @@ function doRightClick(tile: TileCoord, targetId: number | null, shift: boolean):
       : points.length === 1
         ? `${units.length} 个单位移动到 ${tile.x},${tile.y}`
         : `${units.length} 个单位沿 ${points.length} 个路径点移动`;
+  // A plain right click (with or without committed waypoints) is a move order: one crosshair at the
+  // pointer, spawned before the line is sent, replacing any crosshair from an earlier order.
+  startOrderCrosshair(point);
   void sendGameplayBatch("ORDER MOVE", lines, lines, confirmation);
   updateGameplayPanel();
   updateHud(true);
@@ -2865,21 +2946,37 @@ function applySelection(id: number | null, mode: SelectionMode): void {
       cancelPlacement(false);
     }
   }
-  flashNewSelection(previous);
+  // A click is the strong-feedback path: empty ground adds nothing, and a click on an entity flashes
+  // exactly the entity the action newly added. The generic diff still applies, so Shift-clicking an
+  // already selected unit off flashes nothing.
+  flashNewSelection(previous, performance.now(), CLICK_FLASH_STRENGTH);
   updateHud(true);
   updateGameplayPanel();
 }
 
-/** Replaces the selection with every own unit drawn inside the finished marquee. */
+/**
+ * Replaces the selection with every own unit drawn inside the finished marquee.
+ *
+ * The release flash is the last half of the sweep rule: ids the sweep already flashed are not flashed
+ * again, while ids that were inside the rectangle before the drag started (the sweep baseline, which
+ * never "entered") still get their one release flash. `releaseFlashIds` states both halves purely.
+ */
 function applyMarquee(range: TileRange): void {
   const previous = new Set(selectedIds);
+  const finishedSweep = sweep;
+  sweep = null;
   selectedGroup = null;
   pendingRoute = [];
   selectedIds = marqueeSelection(world, range, myPlayerId);
   if (placementPath !== null) {
     cancelPlacement(false);
   }
-  flashNewSelection(previous);
+  const releaseIds = releaseFlashIds(
+    selectedIds,
+    previous,
+    finishedSweep === null ? [] : finishedSweep.flashedIds,
+  );
+  startFlashFor(releaseIds, performance.now(), SWEEP_FLASH_STRENGTH);
   updateHud(true);
   updateGameplayPanel();
 }
@@ -3008,8 +3105,13 @@ const inputHooks: InputHooks = {
   onCameraChange: () => {
     updateHud(true);
   },
-  onRightClick: (tile, targetId, shift) => {
-    doRightClick(tile, targetId, shift);
+  onMarqueeStart: (range) => {
+    // The zero-area box at pointerdown: candidates already inside it are the sweep's baseline, so they
+    // flash on release rather than counting as freshly entered.
+    sweep = new MarqueeSweep(marqueeCoveredIds(world, range, myPlayerId));
+  },
+  onRightClick: (tile, targetId, shift, point) => {
+    doRightClick(tile, targetId, shift, point);
   },
   onLeftClick: (tile) => doLeftClick(tile),
   onCancel: () => {
@@ -3570,16 +3672,41 @@ function animationFrame(now: number): void {
     // Follow the camera: once its focus reaches the loaded window's edge, ask for a new window now
     // instead of waiting for the next poll.
     maybeStreamWindow(now);
-    // Drop finished flash entries before drawing; the map then holds only the recent selection.
+    // Marquee sweep flash: feed the box's current candidate set once per frame and start a flash for
+    // every id that first entered it. The baseline from `onMarqueeStart` means ids already under the
+    // starting point do not count as entered and wait for the release flash.
+    const marqueeRect = input.marqueeRect;
+    if (marqueeRect !== null && sweep !== null) {
+      const entered = sweep.frame(
+        marqueeCoveredIds(world, marqueeTileRange(camera, marqueeRect), myPlayerId),
+      );
+      startFlashFor(entered, now, SWEEP_FLASH_STRENGTH);
+    }
+    // Drop finished flash entries before drawing; the map then holds only the recent selection. The
+    // strong-id set follows the map, so a click's stronger halo cannot outlive its timer.
     pruneFlashes(flashes, now);
+    for (const id of strongFlashes) {
+      if (!flashes.has(id)) {
+        strongFlashes.delete(id);
+      }
+    }
+    // An order crosshair lives exactly 350 ms. The loop always re-requests itself at the bottom of this
+    // function, so this cleanup and the final faded frame happen even when the world is otherwise idle.
+    if (crosshair !== null && now - crosshair.startedAt >= CROSSHAIR_MS) {
+      crosshair = null;
+    }
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
       hoverTile,
       selectedIds,
       placement: placementPreviewAt(hoverTile),
-      marquee: input.marqueeRect,
+      marquee: marqueeRect,
       myPlayerId,
       flashStarts: flashes,
+      strongFlashIds: strongFlashes,
+      sweepFlashIds:
+        marqueeRect === null || sweep === null ? NO_FLASH_IDS : sweep.flashedIds,
+      crosshair,
       nowMs: now,
       showPaths,
       pendingPath: pendingRoute,
