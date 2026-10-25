@@ -84,6 +84,18 @@ export interface InputHooks {
   /** The `O` hotkey: the page selects every own engineer in the loaded window. */
   readonly onSelectEngineers?: () => void;
   /**
+   * The `H` hotkey: the page centres the camera on the local player's own base anchor (the `anchor` of
+   * its own `players` row). When no anchor is known the page says so on the status line instead.
+   */
+  readonly onJumpHome?: () => void;
+  /**
+   * The `M` hotkey: the page places a personal marker under the cursor (or at the camera centre when the
+   * pointer is outside the canvas). The markers are client-only session state; see `markers.ts`.
+   */
+  readonly onPlaceMarker?: () => void;
+  /** `Shift+M`: remove the most recently placed marker. The page reports an empty list on the status line. */
+  readonly onRemoveMarker?: () => void;
+  /**
    * A plain left click on a world tile, before selection. Returning `true` consumes the click, which is
    * how the build placement mode places a site instead of changing the selection.
    */
@@ -632,6 +644,28 @@ export class InputController {
       event.preventDefault();
       if (!event.repeat) {
         this.hooks.onSelectEngineers?.();
+      }
+      return;
+    }
+    if (key === "h") {
+      // "Bring me home": centre the camera on my own published base anchor. The page owns the
+      // unknown-anchor message, because only it knows whether the snapshot or the login is missing.
+      event.preventDefault();
+      if (!event.repeat) {
+        this.hooks.onJumpHome?.();
+      }
+      return;
+    }
+    if (key === "m") {
+      // `M` places a personal marker; `Shift+M` drops the most recently placed one. Neither is a game
+      // command: markers are client-only session state and never reach the server.
+      event.preventDefault();
+      if (!event.repeat) {
+        if (event.shiftKey) {
+          this.hooks.onRemoveMarker?.();
+        } else {
+          this.hooks.onPlaceMarker?.();
+        }
       }
       return;
     }

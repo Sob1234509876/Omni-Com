@@ -32,6 +32,8 @@
     "../src/render/marquee.ts",
     "../src/render/placement.ts",
     "../src/render/minimap.ts",
+    "../src/render/enemy.ts",
+    "../src/render/markers.ts",
     "../src/render/selection.ts",
     "../src/render/commandbar.ts",
     "../src/render/tooltip.ts",

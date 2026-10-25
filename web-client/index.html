@@ -323,6 +323,107 @@
         font-variant-numeric: tabular-nums;
       }
 
+      /* The personal marker panel: the translucent list the `标记` button opens. Same greyscale chrome
+         as the warehouse panel, one clickable row per marker (number, tile, distance, sector), a
+         `清除全部` action and a `关闭` button that mirrors Esc. It is session state only; nothing here
+         is stored or sent to the server, and no other player can see it. */
+      .marker-panel {
+        width: max-content;
+        min-width: 178px;
+        max-width: min(300px, 100%);
+        padding: 7px 9px;
+        border: 1px solid #5a5a5a;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: none;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: auto;
+        backdrop-filter: none;
+      }
+
+      .marker-panel[hidden] {
+        display: none;
+      }
+
+      .marker-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0 0 5px;
+      }
+
+      .marker-panel h2 {
+        margin: 0;
+        color: #c8c8c8;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      #marker-count {
+        color: #e6e6e6;
+        font-weight: 400;
+        letter-spacing: 0;
+      }
+
+      .marker-actions {
+        display: inline-flex;
+        gap: 4px;
+      }
+
+      .marker-actions button {
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 10px;
+        line-height: 1.4;
+      }
+
+      .marker-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .marker-rows[hidden] {
+        display: none;
+      }
+
+      .marker-row {
+        display: block;
+        width: 100%;
+        padding: 2px 5px;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        background: transparent;
+        color: #e6e6e6;
+        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        text-align: left;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .marker-row:hover,
+      .marker-row:focus-visible {
+        border-color: #c8c8c8;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+      }
+
+      .marker-empty {
+        margin: 2px 0 0;
+        color: #b0b0b0;
+        font-style: italic;
+      }
+
+      .marker-empty[hidden] {
+        display: none;
+      }
+
       /* ---------------------------------------------------------------------
          Bottom bar: minimap (left), command bar (centre), context panel (right).
          The grid columns are the layout rule; JavaScript never positions these
@@ -664,11 +765,14 @@
         font-weight: 600;
       }
 
-      /* The enemy anchor line: one clickable chip under the HUD. It names the hostile factions whose
-         starting anchors are published and points at the nearest one; it is pointer-transparent only
-         when hidden, so it never covers the canvas otherwise. Colours stay greyscale like the chrome;
-         the red direction lives on the minimap arrow, not in this text. */
-      #enemy-line {
+      /* The enemy anchor line and the home line: one clickable chip each under the HUD. The enemy line
+         names the hostile factions whose starting anchors are published and points at the nearest one;
+         the home line says how far my own base is (or that it is visible) and jumps there on a click.
+         Both are pointer-transparent only when hidden, so they never cover the canvas otherwise.
+         Colours stay greyscale like the chrome; the red direction lives on the minimap arrow and the
+         white direction on the home / marker arrows, not in this text. */
+      #enemy-line,
+      #home-line {
         pointer-events: auto;
         display: inline-flex;
         align-items: center;
@@ -687,12 +791,15 @@
         cursor: pointer;
       }
 
-      #enemy-line[hidden] {
+      #enemy-line[hidden],
+      #home-line[hidden] {
         display: none;
       }
 
       #enemy-line:hover,
-      #enemy-line:focus-visible {
+      #enemy-line:focus-visible,
+      #home-line:hover,
+      #home-line:focus-visible {
         border-color: #ffffff;
         color: #ffffff;
       }
@@ -1570,6 +1677,14 @@
           </div>
 
           <button id="enemy-line" class="enemy-line" type="button" hidden></button>
+          <button
+            id="home-line"
+            class="home-line"
+            type="button"
+            aria-keyshortcuts="H"
+            title="我方基地：点击把镜头移到自己的基地锚点（H）"
+            hidden
+          ></button>
 
           <aside id="inventory-panel" class="inventory-panel" aria-label="选中单位的库存">
             <h2>单位库存</h2>
@@ -1589,6 +1704,20 @@
               aria-keyshortcuts="O"
               title="选中已载入窗口内自己的全部工兵；快照没有订单状态，无法只选空闲工兵"
             >工兵</button>
+            <button
+              id="home-button"
+              type="button"
+              aria-keyshortcuts="H"
+              title="把我方基地的锚点居中到镜头（H）。快照没有你的 anchor 时会在状态行说明"
+            >基地</button>
+            <button
+              id="marker-button"
+              type="button"
+              aria-keyshortcuts="M"
+              aria-expanded="false"
+              aria-controls="marker-panel"
+              title="打开个人标记列表：M 在当前地块放置标记（最多 12 个），Shift+M 删除最近一个；标记只存在于本页会话，不会发给服务器"
+            >标记</button>
             <button
               id="toggle-paths"
               type="button"
@@ -1624,6 +1753,18 @@
             </div>
             <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
             <ul id="warehouse-items" class="warehouse-items" hidden></ul>
+          </aside>
+
+          <aside id="marker-panel" class="marker-panel" aria-label="我的标记" hidden>
+            <div class="marker-head">
+              <h2>标记 <span id="marker-count">0/12</span></h2>
+              <span class="marker-actions">
+                <button id="marker-clear" type="button" title="清除全部标记（只影响本页）">清除全部</button>
+                <button id="marker-close" type="button" title="关闭标记列表（Esc）；不会删除标记">关闭</button>
+              </span>
+            </div>
+            <p id="marker-empty" class="marker-empty">还没有标记 · M 在当前地块放置</p>
+            <ul id="marker-rows" class="marker-rows" hidden></ul>
           </aside>
 
           <div id="connection-overlay" class="connection-overlay" hidden>
@@ -1732,6 +1873,13 @@
                   · Ctrl+1..9 编队 · 1..9 选择编队 · Shift+1..9 加入编队
                   · O 选中全部工兵 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
                   · 小地图左键/拖动移动镜头 · 顶部“路径”开关选中单位的路线显示。
+                </p>
+                <p class="footnote">
+                  找不到自己基地时：按 <strong>H</strong> 或点右上角 <strong>基地</strong>，镜头会居中到快照里你自己那一行的
+                  <code>anchor</code>；顶部“我方基地”一行同时显示距离与八方向，基地在已载入窗口内时显示“可见”。
+                  <strong>M</strong> 在光标所在的地块（光标不在画布上时用镜头中心）放置个人标记，最多 12 个，同一地块不重复；
+                  <strong>Shift+M</strong> 删除最近放置的一个；右上角 <strong>标记</strong> 打开标记列表，可逐行跳转或
+                  <strong>清除全部</strong>。标记只存在于本页会话（不写 localStorage、不发给服务器），别人看不到。
                 </p>
                 <p class="footnote">
                   底部命令栏：选中单位时出现 <strong>停止</strong>、<strong>攻击移动</strong> 与选中条；

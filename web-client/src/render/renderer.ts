@@ -9,7 +9,8 @@
  * shadows, enemy unit base tints, ownership rings, entities sorted by y so lower entities overlap higher
  * ones, own-unit white outlines, their health bars and the greyscale construction bar / `生产中 ×N`
  * marker above buildings, the brief achromatic selection flash halo, one gold selection ring per
- * selected entity, and finally the marquee rectangle. Ownership rings are thinner than selection rings
+ * selected entity, the personal marker squares with their numbers, and finally the marquee rectangle.
+ * Ownership rings are thinner than selection rings
  * and are drawn first, so every gold selection ring always stays on top. The enemy base tint is the one
  * extra hostile mark, and the white own-unit outline is deliberately achromatic; both live on the
  * canvas, while the surrounding chrome stays greyscale. The flash halo is drawn over the sprite but
@@ -38,6 +39,7 @@ import {
   type SpriteRect,
 } from "./atlas";
 import type { Camera, TileCoord } from "./camera";
+import type { Marker } from "./markers.ts";
 import type { ScreenRect } from "./marquee";
 import {
   drawBuildingProgressBar,
@@ -90,6 +92,72 @@ import {
 
 const BACKGROUND_COLOR = "#0b1016";
 
+/** The one achromatic colour of a personal marker on the canvas: chrome, not ownership. */
+const MARKER_COLOR = "rgba(255, 255, 255, 0.95)";
+
+/**
+ * Draws every in-window personal marker as a small hollow square with its placement number above it.
+ *
+ * <p>White on a dark halo is the same achromatic chrome language the selection flash and the marquee
+ * use, so a marker can never be mistaken for an ownership colour or a gold selection ring. A marker
+ * outside the loaded window is skipped here deliberately: the minimap draws one white numbered arrow for
+ * the nearest outside marker instead (see `markers.ts`), so the canvas can never point at terrain that is
+ * not loaded.
+ */
+function drawMarkers(
+  context: CanvasRenderingContext2D,
+  world: WorldView,
+  camera: Camera,
+  tileSize: number,
+  markers: readonly Marker[],
+  width: number,
+  height: number,
+  devicePixelRatio: number,
+): void {
+  const tileOnScreen = camera.effectiveTileSize;
+  const half = Math.max(4, tileOnScreen * 0.3);
+  const lineWidth = Math.max(1, 1.5 / devicePixelRatio);
+  const fontPixels = Math.max(9, Math.round(tileOnScreen * 0.36));
+  const margin = half * 2 + fontPixels;
+  context.save();
+  context.lineWidth = lineWidth;
+  context.strokeStyle = MARKER_COLOR;
+  context.fillStyle = MARKER_COLOR;
+  context.font = `${fontPixels}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.textAlign = "center";
+  context.textBaseline = "bottom";
+  for (const marker of markers) {
+    if (!tileInWindow(world, marker.tile.x, marker.tile.y)) {
+      continue;
+    }
+    const centre = camera.worldToScreen(
+      (marker.tile.x + 0.5) * tileSize,
+      (marker.tile.y + 0.5) * tileSize,
+    );
+    if (
+      centre.x < -margin ||
+      centre.y < -margin ||
+      centre.x > width + margin ||
+      centre.y > height + margin
+    ) {
+      continue;
+    }
+    context.beginPath();
+    context.rect(centre.x - half, centre.y - half, half * 2, half * 2);
+    context.stroke();
+    // The number sits above the square, stroked first with a dark halo so it reads over bright terrain.
+    const label = String(marker.number);
+    const labelY = centre.y - half - 2;
+    context.lineWidth = Math.max(2, 2.5 / devicePixelRatio);
+    context.strokeStyle = "rgba(0, 0, 0, 0.75)";
+    context.strokeText(label, centre.x, labelY);
+    context.fillText(label, centre.x, labelY);
+    context.lineWidth = lineWidth;
+    context.strokeStyle = MARKER_COLOR;
+  }
+  context.restore();
+}
+
 export interface RenderOptions {
   /** Monotonic animation clock in seconds, supplied by the caller. */
   readonly clockSeconds: number;
@@ -129,6 +197,14 @@ export interface RenderOptions {
   readonly showPaths: boolean;
   /** Pending (uncommitted) waypoints of the current selection, as absolute world tiles. */
   readonly pendingPath: readonly TileCoord[];
+  /**
+   * Personal markers, in placement order.
+   *
+   * They are client-only session state (see `markers.ts`): a small hollow square with its number per
+   * marker, drawn in the same achromatic style as the rest of the chrome. A marker whose tile is outside
+   * the loaded window is not drawn here; the minimap's white numbered arrow is what points at it.
+   */
+  readonly markers: readonly Marker[];
 }
 
 interface Size {
@@ -641,6 +717,21 @@ export class WorldRenderer {
           isBuildingEntityKind(item.entity.kind),
         );
       }
+    }
+
+    // Personal markers last among the map marks: above every sprite, ring and flash, below the marquee.
+    // The white square and number are chrome, so they never compete with the ownership or selection hues.
+    if (options.markers.length > 0) {
+      drawMarkers(
+        context,
+        world,
+        camera,
+        tileSize,
+        options.markers,
+        size.width,
+        size.height,
+        size.devicePixelRatio,
+      );
     }
 
     // Marquee last, so the rectangle is visible over terrain, rings and sprites. It is in CSS pixels

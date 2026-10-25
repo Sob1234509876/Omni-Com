@@ -61,6 +61,21 @@ import {
   enemyLineText,
   type EnemyAnchorEntry,
 } from "./render/enemy";
+import {
+  HOME_ANCHOR_UNKNOWN_TEXT,
+  MAX_MARKERS,
+  clearMarkers,
+  formatHomeLine,
+  formatMarkerLabel,
+  homeAnchorEntry,
+  homeCameraTarget,
+  markerCameraTarget,
+  nearestOutsideMarker,
+  ownAnchorOf,
+  placeMarker,
+  removeLastMarker,
+  type Marker,
+} from "./render/markers";
 import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
 import { pruneFlashes, startFlash } from "./render/flash";
 import {
@@ -186,6 +201,15 @@ const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudWindow = required<HTMLSpanElement>("#hud-window");
 const hudPlayer = required<HTMLSpanElement>("#hud-player");
 const enemyLine = required<HTMLButtonElement>("#enemy-line");
+const homeLine = required<HTMLButtonElement>("#home-line");
+const homeButton = required<HTMLButtonElement>("#home-button");
+const markerButton = required<HTMLButtonElement>("#marker-button");
+const markerPanel = required<HTMLElement>("#marker-panel");
+const markerCount = required<HTMLSpanElement>("#marker-count");
+const markerRows = required<HTMLUListElement>("#marker-rows");
+const markerEmpty = required<HTMLParagraphElement>("#marker-empty");
+const markerClearButton = required<HTMLButtonElement>("#marker-clear");
+const markerCloseButton = required<HTMLButtonElement>("#marker-close");
 const hudResources = required<HTMLSpanElement>("#hud-resources");
 const hudMarked = required<HTMLSpanElement>("#hud-marked");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
@@ -1586,6 +1610,190 @@ function updateEnemyLine(centre: TileCoord): void {
       : `点击把镜头移到最近的敌方锚点 (${entries[0]!.anchor.x},${entries[0]!.anchor.y})`;
 }
 
+// ---------------------------------------------------------------------------------------------
+// "Bring me home" and the personal markers. The pure rules live in `render/markers.ts`; this half owns
+// the DOM (the top-chrome home line, the `基地` jump, the marker list panel) and the status-line wording.
+// ---------------------------------------------------------------------------------------------
+
+/** Personal, client-only markers in placement order. Session state: no storage, no server, no sharing. */
+let markers: readonly Marker[] = [];
+
+/** Whether the translucent marker list is open. `Esc` closes it and never deletes a marker. */
+let markerPanelOpen = false;
+
+/** The marker ids the open list was built for, so a HUD tick only rewrites text instead of the DOM. */
+let markerRowSignature = "";
+
+/**
+ * Refreshes the home line from my own `players` row and the current camera.
+ *
+ * <p>`null` is the ordinary older-snapshot / not-logged-in case, and the line then stays hidden; `H` and
+ * the `基地` button still work as actions and explain the absence on the status line.
+ */
+function updateHomeLine(centre: TileCoord): void {
+  const entry = homeAnchorEntry(world, myPlayerId, centre);
+  if (entry === null) {
+    homeLine.hidden = true;
+    homeLine.textContent = "";
+    homeLine.title = HOME_ANCHOR_UNKNOWN_TEXT;
+    return;
+  }
+  homeLine.hidden = false;
+  homeLine.textContent = formatHomeLine(entry);
+  homeLine.title = entry.visible
+    ? `我方基地 (${entry.anchor.x},${entry.anchor.y}) 已在已载入窗口内；点击居中的镜头（H）`
+    : `点击把镜头移到我的基地 (${entry.anchor.x},${entry.anchor.y})（H）`;
+}
+
+/**
+ * Centres the camera on my own base anchor, or says why it cannot.
+ *
+ * <p>The anchor comes from the snapshot row whose id is my engine player id. It is the same
+ * `anchorCameraTarget` arithmetic the enemy line's click uses (tile centre, clamped to the camera's
+ * numeric safety bound), so home and enemy jumps land on identical pixels for identical tiles.
+ */
+function jumpToHome(): void {
+  const anchor = ownAnchorOf(world.players, myPlayerId);
+  if (anchor === null) {
+    setStatus(HOME_ANCHOR_UNKNOWN_TEXT, "busy");
+    log("info", HOME_ANCHOR_UNKNOWN_TEXT);
+    return;
+  }
+  const target = homeCameraTarget(anchor, camera.tileSize);
+  camera.setCenter(target.x, target.y);
+  updateHud(true);
+  setStatus(`镜头已移到我的基地 (${anchor.x},${anchor.y})`, "ok");
+}
+
+/** Centres the camera on one marker; the row click and the marker's own jump share this. */
+function jumpToMarker(marker: Marker): void {
+  const target = markerCameraTarget(marker, camera.tileSize);
+  camera.setCenter(target.x, target.y);
+  updateHud(true);
+  setStatus(`镜头已移到标记 ${marker.number} (${marker.tile.x},${marker.tile.y})`, "ok");
+}
+
+/**
+ * `M`: places a marker at the tile under the cursor, or at the camera centre when the pointer is not
+ * over the canvas. Duplicates and the cap are reported instead of being applied silently.
+ */
+function placeMarkerHere(): void {
+  const tile = input.hoverTile ?? camera.centerTile();
+  const result = placeMarker(markers, tile);
+  switch (result.kind) {
+    case "duplicate":
+      setStatus(`瓦片 (${tile.x},${tile.y}) 已有标记 ${result.marker.number}，没有重复放置`, "busy");
+      return;
+    case "full":
+      setStatus(
+        `标记已满 ${MAX_MARKERS} 个：Shift+M 删除最近一个，或点“清除全部”`,
+        "error",
+      );
+      return;
+    default:
+      markers = result.markers;
+      updateHud(true);
+      setStatus(
+        `已放置标记 ${result.marker.number}：瓦片 (${result.marker.tile.x},${result.marker.tile.y})`,
+        "ok",
+      );
+  }
+}
+
+/** `Shift+M`: removes the most recently placed marker; an empty list is reported, not ignored. */
+function removeLastMarkerHere(): void {
+  const result = removeLastMarker(markers);
+  if (result.removed === null) {
+    setStatus("没有可删除的标记：M 放置，Shift+M 删除最近一个", "idle");
+    return;
+  }
+  markers = result.markers;
+  updateHud(true);
+  setStatus(`已删除标记 ${result.removed.number}`, "ok");
+}
+
+/** `清除全部`: clears the whole personal marker list; nothing leaves the page. */
+function clearAllMarkers(): void {
+  if (markers.length === 0) {
+    setStatus("标记列表已经是空的", "idle");
+    return;
+  }
+  const count = markers.length;
+  markers = clearMarkers();
+  updateHud(true);
+  setStatus(`已清除全部 ${count} 个标记`, "ok");
+}
+
+/** Reflects the marker count / open state on the `标记` button and the `清除全部` action. */
+function updateMarkerChrome(): void {
+  markerButton.classList.toggle("armed", markerPanelOpen);
+  markerButton.setAttribute("aria-expanded", markerPanelOpen ? "true" : "false");
+  markerButton.title =
+    `标记（${markers.length}/${MAX_MARKERS}）：M 在光标地块放置 · Shift+M 删除最近一个 · ` +
+    `点击${markerPanelOpen ? "关闭" : "打开"}列表；标记只存在于本页会话，不会发给服务器`;
+  markerClearButton.disabled = markers.length === 0;
+  markerCount.textContent = `${markers.length}/${MAX_MARKERS}`;
+}
+
+/**
+ * Rebuilds the marker list rows when the marker set changed, and otherwise only rewrites the distance
+ * text of the existing buttons so a moving camera never destroys the row the operator is focused on.
+ */
+function updateMarkerRows(centre: TileCoord = camera.centerTile()): void {
+  const signature = markers
+    .map((marker) => `${marker.number}:${marker.tile.x},${marker.tile.y}`)
+    .join("|");
+  if (signature !== markerRowSignature) {
+    markerRowSignature = signature;
+    const rows: HTMLLIElement[] = [];
+    for (const marker of markers) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "marker-row";
+      button.dataset["marker"] = String(marker.number);
+      button.title = `把镜头移到标记 ${marker.number} (${marker.tile.x},${marker.tile.y})`;
+      button.addEventListener("click", () => jumpToMarker(marker));
+      item.append(button);
+      rows.push(item);
+    }
+    markerRows.replaceChildren(...rows);
+  }
+  const buttons = markerRows.querySelectorAll<HTMLButtonElement>(".marker-row");
+  markers.forEach((marker, index) => {
+    const button = buttons[index];
+    if (button !== undefined) {
+      button.textContent =
+        `${formatMarkerLabel(marker, centre)} · 瓦片 (${marker.tile.x},${marker.tile.y})`;
+    }
+  });
+  markerRows.hidden = markers.length === 0;
+  markerEmpty.hidden = markers.length > 0;
+}
+
+/**
+ * Opens or closes the translucent marker list. Closing returns focus to the canvas, which is where the
+ * game keys (including `M` and `Esc`) live; it never touches the markers themselves.
+ */
+function setMarkerPanelOpen(open: boolean, moveFocus = true): void {
+  markerPanelOpen = open;
+  markerPanel.hidden = !open;
+  if (!open) {
+    markerRows.replaceChildren();
+    markerRowSignature = "";
+  }
+  updateHud(true);
+  if (!moveFocus) {
+    return;
+  }
+  if (!open) {
+    gameCanvas.focus({ preventScroll: true });
+    return;
+  }
+  const first = markerRows.querySelector<HTMLButtonElement>(".marker-row");
+  (first ?? markerCloseButton).focus({ preventScroll: true });
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -1616,6 +1824,13 @@ function updateHud(force = false, now = performance.now()): void {
         : `玩家：${myPlayerId}`,
   );
   updateEnemyLine(focus);
+  // The home line and the marker list are rebuilt from the same camera tile, so the distance they print
+  // always matches the enemy line's arithmetic. The marker list also stays in sync while it is open.
+  updateHomeLine(focus);
+  updateMarkerChrome();
+  if (markerPanelOpen) {
+    updateMarkerRows(focus);
+  }
   const resources = myPlayerRow();
   void renderLatexInto(
     hudResources,
@@ -2662,9 +2877,19 @@ const inputHooks: InputHooks = {
     doRightClick(tile, targetId, shift);
   },
   onLeftClick: (tile) => doLeftClick(tile),
-  onCancel: () => doCancel(),
+  onCancel: () => {
+    // Esc closes the marker list first and deletes nothing; only then does it cancel an armed mode.
+    if (markerPanelOpen) {
+      setMarkerPanelOpen(false);
+      return true;
+    }
+    return doCancel();
+  },
   onControlGroup: (group, mode) => doControlGroup(group, mode),
   onSelectEngineers: () => selectEngineers(),
+  onJumpHome: () => jumpToHome(),
+  onPlaceMarker: () => placeMarkerHere(),
+  onRemoveMarker: () => removeLastMarkerHere(),
 };
 
 const input = new InputController(gameCanvas, camera, inputHooks);
@@ -2928,6 +3153,16 @@ enemyLine.addEventListener("click", () => {
   camera.setCenter(target.x, target.y);
   updateHud(true);
 });
+
+// The home line and the `基地` button are the two mouse paths to the same jump; `H` is the keyboard one.
+homeLine.addEventListener("click", jumpToHome);
+homeButton.addEventListener("click", jumpToHome);
+
+// The `标记` button toggles the translucent list. Its rows jump, `清除全部` empties the list, and `关闭`
+// is the mouse equivalent of Esc: closing never deletes a marker.
+markerButton.addEventListener("click", () => setMarkerPanelOpen(!markerPanelOpen));
+markerClearButton.addEventListener("click", clearAllMarkers);
+markerCloseButton.addEventListener("click", () => setMarkerPanelOpen(false));
 
 function releaseMinimapPointer(): void {
   minimapPointerId = null;
@@ -3213,10 +3448,18 @@ function animationFrame(now: number): void {
       nowMs: now,
       showPaths,
       pendingPath: pendingRoute,
+      markers,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.
-    minimapRenderer.render(world, camera, myPlayerId);
+    // The personal overlay adds my base marker/arrow and my marker squares/arrow; the nearest-outside
+    // rule is the one pure function from `markers.ts`, so the minimap cannot pick a different marker.
+    const focus = camera.centerTile();
+    minimapRenderer.render(world, camera, myPlayerId, {
+      markers,
+      homeAnchor: ownAnchorOf(world.players, myPlayerId),
+      nearestOutsideMarker: nearestOutsideMarker(world, focus, markers),
+    });
     updateHud(false, now);
     // Re-pick the hovered entity in case a unit slid under a stationary pointer, then park the tooltip.
     input.refreshHover();
@@ -3247,6 +3490,9 @@ function setViewVisible(visible: boolean): void {
   if (viewHidden) {
     hideTooltip();
     setResourcesOpen(false, false);
+    // The marker list is part of the game view chrome; hiding the view closes it without deleting a
+    // single marker, exactly like Escape.
+    setMarkerPanelOpen(false, false);
     stopGameLoop();
     stopWorldPolling();
   } else {
@@ -3357,17 +3603,28 @@ togglePathsButton.addEventListener("click", () => {
 updatePathsButton();
 selectEngineersButton.addEventListener("click", selectEngineers);
 
-// The canvas owns Escape for its own focus; this fallback keeps "cancel placement / attack move"
-// working while focus is still on the button that armed the mode. The connection overlay's capture
-// handler runs first, so Escape closes that panel instead of cancelling a mode behind it.
+// The canvas owns Escape for its own focus; this fallback keeps "close the marker list / cancel
+// placement / attack move" working while focus is still on a chrome button. The connection overlay's
+// capture handler runs first, so Escape closes that panel instead of cancelling a mode behind it.
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !logOverlay.hidden) {
     return;
   }
-  if (placementPath === null && !attackMoveArmed) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
-  if (event.ctrlKey || event.metaKey || event.altKey) {
+  // The canvas controller already handled Escape (it closes the marker list first and consumes the
+  // key); this listener is only the fallback for focus that sits on a chrome button.
+  if (event.target === gameCanvas) {
+    return;
+  }
+  // The marker list is a focusable panel: Escape closes it first and leaves every marker in place.
+  if (markerPanelOpen) {
+    event.preventDefault();
+    setMarkerPanelOpen(false);
+    return;
+  }
+  if (placementPath === null && !attackMoveArmed) {
     return;
   }
   event.preventDefault();

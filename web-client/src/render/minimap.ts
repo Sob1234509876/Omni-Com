@@ -168,14 +168,18 @@ export const MINIMAP_ARROW_INSET = 11;
 export const MINIMAP_ARROW_SIZE = 9;
 
 /**
- * One edge arrow of the minimap: where it sits, which way it points, and what it says.
+ * Where one outside anchor's edge arrow sits, which way it points, and what it says.
  *
  * <p>The arrow is only produced when the anchor lies **outside the loaded window**, because the minimap
  * can only draw the loaded window. If the anchor is inside, the ordinary terrain area already answers
  * "where"; the top-chrome line still answers "how far". The angle is in radians for the canvas, with
  * `0` pointing east and positive angles turning clockwise (screen y grows down).
+ *
+ * <p>This is the shared half of every edge arrow: the red hostile arrow and the white home / marker
+ * arrows are the same ray calculation with a different fill and label. Keeping it one function is what
+ * stops a white and a red arrow from disagreeing about the border they meet.
  */
-export interface MinimapEdgeArrow {
+export interface MinimapEdgeGeometry {
   /** Panel CSS x of the arrow centre. */
   readonly x: number;
   /** Panel CSS y of the arrow centre. */
@@ -186,28 +190,27 @@ export interface MinimapEdgeArrow {
   readonly sector: CompassSector;
   /** Rounded distance from the camera centre to the anchor, in tiles. */
   readonly distance: number;
-  /** The hostile player whose anchor this arrow marks. */
-  readonly playerId: number;
 }
 
 /**
- * The edge arrow for one hostile anchor, or `null` when the anchor is inside the loaded window.
+ * The edge-arrow geometry for any absolute world tile, or `null` when the tile is inside the window.
  *
- * <p>The ray starts at the centre of the terrain area and runs toward the anchor's (possibly far
- * outside) minimap point; the arrow is placed where that ray meets the terrain border, inset by
- * {@link MINIMAP_ARROW_INSET} so the triangle and its distance label stay inside the panel. The sector
- * comes from the world delta, not from the clipped pixel delta, so an anchor far to the south-east still
- * answers `东南` even when the clipped arrow happens to sit on the right edge.
+ * <p>The ray starts at the centre of the terrain area and runs toward the tile's (possibly far outside)
+ * minimap point; the arrow is placed where that ray meets the terrain border, inset by
+ * {@link MINIMAP_ARROW_INSET} so the triangle and its label stay inside the panel. The sector comes from
+ * the world delta, not from the clipped pixel delta, so an anchor far to the south-east still answers
+ * `东南` even when the clipped arrow happens to sit on the right edge.
  *
- * <p>Pure and DOM-free, so the render check can assert the sector and the side of the panel.
+ * <p>Pure and DOM-free, so the render check can assert the sector and the side of the panel. The
+ * hostile-anchor arrow, the home arrow and a marker's numbered arrow all read this one function.
  */
-export function minimapEdgeArrow(
+export function minimapEdgeGeometry(
   world: WorldView,
   camera: Camera,
-  entry: EnemyAnchorEntry,
+  tile: TileCoord,
   panelSize = MINIMAP_PANEL_SIZE,
-): MinimapEdgeArrow | null {
-  if (tileInWindow(world, entry.anchor.x, entry.anchor.y)) {
+): MinimapEdgeGeometry | null {
+  if (tileInWindow(world, tile.x, tile.y)) {
     return null;
   }
   const layout = minimapLayout(world, panelSize);
@@ -216,7 +219,7 @@ export function minimapEdgeArrow(
   }
   const centreX = layout.offsetX + layout.contentWidth / 2;
   const centreY = layout.offsetY + layout.contentHeight / 2;
-  const target = minimapPointForTile(world, entry.anchor.x, entry.anchor.y, panelSize);
+  const target = minimapPointForTile(world, tile.x, tile.y, panelSize);
   const dx = target.x - centreX;
   const dy = target.y - centreY;
   if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) {
@@ -246,7 +249,7 @@ export function minimapEdgeArrow(
     layout.offsetY + layout.contentHeight - inset,
   );
   const centre = camera.centerTile();
-  const sector = compassSector(entry.anchor.x - centre.x, entry.anchor.y - centre.y);
+  const sector = compassSector(tile.x - centre.x, tile.y - centre.y);
   if (sector === null) {
     return null;
   }
@@ -255,9 +258,33 @@ export function minimapEdgeArrow(
     y,
     angle: Math.atan2(dy, dx),
     sector,
-    distance: tileDistance(centre, entry.anchor),
-    playerId: entry.playerId,
+    distance: tileDistance(centre, tile),
   };
+}
+
+/** One hostile anchor's arrow: the shared geometry plus the player id it belongs to. */
+export interface MinimapEdgeArrow extends MinimapEdgeGeometry {
+  /** The hostile player whose anchor this arrow marks. */
+  readonly playerId: number;
+}
+
+/**
+ * The red edge arrow for one hostile anchor, or `null` when the anchor is inside the loaded window.
+ *
+ * <p>It is {@link minimapEdgeGeometry} plus the player id, so the enemy arrow, the white home arrow and
+ * a marker's numbered arrow can never point at different places for the same tile.
+ */
+export function minimapEdgeArrow(
+  world: WorldView,
+  camera: Camera,
+  entry: EnemyAnchorEntry,
+  panelSize = MINIMAP_PANEL_SIZE,
+): MinimapEdgeArrow | null {
+  const geometry = minimapEdgeGeometry(world, camera, entry.anchor, panelSize);
+  if (geometry === null) {
+    return null;
+  }
+  return { ...geometry, playerId: entry.playerId };
 }
 
 /**
@@ -281,6 +308,44 @@ export function minimapNearestEdgeArrow(
   }
   return null;
 }
+
+/** One numbered personal marker as the minimap draws it; `markers.ts` owns the model. */
+export interface MinimapMarker {
+  /** 1-based placement number, drawn beside the arrow when the marker is outside the window. */
+  readonly number: number;
+  /** Absolute world tile. */
+  readonly tile: TileCoord;
+}
+
+/**
+ * The personal overlay the page passes to the minimap: my base anchor plus my own markers.
+ *
+ * <p>`nearestOutsideMarker` is computed by the page with `nearestOutsideMarker` in `markers.ts`, so the
+ * "only the nearest outside marker gets an arrow" rule lives in one tested function instead of being
+ * re-derived by the renderer. Everything is optional: the demo world has no `players` rows and no
+ * markers, and the overlay then draws nothing.
+ */
+export interface MinimapOverlay {
+  /** Every marker, in placement order. */
+  readonly markers: readonly MinimapMarker[];
+  /** My base anchor tile, or `null` when no anchor is known. */
+  readonly homeAnchor: TileCoord | null;
+  /** The nearest marker outside the loaded window, or `null`; only this one gets an arrow. */
+  readonly nearestOutsideMarker: MinimapMarker | null;
+}
+
+/** The overlay a caller that has neither a base nor markers passes; a shared immutable empty value. */
+export const EMPTY_MINIMAP_OVERLAY: MinimapOverlay = {
+  markers: [],
+  homeAnchor: null,
+  nearestOutsideMarker: null,
+};
+
+/** Side of a personal marker's outlined square in panel CSS pixels. */
+export const MINIMAP_MARKER_SIZE = 5;
+
+/** Half-length of the white cross that marks my base on the minimap, in panel CSS pixels. */
+export const MINIMAP_HOME_CROSS_ARM = 4;
 
 /**
  * Draws the minimap into its own small canvas.
@@ -366,8 +431,21 @@ export class MinimapRenderer {
     return canvas;
   }
 
-  /** Draws one minimap frame; safe to call every animation frame. */
-  render(world: WorldView, camera: Camera, myPlayerId: number | null): void {
+  /**
+   * Draws one minimap frame; safe to call every animation frame.
+   *
+   * <p>`overlay` carries the personal layer: my base anchor as a white cross (or a white arrow with its
+   * distance when it is outside this window) and every marker as a small outlined square (or, for the
+   * nearest one outside, a white arrow carrying its number). It defaults to
+   * {@link EMPTY_MINIMAP_OVERLAY}, so a caller that has neither - the demo world - draws exactly the
+   * frame it drew before this feature.
+   */
+  render(
+    world: WorldView,
+    camera: Camera,
+    myPlayerId: number | null,
+    overlay: MinimapOverlay = EMPTY_MINIMAP_OVERLAY,
+  ): void {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
       return;
@@ -437,16 +515,118 @@ export class MinimapRenderer {
       Math.max(0, bottom - top - 1),
     );
 
-    // The edge arrow answers "which way" when the nearest hostile anchor is outside this window. The
-    // distance label is drawn on the inward side of the arrow so it can never fall off the panel.
+    // The personal layer sits above the dots and the camera rectangle: a marker square is chrome, not an
+    // entity, and must never be read as one. My base anchor is a white cross - achromatic, tiny and
+    // clearly unlike both the 2x2 ownership dots and a marker's hollow square.
+    if (overlay.homeAnchor !== null && tileInWindow(world, overlay.homeAnchor.x, overlay.homeAnchor.y)) {
+      this.drawHomeMarker(world, panelSize, overlay.homeAnchor);
+    }
+    for (const marker of overlay.markers) {
+      if (tileInWindow(world, marker.tile.x, marker.tile.y)) {
+        this.drawMarkerSquare(world, panelSize, marker);
+      }
+    }
+
+    // The edge arrows answer "which way" for everything outside this window. The red hostile arrow is
+    // drawn first, then the white home arrow and the white numbered marker arrow, so the two families
+    // stay visually apart: red with a white outline versus white with a dark outline.
     const arrow = minimapNearestEdgeArrow(world, camera, myPlayerId, panelSize);
     if (arrow !== null) {
-      this.drawEdgeArrow(arrow, panelSize);
+      this.drawEdgeArrow(arrow, panelSize, "#ef4444", "#ffffff", `${arrow.distance} 格`);
+    }
+    if (overlay.homeAnchor !== null) {
+      const home = minimapEdgeGeometry(world, camera, overlay.homeAnchor, panelSize);
+      if (home !== null) {
+        this.drawEdgeArrow(home, panelSize, "#ffffff", "rgba(0, 0, 0, 0.85)", `${home.distance} 格`);
+      }
+    }
+    if (overlay.nearestOutsideMarker !== null) {
+      const markerArrow = minimapEdgeGeometry(
+        world,
+        camera,
+        overlay.nearestOutsideMarker.tile,
+        panelSize,
+      );
+      if (markerArrow !== null) {
+        this.drawEdgeArrow(
+          markerArrow,
+          panelSize,
+          "#ffffff",
+          "rgba(0, 0, 0, 0.85)",
+          `${overlay.nearestOutsideMarker.number}`,
+        );
+      }
     }
   }
 
-  /** Draws one red edge arrow with its distance in tiles underneath (inward when at the border). */
-  private drawEdgeArrow(arrow: MinimapEdgeArrow, panelSize: number): void {
+  /** Draws my base as a small white cross with a dark under-stroke, centred on its tile. */
+  private drawHomeMarker(world: WorldView, panelSize: number, anchor: TileCoord): void {
+    const layout = minimapLayout(world, panelSize);
+    const point = minimapPointForTile(world, anchor.x, anchor.y, panelSize);
+    const centreX = Math.round(point.x + layout.scale / 2) + 0.5;
+    const centreY = Math.round(point.y + layout.scale / 2) + 0.5;
+    const arm = MINIMAP_HOME_CROSS_ARM;
+    const context = this.context;
+    context.save();
+    context.lineCap = "butt";
+    // Two passes: a dark wide cross underneath keeps the white cross readable over bright terrain.
+    for (const pass of [
+      { color: "rgba(0, 0, 0, 0.85)", width: 3.5 },
+      { color: "#ffffff", width: 1.5 },
+    ]) {
+      context.strokeStyle = pass.color;
+      context.lineWidth = pass.width;
+      context.beginPath();
+      context.moveTo(centreX - arm, centreY - arm);
+      context.lineTo(centreX + arm, centreY + arm);
+      context.moveTo(centreX + arm, centreY - arm);
+      context.lineTo(centreX - arm, centreY + arm);
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  /** Draws one marker as a small hollow square (white outline, dark fill) centred on its tile. */
+  private drawMarkerSquare(world: WorldView, panelSize: number, marker: MinimapMarker): void {
+    const layout = minimapLayout(world, panelSize);
+    const point = minimapPointForTile(world, marker.tile.x, marker.tile.y, panelSize);
+    const contentRight = layout.offsetX + layout.contentWidth;
+    const contentBottom = layout.offsetY + layout.contentHeight;
+    const half = MINIMAP_MARKER_SIZE / 2;
+    const left = clampNumber(
+      Math.round(point.x + layout.scale / 2 - half),
+      layout.offsetX,
+      Math.max(layout.offsetX, contentRight - MINIMAP_MARKER_SIZE),
+    );
+    const top = clampNumber(
+      Math.round(point.y + layout.scale / 2 - half),
+      layout.offsetY,
+      Math.max(layout.offsetY, contentBottom - MINIMAP_MARKER_SIZE),
+    );
+    const context = this.context;
+    context.save();
+    context.fillStyle = "rgba(0, 0, 0, 0.55)";
+    context.fillRect(left, top, MINIMAP_MARKER_SIZE, MINIMAP_MARKER_SIZE);
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1;
+    context.strokeRect(left + 0.5, top + 0.5, MINIMAP_MARKER_SIZE - 1, MINIMAP_MARKER_SIZE - 1);
+    context.restore();
+  }
+
+  /**
+   * Draws one edge arrow with a caller-chosen fill / outline and label.
+   *
+   * <p>The hostile arrow passes red with a white outline and the distance in tiles; the home arrow and
+   * the marker arrow pass white with a dark outline, labelled with the distance and the marker number
+   * respectively. The label is drawn on the inward side of the arrow so it can never fall off the panel.
+   */
+  private drawEdgeArrow(
+    arrow: MinimapEdgeGeometry,
+    panelSize: number,
+    fill: string,
+    outline: string,
+    label: string,
+  ): void {
     const context = this.context;
     context.save();
     context.translate(arrow.x, arrow.y);
@@ -457,9 +637,9 @@ export class MinimapRenderer {
     context.lineTo(-MINIMAP_ARROW_SIZE + 4, 0);
     context.lineTo(-MINIMAP_ARROW_SIZE + 2, -(MINIMAP_ARROW_SIZE - 2));
     context.closePath();
-    context.fillStyle = "#ef4444";
+    context.fillStyle = fill;
     context.fill();
-    context.strokeStyle = "#ffffff";
+    context.strokeStyle = outline;
     context.lineWidth = 1;
     context.stroke();
     context.restore();
@@ -471,7 +651,6 @@ export class MinimapRenderer {
     context.fillStyle = "#ffffff";
     context.strokeStyle = "rgba(0, 0, 0, 0.72)";
     context.lineWidth = 3;
-    const label = `${arrow.distance} 格`;
     const textX = clampNumber(arrow.x, 18, panelSize - 18);
     const below = arrow.y + 14;
     const textY = clampNumber(

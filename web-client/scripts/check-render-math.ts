@@ -208,7 +208,7 @@ import {
   MINIMAP_DOT_SIZE,
   MINIMAP_PANEL_SIZE,
   minimapCameraTarget,
-  minimapEdgeArrow,
+  minimapEdgeGeometry,
   minimapLayout,
   minimapNearestEdgeArrow,
   minimapPointForTile,
@@ -223,6 +223,23 @@ import {
   formatEnemyAnchor,
   tileDistance,
 } from "../src/render/enemy.ts";
+import {
+  HOME_ANCHOR_UNKNOWN_TEXT,
+  MAX_MARKERS,
+  clearMarkers,
+  formatHomeLine,
+  formatMarkerLabel,
+  homeAnchorEntry,
+  homeCameraTarget,
+  markerCameraTarget,
+  markerEdgeArrow,
+  nearestOutsideMarker,
+  nearestOutsideMarkerArrow,
+  ownAnchorOf,
+  placeMarker,
+  removeLastMarker,
+  type Marker,
+} from "../src/render/markers.ts";
 import {
   doubleClickSelection,
   engineerForPlacement,
@@ -3916,21 +3933,21 @@ check(
   enemyAnchorEntries(undefined, 3, { x: 0, y: 0 }).length === 0 &&
     enemyAnchorEntries(
       [
-        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] },
+        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } },
         { id: 2, name: "Enemy", gold: 0, wood: 0 },
       ],
       3,
       { x: 0, y: 0 },
     ).length === 0 &&
     enemyAnchorEntries(
-      [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] }],
+      [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } }],
       null,
       { x: 0, y: 0 },
     ).length === 0,
   JSON.stringify(
     enemyAnchorEntries(
       [
-        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [3, 2] },
+        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } },
         { id: 2, name: "Enemy", gold: 0, wood: 0 },
       ],
       3,
@@ -4004,6 +4021,243 @@ check(
   arrowWorld !== null &&
     enemyAnchorEntries(arrowWorld.players, null, { x: 0, y: 0 }).length === 0 &&
     enemyAnchorEntries(undefined, 1, { x: 0, y: 0 }).length === 0,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Bring me home: my own anchor row, the two wordings, and the enemy line's clamped jump
+// ---------------------------------------------------------------------------------------------
+
+const homeWorld = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: 0,
+  originY: 0,
+  width: 64,
+  height: 64,
+  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+  players: [
+    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
+    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [192, 192] },
+    { id: 3, name: "owner1", gold: 300, wood: 60, anchor: [40, 40] },
+  ],
+});
+const farHomeWorld = worldViewFromSnapshot({
+  ...validSnapshot,
+  originX: 0,
+  originY: 0,
+  width: 64,
+  height: 64,
+  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+  players: [{ id: 3, name: "owner1", gold: 0, wood: 0, anchor: [192, 192] }],
+});
+const homeRows = homeWorld?.players;
+const myAnchor = ownAnchorOf(homeRows, 3);
+check(
+  "我方基地：只读自己 id 那一行的 anchor，别人的 anchor 不会被当成家",
+  myAnchor?.x === 40 &&
+    myAnchor?.y === 40 &&
+    ownAnchorOf(homeRows, 2)?.x === 192 &&
+    ownAnchorOf(homeRows, 1)?.x === 3,
+  JSON.stringify(myAnchor),
+);
+check(
+  "我方基地：未登录 / 旧快照 / 自己那行没有 anchor 都答 null，状态行文案明确说 anchor",
+  ownAnchorOf(undefined, 3) === null &&
+    ownAnchorOf(homeRows, null) === null &&
+    ownAnchorOf([{ id: 3, name: "owner1", gold: 0, wood: 0 }], 3) === null &&
+    ownAnchorOf(homeRows, 9) === null &&
+    HOME_ANCHOR_UNKNOWN_TEXT.includes("anchor") &&
+    HOME_ANCHOR_UNKNOWN_TEXT.includes("未登录"),
+  HOME_ANCHOR_UNKNOWN_TEXT,
+);
+const homeVisible = homeWorld === null ? null : homeAnchorEntry(homeWorld, 3, { x: 32, y: 32 });
+check(
+  "我方基地：在已载入窗口内时文案是“我方基地：可见”，距离与扇区仍照常算出",
+  homeVisible !== null &&
+    homeVisible.visible &&
+    homeVisible.distance === 11 &&
+    homeVisible.sector === "东南" &&
+    formatHomeLine(homeVisible) === "我方基地：可见",
+  homeVisible === null ? "null" : formatHomeLine(homeVisible),
+);
+const homeFar = farHomeWorld === null ? null : homeAnchorEntry(farHomeWorld, 3, { x: 32, y: 32 });
+check(
+  "我方基地：窗口外文案是 我方基地：距 226 格，东南（沿用敌方行的八方向词汇）",
+  homeFar !== null &&
+    !homeFar.visible &&
+    homeFar.distance === 226 &&
+    homeFar.sector === "东南" &&
+    homeFar.sector === compassSector(192 - 32, 192 - 32) &&
+    formatHomeLine(homeFar) === "我方基地：距 226 格，东南",
+  homeFar === null ? "null" : formatHomeLine(homeFar),
+);
+check(
+  "我方基地：未登录时没有可跳转的基地（H 与 基地 按钮走状态行文案，不静默）",
+  homeWorld !== null &&
+    farHomeWorld !== null &&
+    homeAnchorEntry(homeWorld, null, { x: 32, y: 32 }) === null &&
+    homeAnchorEntry(homeWorld, 9, { x: 32, y: 32 }) === null,
+);
+const homeTarget = homeCameraTarget({ x: 192, y: 192 }, 16);
+check(
+  "H / 基地 的镜头目标与敌方行一致：锚点格中心 (192.5,192.5) → 世界像素 (3080,3080)",
+  homeTarget.x === 3080 &&
+    homeTarget.y === 3080 &&
+    homeTarget.x === anchorCameraTarget({ x: 192, y: 192 }, 16).x &&
+    homeTarget.y === anchorCameraTarget({ x: 192, y: 192 }, 16).y,
+  JSON.stringify(homeTarget),
+);
+const homeArrowGeometry =
+  homeWorld === null
+    ? null
+    : minimapEdgeGeometry(homeWorld, arrowCamera, { x: 192, y: 192 }, MINIMAP_PANEL_SIZE);
+check(
+  "小地图白色回家箭头与红色敌方箭头是同一套几何：扇区 东南、距离 226、落点相同",
+  homeArrowGeometry !== null &&
+    homeArrowGeometry.sector === "东南" &&
+    homeArrowGeometry.distance === 226 &&
+    edgeArrow !== null &&
+    homeArrowGeometry.x === edgeArrow.x &&
+    homeArrowGeometry.y === edgeArrow.y &&
+    Math.abs(homeArrowGeometry.angle - edgeArrow.angle) < 1e-12,
+  JSON.stringify(homeArrowGeometry),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Personal markers: numbering, cap, duplicate rule, removal, nearest-outside arrow and labels
+// ---------------------------------------------------------------------------------------------
+
+let markerList: readonly Marker[] = clearMarkers();
+const firstMarker = placeMarker(markerList, { x: 10, y: 20 });
+if (firstMarker.kind === "placed") {
+  markerList = firstMarker.markers;
+}
+const secondMarker = placeMarker(markerList, { x: 11.9, y: 20.8 });
+if (secondMarker.kind === "placed") {
+  markerList = secondMarker.markers;
+}
+check(
+  "标记：按放置顺序编号 1..n，坐标按地块向下取整",
+  firstMarker.kind === "placed" &&
+    firstMarker.marker.number === 1 &&
+    secondMarker.kind === "placed" &&
+    secondMarker.marker.number === 2 &&
+    secondMarker.marker.tile.x === 11 &&
+    secondMarker.marker.tile.y === 20 &&
+    markerList.length === 2,
+  `${markerList.length} / ${formatMarkerLabel(markerList[1]!, { x: 0, y: 0 })}`,
+);
+const duplicateMarker = placeMarker(markerList, { x: 11, y: 20 });
+check(
+  "标记：同一地块的重复放置被忽略，已有编号被报出且列表不变",
+  duplicateMarker.kind === "duplicate" &&
+    duplicateMarker.marker.number === 2 &&
+    duplicateMarker.markers.length === 2 &&
+    markerList.length === 2,
+  duplicateMarker.kind,
+);
+let cappedMarkers: readonly Marker[] = clearMarkers();
+for (let index = 0; index < MAX_MARKERS; index += 1) {
+  const placed = placeMarker(cappedMarkers, { x: index, y: 0 });
+  if (placed.kind === "placed") {
+    cappedMarkers = placed.markers;
+  }
+}
+const overflowMarker = placeMarker(cappedMarkers, { x: MAX_MARKERS, y: 0 });
+check(
+  `标记：上限 ${MAX_MARKERS} 个，第 ${MAX_MARKERS + 1} 个被拒绝且列表不变`,
+  cappedMarkers.length === MAX_MARKERS &&
+    cappedMarkers[MAX_MARKERS - 1]?.number === MAX_MARKERS &&
+    overflowMarker.kind === "full" &&
+    overflowMarker.markers.length === MAX_MARKERS,
+  `${cappedMarkers.length} / ${overflowMarker.kind}`,
+);
+const removal = removeLastMarker(markerList);
+check(
+  "标记：删除最近一个（编号最大），剩下的编号保持连续",
+  removal.removed?.number === 2 &&
+    removal.markers.length === 1 &&
+    removal.markers[0]?.number === 1,
+  JSON.stringify(removal.markers),
+);
+check(
+  "标记：空列表删除答 null，清除全部得到空列表",
+  removeLastMarker(clearMarkers()).removed === null && clearMarkers().length === 0,
+);
+const labelMarker: Marker = { number: 2, tile: { x: 40, y: 40 } };
+check(
+  "标记标签：标记 2：距 11 格，东南，扇区来自敌方行的 compassSector",
+  formatMarkerLabel(labelMarker, { x: 32, y: 32 }) === "标记 2：距 11 格，东南" &&
+    compassSector(40 - 32, 40 - 32) === "东南",
+  formatMarkerLabel(labelMarker, { x: 32, y: 32 }),
+);
+check(
+  "标记标签：标记就在镜头中心时没有方向，只写距离",
+  formatMarkerLabel({ number: 1, tile: { x: 32, y: 32 } }, { x: 32, y: 32 }) === "标记 1：距 0 格",
+);
+check(
+  "标记跳转的镜头目标是地块中心并受安全边界钳制，与回家 / 敌方跳转同一算术",
+  markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).x === 3080 &&
+    markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).y === 3080 &&
+    markerCameraTarget({ number: 3, tile: { x: -1, y: -1 } }, 16).x === -8 &&
+    markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).x ===
+      homeCameraTarget({ x: 192, y: 192 }, 16).x,
+);
+const insideMarker: Marker = { number: 1, tile: { x: 40, y: 40 } };
+const farMarker: Marker = { number: 2, tile: { x: 192, y: 192 } };
+const eastMarker: Marker = { number: 3, tile: { x: 70, y: 32 } };
+const tieMarker: Marker = { number: 4, tile: { x: 32, y: 70 } };
+const nearestOutside =
+  homeWorld === null
+    ? null
+    : nearestOutsideMarker(homeWorld, { x: 32, y: 32 }, [insideMarker, farMarker, eastMarker]);
+const tiedOutside =
+  homeWorld === null
+    ? null
+    : nearestOutsideMarker(homeWorld, { x: 32, y: 32 }, [eastMarker, tieMarker]);
+check(
+  "标记：窗口内的标记不参与“窗外箭头”，多个窗外标记只取最近的一个",
+  nearestOutside?.number === 3 &&
+    homeWorld !== null &&
+    nearestOutsideMarker(homeWorld, { x: 32, y: 32 }, [insideMarker]) === null &&
+    nearestOutsideMarker(homeWorld, { x: 32, y: 32 }, []) === null &&
+    tiedOutside?.number === 3,
+  JSON.stringify(nearestOutside),
+);
+const markerArrow =
+  homeWorld === null ? null : markerEdgeArrow(homeWorld, arrowCamera, farMarker, MINIMAP_PANEL_SIZE);
+check(
+  "标记边缘箭头：窗口外的标记有与敌方箭头相同的几何，并带上自己的编号",
+  markerArrow !== null &&
+    markerArrow.number === 2 &&
+    markerArrow.sector === "东南" &&
+    markerArrow.distance === 226 &&
+    markerArrow.x > MINIMAP_PANEL_SIZE / 2 &&
+    markerArrow.y > MINIMAP_PANEL_SIZE / 2 &&
+    markerArrow.x === homeArrowGeometry?.x &&
+    markerArrow.y === homeArrowGeometry?.y,
+  JSON.stringify(markerArrow),
+);
+check(
+  "标记边缘箭头：窗口内的标记没有箭头，最近窗外规则只产生一个箭头",
+  homeWorld !== null &&
+    markerEdgeArrow(homeWorld, arrowCamera, insideMarker, MINIMAP_PANEL_SIZE) === null,
+);
+const nearestMarkerArrow =
+  homeWorld === null
+    ? null
+    : nearestOutsideMarkerArrow(
+        homeWorld,
+        arrowCamera,
+        [insideMarker, farMarker, eastMarker],
+        MINIMAP_PANEL_SIZE,
+      );
+check(
+  "标记边缘箭头：只画最近的那一个（编号 3，东侧 38 格）",
+  nearestMarkerArrow !== null &&
+    nearestMarkerArrow.number === 3 &&
+    nearestMarkerArrow.sector === "东" &&
+    nearestMarkerArrow.distance === 38,
+  JSON.stringify(nearestMarkerArrow),
 );
 
 check(
