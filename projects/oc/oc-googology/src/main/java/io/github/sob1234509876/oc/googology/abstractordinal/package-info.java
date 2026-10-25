@@ -36,7 +36,11 @@
  * {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument} is the separate argument
  * register: the step functions accept only an argument, never a produced value. That is an internal seam;
  * the resolution of {@code OPEN QUESTIONS.md} Q6 is the owner's recursion layering, not the type split.
- * The stage-three Q7 decision about {@code omega_alpha} subscripts is separate. The comparison reports the
+ * The owner answered Q7b with the smallest relaxation: an {@code omega_alpha} value may be a subscript of
+ * the {@code omega} step only, through the dedicated
+ * {@link io.github.sob1234509876.oc.googology.abstractordinal.OmegaSubscript} type. A TBMS, TTBMS, NRBMS or
+ * TNRBMS value still cannot be a subscript, and there is no general value-to-argument conversion. The
+ * comparison reports the
  * {@link io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment}s it took place in. A1 is the
  * owner's theorem, A2 follows by the definition of TTBMS, and {@code psi} is a documented modelling choice;
  * there are no assumption tags. The Chinese guide is {@code help/ordinal-ladder.md}.

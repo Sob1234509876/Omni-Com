@@ -61,7 +61,7 @@ Implemented rule:
 
 **What happened to the argument/value separation:** it is retained as an *internal type design* only. The earlier claim that it resolved Q6 is withdrawn: it only made the value-to-argument step unrepresentable, which hid the contradiction without removing it. The recursion layering removes it.
 
-**What remains for Q6:** nothing blocking. A below-`I` enumeration fixed point other than `ψ_𝕀(𝕀)` cannot be named by the current machinery; that is recorded as a documented limitation, not invented. Q7a (the `TNRBMS → ω_α` switch) is answered below; Q7b (values as subscripts) is still open.
+**What remains for Q6:** nothing blocking. A below-`I` enumeration fixed point other than `ψ_𝕀(𝕀)` cannot be named by the current machinery; that is recorded as a documented limitation, not invented. Q7a (the `TNRBMS → ω_α` switch) and Q7b (whether a value may be a subscript) are both answered below.
 
 ## Q7. Stage three: where does `TNRBMS(0)(1^α)` become `ω_α`, and may an `ω_α` value be a subscript?
 
@@ -69,18 +69,21 @@ Implemented rule:
 
 The `TNRBMS(0)(1^α)` notation switches to `ω_α` **at the fixed point of `a ↦ TNRBMS(0)(1^a)`**, i.e. at `X`, and the `ω_α` family **starts at the uncountable ordinals, at `ω₁`**. The register therefore materialises `ω₁ = h(1)` (not `h(ω) = ω_ω`) as the first segment-four value; `h(ω) = ω_ω` remains a normal segment-four value above `X`. The old note that the register "does not claim `ω_ω = ω₁`" is replaced by this rule.
 
+### Q7b — may an `ω_α` value be a subscript? — **answered by the owner: option (b), the smallest relaxation**
+
+The owner said **"b 实现吧"**: implement the smallest relaxation. An `ω_α` **value** may be used as a **subscript of the `ω` step**, so that `ω_{ω_X}`, `ω_{ω_{ω_X}}` and so on are expressible. **Nothing else may cross from the value side to the argument side:** a `TBMS`, `TTBMS` or `NRBMS` value still cannot be a subscript, and there is no general value-to-argument conversion.
+
+**The missing detail the owner did not specify — the recursion type — is the agent's choice.** The default implemented, which is the only self-consistent reading of the earlier rule, is:
+
+- On the ordinal strip `ω₁ ≤ a < I`, the `ω` step **grows**, so an `ω`-iterated subscript is **recursive** there: `ω_{ω_X} > ω_X`, and it routes through A1 (`f(a) > a`).
+- At and above `I`, every `ω` value is a fixed point of the enumeration (`ω_I = I`), so the iterated subscript **collapses**: `ω_{ω_I} = ω_I = I`; `ω_{ω_Absolute}`-style names add nothing. The ladder names one fixed point below `I`, `ψ_𝕀(𝕀)`; it collapses by the same definition (`ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)`) and is the register's checkable stand-in for the `I` rule.
+- Therefore the type of an iterated `ω` subscript is **recursive while the value is on the strip, fixed-point identity from `I` upward** (and at any enumeration fixed point, such as the ladder's `ψ_𝕀(𝕀)`).
+
+**Implementation.** A new top-level type `OmegaSubscript` (package `abstractordinal`) holds **exactly one** `ω_α` value (or its fixed-point image `ψ_𝕀(𝕀)`, the ladder's materialised fixed point) and can be nested, so depth two and three are expressible. Its `of(LadderOrdinal)` factory rejects every other value kind with `IllegalArgumentException`; it is accepted only by the second overload `omegaAlpha(OmegaSubscript)`. It has no conversion to `LadderArgument`, and `f`/`g` still take `LadderArgument` only, so the one-way reflection invariant ("`LadderArgument` contains no `LadderOrdinal`") is intact. Ordering: strictly increasing in the subscript on the strip (`ω_{ω_X} > ω_X`); at the fixed point the iteration collapses (`ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)`); depth adds nothing past a fixed point; `equals`/`hashCode` are by the subscript value, so the same term reached through the argument name `ω₁` and through the value `ω₁` compares equal. There is no small depth limit below a fixed point.
+
+**Status: implemented.** `LadderCheck` section 31 has 20 checks (growth, nesting to depth two and three, the `I`/`ψ_𝕀(𝕀)` collapse, the recursive/non-recursive classification, the negative rule for `TBMS`/`TTBMS`/`NRBMS`/`TNRBMS`, strict increase, equality/hashCode, and transitivity over a sample that includes the new values). The googology self check total is now **698**. The code change touches only `oc-googology`; the two `oc-rts-engine` help pages were changed by the number only. The ladder's declared order for the old values is unchanged, and `f`/`g` are unchanged.
+
 # Still open
-
-## Q7b. May an `ω_α` value be used as a subscript? — **open, and not moot**
-
-`ω_α` is the `α`-th infinite initial ordinal. It is **not** the identity on every uncountable argument: `ω_{ω₁} > ω₁`, because `ω₁` is the first infinite initial ordinal. The owner's "every uncountable ordinal is a fixed point" convention applies only to the **matrix-derived steps** (`TBMS`, the `TTBMS` fixed-point map, `TNRBMS`), which are declared conventions. The real enumeration fixed points are the `α` with `α = ω_α`; the owner states that every ordinal at or above the inaccessible cardinal `I` (and every cardinal-register stage above it) is one, so `ω_I = I` and `ω_a = a` from `I` upward. Fixed points below `I` exist but are not required by `Ordinals.md`; `ψ_𝕀(𝕀)` is the one the register names.
-
-Because `ω_α` grows below `I`, allowing an `ω_α` value as a subscript **would produce new ordinals** (`ω_{ω_X}`, `ω_{ω_{ω_X}}`, …). The two options:
-
-- **No** (current default, implemented). A subscript is a previous-stage argument (`BMS` at or above `ω`, an `NRBMS` expression, `SHO`, `ω₁^CK`, `lim(NRBMS)`, `X`) or a shared boundary (`ω₁`, `ψ_𝕀(𝕀)`). This still expresses every rung in `Ordinals.md`.
-- **The smallest relaxation** (described, not implemented). A dedicated stage-four subscript type wraps one `ω_α` value, is accepted only by a second `omegaAlpha` overload, and has no general conversion to `LadderArgument`. Values must not become ordinary arguments: that would put `LadderOrdinal` inside `LadderArgument` and destroy the one-way reflection invariant.
-
-**Default while Q7b is unanswered:** no value-to-subscript conversion; the relaxation is documented in `help/ordinal-ladder.md` and the Javadoc, not implemented. The `ω_α` family is treated as growing on the strip `ω₁ ≤ a < I` and as the identity from `I` upward; the cardinal register carries the growth above the ordinal ladder.
 
 ## Q8. Should a human account own the showroom as player 1, or stay on slots 3–8 with the showroom neutral? — **open (new)**
 

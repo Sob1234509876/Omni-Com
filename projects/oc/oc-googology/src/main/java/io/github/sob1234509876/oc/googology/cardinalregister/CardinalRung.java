@@ -465,8 +465,10 @@ public enum CardinalRung {
     /**
      * The owner's rule that from the inaccessible rung upward the {@code omega_alpha} enumeration is the
      * identity: {@code omega_alpha = alpha}. The result is this same rung, so the cardinal register stays
-     * the register that carries the growth above the ordinal ladder. This is a bridge for the
-     * fixed-point fact, not a {@link LadderOrdinal} value and not a second order.
+     * the register that carries the growth above the ordinal ladder. This also fixes the iterated
+     * subscript at {@code I}: {@code omega_{omega_I} = omega_I = I}, so the owner's Q7b relaxation
+     * collapses instead of adding a deeper rung. This is a bridge for the fixed-point fact, not a
+     * {@link LadderOrdinal} value and not a second order.
      *
      * @return this rung
      */

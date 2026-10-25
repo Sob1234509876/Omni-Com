@@ -13,7 +13,7 @@ The handoff moved to **[AI TODO.md](documents/Human/TODOs/AI%20TODO.md)** — th
   .\gradlew.bat --offline --no-daemon --console=plain :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck :projects:oc:oc-game-server-debug:selfcheck :projects:oc:oc-game-server-hello:selfcheck :projects:oc:oc-game-server-classic:selfcheck
   cd web-client; pnpm check:render
   ```
-  Totals at `HEAD 2adfb6b` (2026-10-25), from the module and client READMEs: googology 683, engine 657, game server 1071, debug 85, hello 126, classic 542, client 422.
+  Totals at `HEAD 2adfb6b` (2026-10-25), from the module and client READMEs: googology 698, engine 657, game server 1071, debug 85, hello 126, classic 542, client 422.
 - **Never red.** No commit may leave a check failing, and no existing check may be removed or weakened to make a feature pass. If a total changes, grep the old number and update every document that quotes it.
 - **Offline always.** `.\gradlew.bat ... --offline` must work on a machine with no network; a change that needs a download is the wrong change.
 - **Determinism inside the simulation.** No `java.util.Random`, wall clock or threads inside the simulation; use `DeterministicRandom`, fixed ticks and explicit id/coordinate tie-breaks. Only the server's pacing thread may let a clock drive the simulation; transport and storage code may read a clock for timestamps.

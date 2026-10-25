@@ -38,13 +38,19 @@ import java.util.Optional;
  *       rules; no new matrix system is built.</li>
  *   <li><b>Segment 4, {@code X ~ psi_I(I)}</b> - the stage-three {@code omega_alpha} segment. The step is
  *       the abstract function {@link #omegaAlpha(LadderArgument) h(alpha) = omega_alpha}; a value is
- *       printed as {@code omega_alpha}, with the subscript being any argument. The notation switch
- *       {@code TNRBMS(0)(1^alpha) -> omega_alpha} is the boundary {@code X}: every proper TNRBMS value is
- *       below {@code X} and every {@code omega_alpha} value is above it. The top of the segment is the
- *       shared boundary name {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, with
+ *       printed as {@code omega_alpha}, with the subscript being any argument, or - since the owner's Q7b
+ *       answer (option b) - one {@code omega_alpha} value wrapped in an {@link OmegaSubscript}. The notation
+ *       switch {@code TNRBMS(0)(1^alpha) -> omega_alpha} is the boundary {@code X}: every proper TNRBMS
+ *       value is below {@code X} and every {@code omega_alpha} value is above it. The top of the segment is
+ *       the shared boundary name {@code psi_I(I) = min{alpha | alpha = omega_alpha}}, with
  *       {@code h(psi_I(I)) = psi_I(I)}. The switch is at the fixed point of
  *       {@code alpha -> TNRBMS(0)(1^alpha)} and the family starts at {@code omega_1}; the owner confirmed
- *       both in Q7a. Q7b (whether an {@code omega_alpha} value may be a subscript) remains open.</li>
+ *       both in Q7a. <strong>Q7b is answered by the owner (option b):</strong> an {@code omega_alpha} value
+ *       may be a subscript of the {@code omega} step only, so {@code omega_{omega_X}} is expressible, while
+ *       a TBMS/TTBMS/NRBMS/TNRBMS value still cannot be a subscript and there is no general
+ *       value-to-argument conversion. The recursion type of the iterated subscript is the default recorded
+ *       on {@link OmegaSubscript}: recursive and growing on the strip, fixed-point identity from {@code I}
+ *       upward.</li>
  *   <li><b>The named abstract layer</b> - {@link LadderPlaceholder#PSI}, {@link
  *       LadderPlaceholder#SHO}, {@link LadderPlaceholder#LRPO}, {@link
  *       LadderPlaceholder#OMEGA_ONE_CK}, {@link LadderPlaceholder#LIM_NRBMS}, {@link
@@ -58,8 +64,14 @@ import java.util.Optional;
  * <pre>
  *   psi &lt; every BMS value &lt; SHO &lt; every recursive f(alpha) &lt; LRPO &lt; omega_1^CK
  *       &lt; every NRBMS value &lt; lim(NRBMS) &lt; every TNRBMS value &lt; X
- *       &lt; omega_1 &lt; every other omega_alpha value &lt; psi_I(I)
+ *       &lt; omega_1 &lt; every other omega_alpha value (iterated subscripts included) &lt; psi_I(I)
  * </pre>
+ *
+ * <p>Inside segment 4 the order is the <strong>subscript order</strong>. For an ordinary subscript that is
+ * the argument order; for an iterated subscript it is the order of the wrapped {@code omega_alpha} value, so
+ * {@code omega_{omega_X} > omega_X} and every iterated value still sits below {@code psi_I(I)}. Depth adds
+ * only while the enumeration grows: at the fixed point {@code psi_I(I)} the iteration collapses, and from
+ * {@code I} upward (recorded on {@code CardinalRung}) every value is a fixed point.
  *
  * <p>A {@code TTBMS} fixed point is not a separate tier: it compares equal to its argument, so
  * {@code f(omega_1^CK) = omega_1^CK}, {@code f(NRBMS) = NRBMS}, {@code f(lim(NRBMS)) = lim(NRBMS)} and
@@ -70,8 +82,9 @@ import java.util.Optional;
  * then, inside a layer, by the exact order that layer already has:
  * {@link BmsOrdinal#compareTo(BmsOrdinal)} for segment 1,
  * {@link NonRecursiveBms#compareTo(NonRecursiveBms)} for the NRBMS values, the order of the arguments for
- * the segment-2, segment-3 and segment-4 step values (because the steps are declared strictly increasing),
- * and the enum order of {@link LadderPlaceholder} for the names. Tiers are not ordinal values; they are the
+ * the segment-2 and segment-3 step values, the subscript order for the segment-4 step values (the argument
+ * order for an ordinary subscript, the wrapped value's order for an {@link OmegaSubscript}), and the enum
+ * order of {@link LadderPlaceholder} for the names. Tiers are not ordinal values; they are the
  * register's declaration of which layer is above which. The relation is total, transitive, antisymmetric
  * and consistent with {@link #equals(Object)} by construction. {@link #compareWithin(LadderOrdinal)}
  * reports the two {@link LadderSegment}s the comparison took place in, so a cross-layer comparison cannot
@@ -109,22 +122,27 @@ import java.util.Optional;
  * {@code g(omega) = lim(NRBMS)}, {@code g(X) = X}, {@code h(psi_I(I)) = psi_I(I)} and the fixed-point
  * images such as {@code f(omega_1^CK) = omega_1^CK} and {@code f(X) = X}.
  *
- * <p><b>The stage-three argument decision.</b> The step {@code h(alpha) = omega_alpha} reuses the
- * stage-two split: its subscript is a {@link LadderArgument}, never an {@code omega_alpha} value.
- * {@code omega_alpha} is itself the iteration of {@code alpha -> omega^alpha}, so chained subscripts such
- * as {@code omega_{omega_X}} are mathematically natural; the register still keeps them out. This is the
- * separate Q7 decision, not the Q6 resolution. An {@code omega_alpha} value already denotes a rung that
- * the step produced, and letting it back in as a subscript would weaken the reflection invariant that no
- * {@link LadderOrdinal} occurs in {@link LadderArgument}.
- * The restriction is <strong>not</strong> too restrictive for the rungs the owner lists, because every
- * subscript can be drawn from the previous stages (BMS, NRBMS, {@code SHO}, {@code omega_1^CK},
- * {@code lim(NRBMS)}, {@code X}) or from the shared fixed-point boundary {@code psi_I(I)}. What it does
- * exclude is an <em>iterated</em> subscript, for example {@code omega_{omega_X}} or
- * {@code omega_{omega_{omega_X}}}. If the owner wants those, the smallest relaxation is a dedicated
- * subscript type that wraps a stage-four value, is accepted only by {@link #omegaAlpha(LadderArgument)}
- * (via a second overload) and has no conversion back to this class; adding a {@code LadderOrdinal} inside
- * {@link LadderArgument} would be the larger and worse change. This is recorded in {@code OPEN
- * QUESTIONS.md} Q7; no relaxation is implemented here.
+ * <p><b>The stage-three argument decision (Q7b, answered by the owner: option b).</b> The step
+ * {@code h(alpha) = omega_alpha} reuses the stage-two split: its ordinary subscript is a
+ * {@link LadderArgument}, never an {@code omega_alpha} value. The owner chose the <strong>smallest
+ * relaxation</strong>: an {@code omega_alpha} <em>value</em> may be a subscript of the {@code omega} step
+ * only, wrapped in the dedicated {@link OmegaSubscript} type and accepted only by the second
+ * {@link #omegaAlpha(OmegaSubscript)} overload. That is enough to express the mathematically natural
+ * iterated subscripts {@code omega_{omega_X}} and {@code omega_{omega_{omega_X}}}. <strong>Nothing else
+ * crosses:</strong> a TBMS, TTBMS, NRBMS or TNRBMS value is still not a subscript, and there is no general
+ * value-to-argument conversion. The relaxation is deliberately kept out of {@link LadderArgument}: the
+ * new type is top-level and holds a {@link LadderOrdinal}, so {@link LadderArgument} still contains no
+ * {@link LadderOrdinal} member and the one-way reflection invariant is intact.
+ *
+ * <p><b>The recursion type of the iterated subscript (the default the owner did not specify).</b> On the
+ * strip {@code omega_1 <= a < I} the {@code omega} step grows, so an iterated subscript is
+ * <strong>recursive</strong> there: {@code omega_{omega_X} > omega_X}, and it routes through A1
+ * ({@code f(a) > a}). At and above {@code I} every {@code omega} value is a fixed point of the enumeration
+ * ({@code omega_I = I}), so the iteration <strong>collapses</strong>: {@code omega_{omega_I} = omega_I = I}
+ * and deeper names add nothing. The ladder materialises the fixed point {@code psi_I(I)} and records the
+ * actual {@code I} on {@code CardinalRung}; {@link OmegaSubscript#isA1Domain()} and
+ * {@link OmegaSubscript#isA2Domain()} expose the two cases. The self check asserts the growth, the depth
+ * two and three, and the collapse.
  *
  * <p><b>A1 is a theorem; A2 is by definition.</b> The owner's ruling on Q2 settles the status:
  *
@@ -193,13 +211,14 @@ import java.util.Optional;
  * still the only matrix content behind the segment.
  *
  * <p><b>The {@code omega_alpha} segment.</b> The stage-three step {@code h(alpha) = omega_alpha} is
- * abstract in exactly the same sense as {@code f} and {@code g}: it stores its argument and compares by
+ * abstract in exactly the same sense as {@code f} and {@code g}: it stores its subscript and compares by
  * it, and it is declared strictly increasing. There is no matrix, OCF or cardinal behind it. Every
  * {@code omega_alpha} value sits in tier 10, above {@code X} and below {@code psi_I(I)}; the subscript may
- * be any previous-stage argument or the fixed-point boundary {@code psi_I(I)}, but not a produced value
- * (see the stage-three argument decision above). The fixed point {@code psi_I(I)} is the shared boundary
- * name with {@code h(psi_I(I)) = psi_I(I)}; the least-fixed-point property is checkable only over the
- * argument register, exactly as for {@code X}.
+ * be any previous-stage argument or the fixed-point boundary {@code psi_I(I)}, or - since the owner's Q7b
+ * answer (option b) - exactly one {@code omega_alpha} value wrapped in an {@link OmegaSubscript}. A
+ * produced value of any other kind (TBMS, TTBMS, NRBMS, TNRBMS) is still not a subscript. The fixed point
+ * {@code psi_I(I)} is the shared boundary name with {@code h(psi_I(I)) = psi_I(I)}; the least-fixed-point
+ * property is checkable only over the argument register, exactly as for {@code X}.
  *
  * <p><b>Not an {@link io.github.sob1234509876.oc.googology.Ordinal}.</b> This type compares and prints; it
  * has no successor, addition, finite-coefficient multiplication, {@code omega^} or fundamental sequence,
@@ -208,9 +227,10 @@ import java.util.Optional;
  * notation ({@code 0}, {@code BMS(0)(1)}, {@code SHO}, {@code TBMS(0)(1^(0)(1)(2))},
  * {@code TTBMS(0)(1^ω₁^CK)}, {@code LRPO}, {@code ω₁^CK}, {@code NRBMS(1,1,1)(2,2)},
  * {@code lim(NRBMS)}, {@code TNRBMS(0)(1^(1,1,1)(2,2))}, {@code X}, {@code ω_{(0)(1)(2)}},
- * {@code ω_X}, {@code ψ_𝕀(𝕀)}).
+ * {@code ω_X}, {@code ω_{ω_X}}, {@code ω_{ω_{ω_X}}}, {@code ψ_𝕀(𝕀)}).
  *
  * @see LadderArgument
+ * @see OmegaSubscript
  * @see LadderPlaceholder
  * @see LadderSegment
  * @see LadderComparison
@@ -257,6 +277,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     private final BmsOrdinal bms;
     private final NonRecursiveBms nrbms;
     private final LadderArgument argument;
+    private final OmegaSubscript omegaSubscript;
     private final LadderPlaceholder placeholder;
 
     private LadderOrdinal(BmsOrdinal bms) {
@@ -264,6 +285,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         this.bms = Objects.requireNonNull(bms, "bms");
         this.nrbms = null;
         this.argument = null;
+        this.omegaSubscript = null;
         this.placeholder = null;
     }
 
@@ -272,6 +294,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         this.bms = null;
         this.nrbms = Objects.requireNonNull(nrbms, "nrbms");
         this.argument = null;
+        this.omegaSubscript = null;
         this.placeholder = null;
     }
 
@@ -280,6 +303,16 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         this.bms = null;
         this.nrbms = null;
         this.argument = Objects.requireNonNull(argument, "argument");
+        this.omegaSubscript = null;
+        this.placeholder = null;
+    }
+
+    private LadderOrdinal(OmegaSubscript omegaSubscript) {
+        this.kind = Kind.OMEGA_ALPHA;
+        this.bms = null;
+        this.nrbms = null;
+        this.argument = null;
+        this.omegaSubscript = Objects.requireNonNull(omegaSubscript, "omegaSubscript");
         this.placeholder = null;
     }
 
@@ -288,6 +321,7 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         this.bms = null;
         this.nrbms = null;
         this.argument = null;
+        this.omegaSubscript = null;
         this.placeholder = Objects.requireNonNull(placeholder, "placeholder");
     }
 
@@ -632,17 +666,16 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
 
     /**
      * The abstract function {@code h(alpha) = omega_alpha} of segment 4, the stage-three {@code omega_alpha}
-     * rungs of {@code Ordinals.md} item 5.
+     * rungs of {@code Ordinals.md} item 5, with an <strong>ordinary argument subscript</strong>.
      *
      * <p>The argument is a {@link LadderArgument}, so a produced value (including an {@code omega_alpha}
-     * value) is never accepted. This is the stage-three answer to the argument question: an
-     * {@code omega_alpha} <strong>value</strong> may <strong>not</strong> be used as an argument. Every
+     * value) is never accepted here. This is the ordinary half of the stage-three argument decision: the
      * subscript is drawn from the previous stages (BMS values at or above {@code omega}, NRBMS expressions,
      * {@code SHO}, {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X}) or from the shared fixed-point name
-     * {@code psi_I(I)}. The excluded terms are iterated subscripts such as {@code omega_{omega_X}}; the
-     * smallest relaxation that would admit them is a dedicated subscript type wrapping a stage-four value
-     * and accepted only by a second overload of this method, not a {@code LadderOrdinal} inside
-     * {@link LadderArgument}. No such overload is implemented.
+     * {@code psi_I(I)}. Iterated subscripts such as {@code omega_{omega_X}} are <em>not</em> ordinary
+     * arguments, but the owner's Q7b answer (option b) admits them through the separate
+     * {@link OmegaSubscript} type and the second overload {@link #omegaAlpha(OmegaSubscript)}. There is
+     * still no general value-to-argument conversion.
      *
      * <p><b>The switch (owner's Q7a).</b> The owner has confirmed that the notation switches from
      * {@code TNRBMS(0)(1^alpha)} to {@code omega_alpha} at the fixed point of
@@ -651,17 +684,12 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
      * omegaAlpha(one())} as the first segment-four value, not {@code omega_omega}. Every proper TNRBMS
      * value is below {@code X}, and every {@code omega_alpha} value is above it.
      *
-     * <p><b>The enumeration grows (correction to Q7b).</b> {@code omega_alpha} is the {@code alpha}-th
+     * <p><b>The enumeration grows (Q7b's growth rule).</b> {@code omega_alpha} is the {@code alpha}-th
      * infinite initial ordinal. It is the identity only at an enumeration fixed point
      * ({@code alpha = omega_alpha}, checked by {@link #isOmegaFixedPoint(LadderArgument)}); it is
      * <em>not</em> the identity merely because {@code alpha} is uncountable. In particular
      * {@code omega_{omega_1} > omega_1}. The owner's "every uncountable ordinal is a fixed point"
-     * convention applies to the matrix-derived steps {@code f} and {@code g} only. Q7b is therefore not
-     * moot: allowing an {@code omega_alpha} value as a subscript would produce new ordinals such as
-     * {@code omega_{omega_X}}. The current default keeps values out of subscripts; the smallest
-     * relaxation is a dedicated stage-four subscript type accepted only by a second overload of this
-     * method, with no general value-to-argument conversion. It is documented and <strong>not</strong>
-     * implemented.
+     * convention applies to the matrix-derived steps {@code f} and {@code g} only.
      *
      * <p><b>Boundary collapse.</b> {@code h(psi_I(I)) = psi_I(I)} (the owner's
      * {@code psi_I(I) = min{alpha | alpha = omega_alpha}}). Every other materialised argument produces an
@@ -688,6 +716,44 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
             return PSI_I_I;
         }
         return new LadderOrdinal(alpha, Kind.OMEGA_ALPHA);
+    }
+
+    /**
+     * The abstract function {@code h(alpha) = omega_alpha} of segment 4 with an <strong>iterated
+     * subscript</strong>: the owner's Q7b answer, option b, the smallest relaxation.
+     *
+     * <p>An {@code omega_alpha} value may be used as a subscript of the {@code omega} step only. The
+     * subscript is the dedicated {@link OmegaSubscript} type, which holds exactly one {@code omega_alpha}
+     * value (or its fixed-point image {@code psi_I(I)}); a TBMS, TTBMS, NRBMS or TNRBMS value cannot be
+     * wrapped, and there is no general conversion from a value to a {@link LadderArgument}. Consequently
+     * {@link #f(LadderArgument)} and {@link #tnrbms(LadderArgument)} do not accept the new type either.
+     *
+     * <p><b>The recursion type of the iteration (the default the owner did not specify).</b> On the strip
+     * {@code omega_1 <= a < I} the step grows, so the iterated subscript is recursive:
+     * {@code omega_{omega_X} > omega_X}. At an enumeration fixed point it collapses:
+     * {@code omega_{omega_I} = omega_I = I}; the ladder materialises {@code psi_I(I)} as its fixed point,
+     * so {@code omegaAlpha(OmegaSubscript.of(psiII())) == psiII()}. Deeper nesting adds nothing past such a
+     * fixed point. See {@link OmegaSubscript#isA1Domain()} and {@link OmegaSubscript#isA2Domain()}.
+     *
+     * <p><b>Ordering.</b> The result compares by its subscript value: {@code omega_{omega_X} > omega_X},
+     * {@code omega_{omega_1} > omega_X} because {@code omega_1 > X}, and every iterated value still sits
+     * strictly below {@code psi_I(I)}. The same term reached through the argument name {@code omega_1} and
+     * through the value {@code omega_1} compares equal and hashes equal.
+     *
+     * @param subscript the iterated {@code omega} subscript
+     * @return an abstract segment-four value carrying the subscript, or the fixed-point boundary
+     *         {@code psi_I(I)} when the subscript is already the enumeration's fixed point
+     * @throws NullPointerException if {@code subscript} is {@code null}
+     */
+    public static LadderOrdinal omegaAlpha(OmegaSubscript subscript) {
+        Objects.requireNonNull(subscript, "subscript");
+        LadderOrdinal value = subscript.value();
+        if (value.equals(PSI_I_I)) {
+            // The I collapse: at and above I the enumeration is the identity, so omega_{omega_I} = omega_I.
+            // psi_I(I) is the register's materialised fixed point; the actual I is a CardinalRung.
+            return PSI_I_I;
+        }
+        return new LadderOrdinal(subscript);
     }
 
     // ------------------------------------------------------------------ inspection
@@ -790,10 +856,22 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     }
 
     /**
-     * The subscript {@code alpha} of a materialised {@code omega_alpha}, when this is a segment-four value.
+     * The subscript {@code alpha} of a materialised {@code omega_alpha}, when this is a segment-four value
+     * with an ordinary {@link LadderArgument} subscript. An iterated subscript is reported by
+     * {@link #omegaAlphaSubscript()} instead; the two accessors are never both present.
      */
     public Optional<LadderArgument> omegaAlphaArgument() {
         return kind == Kind.OMEGA_ALPHA ? Optional.ofNullable(argument) : Optional.empty();
+    }
+
+    /**
+     * The iterated subscript of a materialised {@code omega_alpha}, when this is a segment-four value built
+     * by {@link #omegaAlpha(OmegaSubscript)}. The wrapped value is itself an {@code omega_alpha} value (or
+     * the fixed point {@code psi_I(I)}), so {@code omegaAlphaSubscript().orElseThrow().value()} is the
+     * inner {@code omega} value.
+     */
+    public Optional<OmegaSubscript> omegaAlphaSubscript() {
+        return kind == Kind.OMEGA_ALPHA ? Optional.ofNullable(omegaSubscript) : Optional.empty();
     }
 
     /** The name, when this is a value of the abstract layer. */
@@ -834,8 +912,10 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
 
     /**
      * The declared total order of the ladder: cross-layer by tier first, then the exact order of the layer
-     * (BMS order, argument order for the step values, NRBMS order, or the placeholder order). The
-     * comparison is total and transitive, and a zero result is equivalent to {@link #equals(Object)}.
+     * (BMS order, argument order for the segment-two and segment-three step values, the subscript order
+     * for the segment-four values including iterated {@link OmegaSubscript}s, NRBMS order, or the
+     * placeholder order). The comparison is total and transitive, and a zero result is equivalent to
+     * {@link #equals(Object)}.
      */
     @Override
     public int compareTo(LadderOrdinal other) {
@@ -856,11 +936,22 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
         }
         return switch (kind) {
             case BMS -> bms.compareTo(other.bms);
-            case FUNCTION, TNRBMS, OMEGA_ALPHA -> argument.compareTo(other.argument);
+            case FUNCTION, TNRBMS -> argument.compareTo(other.argument);
+            case OMEGA_ALPHA -> omegaAlphaKey().compareTo(other.omegaAlphaKey());
             case NRBMS -> nrbms.compareTo(other.nrbms);
             case PLACEHOLDER -> placeholder.compareTo(other.placeholder);
             case FIXPOINT -> throw new AssertionError("a fixed point is handled above");
         };
+    }
+
+    /**
+     * The key by which two segment-four values are ordered: the embedded subscript value for an ordinary
+     * argument, and the wrapped value for an iterated {@link OmegaSubscript}. Both are
+     * {@link LadderOrdinal}s, which is how {@code omega_{omega_X} > omega_X} is expressed without a second
+     * order: the iterated subscript is compared at the same place as the value it wraps.
+     */
+    private LadderOrdinal omegaAlphaKey() {
+        return argument != null ? ofArgument(argument) : omegaSubscript.value();
     }
 
     /**
@@ -912,11 +1003,15 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
     }
 
     /**
-     * The subscript rendering of an {@code omega_alpha} value: a boundary name is printed bare and a matrix
-     * is wrapped in braces, so that {@code omega_X} and {@code omega_{(0)(1)(2)}} cannot be confused with
-     * the notation around them.
+     * The subscript rendering of an {@code omega_alpha} value: a boundary name is printed bare, a matrix
+     * is wrapped in braces, and an iterated subscript is the inner {@code omega} value in braces, so that
+     * {@code omega_X}, {@code omega_{(0)(1)(2)}}, {@code omega_{omega_X}} and
+     * {@code omega_{omega_{omega_X}}} cannot be confused with the notation around them.
      */
     private String omegaSubscriptText() {
+        if (omegaSubscript != null) {
+            return "{" + omegaSubscript.value() + "}";
+        }
         if (argument.isOne()) {
             return "1";
         }
@@ -955,7 +1050,9 @@ public final class LadderOrdinal implements Comparable<LadderOrdinal> {
             case FIXPOINT -> ofArgument(argument).hashCode();
             case NRBMS -> 31 * Kind.NRBMS.ordinal() + nrbms.hashCode();
             case TNRBMS -> 31 * Kind.TNRBMS.ordinal() + argument.hashCode();
-            case OMEGA_ALPHA -> 31 * Kind.OMEGA_ALPHA.ordinal() + argument.hashCode();
+            // Two segment-four values are equal exactly when their subscript keys are equal, so the key's
+            // hash is the value's hash; this also makes the argument-name and value-subscript routes agree.
+            case OMEGA_ALPHA -> 31 * Kind.OMEGA_ALPHA.ordinal() + omegaAlphaKey().hashCode();
             case PLACEHOLDER -> 31 * Kind.PLACEHOLDER.ordinal() + placeholder.hashCode();
         };
     }

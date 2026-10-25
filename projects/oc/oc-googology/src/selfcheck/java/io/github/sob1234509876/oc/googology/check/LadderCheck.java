@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.googology.abstractordinal.LadderComparison;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderPlaceholder;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment;
+import io.github.sob1234509876.oc.googology.abstractordinal.OmegaSubscript;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveExpansion;
@@ -33,7 +34,8 @@ import java.util.List;
  * definition, the recursion layering that removes the old boundary contradiction, the internal
  * argument/value seam (enforced by the types and checked by reflection), the matrix steps' identity on
  * uncountable arguments, the {@code omega_1} start and the {@code I}-upward fixed points of the enumeration,
- * the open Q7b decision that an {@code omega_alpha} value is never a subscript, and the
+ * the owner's Q7b answer (option b: an {@code omega_alpha} value may be a subscript of the {@code omega}
+ * step only, through {@link OmegaSubscript}), and the
  * totality/transitivity of the declared order over a sample that covers all four segments.
  *
  * <p>The checks report into the same counters as {@link GoogologyCheck} through their {@link Result}, so
@@ -89,7 +91,7 @@ public final class LadderCheck {
         section("30) ω_α 步：下标严格递增、X 下界与不动点 ψ_𝕀(𝕀)");
         omegaAlphaStep();
 
-        section("31) 阶段三的实参/值决定：ω_α 值永不当实参，最小放宽只记录未实现");
+        section("31) Q7b 已由所有者选择 b：ω_α 值只对 ω 步当下标，递归类型、嵌套与 I 处坍缩");
         omegaAlphaDecision();
 
         return new Result(passed, List.copyOf(FAILURES));
@@ -989,6 +991,10 @@ public final class LadderCheck {
                 NonRecursiveBms.parse("(1,1,1)(2,2)")));
         LadderOrdinal hLim = LadderOrdinal.omegaAlpha(LadderArgument.limNrbms());
         LadderOrdinal hX = LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint());
+        LadderOrdinal hOfOmegaOne = LadderOrdinal.omegaAlpha(
+                OmegaSubscript.of(LadderOrdinal.omegaOne()));
+        LadderOrdinal hOfOmegaX = LadderOrdinal.omegaAlpha(OmegaSubscript.of(hX));
+        LadderOrdinal hOfOmegaOfOmegaX = LadderOrdinal.omegaAlpha(OmegaSubscript.of(hOfOmegaX));
         LadderOrdinal psiII = LadderOrdinal.psiII();
 
         List<LadderOrdinal> sample = List.of(
@@ -996,7 +1002,8 @@ public final class LadderCheck {
                 fOmegaOmega, fEpsilon, LadderOrdinal.f(LadderArgument.sho()),
                 LadderOrdinal.lrpo(), LadderOrdinal.omegaOneCk(),
                 nrbmsOne, nrbmsThree, limNrbms, gOmegaOmega, gOmegaOne, gNrbms, gLimNrbms, x,
-                hOmega, hOmegaOmega, hSho, hOmegaOne, hNrbms, hLim, hX, psiII);
+                hOmega, hOmegaOmega, hSho, hOmegaOne, hNrbms, hLim, hX,
+                hOfOmegaOne, hOfOmegaX, hOfOmegaOfOmegaX, psiII);
 
         boolean increasing = true;
         for (int index = 1; index < sample.size(); index++) {
@@ -1006,7 +1013,8 @@ public final class LadderCheck {
         }
         check("四段样本严格递增：ψ < 0 < 1 < ω < ω^ω < ε₀ < SHO < f(ω^ω) < f(ε₀) < f(SHO)"
                 + " < LRPO < ω_1^CK < NRBMS < lim(NRBMS) < TNRBMS < X"
-                + " < ω_ω < ω_ω^ω < ω_SHO < ω_ω₁^CK < ω_NRBMS < ω_lim(NRBMS) < ω_X < ψ_𝕀(𝕀)",
+                + " < ω_ω < ω_ω^ω < ω_SHO < ω_ω₁^CK < ω_NRBMS < ω_lim(NRBMS) < ω_X"
+                + " < ω_{ω₁} < ω_{ω_X} < ω_{ω_{ω_X}} < ψ_𝕀(𝕀)",
                 increasing);
 
         int pairs = 0;
@@ -1126,6 +1134,7 @@ public final class LadderCheck {
                         && hX.segment() == LadderSegment.SEGMENT_FOUR
                         && hX.omegaAlphaArgument().orElseThrow().equals(
                                 LadderArgument.tnrbmsFixpoint())
+                        && hX.omegaAlphaSubscript().isEmpty()
                         && hX.bms().isEmpty() && hX.nrbms().isEmpty()
                         && hX.functionArgument().isEmpty() && hX.tnrbmsArgument().isEmpty()
                         && hX.placeholder().isEmpty());
@@ -1176,7 +1185,7 @@ public final class LadderCheck {
         check("ω_α 工厂拒绝 0 与 null，但接受 1 以物化 ω₁（Q7a 的起点；f 与 g 仍拒绝 1）",
                 throwsIllegalArgument(() -> LadderOrdinal.omegaAlpha(
                                 LadderArgument.ofBms(new int[][]{})))
-                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha(null))
+                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha((LadderArgument) null))
                         && LadderOrdinal.omegaAlpha(LadderArgument.one()) == LadderOrdinal.omegaOne()
                         && throwsIllegalArgument(() -> LadderOrdinal.f(LadderArgument.one()))
                         && throwsIllegalArgument(() -> LadderOrdinal.tnrbms(LadderArgument.one())));
@@ -1335,20 +1344,110 @@ public final class LadderCheck {
     // ------------------------------------------------------------------ 31 the stage-three decision
 
     private static void omegaAlphaDecision() {
-        check("omegaAlpha 只有一个重载且只接受 LadderArgument（没有接受 LadderOrdinal 的重载）",
-                omegaAlphaTakesOnlyArgument());
-        check("LadderArgument 中没有任何成员接受或返回 LadderOrdinal：Q7b 的放宽没有实现",
+        LadderOrdinal omega = LadderOrdinal.omega();
+        LadderOrdinal omegaOne = LadderOrdinal.omegaOne();
+        LadderOrdinal omegaX = LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint());
+        LadderOrdinal tbms = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}));
+        LadderOrdinal ttbms = LadderOrdinal.f(LadderArgument.omegaOneCk());
+        LadderOrdinal nrbms = LadderOrdinal.ofNrbms(NonRecursiveBms.parse("(1,1,1)(2,2)"));
+        LadderOrdinal tnrbms = LadderOrdinal.tnrbms(LadderArgument.ofNrbms(
+                NonRecursiveBms.parse("(1,1,1)(2,2)")));
+        LadderOrdinal psiII = LadderOrdinal.psiII();
+        LadderOrdinal omegaOfPsiII = LadderOrdinal.omegaAlpha(LadderArgument.psiII());
+        OmegaSubscript subscriptOfOmegaOne = OmegaSubscript.of(omegaOne);
+        OmegaSubscript subscriptOfOmegaX = OmegaSubscript.of(omegaX);
+        LadderOrdinal omegaOfOmegaX = LadderOrdinal.omegaAlpha(subscriptOfOmegaX);
+        OmegaSubscript subscriptOfOmegaOfOmegaX = OmegaSubscript.of(omegaOfOmegaX);
+        LadderOrdinal omegaOfOmegaOfOmegaX = LadderOrdinal.omegaAlpha(subscriptOfOmegaOfOmegaX);
+        OmegaSubscript subscriptOfFixedPoint = OmegaSubscript.of(omegaOfPsiII);
+
+        check("Q7b 的所有者选择 b：omegaAlpha 恰好有一个 LadderArgument 重载和一个 OmegaSubscript 重载，"
+                + "没有接受 LadderOrdinal 的重载", omegaAlphaOverloads());
+        check("OmegaSubscript 是顶层 final 类、构造器全 private，且只持有一个 LadderOrdinal 字段：它只包装"
+                + " 一个 ω 值", Modifier.isFinal(OmegaSubscript.class.getModifiers())
+                && OmegaSubscript.class.getEnclosingClass() == null
+                && onlyPrivateConstructors(OmegaSubscript.class)
+                && omegaSubscriptHasOneValueField());
+        check("反射：OmegaSubscript 没有接受 BmsOrdinal/NonRecursiveBms/LadderArgument 的构造器或方法，"
+                        + "包装只能经 LadderOrdinal 上的受检前置条件",
+                omegaSubscriptRejectsOtherValueTypes());
+        check("OmegaSubscript 没有转成 LadderArgument 的路径（没有接受或返回 LadderArgument 的成员）",
+                omegaSubscriptHasNoArgumentPath()
+                        && !LadderArgument.class.isAssignableFrom(OmegaSubscript.class)
+                        && !OmegaSubscript.class.isAssignableFrom(LadderArgument.class));
+        check("LadderArgument 本身仍没有任何 LadderOrdinal 成员：放宽只在新类型里，没有把值塞回实参侧",
                 noValueToArgumentPath());
-        check("没有 asArgument/toArgument 之类的转换，也没有把 ω_α 值转成下标的公开方法",
-                noArgumentConversionMethod());
-        check("Boundary 恰好六个：共享的 ω₁ 是实参名，不是把某个 ω_α 值转成下标的通道",
-                LadderArgument.Boundary.values().length == 6
-                        && LadderArgument.omegaOne().boundary().orElseThrow()
-                                == LadderArgument.Boundary.OMEGA_ONE
-                        && !LadderArgument.omegaOne().isNrbms()
-                        && LadderArgument.omegaOne().isBoundary());
-        check("Q7b 保持开放：没有把 ω_X、ω_ω₁ 之类的段四值注册成 Boundary",
-                noOmegaAlphaBoundary());
+        check("f 与 g 仍只接受 LadderArgument，只有 omegaAlpha 接受 OmegaSubscript：放宽只对 ω 步开放",
+                ladderStepsTakeOnlyArguments() && onlyOmegaAlphaTakesSubscript());
+        check("ω_α 值可以作为下标：Ω(ω_X) 保存同一个值，ω₁ 与 ω_ψ 也可包装",
+                subscriptOfOmegaX.value() == omegaX
+                        && OmegaSubscript.isOmegaValue(omegaX)
+                        && OmegaSubscript.isOmegaValue(omegaOne)
+                        && OmegaSubscript.isOmegaValue(omegaOfPsiII)
+                        && subscriptOfOmegaX.depth() == 1
+                        && subscriptOfFixedPoint.isFixedPoint());
+        check("负规则：TBMS 与 TTBMS 值不能当下标", rejectedSubscripts(tbms, ttbms));
+        check("负规则：NRBMS 与 TNRBMS 值不能当下标", rejectedSubscripts(nrbms, tnrbms));
+        check("负规则：BMS 值与其余具名边界（SHO、LRPO、ω₁^CK、lim(NRBMS)、X、ψ）不能当下标",
+                rejectedSubscripts(LadderOrdinal.zero(), omega,
+                        LadderOrdinal.ofArgument(LadderArgument.one()),
+                        LadderOrdinal.sho(), LadderOrdinal.lrpo(), LadderOrdinal.omegaOneCk(),
+                        LadderOrdinal.limNrbms(), LadderOrdinal.tnrbmsFixpoint(),
+                        LadderOrdinal.psi()));
+        check("下标工厂拒绝 null，omegaAlpha 的下标重载也拒绝 null",
+                throwsNullPointer(() -> OmegaSubscript.of(null))
+                        && throwsNullPointer(() -> LadderOrdinal.omegaAlpha((OmegaSubscript) null)));
+        check("条带上迭代下标是递归类型（A1 域）：Ω(ω_X) 递归、非非递归",
+                subscriptOfOmegaX.isRecursivelyExpanded() && subscriptOfOmegaX.isA1Domain()
+                        && !subscriptOfOmegaX.isNonRecursivelyExpanded()
+                        && !subscriptOfOmegaX.isA2Domain());
+        check("不动点处迭代下标是非递归类型（A2 域）：Ω(ω_ψ) 非递归、非递归扩展",
+                subscriptOfFixedPoint.isNonRecursivelyExpanded()
+                        && subscriptOfFixedPoint.isA2Domain()
+                        && !subscriptOfFixedPoint.isRecursivelyExpanded()
+                        && !subscriptOfFixedPoint.isA1Domain());
+        check("条带上严格增长：ω_{ω_X} > ω_X，且 ω_{ω_X} 仍严格低于 ψ_𝕀(𝕀)",
+                omegaOfOmegaX.compareTo(omegaX) > 0
+                        && omegaOfOmegaX.compareTo(psiII) < 0
+                        && omegaOfOmegaX.compareTo(LadderOrdinal.omegaAlpha(LadderArgument.sho())) > 0);
+        check("嵌套深度：Ω(ω_X) 的 depth 是 1，Ω(ω_{ω_X}) 是 2，Ω(ω_{ω_{ω_X}}) 是 3",
+                subscriptOfOmegaX.depth() == 1
+                        && subscriptOfOmegaOfOmegaX.depth() == 2
+                        && OmegaSubscript.of(omegaOfOmegaOfOmegaX).depth() == 3);
+        check("嵌套文本与访问器：ω_{ω_X}、ω_{ω_{ω_X}}，段四、只带下标不带实参",
+                omegaOfOmegaX.toString().equals("ω_{ω_X}")
+                        && omegaOfOmegaOfOmegaX.toString().equals("ω_{ω_{ω_X}}")
+                        && omegaOfOmegaX.segment() == LadderSegment.SEGMENT_FOUR
+                        && omegaOfOmegaX.isOmegaAlpha() && omegaOfOmegaX.isStepValue()
+                        && omegaOfOmegaX.omegaAlphaSubscript().orElseThrow().equals(subscriptOfOmegaX)
+                        && omegaOfOmegaX.omegaAlphaArgument().isEmpty()
+                        && omegaOfOmegaOfOmegaX.omegaAlphaSubscript().orElseThrow().depth() == 2);
+        check("深度不越过不动点：ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)，再嵌一层仍是 ψ_𝕀(𝕀)",
+                LadderOrdinal.omegaAlpha(subscriptOfFixedPoint) == psiII
+                        && LadderOrdinal.omegaAlpha(OmegaSubscript.of(
+                                LadderOrdinal.omegaAlpha(subscriptOfFixedPoint))) == psiII);
+        check("[BOUNDARY] I 处坍缩：ω_I = I（基数寄存器身份），所以 ω_{ω_I} = ω_I = I；"
+                        + "梯子整体低于 I，I 以上没有新的 ω 值",
+                CardinalRung.INACCESSIBLE.isOmegaFixedPoint()
+                        && CardinalRung.INACCESSIBLE.omegaAlpha() == CardinalRung.INACCESSIBLE
+                        && CardinalRung.INACCESSIBLE.compareWithLadder(psiII) == ComparisonResult.GREATER
+                        && CardinalRung.INACCESSIBLE.compareWithLadder(omegaOfOmegaOfOmegaX)
+                                == ComparisonResult.GREATER);
+        check("ω 步在下标上严格递增：Ω(ω₁) < Ω(ω_X) < Ω(ω_{ω_X}) 对应"
+                        + " ω_{ω₁} < ω_{ω_X} < ω_{ω_{ω_X}}",
+                subscriptOfOmegaOne.compareTo(subscriptOfOmegaX) < 0
+                        && subscriptOfOmegaX.compareTo(subscriptOfOmegaOfOmegaX) < 0
+                        && LadderOrdinal.omegaAlpha(subscriptOfOmegaOne).compareTo(omegaOfOmegaX) < 0
+                        && omegaOfOmegaX.compareTo(omegaOfOmegaOfOmegaX) < 0);
+        check("同一项经实参名和经值下标两条路径相等且哈希一致：ω_{ω₁} 的两种构造",
+                LadderOrdinal.omegaAlpha(LadderArgument.omegaOne())
+                                .equals(LadderOrdinal.omegaAlpha(subscriptOfOmegaOne))
+                        && LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).hashCode()
+                                == LadderOrdinal.omegaAlpha(subscriptOfOmegaOne).hashCode()
+                        && subscriptOfOmegaX.equals(OmegaSubscript.of(omegaX))
+                        && subscriptOfOmegaX.hashCode() == OmegaSubscript.of(omegaX).hashCode()
+                        && !omegaOfOmegaX.equals(omegaX)
+                        && !omegaOfOmegaX.equals(omegaOfOmegaOfOmegaX));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1417,29 +1516,45 @@ public final class LadderCheck {
         return true;
     }
 
+    /**
+     * {@code f} and {@code tnrbms} take a {@link LadderArgument} and nothing else; {@code omegaAlpha} takes
+     * a {@link LadderArgument} for an ordinary subscript and, since the owner's Q7b answer (option b), an
+     * {@link OmegaSubscript} for an iterated one. No step accepts a {@link LadderOrdinal}.
+     */
     private static boolean ladderStepsTakeOnlyArguments() {
         boolean foundF = false;
         boolean foundTnrbms = false;
-        boolean foundOmegaAlpha = false;
+        boolean foundOmegaAlphaArgument = false;
         for (Method method : LadderOrdinal.class.getMethods()) {
             if (method.getDeclaringClass() != LadderOrdinal.class) {
                 continue;
             }
-            if (!method.getName().equals("f") && !method.getName().equals("tnrbms")
-                    && !method.getName().equals("omegaAlpha")) {
+            String name = method.getName();
+            if (!name.equals("f") && !name.equals("tnrbms") && !name.equals("omegaAlpha")) {
                 continue;
             }
             Class<?>[] parameters = method.getParameterTypes();
-            if (parameters.length != 1 || parameters[0] != LadderArgument.class) {
+            if (parameters.length != 1) {
                 return false;
             }
-            switch (method.getName()) {
+            if (name.equals("omegaAlpha")) {
+                if (parameters[0] == LadderArgument.class) {
+                    foundOmegaAlphaArgument = true;
+                } else if (parameters[0] != OmegaSubscript.class) {
+                    return false;
+                }
+            } else if (parameters[0] != LadderArgument.class) {
+                return false;
+            }
+            switch (name) {
                 case "f" -> foundF = true;
                 case "tnrbms" -> foundTnrbms = true;
-                default -> foundOmegaAlpha = true;
+                default -> {
+                    // omegaAlpha: the ordinary overload was recorded above.
+                }
             }
         }
-        return foundF && foundTnrbms && foundOmegaAlpha;
+        return foundF && foundTnrbms && foundOmegaAlphaArgument;
     }
 
     private static boolean noArgumentConversionMethod() {
@@ -1459,27 +1574,123 @@ public final class LadderCheck {
         return true;
     }
 
-    /** The stage-three step must have exactly one overload, taking the argument type. */
-    private static boolean omegaAlphaTakesOnlyArgument() {
-        int count = 0;
+    /**
+     * Q7b option b: exactly one ordinary {@code omegaAlpha} overload taking a {@link LadderArgument} and
+     * exactly one iterated overload taking an {@link OmegaSubscript}; no overload takes a
+     * {@link LadderOrdinal}.
+     */
+    private static boolean omegaAlphaOverloads() {
+        int argumentOverloads = 0;
+        int subscriptOverloads = 0;
         for (Method method : LadderOrdinal.class.getMethods()) {
             if (method.getDeclaringClass() != LadderOrdinal.class
                     || !method.getName().equals("omegaAlpha")) {
                 continue;
             }
-            count++;
             Class<?>[] parameters = method.getParameterTypes();
-            if (parameters.length != 1 || parameters[0] != LadderArgument.class) {
+            if (parameters.length != 1) {
+                return false;
+            }
+            if (parameters[0] == LadderArgument.class) {
+                argumentOverloads++;
+            } else if (parameters[0] == OmegaSubscript.class) {
+                subscriptOverloads++;
+            } else {
                 return false;
             }
         }
-        return count == 1;
+        return argumentOverloads == 1 && subscriptOverloads == 1;
     }
 
-    /** No boundary name may stand for an {@code omega_alpha} value. */
-    private static boolean noOmegaAlphaBoundary() {
-        for (LadderArgument.Boundary boundary : LadderArgument.Boundary.values()) {
-            if (boundary.text().contains("ω_") || boundary.name().contains("OMEGA_ALPHA")) {
+    /** The relaxation is for the {@code omega} step only: no other ladder step takes the subscript type. */
+    private static boolean onlyOmegaAlphaTakesSubscript() {
+        for (Method method : LadderOrdinal.class.getMethods()) {
+            if (method.getDeclaringClass() != LadderOrdinal.class) {
+                continue;
+            }
+            boolean takesSubscript = false;
+            for (Class<?> parameter : method.getParameterTypes()) {
+                takesSubscript |= parameter == OmegaSubscript.class;
+            }
+            if (takesSubscript && !method.getName().equals("omegaAlpha")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The subscript type holds exactly one value and that value is a {@link LadderOrdinal}. */
+    private static boolean omegaSubscriptHasOneValueField() {
+        int valueFields = 0;
+        for (Field field : OmegaSubscript.class.getDeclaredFields()) {
+            if (field.isSynthetic()) {
+                continue;
+            }
+            if (field.getType() != LadderOrdinal.class) {
+                return false;
+            }
+            valueFields++;
+        }
+        return valueFields == 1;
+    }
+
+    /**
+     * Reflection form of the negative rule: the subscript type has no constructor or method that accepts a
+     * BMS/NRBMS/argument payload, so the only way in is a {@link LadderOrdinal} through the checked
+     * precondition of {@link OmegaSubscript#of(LadderOrdinal)}.
+     */
+    private static boolean omegaSubscriptRejectsOtherValueTypes() {
+        for (Constructor<?> constructor : OmegaSubscript.class.getDeclaredConstructors()) {
+            for (Class<?> type : constructor.getParameterTypes()) {
+                if (isOtherValueType(type)) {
+                    return false;
+                }
+            }
+        }
+        for (Method method : OmegaSubscript.class.getDeclaredMethods()) {
+            if (method.isSynthetic()) {
+                continue;
+            }
+            if (isOtherValueType(method.getReturnType())) {
+                return false;
+            }
+            for (Class<?> type : method.getParameterTypes()) {
+                if (isOtherValueType(type)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isOtherValueType(Class<?> type) {
+        return type == BmsOrdinal.class || type == NonRecursiveBms.class
+                || type == LadderArgument.class;
+    }
+
+    private static boolean omegaSubscriptHasNoArgumentPath() {
+        for (Method method : OmegaSubscript.class.getMethods()) {
+            if (method.getDeclaringClass() != OmegaSubscript.class) {
+                continue;
+            }
+            if (method.getName().equals("asArgument") || method.getName().equals("toArgument")) {
+                return false;
+            }
+            if (method.getReturnType() == LadderArgument.class) {
+                return false;
+            }
+            for (Class<?> type : method.getParameterTypes()) {
+                if (type == LadderArgument.class) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean rejectedSubscripts(LadderOrdinal... values) {
+        for (LadderOrdinal value : values) {
+            if (!throwsIllegalArgument(() -> OmegaSubscript.of(value))) {
                 return false;
             }
         }

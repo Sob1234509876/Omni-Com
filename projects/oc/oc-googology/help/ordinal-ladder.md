@@ -7,8 +7,11 @@
 > `TBMS(0)(1^α)` 且 `f(α) > α`（A1）；非递归实参给 `TTBMS(0)(1^α)` 的 TBMS 步不动点，因此在不动点
 > `f(α) = α`，永远不低于自己那一层（A2 的不动点例外）。旧矛盾由这个分层消除，而不是被“实参/值分离”
 > 藏起来；分离只是内部类型设计（见第六、七节）。**Q7a 也已回答**：`TNRBMS → ω_α` 在 `a ↦ TNRBMS(0)(1^a)`
-> 的不动点 `X` 切换，`ω_α` 族从 `ω₁` 开始。**Q7b 仍开放**：`ω_α` 值能否当下标；默认不能，最小放宽只记录
-> 不实现（见第五节）。**本阶段不实现 TBMS / TTBMS / TNRBMS 矩阵系统**；NRBMS 直接复用现有的
+> 的不动点 `X` 切换，`ω_α` 族从 `ω₁` 开始。**Q7b 也已回答，所有者选择选项 b（最小放宽）**：`ω_α` 的
+> **值**可以作为 `ω` 步的下标（经专用类型 `OmegaSubscript`），因此 `ω_{ω_X}`、`ω_{ω_{ω_X}}` 可表达；
+> TBMS/TTBMS/NRBMS 值仍不能当下标，也没有一般值转实参。所有者没有指定的**迭代下标递归类型**由本库取默认：
+> 条带上递归且增长，`I` 及以上是不动点恒等、迭代坍缩（见 5.4）。**本阶段不实现 TBMS / TTBMS / TNRBMS
+> 矩阵系统**；NRBMS 直接复用现有的
 > `NonRecursiveBms` / `NonRecursiveExpansion`。阶段四的**基数寄存器**也已落地，但它是独立寄存器；阶段五
 > 把其中不可达这一级的无限内部结构实现成**函数生成的层级**（`InaccessibleCardinal` / `IndexLevel`，
 > 见 [`inaccessible-extension.md`](inaccessible-extension.md)）。阶段五不是序数阶梯的段五，而是秩 0
@@ -32,9 +35,10 @@
   `ψ_𝕀(𝕀)`，且 `h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`。
 - 实参/值分离：`LadderArgument`（实参、下标）与 `LadderOrdinal`（值）仍是两个类型；`f`、`tnrbms` 与
   `omegaAlpha` 只吃前者。它现在是**内部类型缝**，不是 Q6 的解答；Q6 由递归分层解决（第七节）。
-- 一个**仍开放的 Q7b 决定**：`ω_α` 值**不能**当下标；下标只能来自前几段的实参或具名边界。这个限制足以
-  表达所有者列出的所有梯级，但排除了 `ω_{ω_X}` 这类迭代下标；它们会产生新序数，因此 Q7b 不是伪问题。
-  最小放宽（专用段四下标类型 + 第二个重载）写在第五节与 Q7 里，本阶段不实现。
+- **Q7b 已回答（所有者选项 b）**：`ω_α` 值**可以**当 `ω` 步的下标，但只能经专用类型 `OmegaSubscript`
+  包一个 `ω_α` 值，且只被第二个 `omegaAlpha` 重载接受。下标仍可来自前几段的实参或具名边界；TBMS/TTBMS/
+  NRBMS/TNRBMS 值仍不能当下标，`f`/`g` 也不接受新类型。迭代下标的递归类型默认是"条带上递归增长，`I` 及
+  以上不动点坍缩"，`ω_{ω_X} > ω_X`、`ω_{ω_I} = ω_I`，没有小的嵌套深度上限（见 5.4）。
 - 抽象边界：`ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` 八个具名条目（`ω₁` 同时是
   段四的第一个值），以及它们与四段值之间的**声明全序**。
 - 哪些是**做出来的**，哪些是**定理/定义**，哪些是**有意不做**的，阶段四已经落地成什么。
@@ -85,7 +89,8 @@ $$
 
 > **阶段一至三不碰的东西。** 不实现 TBMS、TTBMS 或 TNRBMS 矩阵；不实现任何基数。段四的 `ω_α` 是抽象
 > 步进函数，不是基数寄存器里的 `ω_α` 计数；`X` 与 `ψ_𝕀(𝕀)` 都是具名边界，不是无限矩阵的展开。`ω_α`
-> 值永远不是实参，所以 `ω_{ω_X}` 这类迭代下标不可表达（见第五节与 Q7）。
+> 值仍然不是实参，所以 `f`/`g` 不能吃它；Q7b 的选项 b 只让它在 `ω` 步里经 `OmegaSubscript` 当下标，
+> 因此 `ω_{ω_X}` 可表达，而 `f(ω_X)`、`g(ω_X)` 仍是类型错误（见 5.4 与 Q7）。
 
 ## 二、段一：BMS 与 SHO
 
@@ -372,6 +377,10 @@ $$
 下标 `α`，比较按下标比较，文本按下面的规则打印。`h` 被声明为在下标上严格递增。`ω_α` 族从 `ω₁` 开始
 （Q7a），所以寄存器物化 `h(1) = ω₁`；`h(ω) = ω_ω` 仍是正常的段四值，严格高于 `X`。
 
+`omegaAlpha` 有两个重载：普通下标用 `omegaAlpha(LadderArgument)`；Q7b 的选项 b 允许一个
+`ω_α` 值当下标，经 `OmegaSubscript` 包装后交给 `omegaAlpha(OmegaSubscript)`（见 5.4）。`OmegaSubscript`
+不是 `LadderArgument`，也不提供转换，所以 `f`/`g` 仍然只吃普通实参。
+
 ```java
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
@@ -478,30 +487,81 @@ CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.omegaOne()); // GREATE
 > 只对 `omegaAlpha` 开放，`f`/`g` 仍拒绝 `1`），`h(ω) = ω_ω` 是另一个严格更大的段四值。`ω_ω = ω₁` 是
 > 错误的，本库不再暗示它。
 
-### 5.4 Q7b（仍开放）：`ω_α` 值不当实参
+### 5.4 Q7b（所有者已回答：选项 b）：`ω_α` 值可以当 `ω` 步的下标
 
-阶段三**明确决定**：`ω_α` 的**值**不能当 `ω_α` 的**下标**。Q7b 不是伪问题：`ω_α` 在 `α < I` 上增长，
-所以 `ω_{ω_X} > ω_X`，允许值当下标会产生**新序数**（`ω_{ω_X}`、`ω_{ω_{ω_X}}`……），不会折叠。它仍
-开放，有两个候选：
+所有者说 **“b 实现吧”**，选择**最小放宽**：`ω_α` 的**值**可以作为 `ω` 步的**下标**，于是
+`ω_{ω_X}`、`ω_{ω_{ω_X}}`……可表达。**没有别的东西可以从值侧跨到实参侧**：`TBMS`、`TTBMS`、`NRBMS`
+或 `TNRBMS` 值仍不能当下标，也没有一般的值转实参转换。
 
-- **不**（当前默认，已实现）。下标只能来自前几段实参（`ω`、BMS、NRBMS、`SHO`、`ω₁^CK`、`lim(NRBMS)`、
-  `X`）或共享边界 `ω₁`、`ψ_𝕀(𝕀)`。这足以表达 `Ordinals.md` 的每一级。
-- **最小放宽**（只记录，不实现）。新增一个"段四下标"类型：只包装一个 `ω_α` 值，只被 `omegaAlpha` 的
-  第二个重载接受，不能反向转成一般实参，也不被 `f`/`g` 接受。比它更大的改动是把 `LadderOrdinal` 直接
-  放进 `LadderArgument`，那会同时放宽 `f`/`g`，本库拒绝。
+**所有者没有指定的细节：迭代下标的递归类型（本库取的默认）。** 这是对早先规则的唯一自洽读法：
 
-不再使用"允许它会重新打开 Q6"作为理由——那个理由错了；Q6 已由递归分层解决。拒绝当前放宽的理由只是
-类型不变量与规格范围。
+- 在序数条带 `ω₁ ≤ a < I` 上，`ω` 步**增长**，所以 `ω` 迭代下标在那里是**递归**的：
+  `ω_{ω_X} > ω_X`，走 A1（`f(a) > a`）这一侧；
+- 在 `I` 及以上，每个 `ω` 值都是枚举的不动点（`ω_I = I`），所以迭代下标**坍缩**：
+  `ω_{ω_I} = ω_I = I`，`ω_{ω_Absolute}` 之类的名字不再增加任何东西；梯子里另有一个 `I` 以下的具名
+  不动点 `ψ_𝕀(𝕀)`（`ω_ψ = ψ`），在那里同样坍缩——这是不动点的定义，不是额外约定，也是寄存器里
+  `I` 规则的**可检查替身**；
+- 因此迭代 `ω` 下标的类型是：**值在条带上时递归；到枚举不动点（`I` 及以上，以及梯子里的 `ψ_𝕀(𝕀)`）
+  是不动点恒等**。
+
+**实现。** 新增顶层类型 `OmegaSubscript`（`abstractordinal` 包），它只包装**恰好一个** `ω_α` 值，并且
+可以继续嵌套：`Ω(ω_X)`、`Ω(ω_{ω_X})`、`Ω(ω_{ω_{ω_X}})` 的 `depth()` 分别是 1、2、3。`OmegaSubscript.of`
+只接受 `ω_α` 值或枚举的具名不动点 `ψ_𝕀(𝕀)`；其他任何值种类都抛 `IllegalArgumentException`。它只被
+第二个重载 `LadderOrdinal.omegaAlpha(OmegaSubscript)` 接受，**不能**转成 `LadderArgument`，`f`/`g` 也
+不接受它。`LadderArgument` 本身仍然没有任何 `LadderOrdinal` 成员，所以单向反射不变量没有被破坏——放宽
+只发生在新类型里。**没有小的嵌套深度上限**：不动点以下可以任意迭代；到不动点就坍缩，深度不再增加。
 
 ```java
-LadderOrdinal value = LadderOrdinal.omegaAlpha(LadderArgument.omega());
-// LadderOrdinal.omegaAlpha(value); // 编译错误：值不是 LadderArgument
+import io.github.sob1234509876.oc.googology.abstractordinal.OmegaSubscript;
+
+LadderOrdinal omegaX = LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()); // ω_X
+OmegaSubscript subscript = OmegaSubscript.of(omegaX);                            // 一个 ω 值下标
+
+LadderOrdinal omegaOfOmegaX = LadderOrdinal.omegaAlpha(subscript);               // ω_{ω_X}
+omegaOfOmegaX.toString();              // "ω_{ω_X}"
+omegaOfOmegaX.compareTo(omegaX) > 0;   // true：条带上严格增长
+omegaOfOmegaX.segment();               // LadderSegment.SEGMENT_FOUR
+omegaOfOmegaX.omegaAlphaSubscript().orElseThrow().depth(); // 1
+omegaOfOmegaX.omegaAlphaArgument().isEmpty();              // true
+
+OmegaSubscript deeper = OmegaSubscript.of(omegaOfOmegaX);   // depth 2
+LadderOrdinal omegaOfOmegaOfOmegaX = LadderOrdinal.omegaAlpha(deeper); // ω_{ω_{ω_X}}
+omegaOfOmegaOfOmegaX.toString();       // "ω_{ω_{ω_X}}"
+OmegaSubscript.of(omegaOfOmegaOfOmegaX).depth();           // 3
+
+// 递归类型：条带上是递归（A1 域），不动点处是非递归（A2 域）
+subscript.isRecursivelyExpanded();      // true
+subscript.isA1Domain();                 // true
+
+// I 处坍缩的梯子可检查形式：ψ_𝕀(𝕀) 是寄存器物化的枚举不动点
+LadderOrdinal omegaPsi = LadderOrdinal.omegaAlpha(LadderArgument.psiII()); // ψ_𝕀(𝕀)
+LadderOrdinal collapsed = LadderOrdinal.omegaAlpha(OmegaSubscript.of(omegaPsi));
+collapsed == LadderOrdinal.psiII();     // true：ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)
+OmegaSubscript.of(omegaPsi).isNonRecursivelyExpanded(); // true，A2 域
+```
+
+`I` 本身不是 `LadderOrdinal`：寄存器里所有梯级都低于它
+（`CardinalRung.compareWithLadder` 对每个梯级回 `GREATER`），所以真正的 `I` 坍缩记在基数寄存器上：
+`CardinalRung.INACCESSIBLE.omegaAlpha() == CardinalRung.INACCESSIBLE`，即 `ω_I = I`，因此
+`ω_{ω_I} = ω_I = I`。梯子里可检查的对应形式就是上面的 `ψ_𝕀(𝕀)`。
+
+负规则要显式检查：
+
+```java
+OmegaSubscript.of(LadderOrdinal.f(LadderArgument.omegaOneCk())); // IllegalArgumentException：TTBMS 值
+OmegaSubscript.of(LadderOrdinal.ofNrbms(
+        io.github.sob1234509876.oc.googology.bms.NonRecursiveBms.parse("(1,1,1)(2,2)")));
+// IllegalArgumentException：NRBMS 值
+// LadderOrdinal.f(omegaOfOmegaX); // 编译错误：f 只接受 LadderArgument，不接受 OmegaSubscript
 ```
 
 ### 5.5 比较与打印
 
-段四内部按**下标序**比较；因为 `h` 被声明为严格递增，`h(a) < h(b)` 当且仅当 `a < b`。段外的位置是
-`X < ω₁ < 每个其他 ω_α 值 < ψ_𝕀(𝕀)`，所以段四完整地夹在 `X` 与 `ψ_𝕀(𝕀)` 之间。
+段四内部按**下标序**比较：普通下标就是实参序；迭代下标则是被包装的 `ω` 值在值序里的位置。因为 `h`
+被声明为严格递增，`h(a) < h(b)` 当且仅当 `a < b`。所以 `ω_{ω_X} > ω_X`，`ω_{ω_1} > ω_X`（因为
+`X < ω₁`），两个深度的值也继续按被包装值排序；全部迭代值仍严格低于 `ψ_𝕀(𝕀)`。段外的位置是
+`X < ω₁ < 每个其他 ω_α 值（含迭代下标值） < ψ_𝕀(𝕀)`，所以段四完整地夹在 `X` 与 `ψ_𝕀(𝕀)` 之间。
+深度只在下标增长时增加；到不动点就坍缩，深度不再增加。
 
 ```java
 LadderOrdinal hEpsilon = LadderOrdinal.omegaAlpha(
@@ -518,18 +578,22 @@ hX.compareTo(LadderOrdinal.psiII()) < 0; // true，全部段四值低于 ψ_𝕀
 
 ## 六、实参/值类型：内部设计，不是 Q6 的解答
 
-### 6.1 两个类型
+### 6.1 一个实参类型、一个专用下标与值类型
 
 阶段一把 `f` 的实参和 `f` 的值放在同一个 `LadderOrdinal` 寄存器里。阶段二把它们分成两个类型；这仍是
 当前实现，但它的定位已经改变：**这是内部类型缝，不是 Q6 的解答**。Q6 由递归分层解决（第七节）。
+Q7b 的选项 b 又加了第三个、只服务于 `ω` 步的类型 `OmegaSubscript`。
 
 | 侧 | 类型 | 内容 | 谁能进入 |
 | --- | --- | --- | --- |
-| **实参侧**（下标） | `LadderArgument` | BMS 值、NRBMS 表达式、六个共享边界名（含 `ω₁`） | `f`、`tnrbms`、`omegaAlpha` |
+| **实参侧**（普通下标） | `LadderArgument` | BMS 值、NRBMS 表达式、六个共享边界名（含 `ω₁`） | `f`、`tnrbms`、`omegaAlpha(LadderArgument)` |
+| **专用下标侧**（Q7b） | `OmegaSubscript` | 恰好一个 `ω_α` 值（或枚举不动点 `ψ_𝕀(𝕀)`） | 只被 `omegaAlpha(OmegaSubscript)` 接受；不能转成 `LadderArgument` |
 | **值侧** | `LadderOrdinal` | 四段值、八个具名条目（含 `ω₁` 值） | 只用于比较、打印、嵌入 |
 
 `LadderArgument` 是 `final` 类，所有构造器都是 `private`，而且它的任何字段、方法参数、方法返回值和
-构造器参数都**不允许**出现 `LadderOrdinal`。因此：
+构造器参数都**不允许**出现 `LadderOrdinal`。`OmegaSubscript` 是 `final` 的顶层类，构造器私有，只有
+一个 `LadderOrdinal` 字段；它存在的全部目的就是让**一个** `ω` 值能进入 `ω` 步的下标，同时不把
+`LadderOrdinal` 塞进 `LadderArgument`。因此：
 
 ```java
 LadderOrdinal fValue = LadderOrdinal.f(LadderArgument.ofBms(new int[][]{{0}, {1}, {2}}));
@@ -561,17 +625,23 @@ NRBMS 表达式在两侧各有一个表示：`LadderOrdinal.ofNrbms(nrbms)` 是�
 `LadderOrdinal.ofArgument(...)` 保序：BMS < SHO < ω₁^CK < NRBMS < lim(NRBMS) < X < ω₁ < ψ_𝕀(𝕀)
 在值序里同样成立。tier 只是寄存器内部的层号，不是序数值。
 
+`OmegaSubscript` **不在**这个实参序里：它不是第 8 个 tier，也不是 `LadderArgument` 的一个变体。它的
+顺序是被包装的 `ω` 值在**值序**里的位置，只在 `LadderOrdinal.omegaAlpha` 的下标比较里使用（5.5）。
+
 ### 6.3 A1/A2 的定义域
 
 | 谓词 | 实参 | 对应规则 |
 | --- | --- | --- |
-| `isA1Domain()` | 递归实参：BMS 值 `≥ ω`、`SHO` | A1：`f(a) > a` |
-| `isA2Domain()` | 非递归实参：`ω₁^CK`、NRBMS、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` | A2：`f(a) = a`（不动点）或 `< a`，且 `ψ(a) < f(a)` |
+| `LadderArgument.isA1Domain()` | 递归实参：BMS 值 `≥ ω`、`SHO` | A1：`f(a) > a` |
+| `LadderArgument.isA2Domain()` | 非递归实参：`ω₁^CK`、NRBMS、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` | A2：`f(a) = a`（不动点）或 `< a`，且 `ψ(a) < f(a)` |
 | 都不是（`0`、`1`） | `f` 不物化 | 段一，交给 BMS；`1` 只对 `omegaAlpha` 开放 |
+| `OmegaSubscript.isA1Domain()` | 增长型迭代下标：条带上的 `Ω(ω_X)` | `ω_{ω_X} > ω_X`，递归侧 |
+| `OmegaSubscript.isA2Domain()` | 不动点处的迭代下标：`Ω(ψ_𝕀(𝕀))`（寄存器里 `I` 的可检查形式） | `ω_{ω_ψ} = ω_ψ`，坍缩 |
 
-两个定义域按**递归类型**互补且不相交，不再用 `ω₁^CK` 区间切分。注意 A2 现在包含 `X`：旧上界
-`α < X` 已废止。A1 的定义域在数学上是递归实参全体；`f` 只在 `≥ ω` 的实参上物化，`< ω` 的值直接由
-段一 BMS 负责，所以自检的 A1 样本从 `ω` 开始。
+两个 `LadderArgument` 定义域按**递归类型**互补且不相交，不再用 `ω₁^CK` 区间切分。注意 A2 现在包含
+`X`：旧上界 `α < X` 已废止。A1 的定义域在数学上是递归实参全体；`f` 只在 `≥ ω` 的实参上物化，`< ω`
+的值直接由段一 BMS 负责，所以自检的 A1 样本从 `ω` 开始。`OmegaSubscript` 的两个谓词只描述 `ω` 步的
+迭代下标，**不是** `f` 的实参域：`f` 根本不接受 `OmegaSubscript`。
 
 ### 6.4 共享的六个边界名
 
@@ -580,6 +650,8 @@ NRBMS 表达式在两侧各有一个表示：`LadderOrdinal.ofNrbms(nrbms)` 是�
 `g(X) = X`、`f(κ) = g(κ) = κ`（不可数，所有者约定）、`h(1) = ω₁`、`h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`。这些是值名与
 实参名重合的地方。`ω₁` 的共享是为了 `h(1) = ω₁` 与 `ω_{ω₁} > ω₁` 可写；它不是把某个 `ω_α` 值转成
 下标的一般通道。任何真正的步进值（TBMS/TTBMS/TNRBMS/`ω_α` 结点）都没有进入 `LadderArgument` 的路径。
+Q7b 的选项 b 只开了一条窄路：**一个** `ω` 值经 `OmegaSubscript` 进入 `ω` 步的下标；这条路径不经过
+`LadderArgument`，也不通向 `f` 或 `g`。
 
 ## 七、边界分析：所有者的递归分层
 
@@ -627,7 +699,9 @@ NRBMS 表达式在两侧各有一个表示：`LadderOrdinal.ofNrbms(nrbms)` 是�
 5. `f(X) = X`，旧的 `f(X) = LRPO` 退役；`LRPO` 仍是递归 `f` 值的声明上界。
 
 **遗留（只记录，不发明）：** `ω_α` 在 `I` 以下的不动点中，寄存器只命名 `ψ_𝕀(𝕀)`；其他不动点存在，
-但 `Ordinals.md` 不要求它们。Q7b（`ω_α` 值能否当下标）是独立问题，仍在 `OPEN QUESTIONS.md` 里开放。
+但 `Ordinals.md` 不要求它们。Q7b（`ω_α` 值能否当下标）已由所有者选择**选项 b** 并在 5.4 实现：一个
+`ω` 值经 `OmegaSubscript` 可以当 `ω` 步的下标；剩余限制只是"除 `ψ_𝕀(𝕀)` 外的 `I` 以下枚举不动点仍未
+命名"，与本放宽无关。
 
 ### 7.4 结论
 
@@ -653,11 +727,12 @@ NRBMS 表达式在两侧各有一个表示：`LadderOrdinal.ofNrbms(nrbms)` 是�
 | `f(LadderArgument)` | 段二抽象函数 | 递归：`TBMS` 且 `> α`；非递归：`TTBMS` 固定点；`f(ω)=SHO`、`f(X)=X` |
 | `tnrbms(LadderArgument)` | 段三抽象函数 | `g(ω) = lim(NRBMS)`、`g(X) = X`；不可数上恒等（约定） |
 | `omegaAlpha(LadderArgument)` | 段四抽象函数 | `h(1)=ω₁`、`h(α)=ω_α`；只有枚举不动点（`ψ_𝕀(𝕀)`、`I` 以上）相等 |
+| `omegaAlpha(OmegaSubscript)` | 段四的迭代下标重载（Q7b 选项 b） | `ω_{ω_X} > ω_X`；下标是不动点时坍缩（`ω_{ω_ψ} = ψ_𝕀(𝕀)`）；只接受 `OmegaSubscript` |
 | `isFixedPointOfTbms`、`isFixedPointOfTnrbms`、`isFixedPointOfOmegaAlpha`、`isOmegaFixedPoint` | 不动点谓词 | 分别对 `f`、`g`、`h` 检查 `值 == 实参` |
 | `segment()` | 所属段 | `SEGMENT_ONE` / `SEGMENT_TWO` / `SEGMENT_THREE` / `SEGMENT_FOUR` / `PLACEHOLDER`；TTBMS 固定点归入实参所在段 |
 | `isBms()`、`isFunctionValue()`、`isTbmsFixedPoint()`、`isNrbms()`、`isTnrbms()`、`isOmegaAlpha()`、`isPlaceholder()` | 分类 | 互斥；固定点单列 |
 | `isStepValue()` | 是否是步进值 | `FUNCTION` / `FIXPOINT` / `TNRBMS` / `OMEGA_ALPHA` |
-| `bms()`、`nrbms()`、`functionArgument()`、`tnrbmsArgument()`、`omegaAlphaArgument()`、`placeholder()` | 载荷 | 互为 `Optional.empty()` |
+| `bms()`、`nrbms()`、`functionArgument()`、`tnrbmsArgument()`、`omegaAlphaArgument()`、`omegaAlphaSubscript()`、`placeholder()` | 载荷 | 互为 `Optional.empty()`；`omegaAlphaArgument()` 与 `omegaAlphaSubscript()` 不会同时出现 |
 | `notationName()` | 段内记号 | `BMS` / `TBMS`·`TTBMS`（按递归类型）/ `NRBMS`·`TNRBMS` / `ω`；具名值抛异常 |
 | `compareTo(LadderOrdinal)` | 声明全序 | 排序用；固定点按其嵌入实参比较 |
 | `compareMagnitude(LadderOrdinal)` | 同一个序，按比较 API 报告 | **永远是证明** |
@@ -682,6 +757,35 @@ NRBMS 表达式在两侧各有一个表示：`LadderOrdinal.ofNrbms(nrbms)` 是�
 | `tier()` | 实参层号 | `0..7`，不是序数 |
 | `compareTo(LadderArgument)` | 实参全序 | 排序用 |
 | `toString()` | 下标文本 | 矩阵文本或边界名 |
+
+### 8.3 专用下标 `OmegaSubscript`（Q7b 选项 b）
+
+| 成员 | 作用 | 说明 |
+| --- | --- | --- |
+| `of(LadderOrdinal)` | 包装一个 `ω` 值 | 只接受 `omega_α` 值或 `ψ_𝕀(𝕀)`；其他值种类抛 `IllegalArgumentException` |
+| `isOmegaValue(LadderOrdinal)` | 受检前置条件 | 与 `of` 相同的判定，公开以便调用前测试 |
+| `value()` | 被包装的值 | 就是那个 `ω` 值 |
+| `depth()` | 嵌套深度 | `Ω(ω_X)` 为 1、`Ω(ω_{ω_X})` 为 2、下一层为 3；不动点处不增加 |
+| `isFixedPoint()` | 是否 `ψ_𝕀(𝕀)` | 枚举不动点，迭代在这里坍缩 |
+| `isRecursivelyExpanded()`、`isNonRecursivelyExpanded()` | 递归类型 | 条带上递归；枚举不动点处（梯子里的 `ψ_𝕀(𝕀)`；`I` 及以上全部）非递归 |
+| `isA1Domain()`、`isA2Domain()` | A1/A2 定义域 | 增长（A1）vs 坍缩（A2） |
+| `compareTo`、`equals`、`hashCode` | 下标序 | 按被包装值的值序；`compareTo == 0` 即 `equals` |
+| `toString()` | 文本 | 被包装值的文本；外层 `ω` 再加花括号 |
+
+`OmegaSubscript` **不是** `LadderArgument`：没有 `asArgument`/`toArgument`，没有接受或返回
+`LadderArgument` 的成员，也没有接受 `BmsOrdinal`/`NonRecursiveBms` 的入口。它只被 `omegaAlpha` 的下标
+重载接受；`f`/`g` 不接受它。
+
+```java
+import io.github.sob1234509876.oc.googology.abstractordinal.OmegaSubscript;
+
+OmegaSubscript subscript = OmegaSubscript.of(
+        LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint())); // Ω(ω_X)，depth 1
+LadderOrdinal iterated = LadderOrdinal.omegaAlpha(subscript);       // ω_{ω_X}
+iterated.toString();                                                 // "ω_{ω_X}"
+iterated.omegaAlphaSubscript().orElseThrow().depth();                // 1
+LadderOrdinal.omegaAlpha(OmegaSubscript.of(iterated)).toString();    // "ω_{ω_{ω_X}}"
+```
 
 ```java
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
@@ -723,8 +827,8 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 
 ## 九、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 21–31 节是阶梯
-（`LadderCheck`，168 项），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 21–31 节是阶梯
+（`LadderCheck`，183 项），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
 [`cardinal-register.md`](cardinal-register.md)），第 37–43 节是阶段五的不可达扩展
 （`InaccessibleCheck`，87 项，见 [`inaccessible-extension.md`](inaccessible-extension.md)）：
 
@@ -748,17 +852,17 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
   `lim(NRBMS)`；`g(a) > a`（寄存器的声明，不是 A1）；`g(X) = X`；`X` 是最小不动点；`g(a) < X`；
   实参域与 `f` 相同；`null` 拒绝。
 - **第 26 节（实参/值内部类型，12 项）**：`LadderArgument` 是 `final`、构造器全 `private`；反射检查它
-  的任何成员都不出现 `LadderOrdinal`；`f`/`tnrbms`/`omegaAlpha` 只接受 `LadderArgument`；没有
-  `asArgument` / `toArgument`；`f(a)`/`g(a)` 保存的实参就是 `a`；`isStepValue` 的分类；
-  `ofArgument` 单向保序；`Boundary` 恰好六个（含 `ω₁`）。
+  的任何成员都不出现 `LadderOrdinal`；`f`/`tnrbms` 只接受 `LadderArgument`，`omegaAlpha` 另有只接受
+  `OmegaSubscript` 的重载；没有 `asArgument` / `toArgument`；`f(a)`/`g(a)` 保存的实参就是 `a`；
+  `isStepValue` 的分类；`ofArgument` 单向保序；`Boundary` 恰好六个（含 `ω₁`）。
 - **第 27 节（`ω₁^CK` 边界与回归，12 项）**：`f(ω₁^CK) = ω₁^CK`（旧前提 `f(β) < β` 无法陈述）；
   `f(ω₁^CK)` 是 TTBMS 固定点、不低于边界；A1/A2 按递归类型一致且分域；每个 `f` 值都不低于实参；
   A1/A2 覆盖全部可物化实参；`f(X)=X` 与 `g(X)=X`；`LRPO` 仍是递归段上界；`X` 是 `g` 的最小不动点；
   矩阵步 `f`/`g` 在 `ω₁`、`ψ_𝕀(𝕀)` 上恒等；边界名是共享的、步进值不是；`f` 在递归段与非递归段合起来不下降。
-- **第 28 节（四段合一，13 项）**：28 个值的样本严格递增；784 对反对称且 `compareMagnitude` 全是
-  证明；21952 个三元组传递；样本覆盖四段；段一 < 段二 < `ω₁^CK` < 段三 < `X` < 段四 < `ψ_𝕀(𝕀)`；
-  段四/段一、段二/段四、段三/段四、段四/`X`、段四内部的 `compareWithin`；`Collections.sort`；
-  `null` 入口。
+- **第 28 节（四段合一，13 项）**：31 个值的样本严格递增（含 `ω_{ω₁}`、`ω_{ω_X}`、`ω_{ω_{ω_X}}`）；
+  961 对反对称且 `compareMagnitude` 全是证明；29791 个三元组传递；样本覆盖四段；
+  段一 < 段二 < `ω₁^CK` < 段三 < `X` < 段四 < `ψ_𝕀(𝕀)`；段四/段一、段二/段四、段三/段四、段四/`X`、
+  段四内部的 `compareWithin`；`Collections.sort`；`null` 入口。
 - **第 29 节（段四寄存器，12 项）**：`ω_α` 保存下标、归入段四、访问器互不串台；`ω_X`、`ω_SHO`、
   `ω_ω₁^CK`、`ω_lim(NRBMS)`、`ω_{(0)(1)(2)}`、`ω_{(1,1,1)(2,2)}` 的文本；`notationName` 是 `ω`；
   `ψ_𝕀(𝕀)` 的文本、描述、具名层与共享实参身份；`h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`；`X < 每个 ω_α 值 < ψ_𝕀(𝕀)`；
@@ -767,9 +871,14 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
   （`ψ_𝕀(𝕀)` 不动点除外）；每个 `ω_α` 值都在 `X` 与 `ψ_𝕀(𝕀)` 之间；`ψ_𝕀(𝕀)` 是唯一命名的段四不动点；
   `X` 不是不动点；记号只切换一次；`ω₁ = h(1)` 是段四起点；`ω_1 < ω_{ω_1} < I`；`ω_ω > ω`；
   不动点谓词与比较一致；`ω_I = I`、`ω_M = M`、`ω_Berkeley = Berkeley`；`I` 处单调。
-- **第 31 节（Q7b 决定，5 项）**：`omegaAlpha` 只有一个重载且只接受 `LadderArgument`；反射确认
-  `LadderArgument` 里没有 `LadderOrdinal`；没有 `asArgument`/`toArgument`；`Boundary` 恰好六个，
-  `ω₁` 是实参名而不是值转下标的通道，没有注册 `ω_X`、`ω_ω₁` 之类的段四值。
+- **第 31 节（Q7b 选项 b，20 项）**：`omegaAlpha` 恰好一个 `LadderArgument` 重载和一个
+  `OmegaSubscript` 重载（没有 `LadderOrdinal` 重载）；`OmegaSubscript` 是 `final`、构造器全 `private`、
+  只持有一个 `LadderOrdinal` 字段；反射确认它没有接受 `BmsOrdinal`/`NonRecursiveBms`/`LadderArgument`
+  的入口，也没有转成 `LadderArgument` 的路径；`LadderArgument` 仍无 `LadderOrdinal` 成员；`f`/`g` 仍只
+  接受 `LadderArgument`；接受 `ω` 值、拒绝 TBMS/TTBMS/NRBMS/TNRBMS/BMS/其余具名值，`null` 拒绝；条带
+  上递归（A1 域）与不动点处非递归（A2 域）的分类；`ω_{ω_X} > ω_X`；depth 1/2/3 与嵌套文本；
+  `ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)` 的坍缩；`I` 坍缩（基数寄存器 `ω_I = I`）；下标严格递增；同一项经实参名与
+  经值下标两条路径的 `equals`/`hashCode`。
 - **第 37–43 节（阶段五不可达扩展，87 项）**：`I_0` 最小与 `I(0,β)=I_β`；`I(α,0)` 最小、β 严格递增、
   对角占优；多变量前缀字典序与 `(1,0)` 型样本；`a @ b` 的层级优先/系数其次，以及三组"文档答案 vs
   朴素 `ω^b·a`"的成对反例；自嵌套极限描述的语法、非有限性与序位置；类型内全序与
@@ -777,18 +886,20 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
   包内没有枚举/数组/基数表的反射检查。细节见 [`inaccessible-extension.md`](inaccessible-extension.md)。
 
 这些检查不依赖网络，也不需要 BMS 之外的任何库。它们**不**证明 A1/A2，也不证明 TBMS/TTBMS/TNRBMS
-的强度；它们只验证寄存器内部的一致性、递归类型分域、Q7a 的起点与 `I` 处的不动点，以及 Q7b 默认的
-可检查部分。
+的强度；它们只验证寄存器内部的一致性、递归类型分域、Q7a 的起点与 `I` 处的不动点，以及 Q7b 选项 b
+的可检查部分（增长、嵌套、坍缩、负规则与顺序一致性）。
 
 ## 十、常见坑
 
-1. **值不是实参，但这不是 Q6 的解答。** `f`、`tnrbms` 与 `omegaAlpha` 只接受 `LadderArgument`；
-   `f(f(ω₁^CK))`、`TNRBMS(TNRBMS(…))`、`omegaAlpha(omegaAlpha(…))` 都是编译错误。类型缝是内部设计；
-   Q6 由递归分层解决。不要为了"能写"而加 `asArgument()`——它现在只会破坏不变量，不是因为它会重新
-   引入 Q6。
+1. **值不是实参，但这不是 Q6 的解答。** `f`、`tnrbms` 只接受 `LadderArgument`；`omegaAlpha` 另有
+   一个只接受 `OmegaSubscript` 的迭代下标重载。`f(f(ω₁^CK))`、`TNRBMS(TNRBMS(…))`、
+   `omegaAlpha(omegaAlpha(…))` 仍是编译错误；要写迭代下标，必须显式
+   `omegaAlpha(OmegaSubscript.of(一个 ω 值))`。类型缝是内部设计；Q6 由递归分层解决。不要为了"能写"
+   而加 `asArgument()`——它现在只会破坏不变量，不是因为它会重新引入 Q6。
 2. **六个边界名是共享的，步进值不是。** `SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` 可以当
-   实参；任何 `TBMS`/`TTBMS`/`TNRBMS`/`ω_α` 结点都不行。`ω₁` 的共享是为了 `h(1)=ω₁` 与
-   `ω_{ω₁}>ω₁` 可写，不是一般值转下标的通道。`LRPO`、`ψ` 从来不是实参。
+   普通实参；任何 `TBMS`/`TTBMS`/`TNRBMS`/`ω_α` 结点都不行。Q7b 只开了一条窄路：一个 `ω_α` 值经
+   `OmegaSubscript` 当 `ω` 步的下标；它不是一般值转下标的通道，`f`/`g` 仍拒绝它。`LRPO`、`ψ` 从来
+   不是实参。
 3. **A1/A2 按递归类型分域。** 不要用旧的 `α < ω₁^CK` / `ω₁^CK ≤ α < X` 去套：A1 是递归实参
    （`f(a)>a`），A2 是非递归实参（不动点 `f(a)=a`，否则 `<a`，且 `ψ(a)<f(a)`）。`X` 现在是 A2 实参。
 4. **`f(ω)` 与 `f(X)` 不是同一种塌缩。** `f(ω)=SHO` 是边界名；`f(X)=X` 是 TTBMS 不动点（与 `X` 同层，
@@ -801,22 +912,27 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
    `X` 本身打印名字，不是 `TNRBMS` 或 `ω` 结点。
 8. **NRBMS 的声明位置不是序数翻译。** 所有 NRBMS 值都放在 `ω₁^CK` 与 `lim(NRBMS)` 之间，这是阶梯
    的声明边界；本库不做矩阵到序数的桥接，也不声称 `(1)` 表示哪个序数。
-9. **`X` 与 `ψ_𝕀(𝕀)` 不能被迭代出来。** 不能写 `g(g(ω))` 或 `h(h(ω))`；它们是具名边界，不是"把
-   步进函数应用足够多次"的结果。真正的不动点迭代需要值当实参，而当前类型不允许。
+9. **`X` 与 `ψ_𝕀(𝕀)` 不能被一般地迭代出来。** 不能写 `g(g(ω))` 或 `h(h(ω))`；它们是具名边界，不是
+   "把步进函数应用足够多次"的结果。Q7b 的选项 b 只允许 `ω` 步把**一个** `ω` 值当下标，所以
+   `ω_{ω_X}` 可写，但它不是"把 `h` 重复应用到自己的值上"；真正的值当实参仍不被类型允许。
 10. **tier 不是序数。** `PSI.tier() = 0`、`SHO.tier() = 2` 等只是寄存器内部的层号，不能当算术用。
 11. **没有基本列。** `LadderOrdinal` 不是 `Ordinal`，不能拿来做 `Natural.tower(...)` 的 level，也不
     能展开成 TBMS、TNRBMS 或 `ω_α`。
 12. **`ψ` 不是 OCF。** `LadderOrdinal.psi()` 是所有者批准的具名占位符，用来写 A2 的 `ψ(α) < f(α)` 一侧；
     它是建模选择，没有 `psi(α)` 的求值，`Ordinals.md` 也不要求 OCF。
-13. **`ω_α` 值不是下标（Q7b 仍开放）。** `omegaAlpha` 只吃 `LadderArgument`；`ω_{ω_X}` 这类迭代下标
-    不可表达。它们**不会折叠**（`ω_{ω_X} > ω_X`），所以允许值当下标会产生新序数。最小放宽（专用段四
-    下标类型 + 第二个重载）写在 5.4 与 Q7 里，没有实现。
+13. **`ω_α` 值可以当下标了（Q7b 选项 b），但只对 `ω` 步。** 用 `OmegaSubscript.of(一个 ω 值)` 包装，
+    再交给 `omegaAlpha(OmegaSubscript)`；`ω_{ω_X}`、`ω_{ω_{ω_X}}` 可表达。`OmegaSubscript` 只接受
+    `ω_α` 值或 `ψ_𝕀(𝕀)`，TBMS/TTBMS/NRBMS/TNRBMS 值仍被拒绝；它不能转成 `LadderArgument`，
+    `f`/`g` 也不接受。递归类型默认是条带上增长（`ω_{ω_X} > ω_X`），`I` 及以上坍缩
+    （`ω_{ω_I} = ω_I = I`，梯子可检查形式 `ω_{ω_ψ} = ψ_𝕀(𝕀)`）。没有小的深度上限。
 14. **切换点 `X` 已被所有者确认（Q7a）。** `TNRBMS(0)(1^α)` 在 `a ↦ TNRBMS(0)(1^a)` 的不动点 `X`
     切换成 `ω_α`，`ω_α` 族从 `ω₁` 开始。不再是阶段二代理的猜测。
 15. **段四的第一个物化值现在是 `ω₁ = h(1)`。** `LadderArgument.one()` 只对 `omegaAlpha` 开放
     （`f`/`g` 仍拒绝 `1`）；`h(ω)=ω_ω` 是另一个严格更大的段四值。`ω_ω = ω₁` 是错误的，本库不暗示。
 16. **`ω_α` 从 `I` 起才是恒等。** 在 `ω₁ ≤ α < I` 上它增长（`ω_{ω₁} > ω₁`）；`I` 及每个基数梯级是
-    枚举不动点（`ω_I = I`）。矩阵步 `f`/`g` 在不可数上恒等是所有者约定，不要套到 `ω_α` 上。
+    枚举不动点（`ω_I = I`）。矩阵步 `f`/`g` 在不可数上恒等是所有者约定，不要套到 `ω_α` 上。Q7b 的
+    迭代下标也遵守这一点：条带上 `ω_{ω_X} > ω_X`，到不动点就坍缩（`ω_{ω_I} = ω_I = I`，梯子里的
+    可检查形式是 `ω_{ω_ψ} = ψ_𝕀(𝕀)`）。
 
 ## 十一、阶段四与阶段五已落地：基数寄存器与不可达扩展
 
@@ -835,7 +951,7 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 - 它是**独立的基数寄存器**，不是 `LadderOrdinal` 的段四值：`ω_α` 是序数梯级，基数是另一层。两者
   保持"低端在 BMS/序数阶梯，高端在基数"的清晰分界。
 - 阶段四的下端输入是本阶段（含段四）的声明全序：
-  `ψ < BMS < SHO < 递归 f ≤ LRPO < ω₁^CK < NRBMS < lim(NRBMS) < TNRBMS < X < ω₁ < 其他 ω_α < ψ_𝕀(𝕀)`。
+  `ψ < BMS < SHO < 递归 f ≤ LRPO < ω₁^CK < NRBMS < lim(NRBMS) < TNRBMS < X < ω₁ < 其他 ω_α（含迭代下标值） < ψ_𝕀(𝕀)`。
   基数的第一个条目 `I` 严格高于这个全序的顶端 `ψ_𝕀(𝕀)`：
   `CardinalRung.compareWithLadder(LadderOrdinal)` 对每个梯级都回 `GREATER`，这是寄存器的**公理**；
   `ψ_𝕀(𝕀)` 里的 `𝕀` 只是名字，不是阶段四寄存器的值，二者不要混用。
@@ -848,7 +964,8 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 - 三条未核实条目（Icarus、Ord-Berkeley、limit club Berkeley）的 `isVerified()` 为 `false`，gloss 复用
   `Big Cardinals.md` 的措辞；Ord-Berkeley 的两种读法都写在 gloss 里，没有静默选一种。
 - Q7a 已由所有者回答：切换点就是 `a ↦ TNRBMS(0)(1^a)` 的不动点 `X`，`ω_α` 族从 `ω₁` 开始。Q7b
-  （`ω_α` 值能否当下标）仍开放，默认不开放；它不影响阶段四的上端输入（仍是 `ψ_𝕀(𝕀)`）。
+  也已由所有者选择**选项 b** 并实现（5.4）：`ω_α` 值只对 `ω` 步当下标。它不影响阶段四的上端输入
+  （仍是 `ψ_𝕀(𝕀)`），也不把基数塞回序数梯子。
 - 完整的 19 级表、API、常见坑与自校验见 [`cardinal-register.md`](cardinal-register.md)。
 
 ### 阶段五：不可达扩展（已实现，函数生成）
@@ -883,6 +1000,7 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderOrdinal.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderArgument.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderArgument.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/OmegaSubscript.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/OmegaSubscript.java) —— Q7b 选项 b 的专用 `ω` 值下标
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderPlaceholder.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderPlaceholder.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderSegment.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderSegment.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderComparison.java`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/LadderComparison.java)

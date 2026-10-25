@@ -313,7 +313,7 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 
 ## 七、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 32–36 节是基数寄存器
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 32–36 节是基数寄存器
 （`CardinalRegisterCheck`，50 项），第 37–43 节是阶段五的不可达扩展（`InaccessibleCheck`，87 项，
 见 [`inaccessible-extension.md`](inaccessible-extension.md)）：
 

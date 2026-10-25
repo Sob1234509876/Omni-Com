@@ -13,11 +13,11 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（683 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（698 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
-| 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、按递归类型选择的 `f` 段、直到 `X` 的 NRBMS/TNRBMS 段、从 `ω₁` 到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、递归分层与具名边界 |
+| 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、按递归类型选择的 `f` 段、直到 `X` 的 NRBMS/TNRBMS 段、从 `ω₁` 到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、Q7b 的迭代下标、递归分层与具名边界 |
 | 基数寄存器 | [`help/cardinal-register.md`](help/cardinal-register.md) —— 阶段四：从不可达基数到虚构的 `Ω ~ Ω_Absolute` 段的独立 19 级寄存器、文档委托、Berkeley/Reinhardt 约定与三条未核实条目 |
 | 不可达扩展 | [`help/inaccessible-extension.md`](help/inaccessible-extension.md) —— 阶段五：不可达这一级内部的函数生成层级（`I_α`、不可达维布伦、多变量、`a @ b` 与自嵌套极限），没有枚举或基数列表 |
 
@@ -237,7 +237,7 @@ API 和常见坑。
 | 段一，`0 ~ SHO` | 委托的 `BmsOrdinal` | `0`、`BMS(0)(1)`、`BMS(0)(1)(2)`…… |
 | 段二，`SHO ~ LRPO` | 抽象函数 `f(α)` | 递归实参：`TBMS(0)(1^α)`；非递归实参：`TTBMS(0)(1^α)`（TBMS 不动点） |
 | 段三，`ω₁^CK ~ X` | `lim(NRBMS)` 以下是 NRBMS 表达式，以上是 `g(α) = TNRBMS(0)(1^α)` | 切换点以下 `NRBMS(…)`，以上 `TNRBMS(0)(1^α)` |
-| 段四，`X ~ ψ_𝕀(𝕀)` | `h(α) = ω_α`，无限初始序数枚举 | `ω_α`，下标是实参；`h(1) = ω₁` |
+| 段四，`X ~ ψ_𝕀(𝕀)` | `h(α) = ω_α`，无限初始序数枚举 | `ω_α`，普通下标是实参，或一个 `ω_α` 值包在 `OmegaSubscript` 里；`h(1) = ω₁` |
 | 具名边界 | `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` | 同名文本 |
 
 ```java
@@ -245,6 +245,7 @@ import io.github.sob1234509876.oc.googology.abstractordinal.LadderArgument;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderOrdinal;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderPlaceholder;
 import io.github.sob1234509876.oc.googology.abstractordinal.LadderSegment;
+import io.github.sob1234509876.oc.googology.abstractordinal.OmegaSubscript;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
 
 LadderOrdinal zero = LadderOrdinal.zero();                                  // 0
@@ -286,7 +287,14 @@ h.segment();                                        // LadderSegment.SEGMENT_FOU
 LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint()).toString(); // "ω_X"
 LadderOrdinal.psiII().toString();                   // "ψ_𝕀(𝕀)"
 LadderOrdinal.omegaAlpha(LadderArgument.psiII()) == LadderOrdinal.psiII(); // true：h(Y) = Y
-// LadderOrdinal.omegaAlpha(h);                     // 编译不过：值永远不是下标
+// LadderOrdinal.omegaAlpha(h);                     // 编译不过：值不是普通实参
+
+// Q7b 选项 b：一个 ω_α 值经 OmegaSubscript 当 ω 步的下标
+OmegaSubscript subscript = OmegaSubscript.of(
+        LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint())); // Ω(ω_X)
+LadderOrdinal iterated = LadderOrdinal.omegaAlpha(subscript);       // ω_{ω_X}
+iterated.toString();                                // "ω_{ω_X}"
+iterated.compareTo(LadderOrdinal.omegaAlpha(LadderArgument.tnrbmsFixpoint())); // > 0
 
 LadderOrdinal.ofArgument(omegaArg);                 // 单向嵌入值序，没有反向转换
 LadderPlaceholder.SHO.abstractOrdinal().orElseThrow(); // AbstractOrdinal.SHO：阶梯复用它
@@ -306,18 +314,26 @@ NRBMS/TNRBMS 段在其上，`ω_α` 段在 `X` 之上；`LRPO < ω₁^CK` 是定
 事实是：每个不小于不可达基数 `I` 的序数都是这样的不动点，`ω_I = I`，且 `I` 以上的每个基数梯级同理。
 段四顶端是共享边界名 `ψ_𝕀(𝕀) = min{α | α = ω_α}`，有 `h(ψ_𝕀(𝕀)) = ψ_𝕀(𝕀)`。
 
-**`ω_α` 值不是下标（Q7b 仍开放）。** 步进函数只接受 `LadderArgument`。下标可以是前几段的实参
-（`≥ ω` 的 `BMS`、`NRBMS`、`SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`）或共享边界（`ω₁`、`ψ_𝕀(𝕀)`），但不能是
-`ω_α` 值。这足以表达所有者列出的每个梯级，只排除了 `ω_{ω_X}` 这类迭代下标。与早先的说明不同，它们
-**不会折叠**：`ω_α` 在 `I` 以下增长，所以 `ω_{ω_X} > ω_X` 会是新序数。最小放宽——一个只被 `omegaAlpha`
-第二个重载接受、包装段四值的专用下标类型——写在指南与 Q7b 里，**有意不实现**。
+**`ω_α` 值可以当下标——但只对 `ω` 步（Q7b，所有者已回答：选项 b）。** 所有者选择最小放宽：一个
+`ω_α` **值**可以当 `ω` 步的下标，经专用类型 `OmegaSubscript` 包装，于是 `ω_{ω_X}`、`ω_{ω_{ω_X}}` 及
+更深都可表达。普通下标仍是 `LadderArgument`（`≥ ω` 的 `BMS`、`NRBMS`、`SHO`、`ω₁^CK`、`lim(NRBMS)`、
+`X`，或共享边界 `ω₁`/`ψ_𝕀(𝕀)`）；新重载是 `omegaAlpha(OmegaSubscript)`。**没有别的东西可以跨过去**：
+`TBMS`、`TTBMS`、`NRBMS`、`TNRBMS` 值都**不是**下标，也没有一般的值转实参转换。`OmegaSubscript.of`
+只接受恰好一个 `ω_α` 值（或它的不动点像 `ψ_𝕀(𝕀)`），其他种类一律拒绝；`LadderArgument` 仍不含任何
+`LadderOrdinal`，单向不变量保持完整。
 
-**实参/值类型是内部设计。** `LadderOrdinal` 是值侧，`LadderArgument` 是实参侧。步进函数只接受
+所有者没有指定迭代下标的**递归类型**；实现记录唯一自洽的读法：在条带 `ω₁ ≤ a < I` 上 `ω` 步增长，
+所以迭代在那里是递归的（`ω_{ω_X} > ω_X`，走 A1）；在 `I` 及以上每个 `ω` 值都是枚举不动点，所以迭代
+**坍缩**（`ω_{ω_I} = ω_I = I`，梯子可检查形式 `ω_{ω_ψ} = ω_ψ = ψ_𝕀(𝕀)`）。`I` 本身是 `CardinalRung`，
+不是梯子值；梯子里的可检查替身是 `ψ_𝕀(𝕀)`。不动点以下**没有小的嵌套深度上限**；越过不动点后深度不再
+增加。`OmegaSubscript.depth()`、`isA1Domain()` 与 `isA2Domain()` 暴露这三件事。
+
+**实参/值类型是内部设计。** `LadderOrdinal` 是值侧，`LadderArgument` 是普通实参侧。步进函数只接受
 `LadderArgument`，值到实参没有任何转换路径，`LadderOrdinal.ofArgument` 只把实参单向嵌入值序。因此
 `f(f(ω₁^CK))`、`TNRBMS(TNRBMS(…))`、`omegaAlpha(omegaAlpha(…))` 之类的项是编译错误。六个共享边界名
-`SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` 被两侧共享；任何真正的步进值都永远不会是实参。
-这个类型缝曾被当作 Q6 的解答，现在撤回：它只是让旧的值转实参步骤不可表达，问题由所有者的递归分层
-消除。
+`SHO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)` 被两侧共享；任何真正的步进值都永远不会是普通实参。
+Q7b 的放宽是唯一的窄例外：`OmegaSubscript` 把一个 `ω` 值送进 `ω` 步的下标，仅此而已。这个类型缝曾被
+当作 Q6 的解答，现在撤回：它只是让旧的值转实参步骤不可表达，问题由所有者的递归分层消除。
 
 **A1 是定理，A2 是定义。** 所有者的 Q2 裁定：
 
@@ -466,6 +482,7 @@ src/main/java/io/github/sob1234509876/oc/googology/
     abstractordinal/AbstractOrdinal.java   BMS 极限之上的名册，带声明秩
     abstractordinal/LadderOrdinal.java     值侧：BMS、f(alpha)、NRBMS/TNRBMS、omega_alpha 与具名边界
     abstractordinal/LadderArgument.java    实参侧：BMS、NRBMS 与六个共享边界名；永远不能由值构造
+    abstractordinal/OmegaSubscript.java    Q7b 的专用下标：恰好一个 omega_alpha 值，只给 omega 步用
     abstractordinal/LadderPlaceholder.java psi、SHO、LRPO、omega_1^CK、lim(NRBMS)、X、psi_I(I) 及声明 tier
     abstractordinal/LadderSegment.java     段一 / 段二 / 段三 / 段四 / 具名抽象层
     abstractordinal/LadderComparison.java  比较及其所属的两个段
@@ -479,10 +496,10 @@ src/main/java/io/github/sob1234509876/oc/googology/
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
 help/abstract-ordinals.md        BMS 之上名册的中文指南
-help/ordinal-ladder.md           阶段一至阶段三序数阶梯的中文指南
+help/ordinal-ladder.md           阶段一至阶段三序数阶梯（含 Q7b 迭代下标）的中文指南
 help/cardinal-register.md        阶段四基数寄存器的中文指南
 help/inaccessible-extension.md   阶段五不可达扩展的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    683 项检查的自检程序
+src/selfcheck/java/.../check/GoogologyCheck.java    698 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）

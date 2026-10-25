@@ -24,11 +24,12 @@ package io.github.sob1234509876.oc.googology.abstractordinal;
  *       value.</li>
  *   <li>{@link #SEGMENT_FOUR} - the stage-three {@code omega_alpha} segment, {@code X ~ psi_I(I)}. A value
  *       is the abstract function {@link LadderOrdinal#omegaAlpha(LadderArgument) omegaAlpha(alpha) =
- *       omega_alpha}; the notation is {@code omega_alpha} (the subscript is an argument). The segment's
- *       switch is the boundary {@code X}, above which every value of the ladder is printed {@code
- *       omega_alpha}; the top is the shared boundary name {@code psi_I(I) = min{alpha | alpha =
- *       omega_alpha}}. The owner confirmed in Q7a that the switch is exactly at {@code X} and that the
- *       family starts at {@code omega_1}.</li>
+ *       omega_alpha}; the notation is {@code omega_alpha} (the ordinary subscript is an argument, and the
+ *       owner's Q7b answer also allows one {@code omega_alpha} value wrapped in an
+ *       {@link OmegaSubscript}). The segment's switch is the boundary {@code X}, above which every value of
+ *       the ladder is printed {@code omega_alpha}; the top is the shared boundary name
+ *       {@code psi_I(I) = min{alpha | alpha = omega_alpha}}. The owner confirmed in Q7a that the switch is
+ *       exactly at {@code X} and that the family starts at {@code omega_1}.</li>
  *   <li>{@link #PLACEHOLDER} - the named layer: {@code psi}, {@code SHO}, {@code LRPO},
  *       {@code omega_1^CK}, {@code lim(NRBMS)}, {@code X} and {@code psi_I(I)}. These are names kept by
  *       the register, not values with a fundamental sequence or an arithmetic. They are boundaries that

@@ -55,9 +55,11 @@ import java.util.Optional;
  *       shared name for the first uncountable ordinal. The matrix-derived steps ({@code f} and
  *       {@code g}) are the identity on it by the owner's convention, while the {@code omega_alpha}
  *       enumeration grows: {@code omega_{omega_1} > omega_1}. A <em>produced</em> step value is never
- *       accepted here; in particular the stage-three {@code omega_alpha} values are <strong>not</strong>
- *       arguments. Q7b remains open: allowing them would produce new ordinals such as
- *       {@code omega_{omega_X}} (see {@link LadderOrdinal}).</li>
+ *       accepted here. The owner's Q7b answer (option b) admits iterated subscripts such as
+ *       {@code omega_{omega_X}}, but only through the separate {@link OmegaSubscript} type and only for
+ *       the {@code omega} step: this type still contains no {@link LadderOrdinal} and has no general
+ *       value-to-argument conversion, so {@code f} and {@code TNRBMS} cannot consume an iterated
+ *       subscript. See {@link LadderOrdinal}.</li>
  * </ul>
  *
  * <p><b>The declared argument order.</b> Every pair of arguments is comparable:
@@ -83,6 +85,7 @@ import java.util.Optional;
  * {@link LadderOrdinal} for the layering rule and the boundary statement.
  *
  * @see LadderOrdinal
+ * @see OmegaSubscript
  * @see LadderPlaceholder
  * @since 2.0a
  */

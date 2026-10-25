@@ -433,9 +433,9 @@ switch (lean) {
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 11–15 节是序数层，
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 11–15 节是序数层，
 第 16–18 节是 BMS（标准式与比较、展开、非递归 BMS），第 19–20 节是 BMS 极限之上的抽象序数名册，
-第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，168 项，见 [`ordinal-ladder.md`](ordinal-ladder.md)），
+第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，183 项，见 [`ordinal-ladder.md`](ordinal-ladder.md)），
 第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
 [`cardinal-register.md`](cardinal-register.md)）：
 

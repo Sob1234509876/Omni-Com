@@ -357,10 +357,10 @@ BMS 从 0 起、NRBMS 从 1 起，NRBMS 表示的又是非递归序数。所以�
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 16–18 节是 BMS
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 16–18 节是 BMS
 （`BmsCheck`，136 项），第 19–20 节是 BMS 极限之上的名册（`AbstractOrdinalCheck`，27 项，见
 [`abstract-ordinals.md`](abstract-ordinals.md)），第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，
-168 项，见 [`ordinal-ladder.md`](ordinal-ladder.md)），第 32–36 节是阶段四的基数寄存器
+183 项，见 [`ordinal-ladder.md`](ordinal-ladder.md)），第 32–36 节是阶段四的基数寄存器
 （`CardinalRegisterCheck`，50 项，见 [`cardinal-register.md`](cardinal-register.md)）：
 
 - **第 16 节（标准式与比较，52 项）**：规范形、形状校验、任务里的三个比较例子、参考节点上的严格递增/反对称/传递、

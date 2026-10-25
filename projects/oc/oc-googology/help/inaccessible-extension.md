@@ -354,7 +354,7 @@ CardinalRung.INACCESSIBLE.inaccessibleDelegate().orElseThrow()
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 37–43 节是阶段五
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 37–43 节是阶段五
 （`InaccessibleCheck`，87 项）：
 
 - **第 37 节（基例与一元阶梯，14 项）**：`I_0` 是最小值；`I(0,β) = I_β`（含 `equals`/哈希）；一元
