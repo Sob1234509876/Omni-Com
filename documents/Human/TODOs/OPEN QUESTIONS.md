@@ -83,20 +83,100 @@ The owner said **"b 实现吧"**: implement the smallest relaxation. An `ω_α` 
 
 **Status: implemented.** `LadderCheck` section 31 has 20 checks (growth, nesting to depth two and three, the `I`/`ψ_𝕀(𝕀)` collapse, the recursive/non-recursive classification, the negative rule for `TBMS`/`TTBMS`/`NRBMS`/`TNRBMS`, strict increase, equality/hashCode, and transitivity over a sample that includes the new values). The googology self check total is now **698**. The code change touches only `oc-googology`; the two `oc-rts-engine` help pages were changed by the number only. The ladder's declared order for the old values is unchanged, and `f`/`g` are unchanged.
 
+## Q8. Should a human account own the showroom as player 1, or stay on slots 3–8 with the showroom neutral? — **answered by the owner: a player is just a slot**
+
+The owner's ruling is that a `Player` is just a slot and may be either a bot or a human, so a slot number carries no ownership claim and a human account does **not** need to become player 1.
+
+**Consequence: the current model stands, and nothing in the server, client or protocol moves.**
+
+- Player 1 is the showroom — the sample scene, one finished building of every declared building type and one unit of every declared unit type — and stays **neutral** to every human. It is `我` only when the local id really is 1.
+- Bots take player 2 and then 9, 10, ...; humans take **3–8**. A bot never occupies a human slot and a human join never collides with a bot.
+- `SCENE_PLAYER_ID = 1`'s neutral handling is the final shape, not a placeholder, and `FIRST_HUMAN_PLAYER_ID` stays 3.
+
+**Status: answered; no code change.** This is the model the server and client already implement, and the ownership rule recorded in Q3 is unchanged.
+
 # Still open
-
-## Q8. Should a human account own the showroom as player 1, or stay on slots 3–8 with the showroom neutral? — **open (new)**
-
-`WorldHost` always builds player 1 as the sample scene: one finished building of every declared building type and one unit of every declared unit type, owned by player 1. A human account is assigned the next free id from **3 through 8**; player 2 is the classic bot system's first bot. The browser therefore treats player 1 as **neutral** to a human (`SCENE_PLAYER_ID = 1`; it is `我` only when the local id really is 1), and the "enemy" defect was fixed by that rule rather than by handing the scene to the account.
-
-The owner has not said which model he wants long-term. Candidate readings:
-
-- **Keep the showroom neutral** (current default, implemented). Slots 3–8 stay the human range, player 1 is a permanent demo scene, and the client paints it `中立`. Cost: the map always contains a non-player faction that never acts, and a human can never own or command those units.
-- **Give the showroom to the first human account as player 1.** `FIRST_HUMAN_PLAYER_ID` would move to 1, the sample scene would have to be skipped or handed over, and a reconnect would have to keep the same id. Cost: `WorldHost`, `JoinBaseCheck`, `WorldHostCheck`, `ClassicCheck`, the client's `SCENE_PLAYER_ID` rule, `protocol/oc-protocol.md` and both README twins all move together; a second account then starts at 2, which collides with the classic bot unless the bot range also moves.
-- **Drop the showroom entirely** and let player 1 be the first human. Cost: the deterministic demo map/scene that the client and the checks rely on disappears; `--world off` would be the only way to see the demo, and the "known starting position" anchor story loses its first example.
-
-**Default while Q8 is unanswered:** keep the current model — human accounts on **3–8**, the showroom neutral, player 2 the first bot, the client's `SCENE_PLAYER_ID = 1` rule unchanged. Any move away from it is a coordinated server + client + protocol change, not a local one.
 
 ## Q5b. `git push` — **open, owner-only**
 
 The working tree is ahead of `Github/master` by more than fifteen commits; every check is green locally but the remote is stale. The agent has no credentials and cannot push. This is the only housekeeping item left from Q5: the build is solved and `web-client/dist/` is current, so a push from the owner's account publishes both the code and the rebuilt client.
+
+## Q9. Item 24: which units show their inventory on top of them, and within what distance? — **open (new)**
+
+Item 24 asks to "see the amount of resource in its inventory on top of that unit". The wording does not say whether the label belongs to every unit with cargo, only to the current selection, or to every visible unit, nor how far away it may still be read. Candidate readings:
+
+- **Selected units only, carrying cargo only, within 6 tiles** (current default). The label is a selection detail like the path line and the ring: it appears above each selected unit that actually carries something, and only while that unit is within six tiles of the camera centre. Cost: a selected hauler far from the camera shows nothing until it comes closer.
+- **Every own unit that carries cargo in the loaded window**, selected or not. More informative at a glance, but the map fills with labels during a large haul and the information duplicates the inventory panel.
+- **Every unit, including enemy and neutral ones.** Useful for scouting, but it leaks enemy logistics and conflicts with the rule that most information stays hidden by default.
+
+**Default while Q9 is unanswered:** the first reading — selected units only, carrying cargo only, within 6 tiles.
+
+## Q10. Item 24: does the "enough resources" icon on an arsenal read its own inventory or the warehouse total? — **open (new)**
+
+The icon is meant to say "everything normal or missing resource". An arsenal holds a local buffer, while the warehouses hold the stock a haul would draw from, so the two can disagree. Candidate readings:
+
+- **The arsenal's own stock**, with the transferable warehouse amount shown next to it (current default). The icon reports whether the building can start its next job from what it already holds; the adjacent number says what a haul could still bring. Cost: two numbers instead of one icon.
+- **The warehouse total only.** Simpler, and answers "can the economy pay for this", but it hides a local shortage that is already delaying production.
+- **Both as one combined figure** (local plus warehouse). One number, but it can say "enough" for a job that will still wait for a haul.
+
+**Default while Q10 is unanswered:** the arsenal's own stock, with the transferable warehouse amount shown next to it.
+
+## Q11. Item 24: does "now producing 1x" mean the current job or the queue length? — **open (new)**
+
+The HUD already says `生产中×N` for a finished producer. The owner's phrase "now producing 1x" can be read as the job at the front of the queue or as how many jobs are waiting. Candidate readings:
+
+- **The current job only** (`生产中 1`). Answers "what is being made"; a queue of three still reads 1.
+- **The queue length only** (`生产中 3`). Answers "how much is pending"; the item being made is not identified.
+- **Both**, formatted `生产中 1/3` (current default): position one of three. One compact string answers both questions; the cost is a slightly wider HUD cell.
+
+**Default while Q11 is unanswered:** both, formatted `生产中 1/3`.
+
+## Q12. Item 24: should the resource pop animation appear above the unit or fly to the target? — **open (new)**
+
+Item 24 asks for "an icon resembling 'resource' pop up when an engineer get or give resources". Candidate readings:
+
+- **A brief pop above the unit** (current default). A small achromatic icon and amount rise and fade at the engineer, matching the existing 250 ms selection flash and the grayscale HUD. Cost: it does not show where the resource went.
+- **An icon that flies from the engineer to the receiving building** (or the reverse when loading). It shows the direction of the transfer, but it adds a moving element to the map, a travel time, and a second kind of animation to suppress.
+- **Both**: a pop at the unit and a short flight to the target. The most legible, and the most motion.
+
+**Default while Q12 is unanswered:** a brief pop above the unit, achromatic.
+
+## Q13. Item 26: when several engineers are selected and one site is clicked, should they all be sent? — **open (new)**
+
+The owner reported "engineers cannot build together". The expected behaviour is not recorded beyond that sentence. Candidate readings:
+
+- **Yes — every selected engineer is sent to the one site** (current default, and what has been implemented): one `BUILD` line per engineer, the first placement charged once, and `ConstructionSystem` capping the crew at four.
+- **Only the first engineer builds and the rest stay idle.** This was the old client behaviour and the reported defect, so it is recorded only as the counter-reading.
+- **The group is split across several sites** chosen automatically. Not asked for; it would need a placement rule the owner has not specified.
+
+**Default while Q13 is unanswered:** the first reading — yes, all selected engineers go to the clicked site, which is what was implemented for item 26.
+
+## Q14. Item 27: does Shift-click on a build entry queue tasks for the current engineer or fan one task out to several? — **open (new)**
+
+Item 27 asks that "By clicking shift, you can add tasks for engineers to build, a bit similar to the feature in Rusted Warfare". The modifier is the same in both readings; what differs is which list grows. Candidate readings:
+
+- **Queue several build tasks for the current engineer** (current default; the Rusted Warfare reading): Shift-click on a building entry appends the task to that engineer's queue, and the engineer works through the queue in order.
+- **Send one task to several engineers**: Shift-click broadcasts the same site or task to every selected engineer, which is a batch order rather than a queue.
+- **Two different modifiers** (plain click queues, Shift-click broadcasts), which needs a third gesture for "queue several" and is not what the item says.
+
+**Default while Q14 is unanswered:** queue several build tasks for the current engineer (the Rusted Warfare reading).
+
+## Q15. Item 28: do turrets need population or power? — **open (new)**
+
+Item 28 asks to "Add turrets for defending bases". The classic catalogue has neither a population nor a power system, only gold, wood, storage and production. Candidate readings:
+
+- **No population or power; gold and wood only, three tiers** (current default): a turret is a building like the armory and the mine, paid once and upgraded in place, with the same three-tier ladder as the other classic buildings.
+- **A power requirement**, which needs a new resource, a generator building and a brown-out rule — a new economy system, not a turret.
+- **A population requirement**, which needs a population pool, housing and a cap — likewise a new system.
+
+**Default while Q15 is unanswered:** no population or power — gold and wood only, three tiers.
+
+## Q16. Item 7: how far should the logistics surface go? — **open (new)**
+
+Item 7 is the partial one: the warehouse exists and reports its contents, but there is no logistics surface. The owner has not said which controls he wants. Candidate readings:
+
+- **A single-warehouse view now** (current default): select one warehouse and see its own inventory, instead of the current sum over every own building.
+- **A manual transfer command now** (current default): send a hauler or engineer to move a chosen item between two warehouses, or between a warehouse and an arsenal, through an ordinary command line.
+- **Quotas and priorities later**: per-warehouse keep levels, "keep this arsenal fed first", automatic balancing. Powerful, but it needs a policy model, a UI and a deterministic scheduler, so it is deferred.
+
+**Default while Q16 is unanswered:** the first two now (single-warehouse view and a manual transfer command), quotas and priorities later.

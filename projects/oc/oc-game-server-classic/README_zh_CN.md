@@ -1,4 +1,4 @@
-﻿[English](README.md) | 简体中文
+[English](README.md) | 简体中文
 
 # Omni Com Classic 世界插件
 
@@ -14,7 +14,7 @@
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS |
 | 依赖 | `oc-game-server`（插件 API）与 `oc-rts-engine`（目录类型）；引擎会带上 `oc-googology` |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（522 项检查） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（542 项检查） |
 | 世界内容 | `oc-classic` |
 | 素材 | `assets/manifest.json` 与 96x128 的 `assets/atlas.png` |
 | 帮助 | [03 插件](../oc-game-server/help/03-plugins.md) 与 [05 浏览器端点](../oc-game-server/help/05-browser-endpoint.md)，中文 |
@@ -239,7 +239,7 @@ classic plugin self check: all 542 checks passed.
 | `src/main/resources/omnicom-plugin.properties` | 描述文件：`id=oc-classic`、`version=1.0`、`main`、`description` |
 | `src/main/resources/assets/manifest.json` | 服务器要合并的图集清单 |
 | `src/main/resources/assets/atlas.png` | 96x128 的单位与建筑图集（每种建筑一个 32x32 格） |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 522 条检查的自检程序 |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 542 条检查的自检程序 |
 | `build.gradle` | `selfcheck` 任务，以及挂在它类路径上的服务器检查报告器 |
 
 ## 相关

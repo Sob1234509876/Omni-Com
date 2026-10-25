@@ -1,10 +1,10 @@
 # AI TODOs
 
-A handoff list. The long sentences after each item are the **specification** and are kept verbatim; only the layout is grouped.
+A handoff list of **29 items**. The long sentences after each item are the **specification** and are kept verbatim; only the layout is grouped.
 
 **Status legend** — `[x]` done and verified · `[ ]` not done, **including a partial item**: a partial item stays unticked and its italic note says exactly what is missing. The checkbox is the state. The owner's original markers were `(Y)`, `(X/Y)` and `(X)`.
 
-Verified at `HEAD 519b27d` (2026-10-25) against the module READMEs and `help/` pages, not against the older totals in `TODO.md` §2: googology **698**, engine **657**, game server **1071**, debug **85**, hello **126**, classic **542**, client **422**. `TODO.md` was written against `3abc25d` and still quotes 515 / 1014 / 368 / 203; the module READMEs are the current source.
+Verified at `HEAD 3b23fbe` (2026-10-25) against the module and client READMEs: googology **698**, engine **657**, game server **1071**, debug **85**, hello **126**, classic **542**, client **442**. The root `TODO.md` is now a redirect to this list; the READMEs are the current source.
 
 | Group | Done | Partial | Not started | Items |
 | --- | --- | --- | --- | --- |
@@ -14,10 +14,10 @@ Verified at `HEAD 519b27d` (2026-10-25) against the module READMEs and `help/` p
 | D. Interface and HUD | 6 | 0 | 0 | 8–13 |
 | E. Interaction | 3 | 0 | 0 | 14–16 |
 | F. Units and orders | 3 | 0 | 0 | 17–19 |
-| G. New goals | 4 | 0 | 0 | 20–23 |
-| **Total** | **22** | **1** | **0** | **23** |
+| G. New goals | 7 | 0 | 3 | 20–29 |
+| **Total** | **25** | **1** | **3** | **29** |
 
-The counts use the checkbox: `Done` is `[x]`; `Partial` and `Not started` are both `[ ]`, and the italic note distinguishes them.
+The counts use the checkbox: `Done` is `[x]`; `Partial` and `Not started` are both `[ ]`. An unticked item with an italic note is `Partial` (the note says exactly what is missing); an unticked item without one is `Not started`.
 
 ---
 
@@ -65,7 +65,7 @@ The counts use the checkbox: `Done` is `[x]`; `Partial` and `Not started` are bo
 - [x] **22. Waypoints.** Add waypoints. — *waypoints are `Shift`+right-click points collected for the current selection, drawn as crosses joined by the same dashed line; a plain right-click commits the whole route as one `ORDER MOVE <id> <x> <y> ...` line with 1..8 points, and `Esc` or a selection change clears the pending route. The server grammar refuses an empty route, an odd token count or more than eight pairs.*
 - [x] **23. Faster** You can choose a lot of same typed buildings and let them work at once and producing units. — *double-clicking an own building selects every own building of that kind in the loaded window; the context panel then offers one TRAIN click that sends one `TRAIN <id> <unitPath>` line per selected building, so every queue produces in parallel. Deferred: no batch repair, and the per-building queue rows still describe only a single selected building.*
 - [ ] **24. More HUD** You get a lot more information: you can see the status bar of producing units just on the hud displaying "now producing 1x" and you can see does the arsenals and etc have enough resources (by an icon showing everything normal or missing resource) and also the amount of each resource it has and the resource required. You can also see the amount of resource in it's inventory on top of that unit. You can also see the tasks of engineers, for example seeing are they moving resources to arsenals or idling. Also add some animations for example an icon resembling "resource" pop up when an engineer get or give resources.
-- [x] **25. BUG** You can not upgrade all the arsenal at once. — *fixed in the client: a selected same-kind group of own buildings with at least one `upgrade` offer gets one `升级全部` action. `upgradeBatchPlan` walks the selection in order, reduces a running gold/wood budget, skips an unfinished site / a building without a successor / an unaffordable one with a readable reason, and sends exactly one `UPGRADE <id>` per remaining building through the ordinary command path so every answer is logged. The batch reports `已发送 N 条升级 / M 条被拒绝` (a server `ERR` also counts as rejected); the single `升级` is unchanged. Client checks cover the budget walk, all three skip reasons, mixed/enemy/empty groups and the summary (422 total).*
+- [x] **25. BUG** You can not upgrade all the arsenal at once. — *fixed in the client: a selected same-kind group of own buildings with at least one `upgrade` offer gets one `升级全部` action. `upgradeBatchPlan` walks the selection in order, reduces a running gold/wood budget, skips an unfinished site / a building without a successor / an unaffordable one with a readable reason, and sends exactly one `UPGRADE <id>` per remaining building through the ordinary command path so every answer is logged. The batch reports `已发送 N 条升级 / M 条被拒绝` (a server `ERR` also counts as rejected); the single `升级` is unchanged. Client checks cover the budget walk, all three skip reasons, mixed/enemy/empty groups and the summary (442 total).*
 - [x] **26. BUG** Engineers can not build a building together. — *root cause was the **client UI**, not the server or the engine: `engineerForPlacement` returned only the first engineer, so a group sent one BUILD, and the build ghost treated the group's own unfinished site as `位置被占用`, so a second engineer aiming at it sent nothing. The server's `BUILD` already forwards to `CommandService.tryBuild`, whose `unfinishedSiteAt` joins an unfinished same-kind site and charges nothing, and `ConstructionSystem` already caps the speed at `min(builders, 4)`. Fixed: a multi-engineer selection now sends one `BUILD` line per engineer for the same footprint (`buildBatch`), and `buildPlacementPreview` reports an own same-kind unfinished site as joinable (`joinSiteId`, legal instead of blocked; still gated by the 16-tile reach). Engine section 16 adds the end-to-end assertion that two ordinary placement commands attach both engineers to the one site (the existing 1-vs-2-builder timing check already pins the half-time completion); the client check proves a two-engineer selection produces two BUILD lines.*
 - [ ] **27. Building Tasks** By clicking shift, you can add tasks for engineers to build, a bit similar to the feature in Rusted Warfare.
 - [ ] **28. Turrets** Add turrets for defending bases.

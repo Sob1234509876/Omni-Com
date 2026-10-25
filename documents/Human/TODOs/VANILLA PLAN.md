@@ -454,7 +454,7 @@ The client's `atlas.ts` already parses `entities.*.name`, the tile name (object 
 | 8. Live world | a `WorldHost` built from `VanillaContent` serves the custom catalogue; a human joins and gets the warehouse, surveyor and starting stock; an extractor is built and pays; a unit is trained; two identical runs snapshot byte for byte; the plugin loads from a real jar through `PluginLoader` and its descriptor is right | ~30 |
 | 9. Plugin contract | `name()`/`version()`/`description()` match the descriptor; `onLoad` registers exactly one content and the documented hooks; `onDisable` unregisters requests (none today) and stops nothing (there is no thread) | ~8 |
 
-Target total: **~190 checks**, but the number is provisional and must be replaced by the real printed total in the module README and `TODO.md` §2 when phase 1 lands. Rule from `TODO.md` §7 applies: when the total changes, grep the old number everywhere.
+Target total: **~190 checks**, but the number is provisional and must be replaced by the real printed total in the module README and the totals in [`TODO.md`](../../../TODO.md#still-valid-here)'s **Still valid here** section (*Build and self checks* bullet, which points at the module and client READMEs) when phase 1 lands. The rule from that section's *Never red* bullet applies: when the total changes, grep the old number everywhere.
 
 Run with:
 
@@ -529,7 +529,7 @@ Each phase is one reviewable commit (or a short series) and leaves every existin
 
 ### Phase 8 — polish and handoff
 
-- Final atlas, all display names, README twins, protocol updates, `TODO.md` §2 totals, `AI TODO.md` counts, `OPEN QUESTIONS.md` Q8 if answered.
+- Final atlas, all display names, README twins, protocol updates, the totals in [`TODO.md`](../../../TODO.md#still-valid-here)'s **Still valid here** section (*Build and self checks* bullet), `AI TODO.md` counts, `OPEN QUESTIONS.md` Q8 if answered.
 - A manual play-through: register/login, see the starting base, build, train, land, return.
 - **Exit:** all checks green, totals updated, owner review.
 
