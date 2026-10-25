@@ -88,6 +88,15 @@ export interface EntityView {
    */
   readonly attackDamage?: number;
   /**
+   * Optional attack range in tiles from a snapshot's `attackRange` field.
+   *
+   * A positive value together with {@link attackDamage} is the concrete weapon a building or unit
+   * carries; the selection panel prints it and the build catalogue labels a turret with it. The current
+   * server sends both for every attacker, but an older snapshot omits them and the HUD then shows no
+   * combat line rather than inventing a range.
+   */
+  readonly attackRange?: number;
+  /**
    * Optional animation frame sequence (indices into the kind's atlas row).
    *
    * A snapshot can use it to pick a clip inside a shared row, for example idle `[0, 1]` versus walk
@@ -155,6 +164,15 @@ export interface EntityView {
    * `建造中 → …`, `修理中 → …`, `空闲`), never from movement; non-engineers and older snapshots omit it.
    */
   readonly task?: string;
+  /**
+   * The unit's orders in execution order, from the snapshot's optional `orderQueue` array.
+   *
+   * Each entry is a ready-to-show label such as `建造 兵工厂 @ (12,5)`, `修理 #42` or `搬运 → 仓库`.
+   * The server caps the list at eight entries and ends a longer one with a marker such as `… 还有 3 项`;
+   * a building, an idle unit and an older server omit the field. The client renders the strings as-is,
+   * so the engine stays the one owner of the wording.
+   */
+  readonly orderQueue?: readonly string[];
   /**
    * The newest haul animation fact of a unit from the snapshot's optional `pop` object.
    *
@@ -1014,6 +1032,27 @@ function snapshotDemand(value: unknown): ProductionDemandView | undefined {
  * Both halves are required: a non-empty kind and a non-negative integer tick. A malformed object is
  * absent, not fatal; the animation simply does not start.
  */
+/**
+ * Reads the optional `orderQueue` string array of a unit row.
+ *
+ * `undefined` means the snapshot predates the field (or the row is a building / idle unit). An array is
+ * returned when the field is an array, keeping only non-blank strings in the server's order; a malformed
+ * list is dropped rather than rejecting the whole world, because this is presentation detail.
+ */
+function snapshotOrderQueue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const labels: string[] = [];
+  for (const rawLabel of value) {
+    if (typeof rawLabel !== "string" || rawLabel.trim() === "") {
+      continue;
+    }
+    labels.push(rawLabel.trim());
+  }
+  return labels;
+}
+
 function snapshotPop(value: unknown): PopView | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -1170,6 +1209,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const role =
       typeof roleValue === "string" && roleValue.trim() !== "" ? roleValue.trim() : undefined;
     const attackDamage = finiteNumber(rawEntity["attackDamage"]);
+    const attackRange = finiteNumber(rawEntity["attackRange"]);
+    const orderQueue = snapshotOrderQueue(rawEntity["orderQueue"]);
     const rawWidth = finiteNumber(rawEntity["w"]);
     const rawHeight = finiteNumber(rawEntity["h"]);
     const footprint =
@@ -1205,6 +1246,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(player === null ? {} : { playerId: Math.trunc(player) }),
       ...(role === undefined ? {} : { role }),
       ...(attackDamage === null || attackDamage < 0 ? {} : { attackDamage }),
+      ...(attackRange === null || attackRange < 0 ? {} : { attackRange }),
       ...(health === null ? {} : { healthRatio: Math.min(1, Math.max(0, health)) }),
       ...(footprint === undefined ? {} : { footprint }),
       ...(progress === null ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
@@ -1216,6 +1258,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(producingNow === undefined ? {} : { producingNow }),
       ...(demand === undefined ? {} : { demand }),
       ...(task === undefined ? {} : { task }),
+      ...(orderQueue === undefined ? {} : { orderQueue }),
       ...(pop === undefined ? {} : { pop }),
       ...(contents === undefined ? {} : { contents }),
       ...(upgrade === undefined ? {} : { upgrade }),

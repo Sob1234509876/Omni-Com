@@ -77,8 +77,15 @@ engine.tick();        // tick 末 pipeline 跑完后 engine 调 world.flush()，
 | `tick(context)` | 没有 current 就从队首取一个、调 `onStart` 并发 `OrderIssued`；跑 `tick()`，结束时调 `onFinish` 并发 `OrderFinished` |
 | `finishCurrent(context, state)` | 外部系统以终态结束当前订单（不跑 `tick()`），仍调 `onFinish` 并发 `OrderFinished`；工地完工 / 被毁结束所有附着 `BuildOrder` 就用它 |
 | `current()` / `hasCurrent()` / `pending()` / `size()` / `isEmpty()` | 查询 |
+| `orders()` | 只读快照：当前订单（若有）在前，待办按执行顺序在后；HUD 用它列出任务 |
 
-`tick()` 的返回值是刚**结束**的那个订单的状态，仍在中途则返回 `RUNNING`，无事可做返回 `null`。事件在队列里发布，不在订单里：`Events.OrderIssued(unit, orderName, tick)` 和 `Events.OrderFinished(unit, orderName, state, tick)`。
+`tick()` 的返回值是刚**结束**的那个订单的状态，仍在中途则返回 `RUNNING`，无事可做返回 `null`。事件在队列里发布，不在订单里：`Events.OrderIssued(unit, orderName, tick)` 和 `Events.OrderFinished(unit, orderName, state, tick)`。**一个订单失败不会取消后面的订单**：当前订单以 `FAILED` 结束后，`current` 清空，下一次 `tick()` 从队首取下一个并调 `onStart`；`COMPLETED` 和 `CANCELLED` 同理。这是 `tryQueueBuild` 能连续执行三个工地的底层规则。
+
+### 排队建造：`tryQueueBuild`
+
+`UnitDirector.tryBuild(unit, type, origin)` 是“现在做这个”：`tryBuild` 的落点、扣费、可达检查和 `unfinishedSiteAt` 加入规则全部不变，最后用 `orders().replace(...)` 把工程师原来的队列**替换**成这一个 `BuildOrder`。`tryQueueBuild` 用同一套检查和同一次落点扣费，但最后用 `orders().push(...)` **追加**：三个 Shift 点击就是三个已经放好、已经扣过费的工地，按点击顺序在一个工程师的队列里执行。`tryQueueBuild(unit, site)` 是加入已有未完工工地的队列形式，不落点、不收费。
+
+Q14 的默认规则是“为当前工程师排队多个建造任务”，不是“把一个任务广播给多个工程师”：一次点击仍然按 item 26 的规则给**每个**选中的工程师发一条 BUILD，所以“三个工程师 + 一个工地”是三条加入命令，“一个工程师 + 三个工地”才是三条排队建造。普通点击继续用 `tryBuild`，保持“单条命令、清空旧队列”的旧行为；服务端用同样的四参数 `BUILD` 表示普通点击，用可选的第五个 `queue` token 表示排队形式。
 
 `OrderContext` 是 `record OrderContext(World world, Unit unit, Tick tick)`，外加 `director()` 便捷方法返回 `world.director()`。
 

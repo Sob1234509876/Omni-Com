@@ -4,8 +4,8 @@ English | [简体中文](README_zh_CN.md)
 
 `projects:oc:oc-game-server-classic` — the world content plugin `oc-classic`. A server picks plugins up from its
 `plugins/` folder; this jar registers one game: five melee tiers, an engineer, two armory levels, three mine
-levels, three lumber camp tiers and a warehouse, together with the income hook and the seeded bot player
-system that play it. It registers no request, opens no file and starts no thread. With the jar in the folder
+levels, three lumber camp tiers, three defensive turret tiers and a warehouse, together with the income hook
+and the seeded bot player system that play it. It registers no request, opens no file and starts no thread. With the jar in the folder
 the server serves this world instead of the engine's sample catalogue; remove it and the server falls back.
 
 ## Coordinates
@@ -18,9 +18,9 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (542 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (649 checks) |
 | World content | `oc-classic` |
-| Art | `assets/manifest.json` and a 96x128 `assets/atlas.png` |
+| Art | `assets/manifest.json` and a 96x160 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
 
 ## The five melee tiers
@@ -103,6 +103,26 @@ deliberately a different prefix from the mines' `income_<n>`, so a camp is never
 `ClassicEconomy` sums one player's constructed, living camps and deposits the wood through the same warehouse
 path as gold.
 
+## The three turret tiers
+
+Turrets are the defensive building line (item 28, Q15): **gold and wood only, no population and no power**,
+because the classic catalogue has neither system. Every tier is a 2x2 building with a real engine weapon; the
+combat layer makes it shoot the nearest hostile unit in range, never an own or allied entity, and never a
+building. The attack data is content, not a plugin script: `.attack(damage, range)` and `.attackCooldown(ticks)`
+write `BuildingType.attackDamage/attackRange/attackCooldownTicks`.
+
+| Path | Name | Footprint | HP | Armour | Damage | Range | Cooldown | Build ticks | Build cost | Upgrade |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `building.turret.t1` | 哨塔·普通 | 2x2 | 450 | 2 | 18 | 6.0 | 30 | 120 | 120 gold + 20 wood | 140 gold + 50 wood → `t2` |
+| `building.turret.t2` | 哨塔·强化 | 2x2 | 700 | 4 | 32 | 7.5 | 26 | 180 | 260 gold + 70 wood | 260 gold + 90 wood → `t3` |
+| `building.turret.t3` | 哨塔·精英 | 2x2 | 1000 | 6 | 55 | 9.0 | 22 | 240 | 520 gold + 160 wood | - (top of the ladder) |
+
+The three tiers share the 2x2 footprint because the engine's in-place upgrade replaces a building with a type
+of the same size; the footprint is still declared per tier. The upgrade arithmetic follows the other classic
+ladders: `t1 cost + t1 upgrade = t2 cost` (140 + 190 = 330) and `t2 cost + t2 upgrade = t3 cost`
+(330 + 350 = 680), counted in gold + wood units. All three tiers are buildable by an engineer through the
+ordinary `BUILD` path, and the context panel's `升级` entry walks the ladder.
+
 ## The economy rule
 
 Every **60 ticks** — the classic minute, three seconds at the host's twenty ticks per second — each player is
@@ -132,7 +152,7 @@ approach ring) before it charges anything.
 
 ## Repair, continue building and reclaim
 
-All nine classic building types opt into repair at **1 gold per missing hit point**, declared with
+All twelve classic building types opt into repair at **1 gold per missing hit point**, declared with
 `.repairCostPerHealth(GOLD, 1)`. `REPAIR <engineerId> <buildingId>` sends one engineer to a damaged,
 finished building of the same player; it restores **4 hit points per tick** while standing at the
 building's entrance and charges each tick's healed points from the warehouses. A half-health 600 HP
@@ -211,14 +231,24 @@ second — and falls into one mode, chosen in this fixed precedence:
 | `ECON` | the base is not staffed yet | train engineers and raise buildings |
 
 Whatever the mode, except during a defence, the standing economy rules run: first **upgrade** the base, then
-keep at least **three engineers** alive, **three mines** and **one lumber camp** standing, and grow the army to
-eight. The AI keeps **one** armory, and it upgrades that armory instead of building a second one: when the t1 is
-finished, is not the top tier and the warehouses can pay its 140 gold + 40 wood, `ClassicAi` calls the engine's
-`upgradeBuilding` before it considers any site or training job. The upgrade runs before engineer/army training
-in the same decision and only on an **idle** armory, so it cannot cancel the AI's own queued job. At most one
-production job, building site or upgrade is started per decision, so the AI cannot drain its stock or its
-builders in a single tick. The lumber camp is what gives the AI renewable wood for its armory upgrades; it is
-placed with the same bounded site search as every other building.
+keep at least **three engineers** alive, **three mines**, **one lumber camp** and **one turret** standing, and
+grow the army to eight. The AI keeps **one** armory, and it upgrades that armory instead of building a second
+one: when the t1 is finished, is not the top tier and the warehouses can pay its 140 gold + 40 wood,
+`ClassicAi` calls the engine's `upgradeBuilding` before it considers any site or training job. The upgrade runs
+before engineer/army training in the same decision and only on an **idle** armory, so it cannot cancel the AI's
+own queued job. At most one production job, building site or upgrade is started per decision, so the AI cannot
+drain its stock or its builders in a single tick. The lumber camp is what gives the AI renewable wood for its
+armory upgrades; it is placed with the same bounded site search as every other building.
+
+**The turret rule (item 28).** `ClassicAi.TURRET_TARGET = 1`. Once the armory exists and the warehouses can pay
+the 120 gold + 20 wood price, the next missing-project decision places a `building.turret.t1` with an idle
+engineer; the turret is checked **before** the second mine and the lumber camp, which is what makes a default bot
+observably build one (the opening stock after the armory upgrade is exactly enough). After that, the AI upgrades
+that same turret with `upgradeBuilding` only while the next unit wave is still gathering
+(`countArmy < armyTarget` before the first march, `< attackArmySize` after it) and the step is affordable; when
+the army is already at wave size the upgrade **waits**, so the turret cannot starve the attack. The rule is
+deterministic - first finished, idle turret in entity id order, one attempt per decision - and `ClassicCheck`
+pins both halves: an affordable, idle t1 becomes t2 before the wave and a full wave leaves it at t1.
 
 Army training looks at the **best idle armory** — highest level, ties by entity id — and walks the five tiers
 from the top down, taking the first one the armory's level allows and the warehouses can still pay for. A tier 2
@@ -326,13 +356,15 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 542 checks passed.
+classic plugin self check: all 649 checks passed.
 ```
 
-542 is the sum of the same sixteen sections, plus the regressions added after the owner's report: the
+649 is the sum of the same sixteen sections plus the turret and queued-requirements checks, with the
+regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
-STOP must be followed by an applicable move and build against a real `CommandService`, each of the nine
-classic buildings must own a distinct atlas cell, and the engineer pool must serve one arsenal at a time
+STOP must be followed by an applicable move and build against a real `CommandService`, each of the twelve
+classic buildings must own a distinct atlas cell, the three turret tiers must be buildable, upgrade in place and
+carry the documented weapon numbers, and the engineer pool must serve one arsenal at a time
 from a 24-tile crew, enrol a newly produced engineer without a restart and never assign one engineer to
 two arsenals. The gate section is the strict part: it proves
 against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
@@ -341,7 +373,7 @@ the enemy really reaches tier 2 through the command, and the bots section proves
 byte-for-byte the old one while two bots differ and a different seed moves their bases.
 
 The ownership section pins the reported defect by entity id **and** by the snapshot's `player` field: the
-sample scene (six units, nine buildings) belongs to player 1, and the bot's opening base (warehouse, tier one
+sample scene (six units, twelve buildings) belongs to player 1, and the bot's opening base (warehouse, tier one
 armory, tier one mine) belongs to player 2 - never the other way round. It also pins the published faction
 anchors: player 1 reports the host's spawn anchor and player 2 reports the `ClassicBots` anchor (`(192,192)`
 on the default seed), so the browser's enemy line and minimap edge arrow have a real source. The anchor is a
@@ -351,7 +383,7 @@ known starting position, not a fog-of-war reveal.
 
 | Path | Contents |
 | --- | --- |
-| `src/main/java/.../classic/ClassicContent.java` | the catalogue: terrain, items, six units, nine buildings, six recipes |
+| `src/main/java/.../classic/ClassicContent.java` | the catalogue: terrain, items, six units, twelve buildings, six recipes |
 | `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine and lumber camp income once per 60 ticks |
 | `src/main/java/.../classic/ClassicAi.java` | the deterministic controller of one bot player (the no-argument form is the historical single enemy) |
 | `src/main/java/.../classic/ClassicBots.java` | the bot player system: count, faction seeds, spawn anchors and one controller per bot |
@@ -361,8 +393,8 @@ known starting position, not a fog-of-war reveal.
 | `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the three hooks, reads `--bots` from the plugin options |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
-| `src/main/resources/assets/atlas.png` | the 96x128 unit and building atlas (one 32x32 cell per building kind) |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 542 check self check program |
+| `src/main/resources/assets/atlas.png` | the 96x160 unit and building atlas (one 32x32 cell per building kind, three turret cells on the new row) |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 649 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

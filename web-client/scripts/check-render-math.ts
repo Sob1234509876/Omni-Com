@@ -14,12 +14,15 @@
 import { readFileSync } from "node:fs";
 import {
   BUILDING_CONTENT,
+  BUILDING_COSTS,
   BUILDING_PATHS,
   CLASSIC_BUILDING_KINDS,
   UNIT_PATHS,
   MAX_MOVE_POINTS,
   build,
   buildBatch,
+  buildButtonLabel,
+  buildPlacementBatch,
   buildingContent,
   orderAttack,
   orderAttackMove,
@@ -102,6 +105,7 @@ import {
 } from "../src/render/sweep.ts";
 import {
   STOCK_TAG_RADIUS_TILES,
+  combatLabel,
   demandIcon,
   demandMissingText,
   demandStockText,
@@ -640,6 +644,19 @@ check(
   `${selectByPriority(priorityEntities.slice(2)).join(",")} / ${selectByPriority([priorityEntities[3]!]).join(",")}`,
 );
 check(
+  "role 优先于 attackDamage：带 2 点攻击的工程师仍是工兵组，不会被当成战斗单位",
+  JSON.stringify(
+    selectByPriority([
+      { id: 31, kind: "unit.engineer", x: 2, y: 2, playerId: 1, role: "support", attackDamage: 2 },
+      { id: 32, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, role: "combat", attackDamage: 10 },
+    ]),
+  ) === JSON.stringify([32]),
+  selectByPriority([
+    { id: 31, kind: "unit.engineer", x: 2, y: 2, playerId: 1, role: "support", attackDamage: 2 },
+    { id: 32, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, role: "combat", attackDamage: 10 },
+  ]).join(","),
+);
+check(
   "空框选（没有实体）不选中任何东西",
   selectByPriority([]).length === 0 &&
     marqueeSelection({ ...marqueeWorld, entities: [] }, marqueeSquare, 1).length === 0 &&
@@ -881,7 +898,30 @@ const detailedSnapshot = worldViewFromSnapshot({
         { kind: "", ticks: 1, total: 1 },
       ],
     },
-    { id: 3, kind: "worker", x: 0, y: 0, player: 1, w: 1, h: 1, progress: 0.8 },
+    {
+      id: 3,
+      kind: "worker",
+      x: 0,
+      y: 0,
+      player: 1,
+      w: 1,
+      h: 1,
+      progress: 0.8,
+      task: "建造中 → 兵工厂",
+      orderQueue: ["建造 兵工厂 @ (12,5)", "  ", "修理 #42", "搬运 → 仓库"],
+    },
+    {
+      id: 4,
+      kind: "building.turret.t1",
+      x: 0,
+      y: 2,
+      player: 1,
+      w: 2,
+      h: 2,
+      progress: 1,
+      attackDamage: 18,
+      attackRange: 6,
+    },
   ],
 });
 const detailedWarehouse = detailedSnapshot?.entities.find((entity) => entity.id === 1);
@@ -917,6 +957,26 @@ check(
     detailedWorker?.progress === 0.8,
   JSON.stringify(detailedWorker),
 );
+check(
+  "orderQueue 按顺序保留非空标签并去掉空白项",
+  JSON.stringify(detailedWorker?.orderQueue) ===
+    JSON.stringify(["建造 兵工厂 @ (12,5)", "修理 #42", "搬运 → 仓库"]),
+  JSON.stringify(detailedWorker?.orderQueue),
+);
+const detailedTurret = detailedSnapshot?.entities.find((entity) => entity.id === 4);
+check(
+  "attackDamage / attackRange 被解析，选择面板可显示攻击与射程",
+  detailedTurret?.attackDamage === 18 &&
+    detailedTurret?.attackRange === 6 &&
+    combatLabel(detailedTurret) === "攻击 18 · 射程 6",
+  detailedTurret === undefined ? "missing" : String(combatLabel(detailedTurret)),
+);
+check(
+  "没有武器的旧实体不显示攻击行",
+  combatLabel({ id: 5, kind: "building.warehouse", x: 0, y: 0 }) === null &&
+    combatLabel({ id: 6, kind: "building.turret.t2", x: 0, y: 0, attackDamage: 32, attackRange: 7.5 }) ===
+      "攻击 32 · 射程 7.5",
+);
 const legacySnapshot = worldViewFromSnapshot({
   tick: 1,
   width: 2,
@@ -936,7 +996,9 @@ check(
     legacyEntity.progress === undefined &&
     legacyEntity.queue === undefined &&
     legacyEntity.queueTicks === undefined &&
-    legacyEntity.queueItems === undefined,
+    legacyEntity.queueItems === undefined &&
+    legacyEntity.orderQueue === undefined &&
+    legacyEntity.attackRange === undefined,
   JSON.stringify(legacyEntity),
 );
 
@@ -1900,7 +1962,7 @@ try {
     `经典插件清单不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
   );
 }
-const classicAtlas = parseAtlas(classicManifest, 96, 128);
+const classicAtlas = parseAtlas(classicManifest, 96, 160);
 check("经典插件的 manifest.json 可以被解析", classicAtlas.ok);
 const classicRoot = recordTable(classicManifest);
 const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
@@ -2156,6 +2218,9 @@ check(
       "building.mine.t1",
       "building.lumbercamp.t1",
       "building.warehouse",
+      "building.turret.t1",
+      "building.turret.t2",
+      "building.turret.t3",
     ]),
   BUILDING_PATHS.join(", "),
 );
@@ -2188,6 +2253,46 @@ check(
   "目录里每条路径都能原样交给对应的构建器",
   UNIT_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
     BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
+);
+
+// Shift-click queueing (item 27): the plan keeps the mode armed and every line carries the queue token.
+const shiftPlan = buildPlacementBatch([11, 12, 13], "building.turret.t1", 5, 6, true);
+check(
+  "Shift 点击生成三条带 queue 的 BUILD，并保持放置模式",
+  shiftPlan.keepArmed === true &&
+    shiftPlan.lines.length === 3 &&
+    shiftPlan.lines[0] === "BUILD 11 building.turret.t1 5 6 queue" &&
+    shiftPlan.lines[1] === "BUILD 12 building.turret.t1 5 6 queue" &&
+    shiftPlan.lines[2] === "BUILD 13 building.turret.t1 5 6 queue",
+  shiftPlan.lines.join(" | "),
+);
+const plainPlan = buildPlacementBatch([11], "building.turret.t1", 5, 6, false);
+check(
+  "普通点击只生成一条不带 queue 的 BUILD，并清除放置模式",
+  plainPlan.keepArmed === false &&
+    plainPlan.lines.length === 1 &&
+    plainPlan.lines[0] === "BUILD 11 building.turret.t1 5 6",
+  plainPlan.lines.join(" | "),
+);
+check(
+  "buildBatch 的 queue 参数只追加标记，不改变数量或工兵顺序",
+  JSON.stringify(buildBatch([3, 1, 2], "building.warehouse", 4, 5, true)) ===
+    JSON.stringify([
+      "BUILD 3 building.warehouse 4 5 queue",
+      "BUILD 1 building.warehouse 4 5 queue",
+      "BUILD 2 building.warehouse 4 5 queue",
+    ]),
+  buildBatch([3, 1, 2], "building.warehouse", 4, 5, true).join(" | "),
+);
+check(
+  "哨塔目录带三档造价与射程，按钮标签把它显示出来",
+  BUILDING_COSTS.get("building.turret.t1")?.gold === 120 &&
+    BUILDING_COSTS.get("building.turret.t1")?.wood === 20 &&
+    BUILDING_COSTS.get("building.turret.t2")?.range === 7.5 &&
+    BUILDING_COSTS.get("building.turret.t3")?.range === 9 &&
+    buildButtonLabel("building.turret.t2") === "building.turret.t2 · 金 260 · 木 70 · 射程 7.5" &&
+    buildButtonLabel("building.warehouse") === "building.warehouse",
+  buildButtonLabel("building.turret.t2"),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -2320,11 +2425,15 @@ function placementWorld(): WorldView {
 const placementFixture = placementWorld();
 
 check(
-  "建筑足迹查表：经典目录里的四种建筑都是 3×3（命名空间也能命中）",
+  "建筑足迹查表：三档哨塔是 2×2，其它经典建筑是 3×3（命名空间也能命中）",
   BUILDING_PATHS.every((path) => {
     const footprint = footprintForKind(path);
-    return footprint.width === 3 && footprint.height === 3;
-  }) && footprintForKind("oc:building.warehouse").height === 3,
+    return path.startsWith("building.turret.")
+      ? footprint.width === 2 && footprint.height === 2
+      : footprint.width === 3 && footprint.height === 3;
+  }) &&
+    footprintForKind("oc:building.warehouse").height === 3 &&
+    footprintForKind("oc:building.turret.t3").width === 2,
   BUILDING_PATHS.map((path) => `${path}=${footprintForKind(path).width}`).join(", "),
 );
 check(
@@ -4812,7 +4921,7 @@ check(
     trainableUnitsForBuilding("building.armory.t1").join(",") === UNIT_PATHS.join(","),
 );
 check(
-  "BUILDING_CONTENT 覆盖全部九个经典建筑",
+  "BUILDING_CONTENT 覆盖全部十二个经典建筑",
   BUILDING_CONTENT.size === CLASSIC_BUILDING_KINDS.length &&
     CLASSIC_BUILDING_KINDS.every((kind) => BUILDING_CONTENT.has(kind)),
   String(BUILDING_CONTENT.size),

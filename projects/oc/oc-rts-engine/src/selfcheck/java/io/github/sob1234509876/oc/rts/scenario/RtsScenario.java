@@ -4,6 +4,7 @@ import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.Player;
+import io.github.sob1234509876.oc.rts.PlayerId;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.combat.CombatStats;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
@@ -43,6 +44,7 @@ import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.order.MoveOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
+import io.github.sob1234509876.oc.rts.order.OrderQueue;
 import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.order.RepairOrder;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
@@ -52,6 +54,7 @@ import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.rts.visual.AnimationClips;
 import io.github.sob1234509876.oc.rts.visual.EntitySnapshot;
+import io.github.sob1234509876.oc.rts.visual.OrderLabels;
 import io.github.sob1234509876.oc.rts.visual.SnapshotFactory;
 import io.github.sob1234509876.oc.rts.visual.SpriteFrame;
 import io.github.sob1234509876.oc.rts.visual.SpriteSheet;
@@ -108,11 +111,13 @@ public final class RtsScenario {
         checkDimensions(check, content);
         checkCombat(check, content);
         checkBuildingCombat(check, content);
+        checkBuildingAttackers(check, content);
         checkBuildingCosts(check, content);
         checkBuildReach(check, content);
         checkFootprintBoundaries(check, content);
         checkBuildingUpgrades(check);
         checkCooperativeConstruction(check);
+        checkQueuedBuilds(check);
         checkBuilderArrival(check);
         checkRepairAndReclaim(check);
         checkWaypointsAndPaths(check);
@@ -1189,6 +1194,9 @@ public final class RtsScenario {
     /** A 1x1 building used for the mixed unit-versus-building tie break. */
     private static final String POST = "post";
 
+    /** A building with a weapon, used by the building-attacker checks. */
+    private static final String TOWER = "tower";
+
     /**
      * Combat: damage, armour, range, deterministic target selection, the attack orders and the kill
      * bookkeeping.
@@ -1540,6 +1548,84 @@ public final class RtsScenario {
                 1600);
         check.that(marchFinished, "an AttackMoveOrder with a building id reaches and kills the armoured building");
         check.that(!marcher.orders().hasCurrent(), "the attack-move order ends when the building dies");
+    }
+
+    /**
+     * A building with a weapon shoots the nearest hostile unit in range and never shoots itself, an ally
+     * or a neutral presence.
+     *
+     * <p>The engine's ownership model has no neutral faction: neutrality is a client presentation concept
+     * for the showroom player. The rule a turret can enforce is therefore the same one every unit uses -
+     * never an own entity, never a player on the same team - and that is what is asserted here. An
+     * attackable enemy building is deliberately not a target either: a defensive turret answers the units
+     * attacking it, not a distant structure.
+     */
+    private static void checkBuildingAttackers(Check check, ContentRegistry scenarioContent) {
+        check.section("12c) buildings shoot: nearest hostile unit, never self or ally");
+        ContentRegistry content = combatContent();
+        Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
+        Player red = Player.of(2, "Red", 0xFFEF5350);
+        BuildingType tower = content.building(TOWER);
+        check.equal(7L, tower.attackDamage(), "the tower declares 7 damage");
+        check.close(5f, tower.attackRange(), 1e-6f, "the tower reaches 5 tiles");
+        check.equal(10, tower.attackCooldownTicks(), "the tower fires every 10 ticks");
+        check.that(tower.canAttack(), "the building type reports that it can attack");
+
+        // --- a hostile unit in range takes damage on the first tick and the nearest one is preferred
+        OcRtsEngine shot = combatEngine(content, blue, red);
+        World shotWorld = shot.world();
+        List<Events.DamageDealt> hits = new ArrayList<>();
+        shotWorld.events().subscribe(Events.DamageDealt.class, hits::add);
+        Building towerBuilding = shotWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
+        Unit near = shotWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(23.5f, 21.5f));
+        Unit far = shotWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(25.5f, 21.5f));
+        check.equal(30L, near.health().current(), "the nearest hostile unit starts at full health");
+        shot.tick(1);
+        check.equal(23L, near.health().current(), "the tower hits the nearest hostile unit for 7 on tick 1");
+        check.equal(30L, far.health().current(), "the further hostile unit is untouched while the near one stands");
+        check.equal(1, hits.size(), "the tower published exactly one DamageDealt event");
+        check.equal(towerBuilding.id(), hits.get(0).source().id(), "the building is the recorded attacker");
+        check.equal(near.id(), towerBuilding.targetId(), "the tower records the nearest unit as its target");
+
+        // --- out of range: no shot at all
+        OcRtsEngine outside = combatEngine(content, blue, red);
+        World outsideWorld = outside.world();
+        outsideWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
+        Unit distant = outsideWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(30.5f, 21.5f));
+        outside.tick(5);
+        check.equal(30L, distant.health().current(), "a hostile unit outside the 5 tile range is never hit");
+
+        // --- own and allied units are never targets; a neutral showroom player is not on a team
+        OcRtsEngine safe = combatEngine(content, blue, red);
+        World safeWorld = safe.world();
+        Player ally = new Player(PlayerId.of(3), "Ally", 0xFF66BB6A, blue.team(), false);
+        safeWorld.addPlayer(ally);
+        Building safeTower = safeWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
+        Unit own = safeWorld.spawnUnit(content.unit(DUMMY), blue, new Vec2(22.5f, 21.5f));
+        Unit friendly = safeWorld.spawnUnit(content.unit(DUMMY), ally, new Vec2(20.5f, 23.5f));
+        safe.tick(20);
+        check.equal(30L, own.health().current(), "an own unit is never shot by an own building");
+        check.equal(30L, friendly.health().current(), "an allied unit is never shot");
+        check.that(safeTower.targetId() == null, "with only own and allied units the tower has no target");
+
+        // --- a hostile building in range is not a unit target
+        OcRtsEngine structure = combatEngine(content, blue, red);
+        World structureWorld = structure.world();
+        Building attackerTower = structureWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
+        Building enemyWall = structureWorld.spawnBuilding(content.building(WALL), red, new GridPos(23, 21));
+        structure.tick(5);
+        check.equal(30L, enemyWall.health().current(),
+                "a hostile building in range is not shot: buildings target units only");
+        check.that(attackerTower.targetId() == null, "and the tower records no target");
+
+        // --- a site under construction does not shoot
+        OcRtsEngine unfinished = combatEngine(content, blue, red);
+        World unfinishedWorld = unfinished.world();
+        Building site = unfinishedWorld.placeBuilding(tower, blue, new GridPos(20, 20));
+        Unit visitor = unfinishedWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(23.5f, 21.5f));
+        unfinished.tick(3);
+        check.that(!site.isConstructed(), "the site is still under construction");
+        check.equal(30L, visitor.health().current(), "an unfinished building does not shoot");
     }
 
     /** Tick one duelist needs to destroy a building type, or {@code -1} when nothing died. */
@@ -2265,6 +2351,99 @@ public final class RtsScenario {
                 + firstFingerprint.lines().findFirst().orElse("<empty>"));
     }
 
+    // ------------------------------------------------------------------ 16c) queued builds
+
+    /**
+     * Three Shift-queued builds run in the order they were queued, and one order failing does not cancel
+     * the rest.
+     *
+     * <p>This is the engine half of item 27. {@link UnitDirector#tryQueueBuild} places and charges a site
+     * exactly like the plain command, but appends the {@link BuildOrder} instead of replacing the queue.
+     * The first case proves the queue order and the labels the snapshot sends; the second destroys the
+     * middle site after queueing and proves the third order still runs - the existing {@link OrderQueue}
+     * rule is that a terminal state starts the next pending order on the following tick, so a failure
+     * never cancels the rest.
+     */
+    private static void checkQueuedBuilds(Check check) {
+        check.section("16c) queued build tasks run in order and a failure does not cancel the rest");
+        ContentRegistry content = cooperativeContent();
+        BuildingType hut = content.building(COOP_HUT);
+        ItemType gold = content.item("gold");
+
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 601L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(content.building(COOP_DEPOT), player, new GridPos(10, 10));
+        check.that(player.logistics().deposit(ItemBundle.of(gold, 1000), warehouse.position()).isEmpty(),
+                "the queued-build check starts with 1000 gold in the depot");
+        Unit builder = world.spawnUnit(content.unit(COOP_BUILDER), player, new GridPos(14, 14));
+
+        GridPos[] origins = {new GridPos(16, 10), new GridPos(16, 14), new GridPos(16, 18)};
+        List<Building> sites = new ArrayList<>();
+        Natural goldBefore = player.logistics().amount(gold);
+        for (int index = 0; index < origins.length; index++) {
+            var result = engine.commands().tryQueueBuild(builder, hut, origins[index]);
+            check.that(result.placed(), "queued build " + (index + 1) + " is placed: " + result.refusal());
+            if (result.placed()) {
+                sites.add(result.site());
+            }
+        }
+        check.equal(3, builder.orders().size(), "all three build orders are in the one engineer's queue");
+        check.equal(3, sites.size(), "all three sites exist immediately, because placement is synchronous");
+        check.equal(Natural.of(30), goldBefore.subtractClamped(player.logistics().amount(gold)),
+                "queueing three 10 gold huts charges exactly 30 gold at placement time");
+        List<String> labels = OrderLabels.of(builder);
+        check.equal(List.of("建造 Hut @ (16,10)", "建造 Hut @ (16,14)", "建造 Hut @ (16,18)"), labels,
+                "the snapshot labels list the queued builds in execution order");
+        EntitySnapshot captured = engine.snapshot(new GridPos(16, 14), 32).entity(builder.id()).orElseThrow();
+        check.equal(labels, captured.orderQueue(),
+                "the engine snapshot carries the same capped order list");
+
+        engine.tick(240);
+        boolean allBuilt = true;
+        for (Building site : sites) {
+            allBuilt &= site.isConstructed() && site.isAlive();
+        }
+        check.that(allBuilt, "the engineer finishes all three queued sites in order");
+        check.that(builder.orders().isEmpty(), "the queue is empty when the last site completes");
+        for (int index = 0; index < sites.size(); index++) {
+            check.that(sites.get(index).isConstructed(), "site " + (index + 1) + " is constructed");
+        }
+
+        // --- the middle site is destroyed after queueing: the third order must still run
+        OcRtsEngine damaged = flatEngine(content, VisualLibrary.empty(), 602L);
+        Player damagedPlayer = damaged.players().get(0);
+        World damagedWorld = damaged.world();
+        Building damagedWarehouse = damagedWorld.spawnBuilding(content.building(COOP_DEPOT), damagedPlayer,
+                new GridPos(10, 10));
+        damagedPlayer.logistics().deposit(ItemBundle.of(gold, 1000), damagedWarehouse.position());
+        Unit damagedBuilder = damagedWorld.spawnUnit(content.unit(COOP_BUILDER), damagedPlayer,
+                new GridPos(14, 14));
+        List<Building> damagedSites = new ArrayList<>();
+        for (GridPos origin : origins) {
+            damagedSites.add(damaged.commands().tryQueueBuild(damagedBuilder, hut, origin).site());
+        }
+        damagedWorld.destroy(damagedSites.get(1));
+        check.that(!damagedSites.get(1).isAlive(), "the middle site is destroyed before its order starts");
+        damaged.tick(240);
+        check.that(damagedSites.get(0).isAlive() && damagedSites.get(0).isConstructed(),
+                "the first queued site still completes");
+        check.that(damagedSites.get(2).isAlive() && damagedSites.get(2).isConstructed(),
+                "the third queued site completes even though the middle order failed");
+        check.that(damagedBuilder.orders().isEmpty(), "the failed middle order did not leave the queue stuck");
+
+        // --- the snapshot list is capped with a marker
+        OrderQueue longQueue = new OrderQueue();
+        for (int index = 1; index <= 10; index++) {
+            longQueue.push(new MoveOrder(new GridPos(index, 0)));
+        }
+        List<String> capped = OrderLabels.of(longQueue);
+        check.equal(OrderLabels.MAX_ORDER_LABELS, capped.size(), "a ten order queue is capped at 8 entries");
+        check.equal("… 还有 3 项", capped.get(capped.size() - 1),
+                "the last capped entry is the truncation marker, not a task");
+        check.equal("移动 → (1,0)", capped.get(0), "the head of the capped list is the first task");
+    }
+
     // ------------------------------------------------------------------ 16b) the builder must arrive first
 
     /**
@@ -2853,6 +3032,8 @@ public final class RtsScenario {
                 .building(WALL).name("Wall").size(3, 3).health(30).spriteSet(WALL)
                 .building(BUNKER).name("Bunker").size(3, 3).health(30).armour(5).spriteSet(BUNKER)
                 .building(POST).name("Post").size(1, 1).health(30).spriteSet(POST)
+                .building(TOWER).name("Tower").size(2, 2).health(100).attack(7f, 5f)
+                        .attackCooldown(10).spriteSet(TOWER)
                 .build();
     }
 

@@ -198,6 +198,7 @@ public final class SnapshotFactory {
             }
         }
         String task = entity instanceof Unit unit ? UnitTask.of(unit).orElse(null) : null;
+        List<String> orderQueue = entity instanceof Unit unit ? OrderLabels.of(unit) : List.of();
         return new EntitySnapshot(
                 entity.id(),
                 entity.typeKey(),
@@ -224,7 +225,8 @@ public final class SnapshotFactory {
                 target,
                 producingNow,
                 demand,
-                task);
+                task,
+                orderQueue);
     }
 
     /**

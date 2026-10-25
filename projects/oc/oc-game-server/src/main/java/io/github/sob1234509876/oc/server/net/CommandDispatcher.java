@@ -45,7 +45,7 @@ import java.util.function.Supplier;
  * ORDER ATTACK &lt;entityId&gt; &lt;targetId&gt; -&gt; OK | ERR &lt;reason&gt;
  * ORDER ATTACKMOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; -&gt; OK | ERR &lt;reason&gt;
  * ORDER STOP &lt;entityId&gt;              -&gt; OK | ERR &lt;reason&gt;
- * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
+ * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; [queue] -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
  * TRAIN &lt;buildingId&gt; &lt;unitPath&gt;      -&gt; OK | ERR &lt;reason&gt;
  * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
  * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; -&gt; OK | ERR &lt;reason&gt;
@@ -405,18 +405,32 @@ public final class CommandDispatcher {
     }
 
     /**
-     * {@code BUILD <engineerId> <buildingPath> <x> <y>}: place a site, pay for it and start building.
+     * {@code BUILD <engineerId> <buildingPath> <x> <y> [queue]}: place a site, pay for it and start
+     * building, or append the order to the engineer's queue when the optional literal {@code queue} is
+     * present.
      *
-     * <p>The cost is charged by {@link UnitDirector#tryBuild} on the world thread, so the answer either
-     * carries the new building id or the director's exact refusal (unaffordable, out of reach, occupied,
-     * not commandable). The refusal text is forwarded verbatim, so a client that paints {@code ERR ...}
-     * lines red shows the engine's own reason. No path is fabricated here: an unknown or malformed content
-     * path is
+     * <p>The cost is charged by {@link UnitDirector#tryBuild} (or
+     * {@link UnitDirector#tryQueueBuild}) on the world thread, so the answer either carries the new
+     * building id or the director's exact refusal (unaffordable, out of reach, occupied, not commandable).
+     * The refusal text is forwarded verbatim, so a client that paints {@code ERR ...} lines red shows the
+     * engine's own reason. No path is fabricated here: an unknown or malformed content path is
      * {@link #ERR_UNKNOWN_BUILDING} before the director is asked.
+     *
+     * <p><strong>The queue token is the Shift-click form.</strong> A plain four-token line keeps the
+     * historical replace semantics: the engineer drops what it was doing and builds this site. The
+     * five-token form appends one build order per site, in the order the lines arrive, so a browser can
+     * send three {@code BUILD ... queue} lines and the engineer executes them in order. The token is
+     * deliberately a plain word rather than a second command: an older server answers
+     * {@link #ERR_BAD_ARGUMENTS} instead of silently treating a queue command as a plain build, and the
+     * four-token form is byte-identical to the old grammar.
      */
     private PendingAnswer build(String rest, Session session) {
         String[] tokens = split(rest);
-        if (tokens.length != 4) {
+        if (tokens.length != 4 && tokens.length != 5) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        boolean queue = tokens.length == 5 && "queue".equalsIgnoreCase(tokens[4]);
+        if (tokens.length == 5 && !queue) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
         OptionalLong unitId = parseId(tokens[0]);
@@ -426,6 +440,7 @@ public final class CommandDispatcher {
         if (unitId.isEmpty() || x.isEmpty() || y.isEmpty()) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
+        boolean append = queue;
         return worldGameplay(session, (host, player) -> {
             UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
             if (unit.error() != null) {
@@ -435,8 +450,11 @@ public final class CommandDispatcher {
             if (type == null) {
                 return ERR_UNKNOWN_BUILDING;
             }
-            UnitDirector.BuildResult result = host.engine().commands()
-                    .tryBuild(unit.unit(), type, new GridPos(x.getAsInt(), y.getAsInt()));
+            UnitDirector.BuildResult result = append
+                    ? host.engine().commands().tryQueueBuild(unit.unit(), type,
+                            new GridPos(x.getAsInt(), y.getAsInt()))
+                    : host.engine().commands().tryBuild(unit.unit(), type,
+                            new GridPos(x.getAsInt(), y.getAsInt()));
             return result.placed() ? "OK " + result.site().id().value() : "ERR " + result.refusal();
         });
     }

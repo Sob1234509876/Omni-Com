@@ -111,14 +111,21 @@ function isCombatUnit(entity: EntityView): boolean {
   if (isBuildingEntityKind(entity.kind)) {
     return false;
   }
-  // A positive attack damage is the concrete meaning of "attack capable"; the role is the declared
-  // fallback for a unit whose damage the snapshot does not repeat. The current server sends neither,
-  // so the content path decides in that case.
+  // The declared role wins when the snapshot sends one: the engineer has a small attack, so a positive
+  // `attackDamage` alone would wrongly promote it into the combat group. The damage is the fallback for
+  // a snapshot that carries the weapon but not the role, and the content path is the last fallback for
+  // the oldest snapshots, which carry neither.
+  if (entity.role !== undefined) {
+    const role = entity.role.trim().toLowerCase();
+    if (role === "combat") {
+      return true;
+    }
+    if (role === "worker" || role === "support") {
+      return false;
+    }
+  }
   if (entity.attackDamage !== undefined && entity.attackDamage > 0) {
     return true;
-  }
-  if (entity.role !== undefined) {
-    return entity.role.trim().toLowerCase() === "combat";
   }
   return isCombatKind(entity.kind);
 }

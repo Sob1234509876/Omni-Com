@@ -1560,6 +1560,16 @@ public final class WorldHost {
      * {@link Unit#cargo()} for a unit, the same sources the logistics network uses, so the two cannot
      * disagree about a stored or carried item.
      *
+     * <p><strong>Combat identity and the order queue.</strong> A unit row always carries {@code role}
+     * ({@code combat} / {@code worker} / {@code support}); a unit or building whose content declares a weapon
+     * also carries {@code attackDamage} and {@code attackRange}, the two numbers the selection panel prints
+     * and the combat layer actually fires with. A unit with at least one order carries {@code orderQueue}, an
+     * array of ready-to-show task labels in execution order ({@code 建造 兵工厂 @ (12,5)},
+     * {@code 修理 #42}, {@code 搬运 → 仓库}) built by the engine's {@code OrderLabels}. The array is capped
+     * at eight entries including a `… 还有 N 项` marker, so a player who Shift-queues twenty sites cannot grow
+     * the document without bound; the engine queue itself keeps every order. All of these fields are additive
+     * and presentational: an older client ignores them.
+     *
      * <p><strong>Upgrade offers.</strong> A finished building whose content type names a successor also
      * carries {@code upgrade}, for example
      * {@code "upgrade":{"to":"building.armory.t2","gold":140,"wood":40}}. {@code to} is the successor's
@@ -1789,8 +1799,10 @@ public final class WorldHost {
             appendContents(json, entity);
             appendUpgradeOffer(json, entity, goldItem, woodItem);
             appendBuildingServices(json, entity, goldItem, woodItem);
+            appendCombat(json, entity);
             appendUnitPath(json, entity);
             appendTask(json, entity);
+            appendOrderQueue(json, entity);
             appendPop(json, entity);
             json.append('}');
         }
@@ -2102,6 +2114,63 @@ public final class WorldHost {
         json.append(",\"reclaim\":{\"gold\":").append(amountOf(refund, goldItem))
                 .append(",\"wood\":").append(amountOf(refund, woodItem))
                 .append('}');
+    }
+
+    /**
+     * Appends the optional combat identity of an entity:
+     * {@code ,"role":"combat","attackDamage":18,"attackRange":7.5}.
+     *
+     * <p>A unit row carries its {@link UnitRole#id() role} always, because the client's marquee priority
+     * needs to tell a soldier from an engineer that also has a small attack. A unit or building that can
+     * attack carries the two numbers the selection panel prints; a worker without a weapon, a warehouse
+     * and every non-combat building omit them. A building type's weapon is the same data the combat
+     * system fires, so the HUD cannot promise a range the engine does not use. The fields are additive:
+     * an older client ignores them, and a newer client falls back to the content path when `role` is
+     * absent.
+     */
+    private static void appendCombat(StringBuilder json, Entity entity) {
+        if (entity instanceof Unit unit) {
+            json.append(",\"role\":");
+            appendJsonString(json, unit.role().id());
+            if (!unit.combat().canAttack()) {
+                return;
+            }
+            json.append(",\"attackDamage\":").append(unit.combat().attackDamage().toLongSaturated())
+                    .append(",\"attackRange\":").append(oneDecimal(unit.combat().attackRange()));
+            return;
+        }
+        if (entity instanceof Building building && building.type().canAttack()) {
+            json.append(",\"attackDamage\":").append(building.type().attackDamage().toLongSaturated())
+                    .append(",\"attackRange\":").append(oneDecimal(building.type().attackRange()));
+        }
+    }
+
+    /**
+     * Appends a unit's capped task queue: {@code ,"orderQueue":["建造 兵工厂 @ (12,5)","修理 #42"]}.
+     *
+     * <p>The labels come from the engine's {@link io.github.sob1234509876.oc.rts.visual.OrderLabels},
+     * which is the one implementation shared with the engine snapshot. The list is in execution order,
+     * active order first, and is capped at
+     * {@link io.github.sob1234509876.oc.rts.visual.OrderLabels#MAX_ORDER_LABELS} entries; a longer queue
+     * ends with a marker such as {@code … 还有 5 项} instead of growing the document without bound. A
+     * building row, an idle unit and an older engine omit the field entirely.
+     */
+    private static void appendOrderQueue(StringBuilder json, Entity entity) {
+        if (!(entity instanceof Unit unit)) {
+            return;
+        }
+        List<String> labels = io.github.sob1234509876.oc.rts.visual.OrderLabels.of(unit);
+        if (labels.isEmpty()) {
+            return;
+        }
+        json.append(",\"orderQueue\":[");
+        for (int index = 0; index < labels.size(); index++) {
+            if (index > 0) {
+                json.append(',');
+            }
+            appendJsonString(json, labels.get(index));
+        }
+        json.append(']');
     }
 
     /**

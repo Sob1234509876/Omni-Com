@@ -78,6 +78,21 @@ public final class OrderQueue {
         return Collections.unmodifiableList(new ArrayList<>(pending));
     }
 
+    /**
+     * Every order in execution order: the active order first (when there is one), then the pending ones.
+     *
+     * <p>This is the read-only view a HUD needs to list a unit's tasks in the order the queue will run
+     * them. It is a snapshot, so a caller may walk it while the queue advances.
+     */
+    public List<Order> orders() {
+        List<Order> all = new ArrayList<>(size());
+        if (current != null) {
+            all.add(current);
+        }
+        all.addAll(pending);
+        return List.copyOf(all);
+    }
+
     /** Total number of orders, including the active one. */
     public int size() {
         return pending.size() + (current == null ? 0 : 1);

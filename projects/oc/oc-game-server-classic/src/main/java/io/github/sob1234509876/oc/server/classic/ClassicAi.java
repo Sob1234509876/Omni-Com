@@ -68,12 +68,14 @@ import java.util.Objects;
  * <p>Whatever the state, the standing economy rules run on every decision except during a defence: first
  * upgrade the base (an idle, finished armory below the top tier when the warehouses can pay the step),
  * then keep at least {@value #ENGINEER_TARGET} engineers alive (train them in an armory) and
- * {@value #MINE_TARGET} mines plus {@value #LUMBER_TARGET} lumber camp standing (place a site with the
- * engine's {@link UnitDirector#build} and let an idle builder raise it), and train the army while it is
- * below {@value #ARMY_TARGET}. At most one production job, building site or upgrade is started per
- * decision, so the AI cannot drain its stock or its builders in a single tick. The lumber camp matters
- * because every armory upgrade costs wood and the opening stock is finite; the AI raises a
- * {@code building.lumbercamp.t1} with the same bounded site search it uses for every other building.
+ * {@value #MINE_TARGET} mines, {@value #LUMBER_TARGET} lumber camp and {@value #TURRET_TARGET} turret
+ * standing (place a site with the engine's {@link UnitDirector#build} and let an idle builder raise it), and
+ * train the army while it is below {@value #ARMY_TARGET}. At most one production job, building site or
+ * upgrade is started per decision, so the AI cannot drain its stock or its builders in a single tick. The
+ * lumber camp matters because every armory upgrade costs wood and the opening stock is finite; the AI raises
+ * a {@code building.lumbercamp.t1} with the same bounded site search it uses for every other building. The
+ * turret is placed once the armory exists and its 120 gold + 20 wood price is covered, before the second mine
+ * and the lumber camp, and is then upgraded in place while the next unit wave is still gathering.
  *
  * <h2>The armory upgrade</h2>
  *
@@ -190,6 +192,17 @@ public final class ClassicAi implements WorldTickHook {
 
     /** Lumber camps the AI tries to keep standing, so it has a renewable source of wood. */
     public static final int LUMBER_TARGET = 1;
+
+    /**
+     * Turrets the AI keeps at its base.
+     *
+     * <p>One, like the armory: once the armory exists and the stock covers the turret's 120 gold + 20 wood,
+     * the AI raises a {@code building.turret.t1} before the second mine and the lumber camp, then upgrades
+     * that one building instead of adding more. The upgrade is bought before the next unit wave when the
+     * army is still gathering and the warehouses can pay the step; once the army is already at its wave size
+     * the turret waits, because the wave has priority.
+     */
+    public static final int TURRET_TARGET = 1;
 
     /** Army size the AI grows towards; past it the AI stops training troops. */
     public static final int ARMY_TARGET = 8;
@@ -441,7 +454,17 @@ public final class ClassicAi implements WorldTickHook {
         return false;
     }
 
-    /** Places the missing armory, mine or lumber camp with an idle builder, and upgrades when due. */
+    /**
+     * Places the missing armory, mine, lumber camp or turret with an idle builder, and upgrades when due.
+     *
+     * <p>The order is deliberate: armory first (it produces the army), then the first turret **as soon as
+     * it can be paid for**, then the rest of the economy. Putting the turret ahead of the second mine and
+     * the lumber camp is what makes "build one turret once it can afford it" observable: after the armory
+     * upgrade the opening stock is exactly enough for a t1 turret, so a default bot raises it on its next
+     * decision instead of spending the same gold on another mine. A later decision upgrades it through
+     * {@link #upgradeTurret}. At most one site or upgrade is started per decision, so the turret never
+     * drains the stock a training job needed.
+     */
     private void upkeepBuildings(World world, Player ai, List<Unit> units, List<Building> buildings) {
         // The legacy style (and therefore the default one-bot world) upgrades first: an affordable, idle
         // armory is turned into t2 before any site is considered. The other style fills a missing economy
@@ -452,10 +475,26 @@ public final class ClassicAi implements WorldTickHook {
         BuildingType type = null;
         if (countTag(buildings, ClassicContent.ARMORY_TAG) < ARMORY_TARGET) {
             type = buildingType(world, ClassicContent.ARMORY_T1);
+        } else if (countTag(buildings, ClassicContent.TURRET_TAG) < TURRET_TARGET) {
+            BuildingType turret = buildingType(world, ClassicContent.TURRET_T1);
+            // "once it can afford it": an unaffordable turret is not selected, so the decision can still
+            // spend the same stock on an upgrade or a unit instead of failing a placement every 20 ticks.
+            if (turret != null && ai.hasLogistics() && ai.logistics().hasAvailable(turret.cost())) {
+                type = turret;
+            }
         } else if (countTag(buildings, ClassicContent.MINE_TAG) < strategy.mineTarget()) {
             type = buildingType(world, ClassicContent.MINE_T1);
         } else if (countTag(buildings, ClassicContent.LUMBER_TAG) < LUMBER_TARGET) {
             type = buildingType(world, ClassicContent.LUMBERCAMP_T1);
+        }
+        if (type == null && countTag(buildings, ClassicContent.TURRET_TAG) < TURRET_TARGET) {
+            // The turret is missing but unaffordable: fall through to the rest of the economy rather than
+            // standing still, and retry the turret on a later decision.
+            if (countTag(buildings, ClassicContent.MINE_TAG) < strategy.mineTarget()) {
+                type = buildingType(world, ClassicContent.MINE_T1);
+            } else if (countTag(buildings, ClassicContent.LUMBER_TAG) < LUMBER_TARGET) {
+                type = buildingType(world, ClassicContent.LUMBERCAMP_T1);
+            }
         }
         if (type != null) {
             Unit builder = idleBuilder(units);
@@ -469,9 +508,56 @@ public final class ClassicAi implements WorldTickHook {
             director(world).build(builder, type, origin);
             return;
         }
+        if (upgradeTurret(world, ai, buildings, units)) {
+            return;
+        }
         if (!strategy.upgradeArmoryFirst()) {
             upgradeArmory(world, ai, buildings);
         }
+    }
+
+    /**
+     * Upgrades the AI's finished, idle turret one tier when it is still gathering the next wave.
+     *
+     * <p>The rule is deterministic: walk the AI's buildings in entity id order, take the first finished
+     * turret below the top tier with an empty production queue, and pay the step only when the stock covers
+     * it and the army is below the next wave size ({@code armyTarget} before the first march,
+     * {@code attackArmySize} after it). "Before the next unit wave" is exactly that guard: while the wave
+     * is already full the turret waits, so the upgrade cannot starve the units that are about to march.
+     * One attempt per decision; a refusal still counts as the decision's project, like the armory rule.
+     *
+     * @return whether an affordable, idle turret upgrade was attempted
+     */
+    private boolean upgradeTurret(World world, Player ai, List<Building> buildings, List<Unit> units) {
+        if (!ai.hasLogistics()) {
+            return false;
+        }
+        int waveSize = hasAttacked ? strategy.attackArmySize() : strategy.armyTarget();
+        if (countArmy(units) >= waveSize) {
+            return false;
+        }
+        for (Building building : buildings) {
+            if (!building.isAlive() || !building.isConstructed()
+                    || !building.type().hasTag(ClassicContent.TURRET_TAG)) {
+                continue;
+            }
+            var upgradeKey = building.type().upgradeTo();
+            if (upgradeKey.isEmpty() || world.content().buildingOrNull(upgradeKey.get()) == null) {
+                continue;
+            }
+            if (!ai.logistics().hasAvailable(building.type().upgradeCost())) {
+                continue;
+            }
+            boolean idle = world.production().queue(building)
+                    .map(ProductionQueue::isEmpty)
+                    .orElse(true);
+            if (!idle) {
+                continue;
+            }
+            director(world).upgradeBuilding(building);
+            return true;
+        }
+        return false;
     }
 
     /**

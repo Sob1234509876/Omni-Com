@@ -216,6 +216,34 @@ public final class PlayerCommandCheck {
         check.equal(Natural.of(20), woodBefore.subtractClamped(human.logistics().amount(wood)),
                 "BUILD 恰好扣掉 20 木材");
 
+        check.section("玩家命令：BUILD 的 queue 形式把任务追加到工程师队列");
+        // A clear corridor to the second site, so the only thing under test is the queue token.
+        for (int y = 34; y <= 40; y++) {
+            world.map().setTerrain(new GridPos(18, y), host.content().terrain("grass"));
+        }
+        world.map().setTerrain(new GridPos(19, 36), host.content().terrain("grass"));
+        Natural queueGoldBefore = human.logistics().amount(gold);
+        Natural queueWoodBefore = human.logistics().amount(wood);
+        String queueAnswer = run(dispatcher, host, first,
+                "BUILD " + builder.id().value() + " " + ARMORY_T1 + " 20 36 queue");
+        check.that(queueAnswer.startsWith("OK "), "带 queue 的 BUILD 成功并返回建筑 id: " + queueAnswer);
+        check.equal(2, builder.orders().size(),
+                "普通 BUILD 的订单仍在队首，queue 的第二个订单被追加到它后面");
+        check.equal(Natural.of(100), queueGoldBefore.subtractClamped(human.logistics().amount(gold)),
+                "queue 的 BUILD 同样按放置扣 100 金币");
+        check.equal(Natural.of(20), queueWoodBefore.subtractClamped(human.logistics().amount(wood)),
+                "queue 的 BUILD 同样扣 20 木材");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "BUILD " + builder.id().value() + " " + ARMORY_T1 + " 20 40 nope"),
+                "第五个 token 不是 queue 时回答 ERR bad arguments");
+        String snapshot = host.snapshotJson();
+        check.that(snapshot.contains("\"orderQueue\":["),
+                "快照为有任务的单位带 orderQueue 数组");
+        check.that(snapshot.contains("建造 Armory T1"),
+                "orderQueue 的标签由引擎的 OrderLabels 生成（含建筑显示名）");
+        check.that(snapshot.contains("\"attackDamage\":10") && snapshot.contains("\"attackRange\":0.9"),
+                "快照为能攻击的单位带 attackDamage / attackRange");
+
         check.section("玩家命令：BUILD 的射程由引擎判定");
         Natural goldAfterReach = human.logistics().amount(gold);
         Natural woodAfterReach = human.logistics().amount(wood);
@@ -448,7 +476,10 @@ public final class PlayerCommandCheck {
                 "回收返还一半木材（10），不额外扣费");
         check.that(site != null && !site.isAlive(), "回收后工地把被销毁");
         check.that(site != null && site.builderCount() == 0, "回收后工地不再挂着建造者");
-        check.that(builder.orders().isEmpty(), "被回收工地的建造者不再持有建造命令");
+        check.that(builder.orders().orders().stream().noneMatch(order ->
+                        order instanceof io.github.sob1234509876.oc.rts.order.BuildOrder buildOrder
+                                && buildOrder.site() == site),
+                "被回收工地的建造者不再持有该工地的建造命令（后面排队的工地不受影响）");
         boolean reclaimedReason = reclaimEvents.stream().anyMatch(event ->
                 event.state() == io.github.sob1234509876.oc.rts.order.OrderState.FAILED
                         && event.reason().contains("reclaimed"));

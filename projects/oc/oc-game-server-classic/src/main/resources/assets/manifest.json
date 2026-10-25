@@ -38,6 +38,9 @@
     "building.lumbercamp.t1": { "frames": [[64, 64, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "伐木场 普通" },
     "building.lumbercamp.t2": { "frames": [[0, 96, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "伐木场 强化" },
     "building.lumbercamp.t3": { "frames": [[32, 96, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "伐木场 精英" },
-    "building.warehouse": { "frames": [[64, 96, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "仓库" }
+    "building.warehouse": { "frames": [[64, 96, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "仓库" },
+    "building.turret.t1": { "frames": [[0, 128, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "哨塔 普通" },
+    "building.turret.t2": { "frames": [[32, 128, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "哨塔 强化" },
+    "building.turret.t3": { "frames": [[64, 128, 32, 32]], "fps": 1, "anchor": [0.5, 0.9], "scale": 1, "name": "哨塔 精英" }
   }
 }

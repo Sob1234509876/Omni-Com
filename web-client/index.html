@@ -1021,6 +1021,12 @@
         font-variant-numeric: tabular-nums;
       }
 
+      /* The engineer's order queue (item 27): the same small rows as a production queue, but each line
+         is a ready-made task label from the snapshot and the list can be a little wider. */
+      .hud-orders .hud-queue-name {
+        max-width: 28ch;
+      }
+
       /* The hover tooltip is a small DOM box that follows the pointer. It is greyscale and translucent
          like every other chrome surface, never blurs the canvas, and never captures pointer input: the
          canvas keeps every click, drag and wheel event under it. */
@@ -1990,6 +1996,7 @@
               </div>
             </section>
             <div id="hud-queue" class="hud-queue" hidden></div>
+            <div id="hud-orders" class="hud-queue hud-orders" hidden></div>
           </aside>
         </div>
       </section>

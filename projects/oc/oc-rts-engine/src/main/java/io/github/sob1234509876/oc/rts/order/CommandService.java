@@ -283,6 +283,22 @@ public final class CommandService implements UnitDirector {
      */
     @Override
     public BuildResult tryBuild(Unit unit, BuildingType type, GridPos origin) {
+        return buildSite(unit, type, origin, false);
+    }
+
+    @Override
+    public BuildResult tryQueueBuild(Unit unit, BuildingType type, GridPos origin) {
+        return buildSite(unit, type, origin, true);
+    }
+
+    /**
+     * The one placement transaction: checks, reach, charge, site creation and the build order.
+     *
+     * <p>{@code append} is the only difference between a plain BUILD and a Shift-queued BUILD. Everything
+     * before it is shared, which is what makes "queue three sites" cost exactly the same as placing them
+     * one at a time and makes every refusal identical.
+     */
+    private BuildResult buildSite(Unit unit, BuildingType type, GridPos origin, boolean append) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(origin, "origin");
         if (!isCommandable(unit)) {
@@ -299,7 +315,7 @@ public final class CommandService implements UnitDirector {
         if (existing != null) {
             // A second engineer issued the same building on a site that is still being raised: join it
             // instead of refusing an occupied tile or placing a duplicate site.
-            return tryBuild(unit, existing);
+            return joinSite(unit, existing, append);
         }
         if (!world.canPlace(dimension, type, origin)) {
             return BuildResult.refused("cannot place " + type.key().path() + " at "
@@ -332,8 +348,18 @@ public final class CommandService implements UnitDirector {
         if (charge != null) {
             charge.commit();
         }
-        unit.orders().replace(context(unit), new BuildOrder(site));
+        enqueueBuild(unit, site, append);
         return BuildResult.placed(site);
+    }
+
+    /** Replaces the queue or appends one build order, according to the command form. */
+    private void enqueueBuild(Unit unit, Building site, boolean append) {
+        BuildOrder order = new BuildOrder(site);
+        if (append) {
+            unit.orders().push(order);
+        } else {
+            unit.orders().replace(context(unit), order);
+        }
     }
 
     /**
@@ -350,6 +376,16 @@ public final class CommandService implements UnitDirector {
      */
     @Override
     public BuildResult tryBuild(Unit unit, Building site) {
+        return joinSite(unit, site, false);
+    }
+
+    @Override
+    public BuildResult tryQueueBuild(Unit unit, Building site) {
+        return joinSite(unit, site, true);
+    }
+
+    /** The one join transaction; {@code append} selects queueing or the plain replacement form. */
+    private BuildResult joinSite(Unit unit, Building site, boolean append) {
         Objects.requireNonNull(site, "site");
         if (!isCommandable(unit)) {
             return BuildResult.refused("the builder cannot be commanded");
@@ -374,7 +410,7 @@ public final class CommandService implements UnitDirector {
                     + " (no path of at most " + (int) MAX_BUILD_PATH_TILES
                     + " tiles from the builder to the site)");
         }
-        unit.orders().replace(context(unit), new BuildOrder(site));
+        enqueueBuild(unit, site, append);
         return BuildResult.placed(site);
     }
 

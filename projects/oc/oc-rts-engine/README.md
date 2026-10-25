@@ -50,11 +50,12 @@ terrain streamed in and out per chunk, a unit walking 2000 tiles across an unbou
 chunk budget, a route around water, a squad forming up, warehouse gating of items, a barracks training
 soldiers, animation frames advancing, three dimensions simulated side by side, a melee fight, buildings
 that take damage and die, a charged building site, an in-place building upgrade that keeps its footprint,
-owner and health fraction, several engineers raising one site faster, and an ASCII picture of the world.
-A successful run ends with:
+owner and health fraction, several engineers raising one site faster, three Shift-queued builds running in
+order, a turret shooting the nearest hostile unit, and an ASCII picture of the world. A successful run ends
+with:
 
 ```text
-RTS engine scenario: all 681 checks passed.
+RTS engine scenario: all 720 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -80,10 +81,12 @@ What the scenario actually proves, section by section:
 | 11 dimensions | `moonAndMars()` gives three dimensions; two units spawned on the same tile of the overworld and the Moon keep separate ids, one entity per spatial index and no cross map neighbour; a far away Mars focus loads Mars chunks only; a move order keeps the unit on the Moon; destroying it leaves the overworld unit alive; two gateways chain the overworld to Mars through the Moon, the route is two hops, gateways are one way, and a travelling unit keeps its id and fires one `EntityTransferred` per hop |
 | 12 combat | a duelist and an unarmed dummy: exactly one kill on tick 21, three `DamageDealt` events of 10; a 10 damage hit on 5 hit points reports the 5 actually subtracted; armour 5 halves each hit; a 3 HP slab still dies to the floor of one; a range-zero unit never attacks; the nearest enemy wins with ties broken by id; `AttackOrder` chases, `AttackMoveOrder` engages and resumes; the kill clears the dead id from every unit's target |
 | 12b building targets | a 3x3 building takes hits and dies on tick 21 (armour 5 makes it tick 51), its kill publishes the ordinary `EntityKilled` and removes it from the world, the spatial index and the attacker's target; a mixed unit/building tie is still broken by id; `AttackOrder` and `AttackMoveOrder` both accept a building id, reach its footprint edge and kill it |
+| 12c building attackers | a 2x2 tower with a 5 tile, 7 damage, 10 tick weapon hits the nearest hostile unit on tick 1, leaves a farther one untouched, never fires at an own or allied unit, never spends a shot on a hostile building, and does not fire while still under construction; the building records its target and publishes the ordinary `DamageDealt` with itself as source |
 | 13 building cost | placing a building site charges exactly the catalogue cost once; an unaffordable second build and an occupied-tile placement are both refused, and neither charges anything |
 | 14 build reach | a site beside the builder is accepted and charged, a site twenty tiles away and a site walled off by water are refused as `out of reach`, and both refusals place nothing and leave no reservation |
 | 15 building upgrades | an affordable upgrade replaces the type at the same origin with the same owner and health fraction, charges the cost once, cancels the old production queue, clears the old id from a unit's combat target and from the spatial index, and leaves the replacement finished; unaffordable, missing-target and footprint-mismatch upgrades are refused with a readable reason, charge nothing and leave the old building standing; a type without `upgradeTo()` is not upgradable |
 | 16 cooperative construction | one builder finishes a 40 tick hut on tick 40, two on tick 20, four and five on tick 10 because the speed is capped at `min(builders, 4)`; each builder claims its own free approach-ring tile; the placement is charged once and every join is free; all attached orders report `COMPLETED` on the completion tick and leave every builder idle with no site reference; stopping one builder detaches it and the site keeps progressing at two points per tick; destroying the site fails every attached order on the destruction tick and charges nothing again; the same three builder script twice gives identical ticks, progress and order events |
+| 16c queued builds | three `tryQueueBuild` calls put three sites and three orders in one engineer's queue in click order, charge all three placements at once and finish all three; the snapshot's `orderQueue` lists `建造 Hut @ (16,10)` ... in order; destroying the middle site after queueing makes that order fail while the first and third still complete, because the next pending order starts on the following tick; a ten order queue is capped at eight entries and ends with `… 还有 3 项` |
 
 A real preview of the generated world, terrain only, one character per tile
 (`~` water, `:` sand, `.` grass, `f` forest, `^` hill, `#` rock; units are drawn as `C`, `W`, `S`):
@@ -115,6 +118,8 @@ ffffffff::::::fffffff::::::::~~~~~~~~~~~~~~~:::ff
 | 7 | Travel between maps through gateways | `World.addGateway`, `World.route`, `order.TransferOrder`, `order.UnitDirector.travel`, `event.Events.EntityTransferred` |
 | 8 | Units that fight units and buildings | `combat.CombatSystem`, `combat.CombatStats`, `order.AttackOrder`, `order.AttackMoveOrder`, `event.Events.DamageDealt`, `event.Events.EntityKilled` |
 | 9 | Several builders raising one site faster | `order.BuildOrder`, `order.UnitDirector.tryBuild(Unit, Building)`, `production.ConstructionSystem.MAX_BUILDERS_PER_SITE`, `entity.Building.builders()` |
+| 10 | Build order queueing (Shift-click) | `order.UnitDirector.tryQueueBuild`, `order.OrderQueue.push`, `visual.OrderLabels`, `visual.EntitySnapshot.orderQueue` |
+| 11 | Defensive buildings that shoot | `content.BuildingType.attackDamage/attackRange/attackCooldownTicks`, `combat.CombatSystem.nearestEnemyUnitInRange`, `entity.Building.targetId` |
 
 ## Architecture
 

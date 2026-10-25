@@ -153,6 +153,7 @@ record 的 26 个分量，顺序即声明顺序：
 | 24 | `producingNow` | `ProductionNow` | 生产队列当前任务的紧凑视图：产物内容路径、1 起的位置、未完成任务数；建筑无未完成任务时为 null |
 | 25 | `demand` | `ProductionDemand` | 当前任务的配方输入与建筑自身缓冲区的比较：`ready` 加每项 `need` / `have`（`have` 以 `need` 为上限）/ `stock`（所有者仓库未预留、可调拨的数量）；无当前任务时为 null |
 | 26 | `task` | `String` | 工程师的一行任务（`搬运中 → …` / `建造中 → …` / `修理中 → …` / `空闲`），其它实体为 null |
+| 27 | `orderQueue` | `List<String>` | 单位命令队列的**按执行顺序**标签（当前命令在前），最多 `OrderLabels.MAX_ORDER_LABELS = 8` 项；超过时最后一项是 `… 还有 N 项` 截断标记。建筑、空闲单位和旧快照为空列表 |
 
 构造期校验：`id`、`typeKey`、`position`、`anchorTile` 为 null 时抛 `IllegalArgumentException`；`path` 为 null 时归一成 `List.of()`。派生方法有五个：
 
@@ -171,6 +172,8 @@ entity.roleOrNull();    // 等同于 role()
 - 这是纯表现数据，不参与移动：移动系统始终消费完整的 `Motion.waypoints()`。协议层（`WorldHost.snapshotJson`）用同样的 64 点上限序列化成 `path` / `target` 两个可选字段，旧客户端忽略即可。
 
 **生产视图与任务字段。** `SnapshotFactory` 对已完工建筑读取 `world.production().queue(building)`：有队列时 `producingNow` 来自 `ProductionQueue.producingNow()`，`demand` 来自 `ProductionQueue.demand()`。`demand` 只比较该建筑自己的 `inventory()`，因为引擎的生产就是先把材料送进这个缓冲区再消耗；已经进入 `PRODUCING` / `WAITING_OUTPUT` 的任务报告 `ready = true`，输入已经被消耗，不能再用缓冲区反推出缺料。单位行的 `task` 来自 `UnitTask.of(unit)`：它只看单位命令队列的队首，`BuildOrder` / `RepairOrder` / `HaulOrder` 分别映射成三种任务，其它单位（以及战斗单位和建筑）没有这个字段，普通移动也不会被解释成任务。协议层把这三个视图序列化成同名可选字段，见 `WorldHost.snapshotJson()`；旧客户端忽略即可。
+
+**订单队列字段。** `orderQueue` 由 `OrderLabels.of(unit)` 生成，读取 `OrderQueue.orders()`（当前命令 + 待执行命令）：`建造 兵工厂 @ (12,5)`、`修理 #42`、`搬运 → 仓库`，其它命令回退为 `移动 → (x,y)` / `攻击 #42` / `原地待命` 或命令名。列表上限 8 项，超过时第 8 项是 `… 还有 N 项`：这是快照的容量规则，引擎队列本身不截断。`OrderLabels` 同时被引擎快照和 `WorldHost.snapshotJson()` 使用，所以两条输出不会出现不同措辞。Q14 的 Shift 队列语义见 `04-units-orders-and-movement.md` 的 `tryQueueBuild`。
 
 ## 五、`AsciiMapRenderer`：一个完整的消费示例
 

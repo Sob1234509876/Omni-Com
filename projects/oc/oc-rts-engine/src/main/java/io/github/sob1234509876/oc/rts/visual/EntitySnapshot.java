@@ -57,6 +57,8 @@ import java.util.List;
  * @param demand          the running job's recipe inputs against the building's own buffer, or
  *                        {@code null} when the building has no unfinished job
  * @param task            one-line task of an engineer, or {@code null} for every other entity
+ * @param orderQueue      capped labels of the unit's orders in execution order, from {@link OrderLabels};
+ *                        empty for a building, an idle unit and an older producer of this snapshot
  */
 public record EntitySnapshot(
         EntityId id,
@@ -84,7 +86,8 @@ public record EntitySnapshot(
         GridPos target,
         ProductionNow producingNow,
         ProductionDemand demand,
-        String task) {
+        String task,
+        List<String> orderQueue) {
 
     public EntitySnapshot {
         if (id == null) {
@@ -102,6 +105,7 @@ public record EntitySnapshot(
         displayName = displayName == null ? typeKey.path() : displayName;
         carrying = carrying == null ? ItemBundle.EMPTY : carrying;
         path = path == null ? List.of() : List.copyOf(path);
+        orderQueue = orderQueue == null ? List.of() : List.copyOf(orderQueue);
     }
 
     /** Whether the entity has a frame to draw right now. */

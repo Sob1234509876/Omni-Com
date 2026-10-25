@@ -234,6 +234,24 @@ export function stockTagVisible(
 }
 
 /**
+ * The combat chip of a unit or building: `攻击 18 · 射程 6`, or `null` when the row has no weapon.
+ *
+ * <p>A snapshot sends `attackDamage` and `attackRange` for any attacking entity; a building without a
+ * weapon (a warehouse, a mine) and an older snapshot omit them, so no line is invented. The range is
+ * printed without a decimal when it is a whole number and with one decimal otherwise, which keeps the
+ * classic values readable (`6`, `7.5`, `9`).
+ */
+export function combatLabel(entity: EntityView): string | null {
+  const damage = entity.attackDamage;
+  const range = entity.attackRange;
+  if (damage === undefined || range === undefined || damage <= 0 || range <= 0) {
+    return null;
+  }
+  const rangeText = Number.isInteger(range) ? String(range) : range.toFixed(1);
+  return `攻击 ${damage} · 射程 ${rangeText}`;
+}
+
+/**
  * The selected engineer's task line, `任务：搬运中 → 兵工厂`, or `null` when the row has no task.
  *
  * The server owns the task vocabulary; this helper only rejects a blank string and adds the HUD prefix,

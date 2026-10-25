@@ -115,10 +115,12 @@ export interface InputHooks {
   /** `Shift+M`: remove the most recently placed marker. The page reports an empty list on the status line. */
   readonly onRemoveMarker?: () => void;
   /**
-   * A plain left click on a world tile, before selection. Returning `true` consumes the click, which is
-   * how the build placement mode places a site instead of changing the selection.
+   * A left click on a world tile, before selection. Returning `true` consumes the click, which is how the
+   * build placement mode places a site instead of changing the selection. `shift` is the Shift state of
+   * that click: BUILD placement uses it to queue the task instead of issuing one order and clearing the
+   * mode.
    */
-  readonly onLeftClick?: (tile: TileCoord, targetId: number | null) => boolean;
+  readonly onLeftClick?: (tile: TileCoord, targetId: number | null, shift: boolean) => boolean;
   /**
    * Escape, before the default "clear selection". Returning `true` consumes the key, which is how an
    * armed build placement is cancelled without also deselecting the engineer.
@@ -381,7 +383,7 @@ export class InputController {
   private finishClick(screenX: number, screenY: number, shift: boolean): void {
     const targetId = this.pickEntity(screenX, screenY);
     const tile = this.hoverTileValue;
-    const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId) === true;
+    const consumed = tile !== null && this.hooks.onLeftClick?.(tile, targetId, shift) === true;
     if (consumed) {
       this.resetDoubleClick();
       return;

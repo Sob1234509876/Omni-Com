@@ -9,12 +9,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The {@code oc-classic} game: five melee tiers, an engineer, two armories, three mines, three lumber camps
- * and a warehouse.
+ * The {@code oc-classic} game: five melee tiers, an engineer, two armories, three mines, three lumber camps,
+ * three defensive turrets and a warehouse.
  *
  * <p><strong>The game.</strong> Everything a match needs is registered here, as data: four terrain kinds
  * (grass and sand are buildable, rock and water are not), two items ({@code gold} and {@code wood}), six
- * units, nine buildings and six production recipes. The engine never learns their names; the catalogue is
+ * units, twelve buildings and six production recipes. The engine never learns their names; the catalogue is
  * the game.
  *
  * <p><strong>Units.</strong> Five melee tiers with strictly ascending hit points, damage, armour, cost and
@@ -47,7 +47,7 @@ import java.util.Objects;
  * ({@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}), not a plugin convention:
  * {@code ProductionSystem.enqueue} refuses a recipe the building's level does not reach.
  *
- * <p><strong>The upgrade ladders.</strong> Every armory, mine and lumber camp tier above the first is also
+ * <p><strong>The upgrade ladders.</strong> Every armory, mine, lumber camp and turret tier above the first is also
  * reachable by upgrading the previous tier, which is the engine mechanic
  * {@link io.github.sob1234509876.oc.rts.content.BuildingType#upgradeTo()} /
  * {@link io.github.sob1234509876.oc.rts.content.BuildingType#upgradeCost()} executed by
@@ -69,13 +69,18 @@ import java.util.Objects;
  *       <td>80 + 80 = 160</td></tr>
  *   <tr><td>{@code building.lumbercamp.t2}</td><td>{@code building.lumbercamp.t3}</td><td>160 gold</td>
  *       <td>160 + 160 = 320</td></tr>
+ *   <tr><td>{@code building.turret.t1}</td><td>{@code building.turret.t2}</td><td>140 gold + 50 wood</td>
+ *       <td>120/20 + 140/50 = 260/70</td></tr>
+ *   <tr><td>{@code building.turret.t2}</td><td>{@code building.turret.t3}</td><td>260 gold + 90 wood</td>
+ *       <td>260/70 + 260/90 = 520/160</td></tr>
  * </table>
  *
- * <p>The top of each ladder - {@code building.armory.t2}, {@code building.mine.t3} and
- * {@code building.lumbercamp.t3} - declares no successor, so the client shows no 升级 entry for it and the
- * command answers that the building is the top of its ladder. {@link ClassicAi} upgrades an idle, finished
- * armory when it can afford the step instead of building a second t1 armory, so the enemy reaches the t4/t5
- * recipes through the mechanic rather than through a content handout.
+ * <p>The top of each ladder - {@code building.armory.t2}, {@code building.mine.t3},
+ * {@code building.lumbercamp.t3} and {@code building.turret.t3} - declares no successor, so the client shows
+ * no 升级 entry for it and the command answers that the building is the top of its ladder. {@link ClassicAi}
+ * upgrades an idle, finished armory when it can afford the step instead of building a second t1 armory, so the
+ * enemy reaches the t4/t5 recipes through the mechanic rather than through a content handout; it applies the
+ * same rule to its one turret, upgrading while the next wave is still gathering.
  *
  * <p>The mines are {@code building.mine.t1}/{@code .t2}/{@code .t3}, named 普通/强化/精英, with ascending
  * income rate and cost. <strong>Income is content data, not an engine mechanic</strong>: the engine has no
@@ -169,6 +174,13 @@ public final class ClassicContent implements WorldContent {
     /** The engine's drop off: a building flagged as a warehouse, exactly like the sample catalogue's. */
     public static final String WAREHOUSE = "building.warehouse";
 
+    public static final String TURRET_T1 = "building.turret.t1";
+    public static final String TURRET_T2 = "building.turret.t2";
+    public static final String TURRET_T3 = "building.turret.t3";
+
+    /** Tag shared by the three defensive turret tiers; {@link ClassicAi} counts them with it. */
+    public static final String TURRET_TAG = "turret";
+
     public static final String TRAIN_MELEE_T1 = "recipe.train.melee.t1";
     public static final String TRAIN_MELEE_T2 = "recipe.train.melee.t2";
     public static final String TRAIN_MELEE_T3 = "recipe.train.melee.t3";
@@ -239,6 +251,36 @@ public final class ClassicContent implements WorldContent {
             long woodPerMinute, long costGold, int buildTimeTicks, String upgradeTo, long upgradeGold) {
     }
 
+    /**
+     * One defensive turret tier.
+     *
+     * <p>All three tiers share the same 2 x 2 footprint because the engine's in-place upgrade replaces a
+     * building with a type of the same size; the footprint is still declared per tier in the table rather
+     * than assumed. Damage, range, health and cost ascend strictly; the tower does not need population or
+     * power, because the classic catalogue has neither system.
+     *
+     * @param tier the tier number, 1 to 3
+     * @param buildingPath content path of the building
+     * @param displayName Chinese display name
+     * @param level building level, for symmetry with the other ladders
+     * @param size footprint side in tiles (both dimensions)
+     * @param health hit points
+     * @param armour flat damage reduction
+     * @param damage damage per shot
+     * @param range reach in tiles
+     * @param attackCooldownTicks ticks between shots
+     * @param costGold build cost in gold
+     * @param costWood build cost in wood
+     * @param buildTimeTicks construction time
+     * @param upgradeTo next tier path, or {@code null} at the top
+     * @param upgradeGold gold paid for the upgrade step
+     * @param upgradeWood wood paid for the upgrade step
+     */
+    public record TurretTier(int tier, String buildingPath, String displayName, int level, int size,
+            long health, int armour, long damage, float range, int attackCooldownTicks, long costGold,
+            long costWood, int buildTimeTicks, String upgradeTo, long upgradeGold, long upgradeWood) {
+    }
+
     /** The five melee tiers, cheapest first. */
     private static final List<MeleeTier> MELEE_TIERS = List.of(
             new MeleeTier(1, MELEE_T1, "普通", 100, 10, 1, 20, 60),
@@ -271,6 +313,35 @@ public final class ClassicContent implements WorldContent {
             new LumberCampTier(1, LUMBERCAMP_T1, "普通", 1, 20, 80, 120, LUMBERCAMP_T2, 80),
             new LumberCampTier(2, LUMBERCAMP_T2, "强化", 2, 40, 160, 180, LUMBERCAMP_T3, 160),
             new LumberCampTier(3, LUMBERCAMP_T3, "精英", 3, 80, 320, 240, null, 0));
+
+    /**
+     * The three turret tiers, cheapest first.
+     *
+     * <p>The upgrade arithmetic follows the other classic ladders: the step costs are the differences
+     * between the catalogue prices, so {@code t1 cost + t1 upgrade = t2 cost} and
+     * {@code t2 cost + t2 upgrade = t3 cost} in both resources. The top tier has no successor. Costs are
+     * gold and wood only; there is no population or power requirement because the catalogue has neither
+     * system (Q15).
+     *
+     * <table border="1">
+     *   <caption>Turret tiers</caption>
+     *   <tr><th>Tier</th><th>HP</th><th>Armour</th><th>Damage</th><th>Range</th><th>Ticks</th>
+     *       <th>Build cost</th><th>Upgrade step</th></tr>
+     *   <tr><td>t1</td><td>450</td><td>2</td><td>18</td><td>6.0</td><td>120</td>
+     *       <td>120 gold + 20 wood</td><td>140 gold + 50 wood</td></tr>
+     *   <tr><td>t2</td><td>700</td><td>4</td><td>32</td><td>7.5</td><td>180</td>
+     *       <td>260 gold + 70 wood</td><td>260 gold + 90 wood</td></tr>
+     *   <tr><td>t3</td><td>1000</td><td>6</td><td>55</td><td>9.0</td><td>240</td>
+     *       <td>520 gold + 160 wood</td><td>- (top)</td></tr>
+     * </table>
+     */
+    private static final List<TurretTier> TURRET_TIERS = List.of(
+            new TurretTier(1, TURRET_T1, "哨塔·普通", 1, 2, 450, 2, 18, 6.0f, 30, 120, 20, 120,
+                    TURRET_T2, 140, 50),
+            new TurretTier(2, TURRET_T2, "哨塔·强化", 2, 2, 700, 4, 32, 7.5f, 26, 260, 70, 180,
+                    TURRET_T3, 260, 90),
+            new TurretTier(3, TURRET_T3, "哨塔·精英", 3, 2, 1000, 6, 55, 9.0f, 22, 520, 160, 240,
+                    null, 0, 0));
 
     /** Cost of the basic armory: gold and wood. */
     private static final long ARMORY_T1_GOLD = 100;
@@ -334,6 +405,11 @@ public final class ClassicContent implements WorldContent {
         return LUMBER_CAMP_TIERS;
     }
 
+    /** The three turret tiers, cheapest first. */
+    public static List<TurretTier> turretTiers() {
+        return TURRET_TIERS;
+    }
+
     @Override
     public String id() {
         return ID;
@@ -342,7 +418,7 @@ public final class ClassicContent implements WorldContent {
     @Override
     public String description() {
         return "Classic: five melee tiers and an engineer, two armory levels, three mines, three lumber"
-                + " camps and a warehouse";
+                + " camps, three turret tiers and a warehouse";
     }
 
     @Override
@@ -441,6 +517,29 @@ public final class ClassicContent implements WorldContent {
                     .tag(WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute());
             if (camp.upgradeTo() != null) {
                 registry.upgradeTo(camp.upgradeTo()).upgradeCost(GOLD, camp.upgradeGold());
+            }
+        }
+
+        // ------------------------------------------------------------------ turrets
+        for (TurretTier turret : TURRET_TIERS) {
+            registry.building(turret.buildingPath())
+                    .name(turret.displayName())
+                    .size(turret.size(), turret.size())
+                    .health(turret.health())
+                    .armour(turret.armour())
+                    .level(turret.level())
+                    .cost(GOLD, turret.costGold())
+                    .cost(WOOD, turret.costWood())
+                    .repairCostPerHealth(GOLD, REPAIR_GOLD_PER_HEALTH)
+                    .buildTime(turret.buildTimeTicks())
+                    .attack((float) turret.damage(), turret.range())
+                    .attackCooldown(turret.attackCooldownTicks())
+                    .spriteSet(turret.buildingPath())
+                    .tag(TURRET_TAG);
+            if (turret.upgradeTo() != null) {
+                registry.upgradeTo(turret.upgradeTo())
+                        .upgradeCost(GOLD, turret.upgradeGold())
+                        .upgradeCost(WOOD, turret.upgradeWood());
             }
         }
 

@@ -92,7 +92,7 @@ import java.util.stream.Stream;
  *   <li>the numbers do not ascend - the five melee tiers, the three mines, the three lumber camps;</li>
  *   <li>the engine gate does not hold - the basic armory must not be able to train t4 or t5, and that has to
  *       be proven against a real {@link ProductionSystem}, not by reading the content back;</li>
- *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 128 atlas,
+ *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 160 atlas,
  *       every tile and entity must carry a display name, and a world built from the content must only name
  *       kinds the manifest knows.</li>
  * </ol>
@@ -112,7 +112,7 @@ public final class ClassicCheck {
      * cell. The three-by-three grid of 32 pixel cells (armory t1/t2, mine t1..t3, lumber camp t1..t3 and
      * the warehouse) needs three rows, and the 16 pixel unit sprites occupy the top of the sheet.
      */
-    private static final int ATLAS_HEIGHT = 128;
+    private static final int ATLAS_HEIGHT = 160;
 
     /** Side of one atlas cell, in pixels; the manifest must agree. */
     private static final int TILE_PIXELS = 16;
@@ -146,6 +146,7 @@ public final class ClassicCheck {
         tierGate(check, registry);
         mines(check, registry);
         lumberCamps(check, registry);
+        turrets(check, registry);
         upgradeLadders(check, registry);
         repairAndReclaim(check, registry);
         economy(check, classic, registry);
@@ -204,7 +205,8 @@ public final class ClassicCheck {
                 "工程师伤害低于最便宜的近战单位");
 
         // --- buildings
-        check.equal(9, registry.buildings().size(), "目录注册了 9 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 仓库）");
+        check.equal(12, registry.buildings().size(),
+                "目录注册了 12 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 3 哨塔 + 仓库）");
         BuildingType armoryT1 = registry.building(ClassicContent.ARMORY_T1);
         BuildingType armoryT2 = registry.building(ClassicContent.ARMORY_T2);
         check.equal("兵营·普通", armoryT1.displayName(), "普通兵营的显示名");
@@ -418,6 +420,120 @@ public final class ClassicCheck {
                 "t3 伐木场的内容路径是 building.lumbercamp.t3");
     }
 
+    // ------------------------------------------------------------------ 4a) the turret ladder
+
+    /**
+     * The three defensive turret tiers: costs, footprints, health, weapon numbers and the upgrade ladder.
+     *
+     * <p>The check also executes the whole life of a turret through the ordinary public API: an engineer
+     * places a t1 site, the construction system finishes it, the engine's combat layer sees a weapon, and
+     * {@code CommandService.upgradeBuilding} turns it into t2 and then t3 in place. Nothing here spawns a
+     * finished turret directly, so the BUILD path and the upgrade ladder are proven, not only declared.
+     */
+    private static void turrets(Check check, ContentRegistry registry) {
+        check.section("哨塔：三档、造价、攻击与升级");
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        ItemType wood = registry.item(ClassicContent.WOOD);
+        List<ClassicContent.TurretTier> tiers = ClassicContent.turretTiers();
+        check.equal(3, tiers.size(), "哨塔有 3 个等级");
+        BuildingType t1 = registry.building(ClassicContent.TURRET_T1);
+        BuildingType t2 = registry.building(ClassicContent.TURRET_T2);
+        BuildingType t3 = registry.building(ClassicContent.TURRET_T3);
+
+        check.equal("哨塔·普通", t1.displayName(), "t1 的显示名");
+        check.equal("哨塔·强化", t2.displayName(), "t2 的显示名");
+        check.equal("哨塔·精英", t3.displayName(), "t3 的显示名");
+        for (ClassicContent.TurretTier tier : tiers) {
+            BuildingType type = registry.building(tier.buildingPath());
+            check.equal(tier.size(), type.sizeX(), "t" + tier.tier() + " 的宽度与表一致");
+            check.equal(tier.size(), type.sizeY(), "t" + tier.tier() + " 的高度与表一致");
+            check.equal(tier.health(), asLong(type.maxHealth()), "t" + tier.tier() + " 的生命与表一致");
+            check.equal(tier.armour(), type.armour(), "t" + tier.tier() + " 的护甲与表一致");
+            check.equal(tier.damage(), asLong(type.attackDamage()), "t" + tier.tier() + " 的伤害与表一致");
+            check.that(Math.abs(tier.range() - type.attackRange()) <= 1e-6f,
+                    "t" + tier.tier() + " 的射程与表一致");
+            check.equal(tier.attackCooldownTicks(), type.attackCooldownTicks(),
+                    "t" + tier.tier() + " 的射击间隔与表一致");
+            check.equal(tier.costGold(), asLong(type.cost().amount(gold)),
+                    "t" + tier.tier() + " 的金币造价与表一致");
+            check.equal(tier.costWood(), asLong(type.cost().amount(wood)),
+                    "t" + tier.tier() + " 的木材造价与表一致");
+            check.equal(tier.buildTimeTicks(), type.buildTimeTicks(), "t" + tier.tier() + " 的建造时间与表一致");
+            check.that(type.canAttack(), "t" + tier.tier() + " 通过内容 DSL 声明了攻击");
+            check.that(type.hasTag(ClassicContent.TURRET_TAG), "t" + tier.tier() + " 带 turret 标签");
+            check.that(type.canRepair(), "t" + tier.tier() + " 可维修");
+            check.that(!type.isWarehouse() && !type.canProduce(), "t" + tier.tier() + " 既不是仓库也不是生产建筑");
+        }
+        for (int index = 1; index < tiers.size(); index++) {
+            ClassicContent.TurretTier low = tiers.get(index - 1);
+            ClassicContent.TurretTier high = tiers.get(index);
+            check.that(high.health() > low.health(), "哨塔生命严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.damage() > low.damage(), "哨塔伤害严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.range() > low.range(), "哨塔射程严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.armour() > low.armour(), "哨塔护甲严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.costGold() > low.costGold(), "哨塔金币造价严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.costWood() > low.costWood(), "哨塔木材造价严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.buildTimeTicks() > low.buildTimeTicks(), "哨塔建造时间严格递增 t" + low.tier() + " -> t" + high.tier());
+        }
+
+        check.equal(ClassicContent.TURRET_T2, t1.upgradeTo().orElseThrow().path(), "哨塔 t1 升级到 t2");
+        check.equal(140L, asLong(t1.upgradeCost().amount(gold)), "t1 -> t2 花费 140 金币");
+        check.equal(50L, asLong(t1.upgradeCost().amount(wood)), "t1 -> t2 花费 50 木材");
+        check.equal(ClassicContent.TURRET_T3, t2.upgradeTo().orElseThrow().path(), "哨塔 t2 升级到 t3");
+        check.equal(260L, asLong(t2.upgradeCost().amount(gold)), "t2 -> t3 花费 260 金币");
+        check.equal(90L, asLong(t2.upgradeCost().amount(wood)), "t2 -> t3 花费 90 木材");
+        check.that(t3.upgradeTo().isEmpty() && t3.upgradeCost().isEmpty(), "t3 是阶梯顶端");
+        check.equal(330L, asLong(t1.cost().totalUnits().add(t1.upgradeCost().totalUnits())),
+                "t1 造价 + 升级 = t2 直接造价 330 单位");
+        check.equal(680L, asLong(t2.cost().totalUnits().add(t2.upgradeCost().totalUnits())),
+                "t2 造价 + 升级 = t3 直接造价 680 单位");
+
+        // --- the whole life through the public API: BUILD, construct, upgrade twice
+        OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7));
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building warehouse = world.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        check.equal(0L, asLong(player.logistics().deposit(
+                        ItemBundle.builder().add(gold, 600).add(wood, 200).build(), warehouse.position())
+                .totalUnits()), "哨塔检查的仓库收下了 600 金币与 200 木材");
+        Unit engineer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player, new GridPos(14, 14));
+        Natural goldBefore = player.logistics().amount(gold);
+        Natural woodBefore = player.logistics().amount(wood);
+        var placed = engine.commands().tryBuild(engineer, t1, new GridPos(18, 14));
+        check.that(placed.placed(), "工程师通过普通 BUILD 放置哨塔 t1: " + placed.refusal());
+        Building turret = placed.site();
+        check.equal(ItemBundle.of(gold, 120, wood, 20), turret.invested(),
+                "工地记录 120 金币 + 20 木材的投放成本");
+        check.equal(Natural.of(120), goldBefore.subtractClamped(player.logistics().amount(gold)),
+                "放置哨塔恰好扣 120 金币");
+        check.equal(Natural.of(20), woodBefore.subtractClamped(player.logistics().amount(wood)),
+                "放置哨塔恰好扣 20 木材");
+        engine.tick(200);
+        check.that(turret.isConstructed(), "哨塔 t1 在 200 tick 内完工");
+        check.that(turret.type().canAttack(), "完工后的哨塔 t1 可以攻击");
+
+        var firstUpgrade = engine.commands().upgradeBuilding(turret);
+        check.that(firstUpgrade.upgraded(), "哨塔 t1 原地升级到 t2: " + firstUpgrade.refusal());
+        Building t2Site = firstUpgrade.replacement();
+        check.equal(ClassicContent.TURRET_T2, t2Site.type().key().path(), "替换建筑是 building.turret.t2");
+        check.equal(t2Site.type().sizeX(), t2.sizeX(), "升级保留 2x2 占地宽度");
+        check.that(t2Site.isConstructed(), "升级后的哨塔立刻完工");
+        check.equal(Natural.of(340), player.logistics().amount(gold),
+                "t1 -> t2 恰好再扣 140 金币（600 - 120 - 140 = 340）");
+        check.equal(Natural.of(130), player.logistics().amount(wood),
+                "t1 -> t2 恰好再扣 50 木材（200 - 20 - 50 = 130）");
+        var secondUpgrade = engine.commands().upgradeBuilding(t2Site);
+        check.that(secondUpgrade.upgraded(), "哨塔 t2 原地升级到 t3: " + secondUpgrade.refusal());
+        check.equal(ClassicContent.TURRET_T3, secondUpgrade.replacement().type().key().path(),
+                "替换建筑是 building.turret.t3");
+        check.equal(Natural.of(80), player.logistics().amount(gold),
+                "t2 -> t3 恰好再扣 260 金币（340 - 260 = 80）");
+        check.equal(Natural.of(40), player.logistics().amount(wood),
+                "t2 -> t3 恰好再扣 90 木材（130 - 90 = 40）");
+        check.that(t3.attackCooldownTicks() < t2.attackCooldownTicks(), "t3 的射击间隔比 t2 更短");
+    }
+
     // ------------------------------------------------------------------ 4b) the upgrade ladders
 
     /**
@@ -535,7 +651,7 @@ public final class ClassicCheck {
             check.equal(0L, asLong(type.repairCostPerHealth().amount(wood)),
                     type.key().path() + " 维修不花木材");
         }
-        check.equal(9, repairable, "九个经典建筑类型全部可维修");
+        check.equal(12, repairable, "十二个经典建筑类型全部可维修");
 
         Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
         OcRtsEngine engine = flatEngine(registry, player, Player.of(2, "Enemy", 0xFFEF5350));
@@ -825,7 +941,7 @@ public final class ClassicCheck {
             return Map.of();
         }
         check.equal(20, tiles.size(), "tiles 保留了 hello 的 20 个地块名");
-        check.equal(15, entities.size(), "entities 有 15 个条目（6 单位 + 9 建筑）");
+        check.equal(18, entities.size(), "entities 有 18 个条目（6 单位 + 12 建筑）");
 
         StringBuilder bad = new StringBuilder();
         int rects = 0;
@@ -875,10 +991,10 @@ public final class ClassicCheck {
                 }
             }
         }
-        check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x128 内（共 " + rects + " 个）"
+        check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x160 内（共 " + rects + " 个）"
                 + (bad.length() == 0 ? "" : ": " + bad));
         check.that(sharedCells.isEmpty(), "每个建筑都有自己的纹理格: " + sharedCells);
-        check.that(rects >= 20 + 15, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
+        check.that(rects >= 20 + 18, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
         check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
         check.that(unnamedEntities.isEmpty(), "每个实体都有非空的 name: " + unnamedEntities);
 
@@ -911,7 +1027,7 @@ public final class ClassicCheck {
         if (png != null && png.length > 24) {
             check.that(isPng(png), "atlas.png 以 PNG 签名开头");
             check.equal(ATLAS_WIDTH, intAt(png, 16), "atlas 的宽是 96");
-            check.equal(ATLAS_HEIGHT, intAt(png, 20), "atlas 的高是 128");
+            check.equal(ATLAS_HEIGHT, intAt(png, 20), "atlas 的高是 160");
         }
         return Map.of("tiles", (Object) tiles, "entities", (Object) entities);
     }
@@ -945,7 +1061,7 @@ public final class ClassicCheck {
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
             check.equal(ClassicContent.ID, host.worldContent().id(), "主机服务的正是 oc-classic");
             check.equal(6, host.content().units().size(), "主机用的目录有 6 个单位");
-            check.equal(9, host.content().buildings().size(), "主机用的目录有 9 座建筑");
+            check.equal(12, host.content().buildings().size(), "主机用的目录有 12 座建筑");
 
             String initial = host.snapshotJson();
             check.that(initial.startsWith("{") && initial.endsWith("}"), "快照以 { 开头、以 } 结尾");
@@ -1081,6 +1197,8 @@ public final class ClassicCheck {
         buildsMissingStructures(check, registry);
         upgradesArmory(check);
         keepsLumberCamp(check, registry);
+        buildsTurret(check, registry);
+        upgradesTurret(check, registry);
         attacksWithGatheredArmy(check, registry);
         defendsItsBase(check, registry);
         aiProducesAndAttacks(check);
@@ -1145,6 +1263,9 @@ public final class ClassicCheck {
                 new GridPos(24, 20));
         secondWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), secondEnemy,
                 new GridPos(28, 20));
+        // The turret target is already met, so the missing mine is the next project.
+        secondWorld.spawnBuilding(registry.building(ClassicContent.TURRET_T3), secondEnemy,
+                new GridPos(44, 20));
         secondWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), secondEnemy, new GridPos(22, 22));
         stock(check, registry, secondEnemy, secondWarehouse);
         ClassicAi secondAi = new ClassicAi();
@@ -1244,6 +1365,8 @@ public final class ClassicCheck {
             world.spawnBuilding(registry.building(ClassicContent.MINE_T1), enemy,
                     new GridPos(32 + index * 4, 20));
         }
+        // The turret target is already met so this fixture is only about the missing lumber camp.
+        world.spawnBuilding(registry.building(ClassicContent.TURRET_T3), enemy, new GridPos(48, 20));
         world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy, new GridPos(22, 22));
         stock(check, registry, enemy, warehouse);
         ClassicAi ai = new ClassicAi();
@@ -1274,12 +1397,127 @@ public final class ClassicCheck {
         }
         satisfiedWorld.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), satisfiedEnemy,
                 new GridPos(48, 20));
+        // The turret target is already met at the top tier: this fixture is about the lumber camp, so no
+        // missing turret site or affordable upgrade may win the decision.
+        satisfiedWorld.spawnBuilding(registry.building(ClassicContent.TURRET_T3), satisfiedEnemy,
+                new GridPos(52, 20));
         satisfiedWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), satisfiedEnemy, new GridPos(22, 22));
         stock(check, registry, satisfiedEnemy, satisfiedWarehouse);
         ClassicAi satisfiedAi = new ClassicAi();
         satisfiedAi.tick(satisfiedWorld, 20);
         check.equal(0, sitesOf(satisfiedWorld, satisfiedEnemy).size(),
                 "已有一座伐木场时，AI 不再放下第二座（维持目标 1 座）");
+    }
+
+    /**
+     * The AI raises exactly one turret once the economy is staffed and it can afford the 120 gold + 40
+     * wood, and it does not raise one while the stock is short.
+     */
+    private static void buildsTurret(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player enemy = engine.players().get(1);
+        Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
+        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy, new GridPos(24, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            world.spawnBuilding(registry.building(ClassicContent.MINE_T1), enemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        world.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), enemy, new GridPos(48, 20));
+        world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy, new GridPos(22, 22));
+        stock(check, registry, enemy, warehouse);
+        ClassicAi ai = new ClassicAi();
+
+        check.equal(0, countTag(world, enemy, ClassicContent.TURRET_TAG), "AI 开始时没有哨塔");
+        ai.tick(world, 20);
+        List<Building> sites = sitesOf(world, enemy);
+        check.equal(1, sites.size(), "经济建筑齐备且负担得起时，AI 放下一个哨塔工地");
+        check.equal(ClassicContent.TURRET_T1, sites.isEmpty() ? "<none>" : sites.get(0).type().key().path(),
+                "工地是 building.turret.t1");
+        check.that(sites.isEmpty() || sites.get(0).origin().chebyshevDistance(new GridPos(20, 20)) <= 64,
+                "哨塔就在 AI 基地的确定性搜索范围内");
+
+        // --- unaffordable: the same decision places no turret at all
+        OcRtsEngine poor = aiEngine(registry);
+        World poorWorld = poor.world();
+        Player poorEnemy = poor.players().get(1);
+        warehouse(poorWorld, registry, poorEnemy, new GridPos(20, 20));
+        poorWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), poorEnemy, new GridPos(24, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            poorWorld.spawnBuilding(registry.building(ClassicContent.MINE_T1), poorEnemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        poorWorld.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), poorEnemy,
+                new GridPos(48, 20));
+        poorWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), poorEnemy, new GridPos(22, 22));
+        ClassicAi poorAi = new ClassicAi();
+        poorAi.tick(poorWorld, 20);
+        boolean turretSite = false;
+        for (Building site : sitesOf(poorWorld, poorEnemy)) {
+            turretSite |= site.type().hasTag(ClassicContent.TURRET_TAG);
+        }
+        check.that(!turretSite, "仓库没有金币时 AI 不会放下哨塔工地（不浪费一次决策）");
+    }
+
+    /**
+     * The turret upgrade rule: while the next wave is still gathering an idle, affordable t1 turret is
+     * upgraded in place; once the army has reached the wave size the turret waits.
+     */
+    private static void upgradesTurret(Check check, ContentRegistry registry) {
+        OcRtsEngine engine = aiEngine(registry);
+        World world = engine.world();
+        Player enemy = engine.players().get(1);
+        Building warehouse = warehouse(world, registry, enemy, new GridPos(20, 20));
+        world.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), enemy, new GridPos(24, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            world.spawnBuilding(registry.building(ClassicContent.MINE_T1), enemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        world.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), enemy, new GridPos(48, 20));
+        Building turret = world.spawnBuilding(registry.building(ClassicContent.TURRET_T1), enemy,
+                new GridPos(52, 20));
+        world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy, new GridPos(22, 22));
+        stock(check, registry, enemy, warehouse);
+        ClassicAi ai = new ClassicAi();
+
+        check.equal(0, countArmy(world, enemy), "下一波还没有开始集结时军队为空");
+        ai.tick(world, 20);
+        List<Building> grown = buildingsOf(world, enemy, ClassicContent.TURRET_T2);
+        check.equal(1, grown.size(), "军队未满下一波时 AI 把空闲的 t1 哨塔升级为 t2");
+        check.equal(0, buildingsOf(world, enemy, ClassicContent.TURRET_T1).size(),
+                "升级后不再保留 t1 哨塔（原地替换）");
+        check.that(!turret.isAlive(), "旧 t1 实体被替换掉");
+
+        // --- the wave is already full: the turret upgrade waits
+        OcRtsEngine marching = aiEngine(registry);
+        World marchWorld = marching.world();
+        Player marchEnemy = marching.players().get(1);
+        Building marchWarehouse = warehouse(marchWorld, registry, marchEnemy, new GridPos(20, 20));
+        marchWorld.spawnBuilding(registry.building(ClassicContent.ARMORY_T2), marchEnemy,
+                new GridPos(24, 20));
+        for (int index = 0; index < ClassicAi.MINE_TARGET; index++) {
+            marchWorld.spawnBuilding(registry.building(ClassicContent.MINE_T1), marchEnemy,
+                    new GridPos(32 + index * 4, 20));
+        }
+        marchWorld.spawnBuilding(registry.building(ClassicContent.LUMBERCAMP_T1), marchEnemy,
+                new GridPos(48, 20));
+        marchWorld.spawnBuilding(registry.building(ClassicContent.TURRET_T1), marchEnemy,
+                new GridPos(52, 20));
+        marchWorld.spawnUnit(registry.unit(ClassicContent.ENGINEER), marchEnemy, new GridPos(22, 22));
+        // A human warehouse gives the wave a target; the army is at the legacy target of eight.
+        marchWorld.spawnBuilding(registry.building(ClassicContent.WAREHOUSE), marching.players().get(0),
+                new GridPos(40, 40));
+        for (int index = 0; index < ClassicAi.ARMY_TARGET; index++) {
+            marchWorld.spawnUnit(registry.unit(ClassicContent.MELEE_T1), marchEnemy,
+                    new GridPos(30 + index, 30));
+        }
+        stock(check, registry, marchEnemy, marchWarehouse);
+        ClassicAi marchAi = new ClassicAi();
+        marchAi.tick(marchWorld, 20);
+        check.equal(1, buildingsOf(marchWorld, marchEnemy, ClassicContent.TURRET_T1).size(),
+                "军队已满下一波时哨塔升级让位给进攻，t1 保持不变");
+        check.equal(0, buildingsOf(marchWorld, marchEnemy, ClassicContent.TURRET_T2).size(),
+                "同一决策不会升级哨塔");
     }
 
     /**
@@ -1946,8 +2184,8 @@ public final class ClassicCheck {
                     botBaseById.put(building.id().value(), building);
                 }
             }
-            // One melee of each tier plus the engineer = six units; nine buildings in ClassicContent.
-            check.equal(15, sceneById.size(), "样例场景仍是 6 个单位 + 9 座建筑，全部属于玩家 1");
+            // One melee of each tier plus the engineer = six units; twelve buildings in ClassicContent.
+            check.equal(18, sceneById.size(), "样例场景是 6 个单位 + 12 座建筑，全部属于玩家 1");
             check.equal(3, botBaseById.size(), "机器人开局基地恰好是仓库、一级兵工厂、一级矿井三座建筑");
             Set<String> botKinds = new LinkedHashSet<>();
             for (Entity building : botBaseById.values()) {
@@ -2551,6 +2789,29 @@ public final class ClassicCheck {
             }
         }
         return count;
+    }
+
+    /** Living combat units of a player, the same count the AI's wave gate uses. */
+    private static int countArmy(World world, Player player) {
+        int count = 0;
+        for (Unit unit : world.unitsOf(player)) {
+            if (unit.isAlive() && unit.role() == UnitRole.COMBAT) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Living buildings of one content path, in entity id order. */
+    private static List<Building> buildingsOf(World world, Player player, String buildingPath) {
+        List<Building> result = new ArrayList<>();
+        for (Building building : world.buildingsOf(player)) {
+            if (building.isAlive() && building.type().key().path().equals(buildingPath)) {
+                result.add(building);
+            }
+        }
+        result.sort(Comparator.comparing(Building::id));
+        return result;
     }
 
     /** Buildings carrying a content tag, sites included. */

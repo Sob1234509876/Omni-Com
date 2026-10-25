@@ -34,6 +34,9 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int sizeY;
     private final Natural maxHealth;
     private final int armour;
+    private final Natural attackDamage;
+    private final float attackRange;
+    private final int attackCooldownTicks;
     private final int buildTimeTicks;
     private final int level;
     private final ItemBundle cost;
@@ -54,6 +57,9 @@ public final class BuildingType implements Comparable<BuildingType> {
             int sizeY,
             Natural maxHealth,
             int armour,
+            Natural attackDamage,
+            float attackRange,
+            int attackCooldownTicks,
             int buildTimeTicks,
             int level,
             ItemBundle cost,
@@ -75,6 +81,16 @@ public final class BuildingType implements Comparable<BuildingType> {
             throw new IllegalArgumentException("armour must not be negative, was " + armour);
         }
         this.armour = armour;
+        this.attackDamage = attackDamage == null ? Natural.ZERO : attackDamage;
+        if (!(attackRange >= 0f)) {
+            throw new IllegalArgumentException("building attack range must not be negative, was " + attackRange);
+        }
+        if (attackCooldownTicks < 0) {
+            throw new IllegalArgumentException("building attack cooldown must not be negative, was "
+                    + attackCooldownTicks);
+        }
+        this.attackRange = attackRange;
+        this.attackCooldownTicks = attackCooldownTicks;
         this.buildTimeTicks = buildTimeTicks;
         this.level = level;
         this.cost = cost;
@@ -118,6 +134,35 @@ public final class BuildingType implements Comparable<BuildingType> {
      */
     public int armour() {
         return armour;
+    }
+
+    /**
+     * Damage one shot of this building deals before the target's armour, or {@link Natural#ZERO} for a
+     * building that does not shoot.
+     *
+     * <p>Buildings reuse the engine's combat layer exactly like units: a constructed, living building
+     * with positive damage and range acquires the nearest hostile unit in reach and fires on the same
+     * cooldown rule. Neutral, allied and own entities are never acquired because target selection is the
+     * same {@code CombatSystem.isEnemy} rule units use. The default is zero, so every pre-turret building
+     * type is unchanged.
+     */
+    public Natural attackDamage() {
+        return attackDamage;
+    }
+
+    /** Reach of this building's shot in tiles, measured from the footprint centre; {@code 0} means it cannot shoot. */
+    public float attackRange() {
+        return attackRange;
+    }
+
+    /** Ticks between two shots of this building; zero content is clamped to one tick by the combat system. */
+    public int attackCooldownTicks() {
+        return attackCooldownTicks;
+    }
+
+    /** Whether this building type can attack: positive damage and a positive range. */
+    public boolean canAttack() {
+        return !attackDamage.isZero() && attackRange > 0f;
     }
 
     /**

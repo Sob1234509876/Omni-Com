@@ -34,7 +34,8 @@ import {
   UNIT_PATHS,
   MAX_MOVE_POINTS,
   build,
-  buildBatch,
+  buildButtonLabel,
+  buildPlacementBatch,
   orderAttack,
   orderAttackMove,
   orderMoveRoute,
@@ -135,6 +136,7 @@ import {
   demandMissingText,
   demandStockText,
   demandStockTitle,
+  combatLabel,
   formatProgressPercent,
   incomeSuffix,
   itemDisplayName,
@@ -254,6 +256,8 @@ const hudBuildingProgress = required<HTMLSpanElement>("#hud-building-progress");
 const hudBuildingFill = required<HTMLSpanElement>("#hud-building-fill");
 const hudBuildingPercent = required<HTMLSpanElement>("#hud-building-percent");
 const hudQueue = required<HTMLDivElement>("#hud-queue");
+/** The selected unit's capped order queue, in execution order; see `orderQueue` in the snapshot. */
+const hudOrders = required<HTMLDivElement>("#hud-orders");
 const warehouseSummary = required<HTMLParagraphElement>("#warehouse-summary");
 const warehouseItems = required<HTMLUListElement>("#warehouse-items");
 const warehouseMarkAllButton = required<HTMLButtonElement>("#warehouse-mark-all");
@@ -1294,7 +1298,7 @@ function updatePlacementStatus(): void {
   }
   const preview = placementPreviewAt(hoverTile);
   if (preview === null) {
-    setStatus(`BUILD ${labelledContent(placementPath)}：左键点击地面放置 · Esc 取消`, "busy");
+    setStatus(`BUILD ${labelledContent(placementPath)}：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
     return;
   }
   setStatus(placementReasonText(preview.reason), placementStatusState(preview.state));
@@ -1940,6 +1944,9 @@ function updateHud(force = false, now = performance.now()): void {
   // The engineer's task line is part of the selection HUD. The server sends it only for engineers, so a
   // combat unit or a building simply has no task to append.
   const task = only !== undefined && !isBuildingEntity(only) ? unitTaskLabel(only.task) : null;
+  // A turret (or any attacker) reports the numbers the combat layer really uses; an older snapshot and a
+  // non-combat building omit them, so the line simply stays absent.
+  const combat = only === undefined ? null : combatLabel(only);
   void renderLatexInto(
     hudSelected,
     groupPrefix +
@@ -1951,7 +1958,8 @@ function updateHud(force = false, now = performance.now()): void {
             `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
             `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
             (cargo === null ? "" : ` · ${cargo}`) +
-            (task === null ? "" : ` · ${task}`)),
+            (task === null ? "" : ` · ${task}`) +
+            (combat === null ? "" : ` · ${combat}`)),
   );
   let buildingText =
     only !== undefined && isBuildingEntity(only)
@@ -1969,6 +1977,10 @@ function updateHud(force = false, now = performance.now()): void {
     if (stock !== null) {
       buildingText += ` · ${stock}`;
     }
+    const attack = combatLabel(selectedBuilding);
+    if (attack !== null) {
+      buildingText += ` · ${attack}`;
+    }
   }
   void renderLatexInto(hudBuildingText, buildingText);
   // The inline construction bar is part of the selection HUD: a finished building (or a unit) keeps it
@@ -1981,6 +1993,7 @@ function updateHud(force = false, now = performance.now()): void {
     hudBuildingFill.style.width = `${progressBarRatio(progress) * 100}%`;
   }
   renderQueueList(selectedBuilding);
+  renderOrderQueue(only);
   // The context zone has a panel background only while it has a TRAIN/BUILD section or queue rows.
   updateCommandContextVisibility();
   // One warehouse aggregation per HUD tick feeds the item rows, the marked line and the resource page,
@@ -2072,6 +2085,50 @@ function renderQueueList(building: EntityView | undefined): void {
   }
   hudQueue.replaceChildren(...rows);
   hudQueue.hidden = rows.length === 0;
+}
+
+/**
+ * Lists the selected own unit's capped order queue in execution order.
+ *
+ * <p>The strings are authored by the engine (`OrderLabels`) and arrive through the snapshot's
+ * `orderQueue`; the client does not re-derive a task from movement, so the list says exactly what the
+ * queue will run. A building, an idle unit, an enemy unit and an older snapshot have no array and the
+ * panel hides. The eighth entry of a longer queue is the server's `… 还有 N 项` marker, and it is rendered
+ * as an ordinary row so the truncation is visible rather than silent.
+ */
+function renderOrderQueue(unit: EntityView | undefined): void {
+  const labels =
+    unit !== undefined && !isBuildingEntity(unit) && isMine(unit) ? unit.orderQueue : undefined;
+  if (labels === undefined || labels.length === 0) {
+    hudOrders.hidden = true;
+    hudOrders.replaceChildren();
+    return;
+  }
+  const rows: HTMLDivElement[] = [];
+  const header = document.createElement("div");
+  header.className = "hud-queue-now";
+  header.textContent = `任务队列 ${labels.length}`;
+  header.title = "按执行顺序排列；超过 8 项时最后一项是截断标记";
+  rows.push(header);
+  for (let index = 0; index < labels.length; index += 1) {
+    const label = labels[index];
+    if (label === undefined) {
+      continue;
+    }
+    const row = document.createElement("div");
+    row.className = "hud-queue-item";
+    row.title = label;
+    const number = document.createElement("span");
+    number.className = "hud-queue-index";
+    number.textContent = `${index + 1}.`;
+    const name = document.createElement("span");
+    name.className = "hud-queue-name";
+    void renderLatexInto(name, label);
+    row.append(number, name);
+    rows.push(row);
+  }
+  hudOrders.replaceChildren(...rows);
+  hudOrders.hidden = rows.length === 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2188,7 +2245,7 @@ let commandBarSignature = "";
 function updateCommandContextVisibility(): void {
   const visible =
     !trainSection.hidden || !buildSection.hidden || !upgradeSection.hidden
-      || !buildingActionsSection.hidden || !hudQueue.hidden;
+      || !buildingActionsSection.hidden || !hudQueue.hidden || !hudOrders.hidden;
   commandContext.classList.toggle("has-context", visible);
 }
 
@@ -2270,7 +2327,7 @@ function renderSelectionChips(resolved: readonly EntityView[]): void {
 /** The command bar's one hint line, with the armed placement / attack-move modes taking precedence. */
 function commandBarNote(model: CommandBarModel): string {
   if (placementPath !== null) {
-    return `BUILD ${labelledContent(placementPath)}：左键点地面放置 · Esc 取消`;
+    return `BUILD ${labelledContent(placementPath)}：左键放置 · Shift+左键排队 · Esc 取消`;
   }
   if (attackMoveArmed) {
     return "攻击移动：左键点目标地面 · Esc 取消";
@@ -2779,7 +2836,7 @@ function armBuild(buildingPath: string): void {
   placementPath = buildingPath;
   // Moving focus to the canvas keeps the existing Escape shortcut (bound to the canvas) working.
   gameCanvas.focus({ preventScroll: true });
-  setStatus(`BUILD ${labelledContent(buildingPath)}：左键点击地面放置，Esc 取消`, "busy");
+  setStatus(`BUILD ${labelledContent(buildingPath)}：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
   updateGameplayPanel();
   updateHud(true);
 }
@@ -2832,7 +2889,7 @@ function doRightClick(
   point: { readonly x: number; readonly y: number },
 ): void {
   if (placementPath !== null) {
-    setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置，Esc 取消`, "busy");
+    setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
     return;
   }
   if (attackMoveArmed) {
@@ -2910,7 +2967,7 @@ function doRightClick(
  * Both modes take priority over selection: the click that chooses a site or a target tile must not
  * also replace the selection that the command is aimed with.
  */
-function doLeftClick(tile: TileCoord): boolean {
+function doLeftClick(tile: TileCoord, shift: boolean): boolean {
   if (attackMoveArmed) {
     doAttackMove(tile);
     return true;
@@ -2937,27 +2994,37 @@ function doLeftClick(tile: TileCoord): boolean {
     updateHud(true);
     return true;
   }
-  let lines: string[];
+  let plan: ReturnType<typeof buildPlacementBatch>;
   try {
     // One line per engineer, all with the same footprint. The server places the first site, charges it
-    // once and attaches every other engineer to it through the join path.
-    lines = buildBatch(
+    // once and attaches every other engineer to it through the join path. A Shift click adds the `queue`
+    // token, so the same lines append the task instead of replacing the engineer's queue.
+    plan = buildPlacementBatch(
       engineers.map((selected) => selected.id),
       path,
       tile.x,
       tile.y,
+      shift,
     );
   } catch (error: unknown) {
     refuse(error instanceof Error ? error.message : String(error));
     return true;
   }
-  placementPath = null;
+  const lines = plan.lines;
+  if (!plan.keepArmed) {
+    // A plain click keeps today's behaviour: one order, then the placement mode closes.
+    placementPath = null;
+  }
   updateGameplayPanel();
   updateHud(true);
   const confirmation =
     engineers.length === 1
-      ? `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`
-      : `${engineers.length} 个工兵在 ${tile.x},${tile.y} 建造 ${labelledContent(path)}（第一个放置，其余加入）`;
+      ? plan.keepArmed
+        ? `已排队 BUILD ${labelledContent(path)} @ ${tile.x},${tile.y}（放置模式保持，可继续 Shift 点击）`
+        : `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`
+      : plan.keepArmed
+        ? `${engineers.length} 个工兵在 ${tile.x},${tile.y} 各排队一个 ${labelledContent(path)}（可继续 Shift 点击）`
+        : `${engineers.length} 个工兵在 ${tile.x},${tile.y} 建造 ${labelledContent(path)}（第一个放置，其余加入）`;
   void sendGameplayBatch("BUILD", lines, lines, confirmation);
   return true;
 }
@@ -3162,7 +3229,7 @@ const inputHooks: InputHooks = {
   onRightClick: (tile, targetId, shift, point) => {
     doRightClick(tile, targetId, shift, point);
   },
-  onLeftClick: (tile) => doLeftClick(tile),
+  onLeftClick: (tile, _targetId, shift) => doLeftClick(tile, shift),
   onCancel: () => {
     // Esc closes the marker list first and deletes nothing; only then does it cancel an armed mode.
     if (markerPanelOpen) {
@@ -3854,7 +3921,8 @@ for (const unitPath of UNIT_PATHS) {
 for (const buildingPath of BUILDING_PATHS) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = buildingPath;
+  // Turrets carry their gold/wood cost and range in the catalogue label; other kinds stay bare.
+  button.textContent = buildButtonLabel(buildingPath);
   button.title = `BUILD ${buildingPath}`;
   button.disabled = true;
   button.setAttribute("aria-pressed", "false");

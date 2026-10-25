@@ -21,7 +21,9 @@ import java.util.Objects;
 
 /**
  * Runs one combat step: every unit that can fight picks the nearest enemy in range, turns towards it,
- * stops walking and, when its cooldown has elapsed, hits it.
+ * stops walking and, when its cooldown has elapsed, hits it. Constructed buildings that declare a weapon
+ * then do the same against the nearest hostile <em>unit</em> in range, so a turret is an ordinary content
+ * building and needs no order or separate system.
  *
  * <p><strong>Phase.</strong> This system runs at phase {@value #SYSTEM_ORDER}, directly after
  * {@link io.github.sob1234509876.oc.rts.movement.MovementSystem} (400) and before construction (500).
@@ -120,7 +122,44 @@ public final class CombatSystem implements SimulationSystem {
             if (unit.attackCooldown() > 0) {
                 continue;
             }
-            attack(world, tick, unit, target);
+            attack(world, tick, unit, unit.combat().damageAgainst(target),
+                    unit.combat().attackCooldownTicks(), target);
+        }
+        tickBuildings(world, tick);
+    }
+
+    /**
+     * Fires every constructed, living building that declares a weapon.
+     *
+     * <p>A building is a stationary combatant: it reuses the same enemy test, damage arithmetic, armour,
+     * event publication and kill/removal path as a unit. It targets hostile <em>units</em> only - the
+     * nearest one whose centre is inside its range, with ties broken by entity id - so a defensive turret
+     * never spends its shot on a distant enemy building while an attacker stands next to it. A building
+     * under construction and a building type without a weapon are skipped; a target that dies is cleared
+     * by the ordinary {@link #dropTarget(World, EntityId)} path. Nothing draws a random number.
+     */
+    private void tickBuildings(World world, Tick tick) {
+        List<Building> buildings = world.buildings();
+        for (int index = 0; index < buildings.size(); index++) {
+            Building building = buildings.get(index);
+            if (!building.isAlive() || !building.isConstructed() || !building.type().canAttack()) {
+                continue;
+            }
+            if (building.attackCooldown() > 0) {
+                building.setAttackCooldown(building.attackCooldown() - 1);
+            }
+            Unit target = nearestEnemyUnitInRange(world, building);
+            if (target == null) {
+                building.clearTarget();
+                continue;
+            }
+            building.setTargetId(target.id());
+            face(building, target.position());
+            if (building.attackCooldown() > 0) {
+                continue;
+            }
+            attack(world, tick, building, building.type().attackDamage(),
+                    building.type().attackCooldownTicks(), target);
         }
     }
 
@@ -177,18 +216,66 @@ public final class CombatSystem implements SimulationSystem {
         return largest;
     }
 
-    /** Whether {@code other} is an enemy of {@code unit}: a living unit or building of another player. */
+    /** Whether {@code other} is an enemy of a unit: a living unit or building of another player. */
     public static boolean isEnemy(Unit unit, Entity other) {
-        if (unit == null || other == null || !other.isAlive()) {
+        return isEnemy((Entity) unit, other);
+    }
+
+    /**
+     * Whether {@code other} is an enemy of {@code attacker}, unit or building.
+     *
+     * <p>The owner must differ and must not share a team. This is the one hostile test every attacker
+     * uses, so a turret and a soldier can never disagree about who is an enemy; an own entity and an
+     * allied entity are never selected.
+     */
+    public static boolean isEnemy(Entity attacker, Entity other) {
+        if (attacker == null || other == null || !other.isAlive()) {
             return false;
         }
         if (!(other instanceof Unit) && !(other instanceof Building)) {
             return false;
         }
-        if (unit.owner().equals(other.owner())) {
+        if (attacker.owner().equals(other.owner())) {
             return false;
         }
-        return !unit.owner().isAlliedWith(other.owner());
+        return !attacker.owner().isAlliedWith(other.owner());
+    }
+
+    /**
+     * The nearest living hostile unit whose centre lies in the building's range, or {@code null}.
+     *
+     * <p>Buildings shoot units, not buildings: a defensive tower's job is to stop an attack, and letting
+     * it spend shots on a distant building would make it useless against the units actually hitting it.
+     * The spatial query is the building's own neighbourhood, widened by no footprint because a unit is
+     * measured centre to centre. Equal distances are broken by entity id, exactly like the unit rule.
+     */
+    public static Unit nearestEnemyUnitInRange(World world, Building building) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(building, "building");
+        float range = building.type().attackRange();
+        if (!building.type().canAttack()) {
+            return null;
+        }
+        List<Entity> candidates = world.spatial(building.dimensionId())
+                .inRadius(building.position(), range);
+        Unit best = null;
+        float bestDistance = Float.MAX_VALUE;
+        for (int index = 0; index < candidates.size(); index++) {
+            Entity candidate = candidates.get(index);
+            if (!(candidate instanceof Unit unit) || !unit.isAlive() || !isEnemy(building, unit)) {
+                continue;
+            }
+            float distance = building.position().distanceSquared(unit.position());
+            if (distance > range * range) {
+                continue;
+            }
+            if (best == null || distance < bestDistance
+                    || (distance == bestDistance && unit.id().compareTo(best.id()) < 0)) {
+                best = unit;
+                bestDistance = distance;
+            }
+        }
+        return best;
     }
 
     /**
@@ -212,15 +299,24 @@ public final class CombatSystem implements SimulationSystem {
     // ------------------------------------------------------------------ one hit
 
     /**
-     * Applies one hit from {@code attacker} to {@code victim}, unit or building, publishes the damage
-     * and, when the victim dies, the kill and the removal.
+     * Applies one hit from {@code attacker} (unit or building) to {@code victim} (unit or building),
+     * publishes the damage and, when the victim dies, the kill and the removal.
+     *
+     * <p>The damage is passed in because the caller already resolved it against the victim's armour:
+     * a unit uses {@link CombatStats#damageAgainst(Entity)} and a building uses the same helper on its
+     * type's damage, so both share one arithmetic path and one floor of one.
      */
-    private void attack(World world, Tick tick, Unit attacker, Entity victim) {
-        Natural damage = attacker.combat().damageAgainst(victim);
+    private void attack(World world, Tick tick, Entity attacker, Natural damage, int cooldown,
+            Entity victim) {
         Natural dealt = victim.health().damage(damage);
         // Content with a zero cooldown still has to spend one tick between hits, otherwise the cooldown
-        // would be meaningless and the hit order would depend on the unit order in the list.
-        attacker.setAttackCooldown(Math.max(MINIMUM_COOLDOWN_TICKS, attacker.combat().attackCooldownTicks()));
+        // would be meaningless and the hit order would depend on the entity order in the lists.
+        int wait = Math.max(MINIMUM_COOLDOWN_TICKS, cooldown);
+        if (attacker instanceof Unit unit) {
+            unit.setAttackCooldown(wait);
+        } else if (attacker instanceof Building building) {
+            building.setAttackCooldown(wait);
+        }
         world.events().publish(new Events.DamageDealt(victim, attacker, dealt, tick.number()));
         if (!victim.health().isDead()) {
             return;
@@ -243,6 +339,13 @@ public final class CombatSystem implements SimulationSystem {
                 unit.clearTarget();
             }
         }
+        List<Building> buildings = world.buildings();
+        for (int i = 0; i < buildings.size(); i++) {
+            Building building = buildings.get(i);
+            if (victimId.equals(building.targetId())) {
+                building.clearTarget();
+            }
+        }
     }
 
     // ------------------------------------------------------------------ movement and facing
@@ -261,6 +364,23 @@ public final class CombatSystem implements SimulationSystem {
         VisualState visual = unit.visual();
         if (visual != null) {
             visual.setFacing(angle);
+        }
+    }
+
+    /**
+     * Turns any entity that has a visual state towards a point; used by a shooting building.
+     *
+     * <p>A building has no motion, so only its visual facing is written. Keeping this separate from the
+     * unit form preserves the movement-facing write a unit needs.
+     */
+    public static void face(Entity entity, Vec2 point) {
+        Vec2 delta = point.minus(entity.position());
+        if (delta.lengthSquared() <= 1e-6f) {
+            return;
+        }
+        VisualState visual = entity.visual();
+        if (visual != null) {
+            visual.setFacing(delta.angle());
         }
     }
 

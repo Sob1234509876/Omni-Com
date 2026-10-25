@@ -187,6 +187,40 @@ public interface UnitDirector {
     BuildResult tryBuild(Unit unit, Building site);
 
     /**
+     * Like {@link #tryBuild(Unit, BuildingType, GridPos)}, but appends the {@link BuildOrder} to the
+     * unit's queue instead of replacing the orders it already has.
+     *
+     * <p>This is the engine half of Shift-click queueing: three queued build tasks are three sites and
+     * three orders in one engineer's queue, executed in the order they were queued. Placement, reach,
+     * occupancy and the placement charge are exactly the same transaction as a plain build - each site is
+     * placed and paid for when the command is issued, not when the engineer reaches it - so a refusal
+     * leaves the queue untouched and a later order in the queue is never affected by an earlier one.
+     *
+     * <p>A failure of one queued order does not cancel the rest: {@link OrderQueue} starts the next
+     * pending order on the following tick, whether the previous one completed, failed or was cancelled.
+     * See {@link #tryQueueBuild(Unit, Building)} for the join form.
+     *
+     * @param unit   the builder
+     * @param type   the building to raise
+     * @param origin tile of the minimum corner of the footprint
+     * @return the placed site, or the refusal reason; never {@code null}
+     */
+    BuildResult tryQueueBuild(Unit unit, BuildingType type, GridPos origin);
+
+    /**
+     * Like {@link #tryBuild(Unit, Building)}, but appends the join order to the unit's queue.
+     *
+     * <p>Joining is free and this method places nothing; it is the queueing form of the cooperative
+     * build command. A finished site, a dead site, another player's site, another dimension and an
+     * unreachable site are refused exactly like the plain form, and the existing queue is left intact.
+     *
+     * @param unit the builder
+     * @param site the existing, unfinished site to join
+     * @return the joined site, or the refusal reason; never {@code null}
+     */
+    BuildResult tryQueueBuild(Unit unit, Building site);
+
+    /**
      * Orders an engineer to repair a finished, damaged building of the same player.
      *
      * <p>Repair is priced by {@link BuildingType#repairCostPerHealth()}: the full price of the remaining

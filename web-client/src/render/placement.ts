@@ -80,6 +80,9 @@ const BUILDING_FOOTPRINTS: ReadonlyMap<string, Footprint> = new Map<string, Foot
   ["building.lumbercamp.t1", { width: 3, height: 3 }],
   ["building.lumbercamp.t2", { width: 3, height: 3 }],
   ["building.lumbercamp.t3", { width: 3, height: 3 }],
+  ["building.turret.t1", { width: 2, height: 2 }],
+  ["building.turret.t2", { width: 2, height: 2 }],
+  ["building.turret.t3", { width: 2, height: 2 }],
   ["building.warehouse", { width: 3, height: 3 }],
 ]);
 

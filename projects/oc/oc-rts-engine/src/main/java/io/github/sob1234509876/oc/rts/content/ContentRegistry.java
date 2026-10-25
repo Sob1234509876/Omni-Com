@@ -395,11 +395,22 @@ public final class ContentRegistry {
             return this;
         }
 
-        /** Damage per hit as a natural number; the range stays a distance in tiles. */
+        /**
+         * Damage per hit as a natural number; the range stays a distance in tiles.
+         *
+         * <p>On a unit this is its own weapon. On a building it declares a defensive weapon: the combat
+         * system makes every constructed building with positive damage and range shoot the nearest
+         * hostile unit in reach, so a turret needs no separate system or order.
+         */
         public Builder attack(Natural damage, float range) {
-            UnitDraft unit = draft(UnitDraft.class, "unit");
-            unit.attackDamage = damage;
-            unit.attackRange = range;
+            if (current instanceof BuildingDraft building) {
+                building.attackDamage = damage;
+                building.attackRange = range;
+            } else {
+                UnitDraft unit = draft(UnitDraft.class, "unit");
+                unit.attackDamage = damage;
+                unit.attackRange = range;
+            }
             return this;
         }
 
@@ -427,7 +438,11 @@ public final class ContentRegistry {
             if (ticks < 0) {
                 throw new IllegalArgumentException("an attack cooldown must not be negative, was " + ticks);
             }
-            draft(UnitDraft.class, "unit").attackCooldownTicks = ticks;
+            if (current instanceof BuildingDraft building) {
+                building.attackCooldownTicks = ticks;
+            } else {
+                draft(UnitDraft.class, "unit").attackCooldownTicks = ticks;
+            }
             return this;
         }
 
@@ -708,6 +723,9 @@ public final class ContentRegistry {
                             building.sizeY,
                             building.maxHealth,
                             building.armour,
+                            building.attackDamage,
+                            building.attackRange,
+                            building.attackCooldownTicks,
                             building.buildTimeTicks,
                             building.level,
                             resolveItems(items, building.cost, "building " + building.key),
@@ -895,6 +913,9 @@ public final class ContentRegistry {
         int sizeY = 1;
         Natural maxHealth = Natural.of(500);
         int armour;
+        Natural attackDamage = Natural.ZERO;
+        float attackRange;
+        int attackCooldownTicks = 60;
         int buildTimeTicks = 200;
         int level = 1;
         String upgradeTo;

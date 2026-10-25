@@ -56,6 +56,10 @@ public final class Building extends Entity {
     private Vec2 rallyPoint;
     private int constructionRemaining;
     private boolean constructed;
+    /** Ticks until this defensive building may fire again; only read by buildings with a weapon. */
+    private int attackCooldown;
+    /** The hostile unit this building aimed at last, or {@code null}; presentation and diagnostics only. */
+    private EntityId targetId;
 
     public Building(EntityId id, Player owner, BuildingType type, GridPos origin, long spawnTick) {
         this(id, owner, type, origin, spawnTick, type.cost());
@@ -152,6 +156,34 @@ public final class Building extends Entity {
     /** Flat damage reduction of this building, read from its type; zero unless the content set it. */
     public int armour() {
         return type.armour();
+    }
+
+    /** Ticks until this building may fire again; {@code 0} means ready. */
+    public int attackCooldown() {
+        return attackCooldown;
+    }
+
+    /** Sets the cooldown, clamped to zero so content cannot make it negative. */
+    public void setAttackCooldown(int ticks) {
+        this.attackCooldown = Math.max(0, ticks);
+    }
+
+    /** The unit this building aimed at last, or {@code null} when it has no target. */
+    public EntityId targetId() {
+        return targetId;
+    }
+
+    public void setTargetId(EntityId targetId) {
+        this.targetId = targetId;
+    }
+
+    public void clearTarget() {
+        this.targetId = null;
+    }
+
+    /** Whether this building currently holds a target. */
+    public boolean hasTarget() {
+        return targetId != null;
     }
 
     public boolean isConstructed() {

@@ -19,7 +19,52 @@ export const BUILDING_PATHS = [
   "building.mine.t1",
   "building.lumbercamp.t1",
   "building.warehouse",
+  "building.turret.t1",
+  "building.turret.t2",
+  "building.turret.t3",
 ] as const;
+
+/**
+ * The gold / wood price and optional attack range of one buildable turret tier.
+ *
+ * <p>The classic catalogue owns the real numbers; this table only labels the build buttons and the
+ * placement status, so a player sees what a turret costs before committing. It mirrors
+ * `ClassicContent.TURRET_TIERS`: t1 120 gold + 20 wood (range 6), t2 260 gold + 70 wood (7.5), t3
+ * 520 gold + 160 wood (9). An unknown path has no entry and the button keeps its plain path label.
+ */
+export interface BuildCostView {
+  readonly gold: number;
+  readonly wood: number;
+  /** Reach in tiles, when the building attacks. */
+  readonly range?: number;
+}
+
+export const BUILDING_COSTS: ReadonlyMap<string, BuildCostView> = new Map<string, BuildCostView>([
+  ["building.turret.t1", { gold: 120, wood: 20, range: 6 }],
+  ["building.turret.t2", { gold: 260, wood: 70, range: 7.5 }],
+  ["building.turret.t3", { gold: 520, wood: 160, range: 9 }],
+]);
+
+/**
+ * The label of one build-catalogue button: the content path plus the turret's cost and range.
+ *
+ * <p>Non-turret kinds keep their historical bare path, because their costs are already visible in the
+ * command log and the panel should not grow for buildings that were not the item's subject. A turret
+ * line reads for example `building.turret.t1 · 金 120 · 木 20 · 射程 6`.
+ */
+export function buildButtonLabel(buildingPath: string): string {
+  const cost = BUILDING_COSTS.get(buildingPath);
+  if (cost === undefined) {
+    return buildingPath;
+  }
+  const range = cost.range === undefined ? "" : ` · 射程 ${formatRange(cost.range)}`;
+  return `${buildingPath} · 金 ${cost.gold} · 木 ${cost.wood}${range}`;
+}
+
+/** Formats a range as a whole number when it is one, otherwise with one decimal place. */
+export function formatRange(range: number): string {
+  return Number.isInteger(range) ? String(range) : range.toFixed(1);
+}
 
 /**
  * Unit content paths the classic plugin currently ships, in training-menu order.
@@ -52,6 +97,9 @@ export const CLASSIC_BUILDING_KINDS = [
   "building.lumbercamp.t1",
   "building.lumbercamp.t2",
   "building.lumbercamp.t3",
+  "building.turret.t1",
+  "building.turret.t2",
+  "building.turret.t3",
   "building.warehouse",
 ] as const;
 
@@ -90,6 +138,9 @@ export const BUILDING_CONTENT: ReadonlyMap<string, BuildingContent> = new Map<
   ["building.lumbercamp.t1", { path: "building.lumbercamp.t1", trainableUnits: NO_UNITS }],
   ["building.lumbercamp.t2", { path: "building.lumbercamp.t2", trainableUnits: NO_UNITS }],
   ["building.lumbercamp.t3", { path: "building.lumbercamp.t3", trainableUnits: NO_UNITS }],
+  ["building.turret.t1", { path: "building.turret.t1", trainableUnits: NO_UNITS }],
+  ["building.turret.t2", { path: "building.turret.t2", trainableUnits: NO_UNITS }],
+  ["building.turret.t3", { path: "building.turret.t3", trainableUnits: NO_UNITS }],
   ["building.warehouse", { path: "building.warehouse", trainableUnits: NO_UNITS }],
 ]);
 
@@ -225,13 +276,25 @@ export function orderStop(entityId: number): string {
   return `ORDER STOP ${id}`;
 }
 
-/** `BUILD <engineerId> <buildingPath> <x> <y>`; the answer carries the new building id on success. */
-export function build(engineerId: number, buildingPath: string, x: number, y: number): string {
+/**
+ * `BUILD <engineerId> <buildingPath> <x> <y> [queue]`; the answer carries the new building id.
+ *
+ * <p>The optional literal `queue` is the Shift-click form: the server appends the build order to the
+ * engineer's queue instead of replacing what it was doing. The four-token form is byte-identical to the
+ * historical command, so a plain click cannot accidentally queue.
+ */
+export function build(
+  engineerId: number,
+  buildingPath: string,
+  x: number,
+  y: number,
+  queue = false,
+): string {
   const id = requirePositiveInteger(engineerId, "工程师 id");
   const path = requireContentPath(buildingPath, "建筑路径");
   const tileX = requireFiniteNumber(x, "瓦片 x");
   const tileY = requireFiniteNumber(y, "瓦片 y");
-  return `BUILD ${id} ${path} ${tileX} ${tileY}`;
+  return `BUILD ${id} ${path} ${tileX} ${tileY}${queue ? " queue" : ""}`;
 }
 
 /**
@@ -252,11 +315,42 @@ export function buildBatch(
   buildingPath: string,
   x: number,
   y: number,
+  queue = false,
 ): string[] {
   if (engineerIds.length === 0) {
     throw new Error("批量 BUILD 至少需要一个工兵");
   }
-  return engineerIds.map((engineerId) => build(engineerId, buildingPath, x, y));
+  return engineerIds.map((engineerId) => build(engineerId, buildingPath, x, y, queue));
+}
+
+/** The lines and the placement-mode decision of one building click. */
+export interface BuildPlacementBatch {
+  /** One BUILD line per engineer, in selection order. */
+  readonly lines: string[];
+  /** Whether the placement mode stays armed after this click: true for Shift, false for a plain click. */
+  readonly keepArmed: boolean;
+}
+
+/**
+ * The whole command plan of one click in BUILD placement mode.
+ *
+ * <p>Item 27's reading (Q14) is "queue several build tasks for the current engineer", but the selection
+ * rule of item 26 sends one BUILD per selected engineer for the same footprint. The two combine without a
+ * second command kind: a Shift click emits one `BUILD ... queue` line per engineer in selection order, so
+ * a single-engineer selection queues one task per site, and a multi-engineer selection queues one task per
+ * engineer per site. A plain click keeps the historical four-token BUILD and clears the mode.
+ */
+export function buildPlacementBatch(
+  engineerIds: readonly number[],
+  buildingPath: string,
+  x: number,
+  y: number,
+  shift: boolean,
+): BuildPlacementBatch {
+  return {
+    lines: buildBatch(engineerIds, buildingPath, x, y, shift),
+    keepArmed: shift,
+  };
 }
 
 /** `TRAIN <buildingId> <unitPath>`. */

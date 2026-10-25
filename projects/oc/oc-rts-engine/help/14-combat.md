@@ -75,6 +75,14 @@ CombatStats.armourOf(entity);        // 单位或建筑目标的减伤字段
 
 建筑因此和单位一样会被自动索敌、被 `DamageDealt` 记录、被打死后发布 `EntityKilled` 并从空间索引和每个单位的目标里清掉。`BuildingType.armour()` 不写就是 0，所以旧内容不会因为多了一种目标而改变平衡。
 
+## 三b、建筑也会开火
+
+`BuildingType` 也有 `attackDamage()` / `attackRange()` / `attackCooldownTicks()` 和 `canAttack()`，DSL 里的 `attack(...)` / `attackCooldown(...)` 写在 `building(...)` 定义上就写进建筑类型，和单位共用同一套数值。战斗系统在单位的循环之后遍历 `world.buildings()`：只有**活着、已完工、类型 `canAttack()`** 的建筑才开火；工地不开火。
+
+建筑的目标规则与单位共用 `CombatSystem.isEnemy(Entity, Entity)`：不选自己、不选同队盟友、不选已死实体。和单位不同的是，建筑**只射单位**（`nearestEnemyUnitInRange`），不会把射击浪费在远处的敌方建筑上；目标按“中心距最近”选，平局按实体 id。命中走和单位完全相同的 `attack(...)`：护甲减伤、`DamageDealt`（source 是建筑）、死亡时的 `EntityKilled` 与 `World.destroy`、以及从所有单位与建筑目标里清掉死者 id。建筑自己的 `Building.targetId()` 记录当前目标，`attackCooldown()` 记录冷却。
+
+在 classic 内容里，这就是三档哨塔：`.attack(...)` 与 `.attackCooldown(...)` 写在 `building.turret.t1..t3` 上，射程 6 / 7.5 / 9，伤害 18 / 32 / 55。它没有人口或电力需求（Q15），只是普通的金 + 木建筑，因此可被工程师正常 BUILD，也可用已有的原地升级阶梯升到下一档。
+
 ## 四、一次命中：伤害、冷却、两个事件
 
 `CombatSystem.tick` 对每个活着的单位依次做：
