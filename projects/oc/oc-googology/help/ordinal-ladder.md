@@ -9,14 +9,17 @@
 > 藏起来；分离只是内部类型设计（见第六、七节）。**Q7a 也已回答**：`TNRBMS → ω_α` 在 `a ↦ TNRBMS(0)(1^a)`
 > 的不动点 `X` 切换，`ω_α` 族从 `ω₁` 开始。**Q7b 仍开放**：`ω_α` 值能否当下标；默认不能，最小放宽只记录
 > 不实现（见第五节）。**本阶段不实现 TBMS / TTBMS / TNRBMS 矩阵系统**；NRBMS 直接复用现有的
-> `NonRecursiveBms` / `NonRecursiveExpansion`。阶段四的**基数寄存器**也已落地，但它是独立寄存器，见
-> [`cardinal-register.md`](cardinal-register.md)。
+> `NonRecursiveBms` / `NonRecursiveExpansion`。阶段四的**基数寄存器**也已落地，但它是独立寄存器；阶段五
+> 把其中不可达这一级的无限内部结构实现成**函数生成的层级**（`InaccessibleCardinal` / `IndexLevel`，
+> 见 [`inaccessible-extension.md`](inaccessible-extension.md)）。阶段五不是序数阶梯的段五，而是秩 0
+> 基数的内部结构；寄存器只保留入口 `I_0`。
 
 ## 这一篇讲什么
 
 - `documents/Human/Ordinals.md` 的 21 级阶梯里，阶段一实现前两段，阶段二实现 NRBMS 段（第 3–4 条），
   阶段三实现 `ω_α` 段（第 5 条）；阶段四实现第 6–21 条的基数寄存器（独立类型 `CardinalRung`，见
-  [`cardinal-register.md`](cardinal-register.md)）。
+  [`cardinal-register.md`](cardinal-register.md)）；阶段五实现第 6 条**不可达这一级的内部层级**，用函数
+  生成而不是名册（见 [`inaccessible-extension.md`](inaccessible-extension.md)）。
 - 段一：`0 ~ SHO`。它**已经由 BMS 实现**，本阶段不改 BMS，只让阶梯的下端引用
   [`BmsOrdinal`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java) 和旧名册里的
   [`AbstractOrdinal.SHO`](../src/main/java/io/github/sob1234509876/oc/googology/abstractordinal/AbstractOrdinal.java)。
@@ -43,8 +46,9 @@
 
 ## 一、路线图：21 级阶梯与四个阶段
 
-`documents/Human/Ordinals.md` 的 21 条从 `0` 排到 `Ω_Absolute`。本库把它分成四个实现阶段；阶段一、
-阶段二与阶段三落在序数阶梯里，阶段四是独立的基数寄存器，四者都已落地：
+`documents/Human/Ordinals.md` 的 21 条从 `0` 排到 `Ω_Absolute`。本库把它分成四个阶梯实现阶段；阶段一、
+阶段二与阶段三落在序数阶梯里，阶段四是独立的基数寄存器，四者都已落地。**阶段五**不是第五段阶梯，而是
+第 6 条不可达基数这一级内部的函数生成层级，和阶段四的秩 0 相连：
 
 | 阶段 | `Ordinals.md` 的条目 | 内容 | 本库状态 |
 | --- | --- | --- | --- |
@@ -52,6 +56,7 @@
 | **阶段二** | 3–4 | NRBMS 段：`ω₁^CK ~ ψ_H(ε_{H+1}) = lim(NRBMS) = TNRBMS(0)(1^ω)`，再往上到 `X = min α → TNRBMS(0)(1^α)` 的不动点；记法改成 `TNRBMS(0)(1^α)`；实参/值类型只是内部设计 | **已实现** |
 | **阶段三** | 5 | `ω_α` 的梯级：从 `ω₁` 到 `min α → ω_α` 的不动点 `= ψ_𝕀(𝕀)`；记法改成 `ω_α`；`X` 是切换点与新下端输入 | **已实现**（本页） |
 | **阶段四** | 6–21 | 基数寄存器：不可达基数 `I`、Mahlo、`α`-Mahlo、hyper-Mahlo、弱紧、不可描述、可测、强、超紧、I3~I0、Icarus、Reinhardt、Berkeley、Ord-Berkeley、limit club Berkeley，直到 `Ω ~ Ω_Absolute` | **已实现**（独立的 `CardinalRung` 寄存器，见 [`cardinal-register.md`](cardinal-register.md)） |
+| **阶段五** | 6（内部） | 不可达基数这一级的无限内部结构：`I_α`、不可达维布伦 `I(α,β)`、多变量、序元系数 `a @ b`、自嵌套极限；**函数生成，不是寄存器** | **已实现**（`InaccessibleCardinal` / `IndexLevel`，见 [`inaccessible-extension.md`](inaccessible-extension.md)） |
 
 已经实现的四段与具名边界：
 
@@ -718,9 +723,10 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 
 ## 九、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **596 项**，其中第 21–31 节是阶梯
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 21–31 节是阶梯
 （`LadderCheck`，168 项），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
-[`cardinal-register.md`](cardinal-register.md)）：
+[`cardinal-register.md`](cardinal-register.md)），第 37–43 节是阶段五的不可达扩展
+（`InaccessibleCheck`，87 项，见 [`inaccessible-extension.md`](inaccessible-extension.md)）：
 
 - **第 21 节（寄存器，32 项）**：四段的文本与 `notationName`；段一比较与 `BmsOrdinal` 完全一致；
   `f(ω) = SHO`；`f(ω₁^CK)` 是 TTBMS 固定点；`f(ω^ω)` 保存实参；七个旧占位符及声明 tier；`SHO` 复用
@@ -764,6 +770,11 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 - **第 31 节（Q7b 决定，5 项）**：`omegaAlpha` 只有一个重载且只接受 `LadderArgument`；反射确认
   `LadderArgument` 里没有 `LadderOrdinal`；没有 `asArgument`/`toArgument`；`Boundary` 恰好六个，
   `ω₁` 是实参名而不是值转下标的通道，没有注册 `ω_X`、`ω_ω₁` 之类的段四值。
+- **第 37–43 节（阶段五不可达扩展，87 项）**：`I_0` 最小与 `I(0,β)=I_β`；`I(α,0)` 最小、β 严格递增、
+  对角占优；多变量前缀字典序与 `(1,0)` 型样本；`a @ b` 的层级优先/系数其次，以及三组"文档答案 vs
+  朴素 `ω^b·a`"的成对反例；自嵌套极限描述的语法、非有限性与序位置；类型内全序与
+  `compareWithOrdinal = UNKNOWN`；`INACCESSIBLE.inaccessibleDelegate()` 恰好是 `inaccessible(0)`，以及
+  包内没有枚举/数组/基数表的反射检查。细节见 [`inaccessible-extension.md`](inaccessible-extension.md)。
 
 这些检查不依赖网络，也不需要 BMS 之外的任何库。它们**不**证明 A1/A2，也不证明 TBMS/TTBMS/TNRBMS
 的强度；它们只验证寄存器内部的一致性、递归类型分域、Q7a 的起点与 `I` 处的不动点，以及 Q7b 默认的
@@ -807,7 +818,7 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 16. **`ω_α` 从 `I` 起才是恒等。** 在 `ω₁ ≤ α < I` 上它增长（`ω_{ω₁} > ω₁`）；`I` 及每个基数梯级是
     枚举不动点（`ω_I = I`）。矩阵步 `f`/`g` 在不可数上恒等是所有者约定，不要套到 `ω_α` 上。
 
-## 十一、阶段四已落地：基数寄存器
+## 十一、阶段四与阶段五已落地：基数寄存器与不可达扩展
 
 ### 阶段四：基数寄存器（已实现，独立寄存器）
 
@@ -830,7 +841,8 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
   `ψ_𝕀(𝕀)` 里的 `𝕀` 只是名字，不是阶段四寄存器的值，二者不要混用。
 - 但 `ω_α` 枚举在 `I` 处有真正的固定点：`CardinalRung.isOmegaFixedPoint()` 对每个梯级为真，
   `CardinalRung.omegaAlpha()` 返回该梯级本身（`ω_I = I`、`ω_M = M`）。这是 `I` 以上的数学事实，
-  不是把基数塞回 `LadderOrdinal`；基数的增长仍由本寄存器承担。
+  不是把基数塞回 `LadderOrdinal`；`I` 以上的增长由**阶段五**的函数层级承担（见下一小节），不是由本
+  寄存器承担。
 - 顺序是一致性强度：Berkeley 在 Reinhardt 之上；所有者的"Reinhardt 在概念上更大"由**单独的访问器**
   记录，不是第二个全序。
 - 三条未核实条目（Icarus、Ord-Berkeley、limit club Berkeley）的 `isVerified()` 为 `false`，gloss 复用
@@ -839,10 +851,26 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
   （`ω_α` 值能否当下标）仍开放，默认不开放；它不影响阶段四的上端输入（仍是 `ψ_𝕀(𝕀)`）。
 - 完整的 19 级表、API、常见坑与自校验见 [`cardinal-register.md`](cardinal-register.md)。
 
+### 阶段五：不可达扩展（已实现，函数生成）
+
+- 秩 0 的 `CardinalRung.INACCESSIBLE` 只命名入口 `I_0`：
+  `CardinalRung.INACCESSIBLE.inaccessibleDelegate()` 恰好是
+  `InaccessibleCardinal.inaccessible(0)`。寄存器里没有第二份不可达基数数组或枚举；自校验用反射断言
+  这一点。
+- 阶段五把第 6 条不可达基数这一级的内部结构实现成函数：
+  `inaccessible(α) = I_α`、`veblen(α,β) = I(α,β)`、`veblen(prefix,β)` 的多变量形式、
+  `coefficient(...)` 的序元系数 `I(a @ b)` / `I(a @ b, β)`，以及 `selfNesting()` 的自嵌套极限描述。
+- `IndexLevel` 是自嵌套所需的层级项代数：序数与元组是普通层（前缀优先字典序），条目层按"层级优先、
+  系数其次"比较，自嵌套极限层高于全部有限项。
+- 类型内比较是**全序证明**（`compareTo` / `compareMagnitude`）；与项目里的可数序数不可比，文档说这不是
+  collapse，所以 `compareWithOrdinal` 恒为 `UNKNOWN`。
+- 完整定义、比较规则、自嵌套极限与 API 见 [`inaccessible-extension.md`](inaccessible-extension.md)。
+
 ## 相关文档
 
-- [`../README.md`](../README.md) —— 库总览，阶段一至三阶梯与阶段四基数寄存器在其中的位置
+- [`../README.md`](../README.md) —— 库总览，阶段一至三阶梯、阶段四基数寄存器与阶段五不可达扩展在其中的位置
 - [`cardinal-register.md`](cardinal-register.md) —— 阶段四：19 个基数梯级、文档委托、Berkeley/Reinhardt 约定与未核实条目
+- [`inaccessible-extension.md`](inaccessible-extension.md) —— 阶段五：不可达基数的函数生成层级、比较规则与自嵌套极限
 - [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
 - [`bms.md`](bms.md) —— BMS 标准式、比较、展开与非递归 BMS
 - [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的旧名册，以及 `SHO` 的声明
@@ -862,7 +890,10 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 - [`../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/bms/NonRecursiveBms.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/NonRecursiveBms.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java) —— 阶段四的基数寄存器（独立于本页的序数阶梯）
+- [`../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/InaccessibleCardinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/InaccessibleCardinal.java) —— 阶段五的不可达基数函数
+- [`../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/IndexLevel.java`](../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/IndexLevel.java) —— 自嵌套层级项代数
 - [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/LadderCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/LadderCheck.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java)
+- [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/InaccessibleCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/InaccessibleCheck.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)

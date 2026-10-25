@@ -3,7 +3,9 @@
 > `oc-googology` 的阶段四：把 `documents/Human/Ordinals.md` 第 6–21 条的基数梯级登记成一张**名字与秩的
 > 名册**。它**不是** `LadderOrdinal` 的段五，也**不是**一套记法：没有基本列、不能展开、不能和
 > `Natural` / `Ordinal` 做算术。每一条基数定义都委托给 `documents/Human/Cardinals/` 里的某一节，本库
-> 不另造定义；自校验会解析每一个链接并核对标题。
+> 不另造定义；自校验会解析每一个链接并核对标题。**不可达这一级（秩 0）不是一张有界列表**：它的
+> 内部层级由阶段五的[不可达扩展](inaccessible-extension.md)函数生成，寄存器只通过
+> `INACCESSIBLE.inaccessibleDelegate()` 暴露入口 `I_0`，不保存第二份不可达基数表。
 
 ## 这一篇讲什么
 
@@ -21,6 +23,10 @@
 - **三条未核实**：Icarus、Ord-Berkeley、limit club Berkeley。`Big Cardinals.md` 自己在最后一节
   "Definitions to verify against a source" 里点名了它们。寄存器把 `isVerified()` 设为 `false`，gloss
   直接复用文档措辞，Ord-Berkeley 的两种读法都写进 gloss，**不悄悄选一种**。
+- **不可达部分由函数生成**：秩 0 的 `INACCESSIBLE` 只命名入口 `I_0`。它上面的 `I_α`、不可达维布伦
+  `I(α,β)`、多变量、序元系数 `a @ b` 和自嵌套极限全部由 `io.github.sob1234509876.oc.googology.inaccessible`
+  的函数生成；寄存器通过 `inaccessibleDelegate()` 交出 `InaccessibleCardinal.inaccessible(0)`，没有
+  第二份列表。详见 [`inaccessible-extension.md`](inaccessible-extension.md)。
 - 文档委托、API、常见坑与自校验。
 
 相关：序数阶梯见 [`ordinal-ladder.md`](ordinal-ladder.md)，BMS 之上的旧名册见
@@ -38,6 +44,7 @@
 | 报 `title()`、`notation()`、`gloss()`、`definition()`、`rank()`、`isVerified()` | 展开成基本列（没有 `fundamentalSequence` / `expand`） |
 | 和另一个 `CardinalRung` 按**声明秩**比较（`compareTo`、`compareMagnitude`） | 和 `Natural`、`Ordinal`、`CantorOrdinal` 做任何比较或算术 |
 | `compareWithLadder` 得到 `GREATER`（这是**公理**） | 当 `LadderOrdinal` 的段五值使用，或当作 `LadderArgument` 下标 |
+| `INACCESSIBLE.inaccessibleDelegate()` 得到 `I_0` 的函数值（阶段五入口） | 指望寄存器里有第二份不可达基数数组或枚举 |
 | 作为 `Comparable` 排序（全序、传递、反对称） | 加、乘、取后继、`ω^`，或当成 RTS 的数量值 |
 | 用 `equals` / `==` 比较两个枚举常量 | 从名字反推出它对应的具体基数或一致性强度证明 |
 
@@ -67,7 +74,7 @@
 
 | 秩 | 常量 | 名字 | `Ordinals.md` 的记号 | 委托文档与节 | 核实 |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `INACCESSIBLE` | Inaccessible | `𝕀` | `Inaccessible Cardinal Extension.md` § Strongly inaccessible cardinals | 已核实 |
+| 0 | `INACCESSIBLE` | Inaccessible | `𝕀` | `Inaccessible Cardinal Extension.md` § Strongly inaccessible cardinals | 已核实；内部层级由函数生成 |
 | 1 | `MAHLO` | Mahlo | `𝕄_α` | `Big Cardinals.md` § 1. Mahlo cardinals | 已核实 |
 | 2 | `ALPHA_MAHLO` | alpha-Mahlo | `𝕄(α, β)` | `Big Cardinals.md` § 2. $\alpha$-Mahlo cardinals | 已核实 |
 | 3 | `HYPER_MAHLO` | hyper-Mahlo | `𝕄(1, 0, α)` | `Big Cardinals.md` § 3. Hyper-Mahlo cardinals | 已核实 |
@@ -96,6 +103,27 @@
    这一级是从 `Ω` 到 `Ω_Absolute` 的整段，并引用文件顶部的虚构声明。文件本身说
    "nothing here defines a set, an ordinal or a cardinal; no statement below is a theorem"，所以它是
    **虚构**，不是数学；`isVerified()` 为 `true` 只表示"文档没有把它标成待核实"，不表示它是定理。
+3. **第 0 条为什么不是一张有界表。** 不可达基数有无限多个，所以 `INACCESSIBLE` 不携带数组、枚举或
+   列表。它的 `inaccessibleDelegate()` 返回 **`InaccessibleCardinal.inaccessible(0)`**，即最小不可达
+   基数 `I_0`；其上的 `I_α`、`I(α,β)`、多变量、`a @ b` 与自嵌套极限由
+   [`inaccessible-extension.md`](inaccessible-extension.md) 里的函数按需生成。寄存器只命名阶梯的入口
+   点，自校验用反射断言没有第二份不可达基数表。
+
+### 不可达部分由函数生成
+
+阶段五的 `io.github.sob1234509876.oc.googology.inaccessible` 包是这一条基数的**内部结构**，不是第二张
+寄存器：
+
+- `InaccessibleCardinal.inaccessible(α)` = `I_α`，`veblen(α, β)` = `I(α, β)`，
+  `veblen(prefix, β)` = 多变量形式，`coefficient(...)` = `I(a @ b)` / `I(a @ b, β)`；
+- `IndexLevel` 是 `a @ b` 的层级项代数，支持元组、条目与自嵌套；
+- `selfNesting()` 是 `I(1 @ (1 @ (1 @ ...)))` 的**极限描述**，不是有限项；
+- 类型内比较是全序证明；与可数序数的比较是 `UNKNOWN`（文档说不可比）；
+- 全部定义见 [`inaccessible-extension.md`](inaccessible-extension.md)。
+
+`CardinalRung` 与本包的关系只有两处：`INACCESSIBLE.inaccessibleDelegate()`（入口委托）和
+`compareWithLadder`（基数寄存器对序数阶梯的公理，仍然属于寄存器，不属于不可达扩展）。没有任何
+"基数列表"从阶段五回流到寄存器。
 
 ### 文档委托是怎么被检查的
 
@@ -208,6 +236,8 @@ club `λ`-Berkeley 定义；未核实的是：
 | `compareTo(CardinalRung)` | 按声明秩比较 | 继承自 `Enum`（`final`）；全序、传递、反对称 |
 | `compareMagnitude(CardinalRung)` | 同一个秩，按比较 API 报告 | **永远是证明** |
 | `compareWithLadder(LadderOrdinal)` | 与序数阶梯比较 | 恒为 `GREATER`，**公理不是计算**；`null` 抛 NPE |
+| `inaccessibleDelegate()` | 不可达这一级的函数委托 | 只有 `INACCESSIBLE` 返回 `Optional.of(InaccessibleCardinal.inaccessible(0))`，其余为空 |
+| `hasInaccessibleDelegate()` | 是否有函数委托 | 只有 `INACCESSIBLE` 为 `true` |
 | `isAboveLadder()` | 是否高于整个序数阶梯 | 恒为 `true`，公理的谓词形式 |
 | `isOmegaFixedPoint()` | 是否是 `a ↦ ω_a` 的不动点 | 恒为 `true`：从 `I` 起的每个基数梯级都满足 `ω_a = a`（数学事实） |
 | `omegaAlpha()` | `ω_α` 在该梯级上的值 | 返回该梯级本身（`ω_I = I`、`ω_M = M`）；这是桥，不是 `LadderOrdinal` 值 |
@@ -243,6 +273,8 @@ CardinalRung.REINHARDT.isConceptuallyLargerThan(CardinalRung.BERKELEY); // true�
 CardinalRung.reinhardtIsConceptuallyLargerThanBerkeley();              // true
 
 CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.psiII());    // GREATER，公理
+CardinalRung.INACCESSIBLE.inaccessibleDelegate();  // Optional[I_0]，阶段五入口
+CardinalRung.MAHLO.inaccessibleDelegate();          // Optional.empty
 CardinalRung.INACCESSIBLE.isOmegaFixedPoint();      // true：ω_I = I
 CardinalRung.INACCESSIBLE.omegaAlpha() == CardinalRung.INACCESSIBLE; // true
 CardinalRung.MAHLO.omegaAlpha() == CardinalRung.MAHLO;               // true：ω_M = M
@@ -274,11 +306,16 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 9. **不是 `Ordinal` / `Natural`。** 没有算术、没有基本列、不能当 `Natural.tower(...)` 的 level，也不能
    参与 RTS 的数量运算。
 10. **`I` 与 `ψ_𝕀(𝕀)` 的 `𝕀` 不是同一个东西。** 后者是序数阶梯的边界名，前者是本寄存器的第 0 级。
+11. **不可达这一级没有第二份表。** `INACCESSIBLE` 只交出 `InaccessibleCardinal.inaccessible(0)`；`I_α`、
+    `I(α,β)`、`a @ b` 与自嵌套极限都由阶段五的函数生成。不要给寄存器加 `InaccessibleCardinal[]` 或
+    `List<InaccessibleCardinal>` 字段：自校验的反射检查会失败，而且那正是所有者要求避免的"第二个
+    寄存器"。
 
 ## 七、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **596 项**，其中第 32–36 节是基数寄存器
-（`CardinalRegisterCheck`，50 项）：
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **683 项**，其中第 32–36 节是基数寄存器
+（`CardinalRegisterCheck`，50 项），第 37–43 节是阶段五的不可达扩展（`InaccessibleCheck`，87 项，
+见 [`inaccessible-extension.md`](inaccessible-extension.md)）：
 
 - **第 32 节（寄存器与文档委托，26 项）**：19 个梯级；枚举顺序就是 `Ordinals.md` 第 6–21 条（I3–I0
   拆四级）；`rank()` 与枚举位置严格同步；名字、记号、gloss 各自非空且互不相同；19 条定义都在
@@ -296,6 +333,12 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 - **第 36 节（约定与相等，5 项）**：Berkeley 在 Reinhardt 之上；静态与实例访问器都说 Reinhardt 概念上
   更大；342 个有序对里概念大小访问器恰好 1 个 `true`；约定不改变声明顺序；`equals`/`hashCode` 与
   `compareTo` 一致。
+- **第 37–43 节（阶段五不可达扩展，87 项）**：文档基例（`I_0` 最小、`I(0,β)=I_β`、`I(α,0)` 最小
+  α-不可达、β 严格递增）；多变量字典序与 `(1,0)` 型前缀；序元系数 `a @ b` 的层级优先/系数其次，以及
+  三组"文档答案 vs 朴素 `ω^b·a`"的成对反例；自嵌套极限描述的语法、非有限性与序位置；类型内全序、
+  证明与 `compareWithOrdinal = UNKNOWN`；`INACCESSIBLE.inaccessibleDelegate()` 恰好是
+  `inaccessible(0)`；反射断言包内没有枚举、`InaccessibleCardinal[]`、基数集合或 `values()`。细节见
+  [`inaccessible-extension.md`](inaccessible-extension.md) 第十节。
 
 这些检查**不**证明一致性强度，不证明三条待核实定义的正确性，也不把 `Fake Googology.md` 变成数学；它们
 只验证名册内部的一致性、文档委托真的落在定义所在节，以及"不发明"这条约束在代码里成立。检查读本地
@@ -305,6 +348,7 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 
 - [`../README.md`](../README.md) —— 库总览，阶段四在其中的位置
 - [`ordinal-ladder.md`](ordinal-ladder.md) —— 阶段一至阶段三的序数阶梯；第十一节记录阶段四已落地
+- [`inaccessible-extension.md`](inaccessible-extension.md) —— 阶段五：秩 0 内部的函数生成层级、比较规则与自嵌套极限
 - [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的旧名册，以及 `compareWithBms` 公理
 - [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
 - [`../../../../documents/Human/Ordinals.md`](../../../../documents/Human/Ordinals.md) —— 21 级阶梯的原始规格
@@ -316,8 +360,11 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 ## 相关源码
 
 - [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/CardinalRung.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/InaccessibleCardinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/InaccessibleCardinal.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/IndexLevel.java`](../src/main/java/io/github/sob1234509876/oc/googology/inaccessible/IndexLevel.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/RelativePath.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/package-info.java`](../src/main/java/io/github/sob1234509876/oc/googology/cardinalregister/package-info.java)
 - [`../src/main/java/module-info.java`](../src/main/java/module-info.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/CardinalRegisterCheck.java)
+- [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/InaccessibleCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/InaccessibleCheck.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)

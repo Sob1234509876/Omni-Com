@@ -24,7 +24,9 @@ import java.util.Random;
  * limit, and the ordinal ladder (stage one: BMS, TBMS/TTBMS and the named placeholders; stage two: the
  * NRBMS/TNRBMS segment, the argument/value separation and the boundary analysis; stage three: the
  * {@code omega_alpha} segment up to {@code psi_I(I)}; stage four: the separate cardinal register from the
- * inaccessible cardinal to the fictional {@code Omega ~ Omega_Absolute} segment). Run with
+ * inaccessible cardinal to the fictional {@code Omega ~ Omega_Absolute} segment; stage five: the
+ * function-generated inaccessible hierarchy of {@code googology.inaccessible}, from {@code I_0} through the
+ * inaccessible Veblen function and its ordinal-coefficient and self-nesting forms). Run with
  * {@code ./gradlew :projects:oc:oc-googology:selfcheck}.
  */
 public final class GoogologyCheck {
@@ -232,6 +234,9 @@ public final class GoogologyCheck {
         CardinalRegisterCheck.Result cardinals = CardinalRegisterCheck.run();
         passed += cardinals.passed();
         FAILURES.addAll(cardinals.failures());
+        InaccessibleCheck.Result inaccessible = InaccessibleCheck.run();
+        passed += inaccessible.passed();
+        FAILURES.addAll(inaccessible.failures());
 
         summary();
     }

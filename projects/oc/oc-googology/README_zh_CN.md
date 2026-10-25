@@ -13,12 +13,13 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（596 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（683 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
 | 序数阶梯 | [`help/ordinal-ladder.md`](help/ordinal-ladder.md) —— 21 级阶梯的阶段一至阶段三：BMS 段、按递归类型选择的 `f` 段、直到 `X` 的 NRBMS/TNRBMS 段、从 `ω₁` 到 `ψ_𝕀(𝕀)` 的 `ω_α` 段、递归分层与具名边界 |
 | 基数寄存器 | [`help/cardinal-register.md`](help/cardinal-register.md) —— 阶段四：从不可达基数到虚构的 `Ω ~ Ω_Absolute` 段的独立 19 级寄存器、文档委托、Berkeley/Reinhardt 约定与三条未核实条目 |
+| 不可达扩展 | [`help/inaccessible-extension.md`](help/inaccessible-extension.md) —— 阶段五：不可达这一级内部的函数生成层级（`I_α`、不可达维布伦、多变量、`a @ b` 与自嵌套极限），没有枚举或基数列表 |
 
 ## 它提供什么
 
@@ -352,9 +353,17 @@ Ord-Berkeley、limit club Berkeley，以及虚构的 `Ω ~ Ω_Absolute` 段。�
 `LadderOrdinal` 的段五：`CardinalRung` 是名字与秩的名册，每一条基数定义都委托给
 `documents/Human/Cardinals/`。
 
+**不可达这一级由函数生成。** 秩 0 只是入口。不可达基数有无限多个，所以
+`CardinalRung.INACCESSIBLE.inaccessibleDelegate()` 恰好是
+`InaccessibleCardinal.inaccessible(0)`（`I_0`），其上的 `I_α`、不可达维布伦 `I(α, β)`、多变量形式、
+序元系数 `a @ b` 与自嵌套极限都由
+[`io.github.sob1234509876.oc.googology.inaccessible`](src/main/java/io/github/sob1234509876/oc/googology/inaccessible/package-info.java)
+的函数生成。寄存器里没有第二份不可达基数数组、列表或枚举；自校验用反射断言这一点。阶段五不是第五段
+阶梯，它就是这一级基数的内部结构。见 [`help/inaccessible-extension.md`](help/inaccessible-extension.md)。
+
 | 秩 | 梯级 | `Ordinals.md` 的记号 | 委托文档与节 |
 | --- | --- | --- | --- |
-| 0 | 不可达 | `𝕀` | Inaccessible Cardinal Extension § Strongly inaccessible cardinals |
+| 0 | 不可达 | `𝕀` | Inaccessible Cardinal Extension § Strongly inaccessible cardinals（内部层级由函数生成） |
 | 1 | Mahlo | `𝕄_α` | Big Cardinals § 1. Mahlo cardinals |
 | 2 | `α`-Mahlo | `𝕄(α, β)` | Big Cardinals § 2. `$\alpha$`-Mahlo cardinals |
 | 3 | hyper-Mahlo | `𝕄(1, 0, α)` | Big Cardinals § 3. Hyper-Mahlo cardinals |
@@ -397,11 +406,15 @@ CardinalRung.ALPHA_MAHLO.definition().section();     // "2. $\alpha$-Mahlo cardi
 CardinalRung.BERKELEY.compareTo(CardinalRung.REINHARDT); // > 0，一致性强度
 CardinalRung.REINHARDT.isConceptuallyLargerThan(CardinalRung.BERKELEY); // true，所有者的约定
 CardinalRung.INACCESSIBLE.compareWithLadder(LadderOrdinal.psiII());    // GREATER，公理
+CardinalRung.INACCESSIBLE.inaccessibleDelegate();    // Optional[I_0]，阶段五入口
+CardinalRung.MAHLO.inaccessibleDelegate();            // Optional.empty
 CardinalRung.ICARUS.isVerified();                    // false
 ```
 
 **哪些有意不做。** 不构造或展开基数、不证明一致性强度、不"修好"三条待核实定义：寄存器只记录文档的
-状态并拒绝发明。`RelativePath` 解析文件，自校验核对节标题，所以悬空的委托会让构建失败而不是留在注释里。
+状态并拒绝发明。不可达部分不是有界列表：委托是 `I_0`，其上的层级由 `inaccessible` 包的函数生成；这些
+函数按声明项序比较，并对项目里的可数序数返回 `UNKNOWN` 而不是猜。
+`RelativePath` 解析文件，自校验核对节标题，所以悬空的委托会让构建失败而不是留在注释里。
 `Fake Googology.md` 是虚构，引用它的梯级在枚举与本文件中都标明了。完整表、API、常见坑与自校验见
 [`help/cardinal-register.md`](help/cardinal-register.md)。
 
@@ -413,7 +426,7 @@ CardinalRung.ICARUS.isVerified();                    // false
 - **负数。** 当结果会低于零时 `subtract` 抛出异常；`subtractClamped` 则在零处停止，这正是游戏在伤害和库存方面想要的。
 - **记法上限之上的序数，或快速增长层级。** 序数作为超运算*层级*受到支持，最高到记法的极限（默认记法为 `ε₀`），自定义记法可以命名自己的极限；这个库仍然不提供快速增长层级、序数坍缩函数，或 `ε₀` 之后的序数。
 - **BMS 之上的记法。** `AbstractOrdinal` 只**命名** BMS 极限及其之上的阶段，并给它们一个声明顺序；它不是记法，没有基本列、算术或值，它的"高于一切 BMS 值"比较是一条显式公理。它不说明一个名字比 BMS 高多少，低于极限的参考节点也被有意排除在名册之外。
-- **TBMS/TTBMS/TNRBMS 矩阵系统。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一至阶段三：段一委托 BMS，段二是**抽象**函数 `f(α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，段四是直到 `ψ_𝕀(𝕀)` 的**抽象** `ω_α` 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF 或基数。A1 是所有者裁定的定理，A2 直接来自 TTBMS 的定义（该定义是社区标准，从未完整写出）。它的 `f`、`g` 与 `h` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。基数寄存器是独立的，见上一节：它只委托定义，同样不构造基数。
+- **TBMS/TTBMS/TNRBMS 矩阵系统。** `LadderOrdinal` 实现 `Ordinals.md` 的阶段一至阶段三：段一委托 BMS，段二是**抽象**函数 `f(α)`，段三是直到不动点 `X` 的 NRBMS/TNRBMS 段，段四是直到 `ψ_𝕀(𝕀)` 的**抽象** `ω_α` 段，具名层是 `ψ`、`SHO`、`LRPO`、`ω₁^CK`、`lim(NRBMS)`、`X`、`ω₁`、`ψ_𝕀(𝕀)`。它不构造 TBMS、TTBMS 或 TNRBMS 矩阵，不算 OCF 或基数。A1 是所有者裁定的定理，A2 直接来自 TTBMS 的定义（该定义是社区标准，从未完整写出）。它的 `f`、`g` 与 `h` 值按参数比较，这就是所有者要求的保序性，不是矩阵展开。基数寄存器是独立的，见上一节：它只委托定义，同样不构造基数。不可达扩展也不构造基数：它用函数生成文档的下标项，按声明项序比较，并把最终的自嵌套极限表示为描述。
 - **把 BMS 当作完整的 `Ordinal`，或证明它的强度。** BMS 层能展开矩阵，但它不是 `Ordinal`：没有加法、有限系数乘法或 `ω^`，也没有接上 `OrdinalNotation`。展开的一致性（`S > S[n]`、严格递增）是测试和论证，不是形式证明；字典序也只在标准式上被**断言**与序数顺序一致。非递归 BMS 同理：没有坏根的情形是无限列，只作为描述暴露，不是可比较的值。
 
 ## 一张表概括语义
@@ -460,16 +473,21 @@ src/main/java/io/github/sob1234509876/oc/googology/
     cardinalregister/CardinalRung.java     19 个基数梯级：名字、记号、gloss、文档链接、秩与核实标记
     cardinalregister/RelativePath.java     仓库根相对路径 + 节标题的文档引用
     cardinalregister/package-info.java     基数寄存器包文档
+    inaccessible/InaccessibleCardinal.java 函数生成的不可达层级：I_alpha、I(alpha,beta)、a @ b 与自嵌套极限
+    inaccessible/IndexLevel.java           自嵌套扩展的层级项代数
+    inaccessible/package-info.java         不可达扩展包文档
 help/ordinals.md                 序数层的中文指南
 help/bms.md                      BMS 层的中文指南
 help/abstract-ordinals.md        BMS 之上名册的中文指南
 help/ordinal-ladder.md           阶段一至阶段三序数阶梯的中文指南
 help/cardinal-register.md        阶段四基数寄存器的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    596 项检查的自检程序
+help/inaccessible-extension.md   阶段五不可达扩展的中文指南
+src/selfcheck/java/.../check/GoogologyCheck.java    683 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）
 src/selfcheck/java/.../check/CardinalRegisterCheck.java  其中的基数寄存器五节（第 32–36 节）
+src/selfcheck/java/.../check/InaccessibleCheck.java  其中的不可达扩展七节（第 37–43 节）
 ```
 
 ## 相关
@@ -482,4 +500,6 @@ src/selfcheck/java/.../check/CardinalRegisterCheck.java  其中的基数寄存�
   以及阶段四的交接，中文。
 - [`help/cardinal-register.md`](help/cardinal-register.md) —— 阶段四：19 级基数寄存器、每一级的文档节、
   Berkeley/Reinhardt 约定、三条未核实条目、API 与常见坑，中文。
+- [`help/inaccessible-extension.md`](help/inaccessible-extension.md) —— 阶段五：秩 0 内部的函数生成层级、
+  不可达维布伦函数、`a @ b` 比较规则、自嵌套极限描述，以及"没有基数列表"的反射保证，中文。
 - 被 RTS 引擎用于物品数量、容量、生命值和伤害；参见 [`../oc-rts-engine/README.md`](../oc-rts-engine/README.md)，以及中文的引擎 [`help/12-numbers-and-googology.md`](../oc-rts-engine/help/12-numbers-and-googology.md)。
