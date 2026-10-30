@@ -6,11 +6,12 @@
  * Entity shapes are equally simple but recognisable: a circle for a unit, a roofed square for a
  * building, both tinted by owner.
  *
- * The module is DOM-free apart from the Canvas 2D context it is handed, and its only import is a
- * type, which keeps it importable by the Node render math check.
+ * The module is DOM-free apart from the Canvas 2D context it is handed, and its only imports are a
+ * type and the shared font-stack constant, which keeps it importable by the Node render math check.
  */
 
 import type { Camera, TileRange } from "./camera";
+import { FONT_STACK } from "./font.ts";
 
 /**
  * Base colours, keyed by the engine's terrain content path.
@@ -867,7 +868,7 @@ function drawGreyTag(
 ): void {
   const fontSize = Math.max(9, Math.round(tilePixels * fontScale));
   context.save();
-  context.font = `600 ${fontSize}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.font = `600 ${fontSize}px ${FONT_STACK}`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   const paddingX = Math.max(4, Math.round(fontSize * 0.35));

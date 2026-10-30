@@ -113,6 +113,13 @@ container is transparent and takes no pointer input outside its panel, so the ca
 world still reach it. Exchanges are shown as toasts, with the full history still available behind the **日志** button.
 No new dependencies are installed: the only runtime dependency is the already-installed `katex` **^0.19.0**, and the two devDependencies remain `typescript` and `vite`.
 
+**UI font.** The interface uses **JetBrains Mono**, bundled from
+[`public/fonts/JetBrainsMono-Medium.ttf`](public/fonts/JetBrainsMono-Medium.ttf). A single `@font-face`
+declares the whole weight range (`font-weight: 100 900`) from that one Medium file, so bold chrome reuses
+the same face instead of a synthesised bold. The system monospace stack (`ui-monospace`, `Cascadia Code`,
+`Consolas`) stays behind it as the fallback, and the base body stack keeps `Microsoft YaHei` for Chinese
+text because the font has no CJK glyphs.
+
 ```shell
 cd web-client
 pnpm dev

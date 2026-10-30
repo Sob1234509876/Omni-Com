@@ -110,6 +110,12 @@ OC/1 只使用文本帧。如果服务端发送了二进制帧，页面只记录
 交互以提示消息显示，完整历史仍可从**日志**按钮后查看。
 没有安装任何新依赖：唯一的运行时依赖是已经安装好的 `katex` **^0.19.0**，两个 devDependencies 仍是 `typescript` 和 `vite`。
 
+**界面字体。** 界面使用 **JetBrains Mono**，文件位于
+[`public/fonts/JetBrainsMono-Medium.ttf`](public/fonts/JetBrainsMono-Medium.ttf)。单个 `@font-face`
+从这一个 Medium 文件声明整个字重范围（`font-weight: 100 900`），因此粗体外壳复用同一字形，而不是合成粗体。
+系统等宽栈（`ui-monospace`、`Cascadia Code`、`Consolas`）仍作为回退，基础正文字体栈保留
+`Microsoft YaHei` 以渲染中文，因为该字体不含 CJK 字形。
+
 ```shell
 cd web-client
 pnpm dev

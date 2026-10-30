@@ -73,6 +73,7 @@ import {
   TERRAIN_COLORS,
   terrainColor,
 } from "../src/render/fallback.ts";
+import { FONT_STACK } from "../src/render/font.ts";
 import {
   CLICK_FLASH_STRENGTH,
   FLASH_COLOR,
@@ -370,7 +371,7 @@ import {
 let passed = 0;
 const failures: string[] = [];
 
-function check(name: string, condition: boolean, detail = ""): void {
+function check(name: string, condition: boolean, detail: string | null = ""): void {
   if (condition) {
     passed += 1;
     console.log(`ok ${passed} - ${name}`);
@@ -6066,6 +6067,36 @@ check(
   "超过生命周期加节流窗口后记录被清理",
   popRecords.size === 0,
   String(popRecords.size),
+);
+
+// ---------------------------------------------------------------------------------------------
+// UI font stack
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "界面等宽字体栈以 JetBrains Mono 开头，并以通用 monospace 兜底",
+  FONT_STACK.startsWith('"JetBrains Mono"') && FONT_STACK.endsWith("monospace"),
+  FONT_STACK,
+);
+
+// The base body stack lives in the page stylesheet, so read it from disk: JetBrains Mono has no
+// Chinese glyphs and the body rule must keep a CJK fallback for the Chinese UI.
+const INDEX_HTML_URL = new URL("../index.html", import.meta.url);
+let indexHtml = "";
+try {
+  indexHtml = readFileSync(INDEX_HTML_URL, "utf8");
+} catch (error: unknown) {
+  console.error(
+    `读取 index.html 失败：${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+const bodyStack = /font:\s*15px\/1\.55\s+([^;]+);/.exec(indexHtml)?.[1]?.trim() ?? "";
+check(
+  "基础正文字体栈以 JetBrains Mono 开头，并保留 Microsoft YaHei 作为中文字形回退",
+  bodyStack.startsWith('"JetBrains Mono"') &&
+    bodyStack.includes('"Microsoft YaHei"') &&
+    bodyStack.endsWith("sans-serif"),
+  bodyStack,
 );
 
 // ---------------------------------------------------------------------------------------------

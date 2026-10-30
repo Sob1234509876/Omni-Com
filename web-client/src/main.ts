@@ -158,6 +158,7 @@ import {
   unitTaskLabel,
   warehouseContentsLabel,
 } from "./render/status";
+import { FONT_STACK } from "./render/font";
 import {
   activePops,
   prunePops,
@@ -3668,8 +3669,7 @@ function drawTooltipThumbnail(entity: EntityView): HTMLCanvasElement {
   context.fillStyle = "#2a2a2a";
   context.fillRect(0, 0, size, size);
   context.fillStyle = "#e6e6e6";
-  context.font =
-    `600 ${Math.round(size * 0.42)}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.font = `600 ${Math.round(size * 0.42)}px ${FONT_STACK}`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(thumbnail.kind === "placeholder" ? thumbnail.label : "?", size / 2, size / 2 + 1);
@@ -4172,6 +4172,25 @@ function startGameLoop(): void {
   }
 }
 
+/**
+ * Starts the world loop only once the bundled UI face is ready, so the first canvas frame measures
+ * JetBrains Mono instead of the system fallback. The rest of the boot stays synchronous: polling and
+ * the HUD are already running, the async part never rejects, and a failed load still starts the game.
+ */
+function startGameAfterFonts(): void {
+  void (async () => {
+    try {
+      await document.fonts.load('12px "JetBrains Mono"');
+      await document.fonts.ready;
+    } catch (error: unknown) {
+      console.warn("界面字体载入失败，画布文字回退到系统等宽字体", error);
+    }
+    // This schedules the first frame (and thus the post-`fonts.ready` redraw) when none is pending,
+    // so even a frame that raced the font swap is replaced once with real JetBrains Mono metrics.
+    startGameLoop();
+  })();
+}
+
 function stopGameLoop(): void {
   if (rafId !== 0) {
     window.cancelAnimationFrame(rafId);
@@ -4367,9 +4386,9 @@ void loadArtwork();
 window.addEventListener("resize", () => {
   updateHud(true);
 });
-startGameLoop();
 startWorldPolling();
 updateHud(true);
+startGameAfterFonts();
 log(
   "info",
   `游戏画面已启用：先显示 ${world.width}×${world.height} 的确定性占位地图，` +

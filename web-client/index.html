@@ -7,6 +7,17 @@
     <link rel="apple-touch-icon" href="/oc.png" />
     <title>Omni Com · OC/1 浏览器客户端</title>
     <style>
+      /* The UI face is bundled once from public/fonts/. Declaring the whole weight range (100..900)
+         on this single Medium file makes bold chrome reuse the face instead of a synthesised bold;
+         Latin text therefore wins over the system monospace stack declared further down. */
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("/fonts/JetBrainsMono-Medium.ttf") format("truetype");
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
+
       /* Page chrome is monochrome by design: every colour literal here is a grey
          (equal red, green and blue channels). Game content is the exception; see
          the #world-canvas rule below and the chip health bars, which reuse the
@@ -50,7 +61,7 @@
         overflow: hidden;
         background: var(--bg);
         color: var(--text);
-        font: 15px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        font: 15px/1.55 "JetBrains Mono", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
       }
 
       /* The game view is the whole page now: there is no permanent right-hand
@@ -140,7 +151,7 @@
         border-radius: 4px;
         background: rgba(0, 0, 0, 0.72);
         color: var(--muted);
-        font: 600 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 600 11px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
@@ -210,7 +221,7 @@
 
       .connection-head h1 span {
         color: #c8c8c8;
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 0.72em;
       }
 
@@ -233,7 +244,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
         backdrop-filter: none;
       }
@@ -366,7 +377,7 @@
         border-radius: 3px;
         background: rgba(0, 0, 0, 0.55);
         color: #e6e6e6;
-        font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 11px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
       }
 
       .warehouse-transfer-status {
@@ -402,7 +413,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
         backdrop-filter: none;
       }
@@ -466,7 +477,7 @@
         border-radius: 3px;
         background: transparent;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-align: left;
         white-space: nowrap;
         cursor: pointer;
@@ -564,7 +575,7 @@
       .command-bar-title {
         flex: 0 0 auto;
         color: #c8c8c8;
-        font: 600 10px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 600 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.12em;
       }
 
@@ -596,7 +607,7 @@
 
       #order-stop,
       #order-attack-move {
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
       }
 
       /* The selected-units strip: one compact chip per unit, horizontally scrollable
@@ -629,7 +640,7 @@
         border-radius: 4px;
         background: rgba(0, 0, 0, 0.55);
         color: #e6e6e6;
-        font: 11px/1.2 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 11px/1.2 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         cursor: pointer;
       }
 
@@ -713,7 +724,7 @@
       .context-section h3 {
         margin: 0 0 4px;
         color: #c8c8c8;
-        font: 600 10px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 600 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.12em;
       }
 
@@ -732,7 +743,7 @@
       .context-buttons button {
         padding: 4px 7px;
         border-radius: 4px;
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 11px;
       }
 
@@ -762,7 +773,7 @@
         background: transparent;
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
         backdrop-filter: none;
       }
@@ -779,7 +790,7 @@
         background: transparent;
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
         backdrop-filter: none;
       }
@@ -848,7 +859,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-align: left;
         white-space: nowrap;
         overflow: hidden;
@@ -881,7 +892,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
         backdrop-filter: none;
       }
@@ -1111,7 +1122,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.35 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.35 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         white-space: nowrap;
         pointer-events: none;
         backdrop-filter: none;
@@ -1216,7 +1227,7 @@
 
       .panel h3 span {
         color: var(--text);
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-weight: 400;
       }
 
@@ -1269,7 +1280,7 @@
 
       textarea {
         resize: vertical;
-        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 13px;
       }
 
@@ -1400,7 +1411,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.45 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         animation: toast-in 120ms ease-out;
         backdrop-filter: none;
       }
@@ -1532,7 +1543,7 @@
         border-radius: 8px;
         background: #000000;
         color: #c8c8c8;
-        font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 13px/1.55 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         white-space: pre-wrap;
         word-break: break-word;
       }
@@ -1574,7 +1585,7 @@
         background: rgba(0, 0, 0, 0.72);
         box-shadow: none;
         color: #e6e6e6;
-        font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 12px/1.45 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
         backdrop-filter: none;
       }

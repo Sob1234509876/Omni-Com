@@ -70,6 +70,7 @@ import {
   playerColor,
 } from "./fallback";
 import { FLASH_COLOR, FLASH_MS, flashIntensity, flashRingCount } from "./flash";
+import { FONT_STACK } from "./font";
 import { queueMarkerText, stockTagVisible, unitStockTagLabel } from "./status";
 import {
   popAlpha,
@@ -141,7 +142,7 @@ function drawMarkers(
   context.lineWidth = lineWidth;
   context.strokeStyle = MARKER_COLOR;
   context.fillStyle = MARKER_COLOR;
-  context.font = `${fontPixels}px ui-monospace, "Cascadia Code", Consolas, monospace`;
+  context.font = `${fontPixels}px ${FONT_STACK}`;
   context.textAlign = "center";
   context.textBaseline = "bottom";
   for (const marker of markers) {

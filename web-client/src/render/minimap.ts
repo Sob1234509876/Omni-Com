@@ -19,6 +19,7 @@
  */
 
 import { CAMERA_SAFETY_BOUND_TILES, type Camera, type Point, type TileCoord } from "./camera.ts";
+import { FONT_STACK } from "./font.ts";
 import {
   compassSector,
   enemyAnchorEntries,
@@ -645,7 +646,7 @@ export class MinimapRenderer {
     context.restore();
 
     context.save();
-    context.font = "10px ui-monospace, \"Cascadia Code\", Consolas, monospace";
+    context.font = `10px ${FONT_STACK}`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillStyle = "#ffffff";

@@ -27,6 +27,7 @@
     "../src/render/stream.ts",
     "../src/render/atlas.ts",
     "../src/render/fallback.ts",
+    "../src/render/font.ts",
     "../src/render/status.ts",
     "../src/render/pop.ts",
     "../src/render/interpolate.ts",
