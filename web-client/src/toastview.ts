@@ -7,6 +7,7 @@
  */
 
 import { renderLatexInto } from "./render/latex";
+import { classifyToast, type MessageCategory } from "./settings";
 import {
   TOAST_VISIBLE_CAP,
   toastLifetimeMs,
@@ -46,9 +47,18 @@ export class ToastConsole {
   private readonly entries: ToastEntry[] = [];
   private readonly timers = new Map<number, number>();
   private nextId = 1;
+  private filter: ((category: MessageCategory) => boolean) | null = null;
 
   constructor(host: HTMLElement) {
     this.host = host;
+  }
+
+  /**
+   * Installs the settings-filter predicate. It is consulted for every push, before an entry or a timer
+   * exists, so a filtered category produces no toast at all. The full log history is unaffected.
+   */
+  setFilter(filter: ((category: MessageCategory) => boolean) | null): void {
+    this.filter = filter;
   }
 
   /** Number of toasts currently on screen; never more than {@link TOAST_VISIBLE_CAP}. */
@@ -56,8 +66,12 @@ export class ToastConsole {
     return this.entries.length;
   }
 
-  /** Adds one toast at the top and starts its own dismissal timer. */
+  /** Adds one toast at the top and starts its own dismissal timer, unless its category is filtered. */
   push(input: ToastInput): void {
+    const category = classifyToast(input.command, input.answer, input.tone);
+    if (this.filter !== null && !this.filter(category)) {
+      return;
+    }
     const entry: ToastEntry = {
       id: this.nextId,
       tone: input.tone,

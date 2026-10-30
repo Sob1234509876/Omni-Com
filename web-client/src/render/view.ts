@@ -516,7 +516,7 @@ export function ownershipColor(playerId: number | undefined, myPlayerId: number 
  * greyscale palette rule and does not compete with the gold selection ring. `enemy-base` is a
  * translucent red ellipse under the enemy unit's feet, using the same red as the enemy ownership ring.
  * Buildings keep only the existing ring: a white outline around a large roof would read as a selection
- * and a base tint would fight the construction bar. The tooltip carries the bold owner tag for every
+ * and a base tint would fight the construction bar. The tooltip carries the 500 emphasis owner tag for every
  * entity, so a building's owner is still unmistakable.
  */
 export type OwnerBadge = "own-outline" | "enemy-base" | "none";

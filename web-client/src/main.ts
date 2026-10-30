@@ -207,6 +207,19 @@ import {
   type WorldView,
 } from "./render/view";
 import { renderLatexInto } from "./render/latex";
+import { MusicPlayerView } from "./musicview";
+import {
+  FILTER_PRESETS,
+  SETTINGS_STORAGE_KEY,
+  defaultSettings,
+  isMessageCategory,
+  parseSettings,
+  presetFilters,
+  serializeSettings,
+  type MessageCategory,
+  type MessageFilters,
+  type Settings,
+} from "./settings";
 import { toastTone } from "./toast";
 import { ToastConsole } from "./toastview";
 
@@ -330,6 +343,236 @@ const commandButtons: readonly HTMLButtonElement[] = [
 /** The transient exchange popups; the full history stays in the `#log` overlay below. */
 const toastConsole = new ToastConsole(toastStack);
 
+const openSettingsButton = required<HTMLButtonElement>("#open-settings");
+const settingsOverlay = required<HTMLDivElement>("#settings-overlay");
+const settingsPanel = required<HTMLElement>("#settings-panel");
+const settingsCloseButton = required<HTMLButtonElement>("#settings-close");
+const settingsResetButton = required<HTMLButtonElement>("#settings-reset");
+const connectionSettingsLink = required<HTMLButtonElement>("#connection-settings-link");
+const settingsConnectionPanel = required<HTMLButtonElement>("#settings-connection-panel");
+const settingPathsInput = required<HTMLInputElement>("#setting-paths");
+const settingViewInput = required<HTMLInputElement>("#setting-view");
+const filterInputs: readonly HTMLInputElement[] = Array.from(
+  document.querySelectorAll<HTMLInputElement>("[data-filter-category]"),
+);
+const presetButtons: readonly HTMLButtonElement[] = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-filter-preset]"),
+);
+const openMusicButton = required<HTMLButtonElement>("#open-music");
+const musicOverlay = required<HTMLDivElement>("#music-overlay");
+
+/** The player owns its own `<audio>` element and the object URLs of every chosen file. */
+const musicPlayer = new MusicPlayerView(musicOverlay, openMusicButton);
+
+// ---------------------------------------------------------------------------------------------
+// Settings. The pure shape/preset/parse rules live in `settings.ts`; this section owns the DOM,
+// `localStorage` and the one-time restore. Every field is saved under one versioned key.
+// ---------------------------------------------------------------------------------------------
+
+function readStoredSettings(): Settings {
+  try {
+    return parseSettings(window.localStorage.getItem(SETTINGS_STORAGE_KEY));
+  } catch {
+    // A browser that blocks storage (private mode, a file:// origin) simply keeps the defaults.
+    return defaultSettings();
+  }
+}
+
+let settings: Settings = readStoredSettings();
+
+function persistSettings(): void {
+  try {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, serializeSettings(settings));
+  } catch {
+    // Storage can be unavailable; the in-memory settings still drive this session.
+  }
+}
+
+/** The saved server address is restored into the fields that moved to the settings panel. */
+hostInput.value = settings.connection.host;
+portInput.value = settings.connection.port;
+
+/** A copy of `filters` with one category changed; typed so the computed key stays a known category. */
+function withFilter(
+  filters: MessageFilters,
+  category: MessageCategory,
+  allowed: boolean,
+): MessageFilters {
+  return { ...filters, [category]: allowed };
+}
+
+// The filter is consulted by `ToastConsole.push`, before an element or a timer exists. The full log
+// written by `log()` is deliberately never filtered.
+toastConsole.setFilter((category) => settings.filters[category]);
+
+function updateSettingsView(): void {
+  settingPathsInput.checked = showPaths;
+  settingViewInput.checked = viewHidden;
+  for (const input of filterInputs) {
+    const category = input.dataset["filterCategory"];
+    if (category !== undefined && isMessageCategory(category)) {
+      input.checked = settings.filters[category];
+    }
+  }
+}
+
+/**
+ * Opens or closes the grouped settings panel. Opening closes the connection overlay (its address fields
+ * moved here) and parks focus on the panel itself, so the player's keyboard shortcuts cannot fire behind
+ * an open dialog; closing returns focus to the 设置 button.
+ */
+function setSettingsOpen(open: boolean, moveFocus = true): void {
+  settingsOverlay.hidden = !open;
+  openSettingsButton.setAttribute("aria-expanded", open ? "true" : "false");
+  openSettingsButton.classList.toggle("armed", open);
+  if (!moveFocus) {
+    return;
+  }
+  if (open) {
+    updateSettingsView();
+    settingsPanel.focus({ preventScroll: true });
+  } else {
+    openSettingsButton.focus({ preventScroll: true });
+  }
+}
+
+openSettingsButton.addEventListener("click", () => {
+  const opening = settingsOverlay.hidden === true;
+  if (opening) {
+    setConnectionOpen(false, false);
+    setResourcesOpen(false, false);
+    if (musicPlayer.isOpen) {
+      musicPlayer.close();
+    }
+  }
+  setSettingsOpen(opening);
+});
+settingsCloseButton.addEventListener("click", () => {
+  setSettingsOpen(false);
+});
+connectionSettingsLink.addEventListener("click", () => {
+  setConnectionOpen(false, false);
+  setSettingsOpen(true);
+});
+settingsConnectionPanel.addEventListener("click", () => {
+  setSettingsOpen(false);
+  setConnectionOpen(true);
+});
+openMusicButton.addEventListener("click", () => {
+  if (musicOverlay.hidden) {
+    // The player is a small floating panel; close the other dialogs so only one owns the keyboard.
+    setSettingsOpen(false, false);
+    setConnectionOpen(false, false);
+    setResourcesOpen(false, false);
+  }
+  musicPlayer.toggleOpen();
+});
+
+for (const input of filterInputs) {
+  input.addEventListener("change", () => {
+    const category = input.dataset["filterCategory"];
+    if (category === undefined || !isMessageCategory(category)) {
+      return;
+    }
+    settings = {
+      ...settings,
+      filters: withFilter(settings.filters, category, input.checked),
+    };
+    persistSettings();
+  });
+}
+
+for (const button of presetButtons) {
+  button.addEventListener("click", () => {
+    const preset = FILTER_PRESETS.find((entry) => entry.id === button.dataset["filterPreset"]);
+    if (preset === undefined) {
+      return;
+    }
+    settings = { ...settings, filters: presetFilters(preset.id) };
+    persistSettings();
+    updateSettingsView();
+    setStatus(`消息筛选：${preset.label}`, "idle");
+  });
+}
+
+/**
+ * Applies the 路径 switch from either its top-chrome button or the settings checkbox, so the two can
+ * never disagree, and saves the choice.
+ */
+function setShowPaths(value: boolean, persist: boolean): void {
+  showPaths = value;
+  settings = { ...settings, showPaths: value };
+  if (persist) {
+    persistSettings();
+  }
+  settingPathsInput.checked = value;
+  updatePathsButton();
+  updateHud(true);
+}
+
+settingPathsInput.addEventListener("change", () => {
+  setShowPaths(settingPathsInput.checked, true);
+});
+
+settingViewInput.addEventListener("change", () => {
+  setViewVisible(!settingViewInput.checked);
+  updateSettingsView();
+});
+
+/** Restores every saved default and clears the saved server address. */
+settingsResetButton.addEventListener("click", () => {
+  settings = defaultSettings();
+  hostInput.value = "";
+  portInput.value = "";
+  showPaths = settings.showPaths;
+  if (viewHidden) {
+    setViewVisible(true);
+  }
+  updateSettingsView();
+  persistSettings();
+  updatePathsButton();
+  updateHud(true);
+  setStatus("设置已重置：服务器地址已清空，消息筛选与界面开关恢复默认。", "ok");
+});
+
+// Capture phase so Escape closes this panel before the canvas or another overlay consumes the key.
+// The log overlay keeps its priority: Escape closes the log first when both are open.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key !== "Escape" || !logOverlay.hidden) {
+      return;
+    }
+    if (!settingsOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setSettingsOpen(false);
+      return;
+    }
+    if (!musicOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      musicPlayer.close();
+    }
+  },
+  true,
+);
+
+hostInput.addEventListener("input", () => {
+  settings = {
+    ...settings,
+    connection: { ...settings.connection, host: hostInput.value },
+  };
+  persistSettings();
+});
+portInput.addEventListener("input", () => {
+  settings = {
+    ...settings,
+    connection: { ...settings.connection, port: portInput.value },
+  };
+  persistSettings();
+});
+
 /**
  * Opens or closes the full-history overlay. The small "日志" button and Escape are the two ways in and
  * out; focus moves to the close button while it is open so a keyboard user is not left behind it.
@@ -383,14 +626,24 @@ function setConnectionOpen(open: boolean, moveFocus = true): void {
     return;
   }
   if (open) {
-    hostInput.focus({ preventScroll: true });
+    // The host/port fields now live in the 设置 panel, so the connection overlay's first control is
+    // the connect button; focusing the hidden host input would strand the keyboard on nothing.
+    connectButton.focus({ preventScroll: true });
   } else {
     connectionToggle.focus({ preventScroll: true });
   }
 }
 
 connectionToggle.addEventListener("click", () => {
-  setConnectionOpen(connectionOverlay.hidden === true);
+  const opening = connectionOverlay.hidden === true;
+  if (opening) {
+    setSettingsOpen(false, false);
+    setResourcesOpen(false, false);
+    if (musicPlayer.isOpen) {
+      musicPlayer.close();
+    }
+  }
+  setConnectionOpen(opening);
 });
 
 // Capture phase: Escape must close the overlay before the canvas turns the same key into a
@@ -421,8 +674,8 @@ let loginName: string | null = null;
 let placementPath: string | null = null;
 /** Pending waypoints of the current selection (Shift+right-click), in click order. */
 let pendingRoute: TileCoord[] = [];
-/** Whether the route overlay is drawn; a session preference, on by default. */
-let showPaths = true;
+/** Whether the route overlay is drawn; restored from the saved settings (default on). */
+let showPaths = settings.showPaths;
 /** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
 let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
@@ -474,7 +727,7 @@ function toastExchange(command: string, answer: string, clientRefusal = false): 
 
 /**
  * Reports a client-side refusal: the UI could not or would not send a command. It is logged, toasted
- * as an error (bright and bold for about eight seconds) and put on the status line.
+ * as an error (bright and emphasised for about eight seconds) and put on the status line.
  *
  * The WebSocket layer can report the same failure twice (its `onError` hook and the rejected `send`);
  * identical refusals within half a second therefore keep the log and status lines but not a second popup.
@@ -1784,7 +2037,14 @@ function setResourcesOpen(open: boolean, moveFocus = true): void {
 }
 
 openResourcesButton.addEventListener("click", () => {
-  setResourcesOpen(resourcesOverlay.hidden === true);
+  const opening = resourcesOverlay.hidden === true;
+  if (opening) {
+    setSettingsOpen(false, false);
+    if (musicPlayer.isOpen) {
+      musicPlayer.close();
+    }
+  }
+  setResourcesOpen(opening);
 });
 
 resourcesCloseButton.addEventListener("click", () => {
@@ -3666,10 +3926,10 @@ function drawTooltipThumbnail(entity: EntityView): HTMLCanvasElement {
     }
     return canvas;
   }
-  context.fillStyle = "#2a2a2a";
+  context.fillStyle = "#202020";
   context.fillRect(0, 0, size, size);
-  context.fillStyle = "#e6e6e6";
-  context.font = `600 ${Math.round(size * 0.42)}px ${FONT_STACK}`;
+  context.fillStyle = "#e0e0e0";
+  context.font = `500 ${Math.round(size * 0.42)}px ${FONT_STACK}`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(thumbnail.kind === "placeholder" ? thumbnail.label : "?", size / 2, size / 2 + 1);
@@ -4219,6 +4479,9 @@ function setViewVisible(visible: boolean): void {
   // page is not blank, and close it again when the canvas comes back. No focus stealing here - the
   // toggle button keeps focus in both directions.
   setConnectionOpen(viewHidden, false);
+  settings = { ...settings, viewHidden };
+  persistSettings();
+  settingViewInput.checked = viewHidden;
   updateHud(true);
 }
 
@@ -4303,7 +4566,7 @@ continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);
 
-/** Reflects the 路径 session toggle on its chrome button. */
+/** Reflects the 路径 preference on its chrome button; the settings checkbox is kept in sync too. */
 function updatePathsButton(): void {
   togglePathsButton.classList.toggle("armed", showPaths);
   togglePathsButton.setAttribute("aria-pressed", showPaths ? "true" : "false");
@@ -4313,9 +4576,7 @@ function updatePathsButton(): void {
 }
 
 togglePathsButton.addEventListener("click", () => {
-  showPaths = !showPaths;
-  updatePathsButton();
-  updateHud(true);
+  setShowPaths(!showPaths, true);
 });
 updatePathsButton();
 selectEngineersButton.addEventListener("click", selectEngineers);
@@ -4400,8 +4661,21 @@ window.addEventListener("beforeunload", () => {
   stopHeartbeat();
   stopWorldPolling();
   input.dispose();
+  musicPlayer.dispose();
   socket?.close("page unload");
 });
 
 setCommandsEnabled(false);
+// Restore the saved UI switches. The 路径 checkbox and the top-chrome button are synced by
+// `setShowPaths`/`updatePathsButton`; a saved hidden view is applied last, because it opens the
+// connection panel and stops the polling loops.
+updateSettingsView();
+if (settings.viewHidden) {
+  setViewVisible(false);
+}
 log("info", `OC/1 浏览器客户端已就绪（页面 ${window.location.origin}）。`);
+log(
+  "info",
+  `设置：${settings.filters.command ? "显示" : "隐藏"}命令与回答提示、` +
+    `${settings.filters.error ? "显示" : "隐藏"}错误提示；消息筛选只影响提示，日志始终完整。`,
+);

@@ -7,9 +7,9 @@
     <link rel="apple-touch-icon" href="/oc.png" />
     <title>Omni Com · OC/1 浏览器客户端</title>
     <style>
-      /* The UI face is bundled once from public/fonts/. Declaring the whole weight range (100..900)
-         on this single Medium file makes bold chrome reuse the face instead of a synthesised bold;
-         Latin text therefore wins over the system monospace stack declared further down. */
+      /* One bundled Medium cut. The 100..900 range keeps the browser from synthesising a faux bold,
+         but it cannot create real weight: 600 and 700 render exactly like 500, so the stylesheet only
+         uses 400/500. Real bold would need a separate Bold cut of the font. */
       @font-face {
         font-family: "JetBrains Mono";
         src: url("/fonts/JetBrainsMono-Medium.ttf") format("truetype");
@@ -18,24 +18,25 @@
         font-display: swap;
       }
 
-      /* Page chrome is monochrome by design: every colour literal here is a grey
-         (equal red, green and blue channels). Game content is the exception; see
+      /* Page chrome is achromatic by design: every colour literal here is a grey
+         (equal red, green and blue channels) except the error treatment
+         (#402020 / #ffe0e0 / #503030). Game content is the exception; see
          the #world-canvas rule below and the chip health bars, which reuse the
          ownership colours of the ground rings and minimap dots. */
       :root {
         color-scheme: dark;
-        accent-color: #e6e6e6;
-        scrollbar-color: #3a3a3a #0a0a0a;
-        --bg: #0a0a0a;
-        --panel: #161616;
-        --line: #3a3a3a;
-        --text: #e6e6e6;
+        accent-color: #e0e0e0;
+        scrollbar-color: #303030 #101010;
+        --bg: #101010;
+        --panel: #202020;
+        --line: #303030;
+        --text: #e0e0e0;
         --muted: #b0b0b0;
-        --accent: #ffffff;
-        --ok: #e6e6e6;
-        --bad: #ffffff;
-        --warn: #c8c8c8;
-        --focus: #ffffff;
+        --accent: #e0e0e0;
+        --ok: #e0e0e0;
+        --bad: #e0e0e0;
+        --warn: #b0b0b0;
+        --focus: #e0e0e0;
         /* The three bottom zones keep one fixed height so the toast stack can sit
            above them without measuring anything in JavaScript. Media queries lower
            on this page adjust the same variable. */
@@ -47,8 +48,8 @@
       }
 
       ::selection {
-        background: #3a3a3a;
-        color: #ffffff;
+        background: #303030;
+        color: #e0e0e0;
       }
 
       html,
@@ -66,7 +67,7 @@
 
       /* The game view is the whole page now: there is no permanent right-hand
          protocol column. The canvas fills the stage and every panel floats over
-         it as translucent chrome. */
+         it as opaque #202020 chrome. */
       main.app {
         width: 100%;
         height: 100vh;
@@ -79,7 +80,7 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #000000;
+        background: #101010;
       }
 
       /* The canvas is game content, not chrome: it keeps its own colours and is
@@ -134,47 +135,43 @@
 
       .top-right-chrome button {
         padding: 4px 8px;
-        border-radius: 4px;
         font-size: 11px;
         white-space: nowrap;
       }
 
-      /* The status line keeps its old lightness-coded states, but is now a small
-         always-visible chip instead of a row in a side panel. */
+      /* The status line keeps its states as brightness changes, with one exception: an error uses the
+         same red treatment as an error toast. There is only the 1px border; no accent bar. */
       #status {
         flex: 1 1 100%;
         max-width: 100%;
         overflow: hidden;
         padding: 4px 8px;
-        border: 1px solid #5a5a5a;
-        border-left: 3px solid #2a2a2a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid #303030;
+        background: #202020;
         color: var(--muted);
-        font: 600 11px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        font: 500 11px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       #status[data-state="ok"] {
-        border-left-color: #c8c8c8;
-        color: #e6e6e6;
-        font-weight: 600;
+        color: #e0e0e0;
+        font-weight: 500;
       }
 
       #status[data-state="busy"] {
-        border-left-color: #6b6b6b;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-weight: 500;
       }
 
       #status[data-state="error"] {
-        border-left-color: #ffffff;
-        color: #ffffff;
-        font-weight: 700;
+        border-color: #503030;
+        background: #402020;
+        color: #ffe0e0;
+        font-weight: 500;
       }
 
-      /* The connection overlay: a translucent panel under the top-right column.
+      /* The connection overlay: a square panel under the top-right column.
          Its container is transparent and takes no pointer input, so the canvas is
          never dimmed and clicks outside the panel still reach the world. */
       .connection-overlay {
@@ -202,11 +199,8 @@
         overflow-y: auto;
         overscroll-behavior: contain;
         padding: 14px;
-        border: 1px solid #5a5a5a;
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        backdrop-filter: none;
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       .connection-head {
@@ -220,7 +214,7 @@
       }
 
       .connection-head h1 span {
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 0.72em;
       }
@@ -232,21 +226,18 @@
       }
 
       /* The warehouse panel is the local player's stock plus the client-side marking controls. Same
-         greyscale, translucent chrome as the HUD chips; it takes pointer input only for its own
+         square #202020 chrome as the HUD chips; it takes pointer input only for its own
          checkboxes and buttons, so the canvas stays clickable everywhere around it. */
       .warehouse-panel {
         width: max-content;
         min-width: 148px;
         max-width: min(320px, 100%);
         padding: 7px 9px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
-        backdrop-filter: none;
       }
 
       .warehouse-head {
@@ -259,9 +250,9 @@
 
       .warehouse-panel h2 {
         margin: 0;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 500;
         letter-spacing: 0.08em;
       }
 
@@ -272,14 +263,13 @@
 
       .warehouse-actions button {
         padding: 1px 5px;
-        border-radius: 3px;
         font-size: 10px;
         line-height: 1.4;
       }
 
       .warehouse-summary {
         margin: 0;
-        color: #c8c8c8;
+        color: #b0b0b0;
       }
 
       .warehouse-items {
@@ -310,9 +300,8 @@
         margin: 0;
         padding: 0;
         border: 0;
-        border-radius: 0;
         background: transparent;
-        accent-color: #e6e6e6;
+        accent-color: #e0e0e0;
       }
 
       .warehouse-item-name {
@@ -324,13 +313,13 @@
       }
 
       .warehouse-item.marked .warehouse-item-name {
-        color: #ffffff;
-        font-weight: 600;
+        color: #e0e0e0;
+        font-weight: 500;
       }
 
       .warehouse-amount {
         flex: 0 0 auto;
-        color: #ffffff;
+        color: #e0e0e0;
         font-variant-numeric: tabular-nums;
       }
 
@@ -338,18 +327,18 @@
          warehouse's stock while the marked HUD line stays the all-warehouse total. */
       .warehouse-note {
         margin: 4px 0 0;
-        color: #9a9a9a;
+        color: #b0b0b0;
         font-size: 10px;
       }
 
-      /* The manual transfer form: one compact row per field, same greyscale chrome as the panel. */
+      /* The manual transfer form: one compact row per field, same square chrome as the panel. */
       .warehouse-transfer {
         display: flex;
         flex-direction: column;
         gap: 3px;
         margin-top: 6px;
         padding-top: 5px;
-        border-top: 1px solid #4a4a4a;
+        border-top: 1px solid #303030;
       }
 
       .warehouse-transfer[hidden] {
@@ -364,7 +353,7 @@
 
       .warehouse-transfer-row > span {
         flex: 0 0 26px;
-        color: #9a9a9a;
+        color: #b0b0b0;
         font-size: 10px;
       }
 
@@ -373,33 +362,35 @@
         flex: 1 1 auto;
         min-width: 0;
         padding: 1px 2px;
-        border: 1px solid #5a5a5a;
-        border-radius: 3px;
-        background: rgba(0, 0, 0, 0.55);
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #101010;
+        color: #e0e0e0;
         font: 11px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
       }
 
       .warehouse-transfer-status {
         margin: 4px 0 0;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-size: 10px;
         word-break: break-word;
       }
 
       .warehouse-transfer-status[data-state="ok"] {
-        color: #b9f6ca;
+        color: #e0e0e0;
       }
 
       .warehouse-transfer-status[data-state="error"] {
-        color: #ffb4b4;
+        padding: 3px 5px;
+        border: 1px solid #503030;
+        background: #402020;
+        color: #ffe0e0;
       }
 
       .warehouse-transfer-status[data-state="busy"] {
-        color: #ffe08a;
+        color: #b0b0b0;
       }
 
-      /* The personal marker panel: the translucent list the `标记` button opens. Same greyscale chrome
+      /* The personal marker panel: the square list the `标记` button opens. Same chrome
          as the warehouse panel, one clickable row per marker (number, tile, distance, sector), a
          `清除全部` action and a `关闭` button that mirrors Esc. It is session state only; nothing here
          is stored or sent to the server, and no other player can see it. */
@@ -408,14 +399,11 @@
         min-width: 178px;
         max-width: min(300px, 100%);
         padding: 7px 9px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
-        backdrop-filter: none;
       }
 
       .marker-panel[hidden] {
@@ -432,14 +420,14 @@
 
       .marker-panel h2 {
         margin: 0;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 500;
         letter-spacing: 0.08em;
       }
 
       #marker-count {
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-weight: 400;
         letter-spacing: 0;
       }
@@ -451,7 +439,6 @@
 
       .marker-actions button {
         padding: 1px 5px;
-        border-radius: 3px;
         font-size: 10px;
         line-height: 1.4;
       }
@@ -474,20 +461,21 @@
         width: 100%;
         padding: 2px 5px;
         border: 1px solid transparent;
-        border-radius: 3px;
         background: transparent;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-align: left;
         white-space: nowrap;
         cursor: pointer;
       }
 
-      .marker-row:hover,
+      .marker-row:hover {
+        filter: brightness(75%);
+      }
+
       .marker-row:focus-visible {
-        border-color: #c8c8c8;
-        background: rgba(0, 0, 0, 0.5);
-        color: #ffffff;
+        outline: 2px solid var(--focus);
+        outline-offset: -2px;
       }
 
       .marker-empty {
@@ -533,11 +521,8 @@
         width: 180px;
         height: 180px;
         overflow: hidden;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        backdrop-filter: none;
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       /* Terrain, ownership dots and the white camera outline are canvas content; the panel around
@@ -558,11 +543,8 @@
         min-width: 0;
         padding: 7px 10px;
         overflow: hidden;
-        border: 1px solid #5a5a5a;
-        border-radius: 6px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        backdrop-filter: none;
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       .command-bar-head {
@@ -574,8 +556,8 @@
 
       .command-bar-title {
         flex: 0 0 auto;
-        color: #c8c8c8;
-        font: 600 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        color: #b0b0b0;
+        font: 500 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.12em;
       }
 
@@ -600,7 +582,6 @@
 
       .command-actions button {
         padding: 5px 10px;
-        border-radius: 4px;
         font-size: 12px;
         white-space: nowrap;
       }
@@ -636,17 +617,15 @@
         gap: 3px;
         min-width: 42px;
         padding: 3px 5px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.55);
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 11px/1.2 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         cursor: pointer;
       }
 
       .selection-chip:hover:not(:disabled) {
-        border-color: #c8c8c8;
-        background: rgba(0, 0, 0, 0.72);
+        filter: brightness(75%);
       }
 
       .selection-chip:focus-visible {
@@ -667,9 +646,8 @@
         width: 100%;
         height: 5px;
         overflow: hidden;
-        border: 1px solid #8a8a8a;
-        border-radius: 1px;
-        background: #4a4a4a;
+        border: 1px solid #303030;
+        background: #303030;
       }
 
       /* The fill keeps the ownership colour (mine / enemy / neutral), the same rule
@@ -678,14 +656,14 @@
         display: block;
         height: 100%;
         width: 100%;
-        background: #9ca3af;
+        background: #b0b0b0;
       }
 
       .selection-chip-more {
         align-items: center;
         justify-content: center;
         min-width: 36px;
-        color: #c8c8c8;
+        color: #b0b0b0;
         cursor: default;
       }
 
@@ -698,7 +676,6 @@
         overflow-y: auto;
         overflow-x: hidden;
         border: 1px solid transparent;
-        border-radius: 6px;
         padding: 0;
         /* An empty context zone must not swallow canvas clicks; with content it becomes a panel. */
         pointer-events: none;
@@ -706,10 +683,8 @@
 
       .command-context.has-context {
         padding: 7px 9px;
-        border-color: #5a5a5a;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        backdrop-filter: none;
+        border-color: #303030;
+        background: #202020;
         pointer-events: auto;
       }
 
@@ -723,13 +698,13 @@
 
       .context-section h3 {
         margin: 0 0 4px;
-        color: #c8c8c8;
-        font: 600 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        color: #b0b0b0;
+        font: 500 10px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.12em;
       }
 
       .context-section h3 span {
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-weight: 400;
         letter-spacing: 0;
       }
@@ -742,7 +717,6 @@
 
       .context-buttons button {
         padding: 4px 7px;
-        border-radius: 4px;
         font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 11px;
       }
@@ -769,13 +743,10 @@
         max-width: calc(100% - 340px);
         padding: 0;
         border: 0;
-        border-radius: 0;
         background: transparent;
-        box-shadow: none;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
-        backdrop-filter: none;
       }
 
       .hud {
@@ -786,27 +757,22 @@
         max-width: 100%;
         padding: 0;
         border: 0;
-        border-radius: 0;
         background: transparent;
-        box-shadow: none;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
-        backdrop-filter: none;
       }
 
-      /* Each chip is translucent black over the game view: grey border, no blur, no glow, and text
-         light enough for at least 7:1 contrast even over the brightest terrain. */
+      /* Each chip is an opaque #202020 surface over the game view: #303030 border, no blur, no glow,
+         and text light enough for at least 7:1 contrast even over the brightest terrain. */
       .hud > span {
         display: inline-flex;
         align-items: center;
         gap: 6px;
         padding: 2px 7px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         white-space: nowrap;
       }
 
@@ -821,31 +787,31 @@
       #hud-fps,
       #hud-selected,
       #hud-building {
-        color: #e6e6e6;
+        color: #e0e0e0;
       }
 
       /* An unavailable resource row stays fully readable; italic marks it as "no data". */
       #hud-resources.unavailable {
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-style: italic;
       }
 
       /* The marked-resource line: the same grey chip as the HUD, showing the warehouse totals of the
          items ticked in the warehouse panel. It starts as `已标记：—`. */
       #hud-marked {
-        color: #e6e6e6;
+        color: #e0e0e0;
       }
 
       #hud-marked.has-marks {
-        color: #ffffff;
-        font-weight: 600;
+        color: #e0e0e0;
+        font-weight: 500;
       }
 
       /* The enemy anchor line and the home line: one clickable chip each under the HUD. The enemy line
          names the hostile factions whose starting anchors are published and points at the nearest one;
          the home line says how far my own base is (or that it is visible) and jumps there on a click.
          Both are pointer-transparent only when hidden, so they never cover the canvas otherwise.
-         Colours stay greyscale like the chrome; the red direction lives on the minimap arrow and the
+         Colours stay achromatic like the chrome; the red direction lives on the minimap arrow and the
          white direction on the home / marker arrows, not in this text. */
       #enemy-line,
       #home-line {
@@ -854,11 +820,9 @@
         align-items: center;
         max-width: 100%;
         padding: 2px 7px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         text-align: left;
         white-space: nowrap;
@@ -873,11 +837,14 @@
       }
 
       #enemy-line:hover,
+      #home-line:hover {
+        filter: brightness(75%);
+      }
+
       #enemy-line:focus-visible,
-      #home-line:hover,
       #home-line:focus-visible {
-        border-color: #ffffff;
-        color: #ffffff;
+        outline: 2px solid var(--focus);
+        outline-offset: -2px;
       }
 
       /* The dedicated inventory HUD, directly under the chips. Read-only and pointer-transparent like
@@ -887,21 +854,18 @@
         min-width: 148px;
         max-width: min(240px, 100%);
         padding: 6px 9px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: none;
-        backdrop-filter: none;
       }
 
       .inventory-panel h2 {
         margin: 0 0 4px;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 500;
         letter-spacing: 0.08em;
       }
 
@@ -909,7 +873,7 @@
         margin: 0;
         max-width: 100%;
         overflow: hidden;
-        color: #c8c8c8;
+        color: #b0b0b0;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
@@ -941,15 +905,15 @@
       }
 
       .inventory-amount {
-        color: #ffffff;
+        color: #e0e0e0;
         font-variant-numeric: tabular-nums;
       }
 
       .inventory-total {
         margin: 3px 0 0;
         padding-top: 3px;
-        border-top: 1px solid #4a4a4a;
-        color: #e6e6e6;
+        border-top: 1px solid #303030;
+        color: #e0e0e0;
         font-variant-numeric: tabular-nums;
       }
 
@@ -979,21 +943,20 @@
         display: inline-block;
         width: 46px;
         height: 7px;
-        border: 1px solid #8a8a8a;
-        border-radius: 1px;
-        background: #9a9a9a;
+        border: 1px solid #303030;
+        background: #b0b0b0;
       }
 
       #hud-building-fill {
         display: block;
         width: 0;
         height: 100%;
-        background: #ffffff;
+        background: #e0e0e0;
       }
 
       #hud-building-percent {
         min-width: 4ch;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-variant-numeric: tabular-nums;
       }
 
@@ -1007,9 +970,8 @@
         width: max-content;
         max-width: 100%;
         padding: 4px 7px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       .hud-queue[hidden] {
@@ -1027,9 +989,9 @@
 
       /* The running-job header: `生产中 1/3`, position among the unfinished jobs. */
       .hud-queue-now {
-        color: #ffffff;
+        color: #e0e0e0;
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 500;
         font-variant-numeric: tabular-nums;
         line-height: 1.3;
       }
@@ -1039,25 +1001,25 @@
       .hud-queue-demand {
         flex: 0 0 auto;
         width: 1.5em;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-size: 12px;
         line-height: 1;
         text-align: center;
       }
 
       .hud-queue-demand.ready {
-        color: #c8c8c8;
+        color: #b0b0b0;
       }
 
       .hud-queue-demand.warning {
-        color: #ffffff;
-        font-weight: 700;
+        color: #e0e0e0;
+        font-weight: 500;
       }
 
       /* The transferable warehouse amount beside the demand icon (Q10): a small achromatic number. */
       .hud-queue-stock {
         flex: 0 0 auto;
-        color: #c8c8c8;
+        color: #b0b0b0;
         font-size: 10px;
         font-variant-numeric: tabular-nums;
         line-height: 1;
@@ -1067,7 +1029,7 @@
       .hud-queue-name {
         max-width: 18ch;
         overflow: hidden;
-        color: #e6e6e6;
+        color: #e0e0e0;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
@@ -1077,22 +1039,21 @@
         flex: 0 0 auto;
         width: 56px;
         height: 5px;
-        border: 1px solid #8a8a8a;
-        border-radius: 1px;
-        background: #6b6b6b;
+        border: 1px solid #303030;
+        background: #303030;
       }
 
       .hud-queue-fill {
         display: block;
         width: 0;
         height: 100%;
-        background: #ffffff;
+        background: #e0e0e0;
       }
 
       .hud-queue-index {
         flex: 0 0 auto;
         min-width: 3ch;
-        color: #c8c8c8;
+        color: #b0b0b0;
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
@@ -1103,7 +1064,7 @@
         max-width: 28ch;
       }
 
-      /* The hover tooltip is a small DOM box that follows the pointer. It is greyscale and translucent
+      /* The hover tooltip is a small DOM box that follows the pointer. It is a square #202020 surface
          like every other chrome surface, never blurs the canvas, and never captures pointer input: the
          canvas keeps every click, drag and wheel event under it. */
       .entity-tooltip {
@@ -1117,15 +1078,12 @@
         gap: 8px;
         max-width: min(280px, calc(100vw - 16px));
         padding: 5px 8px;
-        border: 1px solid #5a5a5a;
-        border-radius: 4px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.35 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         white-space: nowrap;
         pointer-events: none;
-        backdrop-filter: none;
       }
 
       .entity-tooltip[hidden] {
@@ -1140,9 +1098,8 @@
         flex: 0 0 auto;
         width: 48px;
         height: 48px;
-        border: 1px solid #4a4a4a;
-        border-radius: 3px;
-        background: #2a2a2a;
+        border: 1px solid #303030;
+        background: #202020;
         pointer-events: none;
       }
 
@@ -1157,8 +1114,8 @@
       .entity-tooltip-name {
         max-width: 100%;
         overflow: hidden;
-        color: #ffffff;
-        font-weight: 600;
+        color: #e0e0e0;
+        font-weight: 500;
         text-overflow: ellipsis;
       }
 
@@ -1166,15 +1123,15 @@
       .entity-tooltip-owner {
         max-width: 100%;
         overflow: hidden;
-        color: #ffffff;
-        font-weight: 700;
+        color: #e0e0e0;
+        font-weight: 500;
         text-overflow: ellipsis;
       }
 
       .entity-tooltip-line {
         max-width: 100%;
         overflow: hidden;
-        color: #c8c8c8;
+        color: #b0b0b0;
         text-overflow: ellipsis;
       }
 
@@ -1185,14 +1142,11 @@
       .notice {
         margin: 10px 0;
         padding: 9px 11px;
-        border: 1px solid #4a4a4a;
-        border-left: 3px solid var(--warn);
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid #303030;
+        background: #202020;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.55;
-        backdrop-filter: none;
       }
 
       .notice strong {
@@ -1202,16 +1156,14 @@
       .panel {
         margin: 10px 0;
         padding: 12px;
-        border: 1px solid #4a4a4a;
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.72);
-        backdrop-filter: none;
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       .panel h2 {
         margin: 0 0 8px;
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 500;
         color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.08em;
@@ -1220,7 +1172,7 @@
       .panel h3 {
         margin: 0 0 8px;
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 500;
         color: var(--muted);
         letter-spacing: 0.05em;
       }
@@ -1259,29 +1211,69 @@
       textarea {
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 7px;
-        background: #000000;
+        background: #101010;
         color: var(--text);
+        padding: 0 10px;
+      }
+
+      input {
+        height: 32px;
+      }
+
+      textarea {
         padding: 8px 10px;
       }
 
       input::placeholder,
       textarea::placeholder {
-        color: #9a9a9a;
+        color: #b0b0b0;
         opacity: 1;
       }
 
-      /* Keep browser autofill from painting its own hue over the grey field. */
+      /* Keep browser autofill from painting its own hue over the field. No shadow trick is used: the
+         text colour is forced and the delayed transition keeps the palette from flashing a blue fill. */
       input:autofill,
       input:-webkit-autofill {
-        -webkit-text-fill-color: #e6e6e6;
-        box-shadow: 0 0 0 1000px #000000 inset;
+        -webkit-text-fill-color: #e0e0e0;
+        caret-color: #e0e0e0;
+        transition: background-color 9999s ease-out 0s;
       }
 
       textarea {
         resize: vertical;
         font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 13px;
+      }
+
+      /* Square controls: a checkbox is a 14px box, a range is a thin track, a select is the same 32px
+         field as a text input. Nothing gets a native rounded chrome. */
+      input[type="checkbox"],
+      input[type="radio"] {
+        width: 14px;
+        height: 14px;
+        min-height: 0;
+        padding: 0;
+        border: 1px solid #303030;
+        background: #101010;
+        accent-color: #e0e0e0;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 18px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        accent-color: #e0e0e0;
+      }
+
+      select {
+        height: 32px;
+        padding: 0 6px;
+        border: 1px solid #303030;
+        background: #101010;
+        color: var(--text);
+        font: inherit;
       }
 
       input:focus,
@@ -1309,22 +1301,23 @@
         width: 180px;
       }
 
+      /* Flat text buttons: the label is the control, the 1px border is the only fill. Hover is a
+         brightness change, never a colour change, so every button keeps the same achromatic palette. */
       button {
-        border: 1px solid #3a3a3a;
-        border-radius: 7px;
-        background: #2a2a2a;
+        appearance: none;
+        border: 1px solid #303030;
+        background: transparent;
         color: var(--text);
-        padding: 8px 14px;
+        padding: 6px 10px;
         cursor: pointer;
       }
 
       button:hover:not(:disabled) {
-        background: #3a3a3a;
-        border-color: #9a9a9a;
+        filter: brightness(75%);
       }
 
       button:active:not(:disabled) {
-        background: #4a4a4a;
+        filter: brightness(60%);
       }
 
       button:disabled {
@@ -1332,24 +1325,12 @@
         opacity: 0.45;
       }
 
-      /* Primary and secondary are separated by lightness only: light fill with
-         dark text versus dark fill with light text. */
-      button.primary {
-        background: #e6e6e6;
-        border-color: #ffffff;
-        color: #000000;
-      }
-
-      button.primary:hover:not(:disabled) {
-        background: #ffffff;
-        border-color: #ffffff;
-        color: #000000;
-      }
-
+      /* Primary and armed are only a slightly stronger border; the text stays #e0e0e0. */
+      button.primary,
       button.armed {
-        border-color: #ffffff;
-        background: #3a3a3a;
-        color: #ffffff;
+        border-color: #e0e0e0;
+        background: transparent;
+        color: var(--text);
       }
 
       .footnote {
@@ -1360,7 +1341,7 @@
       }
 
       code {
-        color: #e6e6e6;
+        color: #e0e0e0;
       }
 
       /* ---------------------------------------------------------------------
@@ -1369,7 +1350,7 @@
          or `$$...$$`; the stylesheet itself is imported by src/main.ts so Vite
          bundles its font files. Math takes the surrounding chrome colour instead
          of a colour of its own. KaTeX paints a formula it cannot parse red with
-         an inline style; the chrome is greyscale by design, so that inline colour
+         an inline style; the chrome is achromatic apart from the error treatment, so that inline colour
          is overridden here too. */
       .katex {
         color: inherit;
@@ -1406,14 +1387,14 @@
       .toast {
         pointer-events: auto;
         padding: 8px 10px;
-        border: 1px solid #5a5a5a;
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.45 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-        animation: toast-in 120ms ease-out;
-        backdrop-filter: none;
+        /* The owner's toast animation slides in from the right over about one second. The stack is
+           anchored bottom-right (not top-right) because the bottom command bar owns the bottom edge
+           and the top chrome already carries several lines; the deviation is documented in the READMEs. */
+        animation: toast-slide-in 1s ease-out both;
       }
 
       .toast-line {
@@ -1425,7 +1406,7 @@
 
       .toast-arrow {
         flex: 0 0 auto;
-        color: #e6e6e6;
+        color: #e0e0e0;
       }
 
       .toast-text {
@@ -1435,28 +1416,24 @@
         white-space: nowrap;
       }
 
-      /* Error toasts stay distinguishable by brightness and weight only - white border, bold white
-         text - never by hue, and they keep the same translucent greyscale background. */
+      /* The one chromatic treatment in the chrome: errors. Everything else is achromatic. */
       .toast-error {
-        border-color: #ffffff;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #ffffff;
-        font-weight: 700;
+        border-color: #503030;
+        background: #402020;
+        color: #ffe0e0;
+        font-weight: 500;
       }
 
       .toast-error .toast-arrow {
-        color: #ffffff;
+        color: #ffe0e0;
       }
 
-      @keyframes toast-in {
+      @keyframes toast-slide-in {
         from {
-          opacity: 0;
-          transform: translateY(6px);
+          transform: translateX(calc(100% + 14px));
         }
         to {
-          opacity: 1;
-          transform: translateY(0);
+          transform: translateX(0);
         }
       }
 
@@ -1489,11 +1466,8 @@
         width: min(980px, 100%);
         max-height: min(86vh, 900px);
         overflow: hidden;
-        border: 1px solid #6b6b6b;
-        border-radius: 10px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        backdrop-filter: none;
+        border: 1px solid #303030;
+        background: #202020;
       }
 
       .log-overlay-head {
@@ -1502,14 +1476,13 @@
         justify-content: space-between;
         gap: 12px;
         padding: 12px 14px;
-        border-bottom: 1px solid #6b6b6b;
-        background: rgba(0, 0, 0, 0.72);
-        backdrop-filter: none;
+        border-bottom: 1px solid #303030;
+        background: #202020;
       }
 
       .log-overlay-head h2 {
         margin: 0;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-size: 14px;
         letter-spacing: 0.08em;
       }
@@ -1525,24 +1498,22 @@
         max-height: none;
         margin: 0;
         border: 0;
-        border-radius: 0;
-        background: rgba(0, 0, 0, 0.45);
-        color: #e6e6e6;
+        background: #101010;
+        color: #e0e0e0;
       }
 
       /* The log is a single text node written by main.ts with textContent, so the
          direction arrows and the ERR/! lines cannot be restyled individually
-         without changing main.ts; the pane is monochrome grey as a whole. */
+         without changing main.ts; the pane is achromatic as a whole. */
       .log {
         min-height: 200px;
         max-height: 360px;
         margin: 0;
         overflow: auto;
         padding: 12px;
-        border: 1px solid #3a3a3a;
-        border-radius: 8px;
-        background: #000000;
-        color: #c8c8c8;
+        border: 1px solid #303030;
+        background: #101010;
+        color: #b0b0b0;
         font: 13px/1.55 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         white-space: pre-wrap;
         word-break: break-word;
@@ -1554,7 +1525,7 @@
         }
       }
 
-      /* The full resource page: one translucent panel over the game view. Its container is fully
+      /* The full resource page: one square panel over the game view. Its container is fully
          transparent and takes no pointer input, so it never adds a scrim and clicks outside the panel
          still reach the canvas; only the panel itself is darkened and interactive. */
       .resources-overlay {
@@ -1580,14 +1551,11 @@
         max-height: min(82vh, 760px);
         overflow: hidden;
         padding: 0;
-        border: 1px solid #6b6b6b;
-        border-radius: 10px;
-        background: rgba(0, 0, 0, 0.72);
-        box-shadow: none;
-        color: #e6e6e6;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
         font: 12px/1.45 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
         pointer-events: auto;
-        backdrop-filter: none;
       }
 
       .resources-head {
@@ -1596,26 +1564,25 @@
         justify-content: space-between;
         gap: 12px;
         padding: 10px 14px;
-        border-bottom: 1px solid #5a5a5a;
+        border-bottom: 1px solid #303030;
       }
 
       .resources-head h2 {
         margin: 0;
-        color: #e6e6e6;
+        color: #e0e0e0;
         font-size: 14px;
         letter-spacing: 0.08em;
       }
 
       .resources-head button {
         padding: 3px 9px;
-        border-radius: 4px;
         font-size: 11px;
       }
 
       .resources-note {
         margin: 0;
         padding: 8px 14px;
-        border-bottom: 1px solid #3a3a3a;
+        border-bottom: 1px solid #303030;
         color: #b0b0b0;
         font-size: 11px;
       }
@@ -1636,7 +1603,7 @@
         align-items: baseline;
         gap: 10px;
         padding: 3px 0;
-        border-bottom: 1px solid #2a2a2a;
+        border-bottom: 1px solid #303030;
       }
 
       .resources-row:last-child {
@@ -1646,13 +1613,13 @@
       .resources-name {
         min-width: 0;
         overflow: hidden;
-        color: #e6e6e6;
+        color: #e0e0e0;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .resources-amount {
-        color: #ffffff;
+        color: #e0e0e0;
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
@@ -1665,6 +1632,302 @@
         text-align: right;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      /* ---------------------------------------------------------------------
+         Settings panel and music player. Both are grouped #202020 surfaces with
+         1px #303030 borders; they float over the canvas without a scrim so the
+         world stays visible beside them. No radius, shadow, blur or glow.
+         --------------------------------------------------------------------- */
+      .settings-overlay,
+      .music-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 46;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      .settings-overlay[hidden],
+      .music-overlay[hidden] {
+        display: none;
+      }
+
+      .settings-panel,
+      .music-panel {
+        display: flex;
+        flex-direction: column;
+        width: min(620px, 100%);
+        max-height: min(88vh, 900px);
+        overflow: hidden;
+        border: 1px solid #303030;
+        background: #202020;
+        color: #e0e0e0;
+        font: 12px/1.5 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        pointer-events: auto;
+        outline: none;
+      }
+
+      .music-panel {
+        width: min(520px, 100%);
+      }
+
+      .settings-panel:focus-visible,
+      .music-panel:focus-visible {
+        outline: 2px solid #e0e0e0;
+        outline-offset: 2px;
+      }
+
+      .settings-head,
+      .music-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #303030;
+      }
+
+      .settings-head h2,
+      .music-head h2 {
+        margin: 0;
+        color: #e0e0e0;
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+      }
+
+      .settings-head-actions {
+        display: flex;
+        gap: 6px;
+      }
+
+      .settings-head button,
+      .music-head button {
+        padding: 3px 9px;
+        font-size: 11px;
+      }
+
+      .settings-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0 12px 10px;
+      }
+
+      .settings-group {
+        padding: 10px 0;
+        border-bottom: 1px solid #303030;
+      }
+
+      .settings-group:last-child {
+        border-bottom: 0;
+      }
+
+      .settings-group h3 {
+        margin: 0 0 6px;
+        color: #e0e0e0;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+      }
+
+      .settings-note {
+        margin: 0 0 8px;
+        color: #b0b0b0;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .settings-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .settings-checks {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 12px;
+      }
+
+      .settings-checks label,
+      .settings-group > label {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        color: #e0e0e0;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .settings-checks input,
+      .settings-group > label input {
+        flex: 0 0 auto;
+        width: 14px;
+        height: 14px;
+        margin: 0;
+      }
+
+      .settings-presets {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .settings-presets button {
+        padding: 3px 9px;
+        font-size: 11px;
+      }
+
+      /* --- music player --------------------------------------------------- */
+      .music-note,
+      .music-status,
+      .music-now,
+      .music-empty {
+        margin: 0;
+        padding: 6px 12px 0;
+        color: #b0b0b0;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .music-status {
+        padding-top: 8px;
+      }
+
+      .music-status[data-state="ok"] {
+        color: #e0e0e0;
+      }
+
+      .music-status[data-state="error"] {
+        margin: 8px 12px 0;
+        padding: 4px 6px;
+        border: 1px solid #503030;
+        background: #402020;
+        color: #ffe0e0;
+      }
+
+      .music-now {
+        color: #e0e0e0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .music-files-label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 8px 12px 0;
+        color: #b0b0b0;
+        font-size: 11px;
+      }
+
+      .music-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px 12px 0;
+      }
+
+      .music-progress-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px 0;
+      }
+
+      .music-progress-row span {
+        min-width: 4ch;
+        color: #e0e0e0;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+      }
+
+      .music-options {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 12px 0;
+      }
+
+      .music-options label {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        color: #e0e0e0;
+        font-size: 11px;
+      }
+
+      .music-options input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        margin: 0;
+      }
+
+      .music-volume input[type="range"] {
+        width: 110px;
+      }
+
+      .music-playlist {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: 240px;
+        margin: 8px 12px 12px;
+        padding: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border-top: 1px solid #303030;
+        list-style: none;
+      }
+
+      .music-playlist[hidden] {
+        display: none;
+      }
+
+      .music-track {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 0;
+        border-bottom: 1px solid #303030;
+      }
+
+      .music-track-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        padding: 3px 5px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: #b0b0b0;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .music-track.active .music-track-name {
+        border-color: #303030;
+        color: #e0e0e0;
+      }
+
+      .music-track-remove {
+        flex: 0 0 auto;
+        padding: 2px 7px;
+        font-size: 11px;
+      }
+
+      .music-empty[hidden] {
+        display: none;
       }
 
       /* Hide game view: the permanent chrome disappears, the top-right toggle stays
@@ -1763,8 +2026,15 @@
           justify-content: flex-start;
         }
 
-        .fields {
+        .fields,
+        .settings-fields,
+        .settings-checks {
           grid-template-columns: 1fr;
+        }
+
+        .settings-overlay,
+        .music-overlay {
+          padding: 10px;
         }
       }
     </style>
@@ -1847,6 +2117,20 @@
               title="路径：显示选中单位的移动路径与待定路径点（点击关闭）"
             >路径</button>
             <button id="open-log" type="button">日志</button>
+            <button
+              id="open-settings"
+              type="button"
+              aria-expanded="false"
+              aria-controls="settings-overlay"
+              title="设置：服务器地址、消息筛选与界面开关（Esc 关闭）"
+            >设置</button>
+            <button
+              id="open-music"
+              type="button"
+              aria-expanded="false"
+              aria-controls="music-overlay"
+              title="音乐：只播放本机音频文件，不上传、不联网（Esc 关闭）"
+            >音乐</button>
             <button
               id="open-resources"
               type="button"
@@ -1948,15 +2232,10 @@
 
               <section class="panel">
                 <h2>连接</h2>
+                <p class="footnote">
+                  主机与端口已移到 <strong>设置 → 连接</strong>，并在本机记住；这里保留连接按钮与协议命令。
+                </p>
                 <div class="fields">
-                  <label>
-                    主机
-                    <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
-                  </label>
-                  <label>
-                    端口
-                    <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
-                  </label>
                   <label>
                     用户名
                     <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
@@ -1984,6 +2263,9 @@
                 </div>
                 <div class="row">
                   <button id="connect" class="primary" type="button">连接</button>
+                  <button id="connection-settings-link" type="button" title="打开设置 → 连接，修改主机与端口">
+                    服务器地址…
+                  </button>
                   <span class="footnote">连接状态显示在右上角的 <code>#status</code> 芯片里。</span>
                 </div>
                 <p class="footnote">
@@ -2157,6 +2439,129 @@
           清单物品 + 我的仓库库存 + 我的单位携带 + 金/木货币；按名称排序，数量为 0 也保留。
         </p>
         <ul id="resources-list" class="resources-list" aria-live="polite"></ul>
+      </section>
+    </div>
+
+    <div id="settings-overlay" class="settings-overlay" hidden>
+      <section
+        id="settings-panel"
+        class="settings-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="settings-title"
+        tabindex="-1"
+      >
+        <header class="settings-head">
+          <h2 id="settings-title">设置</h2>
+          <div class="settings-head-actions">
+            <button id="settings-reset" type="button" title="恢复默认设置并清除本机保存的值">重置</button>
+            <button id="settings-close" type="button">关闭</button>
+          </div>
+        </header>
+        <div class="settings-body">
+          <section class="settings-group" aria-labelledby="settings-connection-title">
+            <h3 id="settings-connection-title">连接</h3>
+            <p class="settings-note">
+              服务器地址与端口保存在本机；用户名、密码与 debug.key 不会被保存。连接按钮仍在右上角
+              <strong>连接</strong> 面板里。
+            </p>
+            <div class="settings-fields">
+              <label>
+                主机
+                <input id="host" name="host" placeholder="留空 = 当前页面" autocomplete="off" />
+              </label>
+              <label>
+                端口
+                <input id="port" name="port" inputmode="numeric" placeholder="留空 = 25567" autocomplete="off" />
+              </label>
+            </div>
+            <div class="settings-presets">
+              <button id="settings-connection-panel" type="button" title="打开连接与协议面板">
+                打开连接面板…
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="settings-filter-title">
+            <h3 id="settings-filter-title">消息筛选</h3>
+            <p class="settings-note">
+              筛选只作用于右下角的提示消息，日志浮层始终记录全部内容。错误不会被“只显示错误”或“安静”预设隐藏，
+              只有显式取消勾选“错误”才会隐藏。
+            </p>
+            <div class="settings-checks">
+              <label><input type="checkbox" data-filter-category="command" checked /> 命令与回答</label>
+              <label><input type="checkbox" data-filter-category="ping" checked /> PING</label>
+              <label><input type="checkbox" data-filter-category="build" checked /> 建造</label>
+              <label><input type="checkbox" data-filter-category="production" checked /> 生产</label>
+              <label><input type="checkbox" data-filter-category="combat" checked /> 攻击/被袭</label>
+              <label><input type="checkbox" data-filter-category="event" checked /> 事件</label>
+              <label><input type="checkbox" data-filter-category="error" checked /> 错误</label>
+            </div>
+            <div class="settings-presets" aria-label="消息筛选预设">
+              <button type="button" data-filter-preset="errors">只显示错误</button>
+              <button type="button" data-filter-preset="quiet">安静</button>
+              <button type="button" data-filter-preset="all">全部</button>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="settings-ui-title">
+            <h3 id="settings-ui-title">界面</h3>
+            <label><input id="setting-paths" type="checkbox" checked /> 显示路径（与顶部“路径”按钮同步）</label>
+            <label><input id="setting-view" type="checkbox" /> 隐藏游戏画面（与顶部“隐藏游戏画面”按钮同步）</label>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <div id="music-overlay" class="music-overlay" hidden>
+      <section
+        id="music-panel"
+        class="music-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="music-title"
+        tabindex="-1"
+      >
+        <header class="music-head">
+          <h2 id="music-title">音乐</h2>
+          <button id="music-close" type="button">关闭</button>
+        </header>
+        <p class="music-note">
+          只读取本机音频文件，用对象 URL 播放；不上传、不联网。刷新页面后播放列表会清空（文件输入没有可重新打开的路径）。
+        </p>
+        <label class="music-files-label">
+          选择音频文件
+          <input id="music-files" type="file" multiple accept="audio/*" />
+        </label>
+        <p id="music-status" class="music-status" data-state="idle">尚未选择文件。</p>
+        <p id="music-now" class="music-now">未播放</p>
+        <div class="music-controls">
+          <button id="music-prev" type="button" title="上一首（播放器内按左方向键）">上一首</button>
+          <button id="music-play" type="button" title="播放/暂停（播放器内按空格）" aria-pressed="false">播放</button>
+          <button id="music-next" type="button" title="下一首（播放器内按右方向键）">下一首</button>
+        </div>
+        <div class="music-progress-row">
+          <span id="music-elapsed">0:00</span>
+          <input id="music-progress" type="range" min="0" max="1000" step="1" value="0" aria-label="播放进度" />
+          <span id="music-total">0:00</span>
+        </div>
+        <div class="music-options">
+          <label>
+            循环
+            <select id="music-loop">
+              <option value="off">不循环</option>
+              <option value="all" selected>列表循环</option>
+              <option value="one">单曲循环</option>
+            </select>
+          </label>
+          <label><input id="music-shuffle" type="checkbox" /> 随机播放</label>
+          <label class="music-volume">
+            音量
+            <input id="music-volume" type="range" min="0" max="100" step="1" value="100" />
+          </label>
+        </div>
+        <p id="music-empty" class="music-empty">播放列表为空。</p>
+        <ul id="music-playlist" class="music-playlist" aria-label="播放列表" hidden></ul>
       </section>
     </div>
 

@@ -868,7 +868,7 @@ function drawGreyTag(
 ): void {
   const fontSize = Math.max(9, Math.round(tilePixels * fontScale));
   context.save();
-  context.font = `600 ${fontSize}px ${FONT_STACK}`;
+  context.font = `500 ${fontSize}px ${FONT_STACK}`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   const paddingX = Math.max(4, Math.round(fontSize * 0.35));

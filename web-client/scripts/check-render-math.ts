@@ -367,6 +367,43 @@ import {
   splitTex,
   type TexSegment,
 } from "../src/render/latex.ts";
+import {
+  ALL_MESSAGES,
+  FILTER_PRESETS,
+  MESSAGE_CATEGORIES,
+  MESSAGE_CATEGORY_LABELS,
+  SETTINGS_STORAGE_KEY,
+  SETTINGS_VERSION,
+  classifyCommand,
+  classifyNotice,
+  classifyToast,
+  defaultSettings,
+  isMessageCategory,
+  isToastAllowed,
+  parseSettings,
+  presetFilters,
+  serializeSettings,
+  type MessageCategory,
+  type Settings,
+} from "../src/settings.ts";
+import {
+  LOOP_MODES,
+  addTracks,
+  clampIndex,
+  clampVolume,
+  formatTime,
+  nextIndex,
+  prevIndex,
+  progressSliderValue,
+  removeTrack,
+  type Track,
+} from "../src/music.ts";
+import {
+  TOAST_SLIDE_MS,
+  UI_FORBIDDEN_STYLE_PROPERTIES,
+  UI_PALETTE,
+  UI_WEIGHTS,
+} from "../src/theme.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -6097,6 +6134,410 @@ check(
     bodyStack.includes('"Microsoft YaHei"') &&
     bodyStack.endsWith("sans-serif"),
   bodyStack,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Settings, message filters and the palette
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "消息筛选有七个类别，默认全部打开且标签非空",
+  MESSAGE_CATEGORIES.length === 7 &&
+    MESSAGE_CATEGORIES.every(
+      (category) => MESSAGE_CATEGORY_LABELS[category].trim() !== "" && ALL_MESSAGES[category],
+    ) &&
+    MESSAGE_CATEGORIES.every((category) => isToastAllowed(defaultSettings().filters, category)),
+  MESSAGE_CATEGORIES.join(","),
+);
+
+const pingOff = { ...ALL_MESSAGES, ping: false };
+check(
+  "单个类别的开关决定该类别是否允许提示，其他类别不受影响",
+  !isToastAllowed(pingOff, "ping") &&
+    isToastAllowed(pingOff, "error") &&
+    isToastAllowed(pingOff, "command") &&
+    isToastAllowed(ALL_MESSAGES, "ping"),
+  JSON.stringify(pingOff),
+);
+
+const errorsPreset = presetFilters("errors");
+const quietPreset = presetFilters("quiet");
+const allPreset = presetFilters("all");
+check(
+  "“只显示错误”只留下错误，“安静”保留错误与事件，“全部”打开所有类别",
+  MESSAGE_CATEGORIES.every((category) => errorsPreset[category] === (category === "error")) &&
+    MESSAGE_CATEGORIES.every(
+      (category) => quietPreset[category] === (category === "error" || category === "event"),
+    ) &&
+    MESSAGE_CATEGORIES.every((category) => allPreset[category] === true),
+  `${MESSAGE_CATEGORIES.map((category) => `${category}:${String(errorsPreset[category])}/${String(quietPreset[category])}`).join(",")}`,
+);
+
+check(
+  "任何预设都不隐藏错误；三个预设的元数据与实现一致",
+  errorsPreset.error &&
+    quietPreset.error &&
+    allPreset.error &&
+    FILTER_PRESETS.length === 3 &&
+    FILTER_PRESETS.map((preset) => preset.id).join(",") === "errors,quiet,all" &&
+    FILTER_PRESETS.every((preset) => preset.label.trim() !== "" && preset.filters.error),
+  FILTER_PRESETS.map((preset) => preset.label).join(","),
+);
+
+check(
+  "类别守卫接受七个类别并拒绝未知值",
+  MESSAGE_CATEGORIES.every((category) => isMessageCategory(category)) &&
+    isMessageCategory("error") &&
+    !isMessageCategory("") &&
+    !isMessageCategory("commands") &&
+    !isMessageCategory("PING"),
+  MESSAGE_CATEGORIES.join(","),
+);
+
+const commandCases: readonly (readonly [string, MessageCategory])[] = [
+  ["PING", "ping"],
+  ["BUILD 1 building.mine.t1 0 0", "build"],
+  ["UPGRADE 1", "build"],
+  ["TRAIN 1 unit.engineer", "production"],
+  ["ORDER ATTACK 1 2", "combat"],
+  ["ORDER ATTACKMOVE 1 2 3", "combat"],
+  ["ORDER MOVE 1 2 3", "command"],
+  ["WHOAMI", "command"],
+];
+check(
+  "命令分类覆盖 PING / 建造 / 生产 / 攻击 / 普通命令，空命令落到事件",
+  commandCases.every(([command, category]) => classifyCommand(command) === category) &&
+    classifyCommand(null) === "event",
+  commandCases
+    .map(([command, category]) => `${command.slice(0, 12)}=${category}`)
+    .join(","),
+);
+
+check(
+  "通知分类：建筑完成与普通通知是事件，遭到攻击是战斗，ERR 是错误",
+  classifyNotice("建筑完成：兵工厂") === "event" &&
+    classifyNotice("普通通知") === "event" &&
+    classifyNotice("遭到攻击：我的仓库") === "combat" &&
+    classifyNotice("ERR 权限不足") === "error",
+  classifyNotice("遭到攻击：我的仓库"),
+);
+
+check(
+  "错误回答压过命令类别；正常回答按命令归类，无命令的通知按文本归类",
+  classifyToast("BUILD 1 building.mine.t1 0 0", "ERR 拒绝") === "error" &&
+    classifyToast("ORDER MOVE 1 2 3", "OK", "error") === "error" &&
+    classifyToast("BUILD 1 building.mine.t1 0 0", "OK") === "build" &&
+    classifyToast("PING", "PONG") === "ping" &&
+    classifyToast(null, "遭到攻击：我的仓库") === "combat" &&
+    classifyToast(null, "建筑完成：兵工厂") === "event",
+  `${classifyToast("PING", "PONG")}/${classifyToast(null, "建筑完成：兵工厂")}`,
+);
+
+const savedSettings: Settings = {
+  ...defaultSettings(),
+  showPaths: false,
+  viewHidden: true,
+  filters: presetFilters("quiet"),
+  connection: { host: "127.0.0.1", port: "25567" },
+};
+const restoredSettings = parseSettings(serializeSettings(savedSettings));
+check(
+  "设置序列化后按版本原样恢复（筛选、界面开关与服务器地址）",
+  restoredSettings.showPaths === false &&
+    restoredSettings.viewHidden === true &&
+    restoredSettings.connection.host === "127.0.0.1" &&
+    restoredSettings.connection.port === "25567" &&
+    MESSAGE_CATEGORIES.every(
+      (category) => restoredSettings.filters[category] === savedSettings.filters[category],
+    ) &&
+    serializeSettings(restoredSettings) === serializeSettings(savedSettings),
+  serializeSettings(savedSettings),
+);
+
+check(
+  "保存值带版本号，并且整份设置只使用一个固定的 localStorage 键",
+  serializeSettings(savedSettings) ===
+    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"connection":{"host":"127.0.0.1","port":"25567"}}` &&
+    SETTINGS_STORAGE_KEY === "omni-com.web-client.settings" &&
+    SETTINGS_VERSION === 1,
+  SETTINGS_STORAGE_KEY,
+);
+
+const defaults = defaultSettings();
+check(
+  "缺失、非 JSON、非对象或旧版本的值回退到默认设置",
+  parseSettings(null).showPaths &&
+    parseSettings("").filters.error &&
+    parseSettings("not json").filters.command &&
+    parseSettings("[]").connection.host === "" &&
+    parseSettings(JSON.stringify({ version: SETTINGS_VERSION - 1, filters: ALL_MESSAGES })).filters
+      .command &&
+    parseSettings(JSON.stringify({ version: 999 })).showPaths === defaults.showPaths,
+  serializeSettings(parseSettings("not json")),
+);
+
+check(
+  "非法字段类型整体回退；同版本缺少的可选字段由默认值补齐",
+  parseSettings(
+    JSON.stringify({
+      version: SETTINGS_VERSION,
+      filters: { ...ALL_MESSAGES },
+      showPaths: false,
+      connection: { host: 1, port: "25567" },
+    }),
+  ).showPaths === true &&
+    parseSettings(
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        filters: { ...ALL_MESSAGES, ping: "yes" },
+      }),
+    ).filters.ping === true &&
+    parseSettings(
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        filters: { command: false },
+        showPaths: false,
+      }),
+    ).filters.command === false &&
+    parseSettings(
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        filters: { command: false },
+        showPaths: false,
+      }),
+    ).showPaths === false &&
+    parseSettings(
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        filters: { command: false },
+        showPaths: false,
+      }),
+    ).connection.host === "",
+  "invalid field types",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Music playlist
+// ---------------------------------------------------------------------------------------------
+
+const addedTracks = addTracks([], [
+  { key: "a", name: "A.mp3", url: "blob:a" },
+  { key: "b", name: "", url: "blob:b" },
+]);
+check(
+  "加入本地文件时按顺序分配 id，空文件名使用占位名",
+  addedTracks.tracks.length === 2 &&
+    addedTracks.added[0]?.id === 1 &&
+    addedTracks.added[1]?.id === 2 &&
+    addedTracks.added[0]?.name === "A.mp3" &&
+    addedTracks.added[1]?.name === "未命名音频" &&
+    addedTracks.skipped === 0,
+  JSON.stringify(addedTracks.added),
+);
+
+const deduped = addTracks(addedTracks.tracks, [
+  { key: "a", name: "again.mp3", url: "blob:c" },
+  { key: "b", name: "B.mp3", url: "blob:d" },
+  { key: "", name: "no-url.mp3", url: "" },
+]);
+check(
+  "重复的文件 key 与空对象 URL 被跳过，已有列表不被修改",
+  deduped.added.length === 0 &&
+    deduped.skipped === 3 &&
+    deduped.tracks.length === 2 &&
+    addedTracks.tracks.length === 2,
+  `${String(deduped.skipped)}/${String(deduped.tracks.length)}`,
+);
+
+const removedTrack = removeTrack(addedTracks.tracks, 1);
+const missingTrack = removeTrack(addedTracks.tracks, 999);
+check(
+  "移除中间一首后保持其余顺序；未知 id 返回 -1 且不改动列表",
+  removedTrack.index === 0 &&
+    removedTrack.removed?.name === "A.mp3" &&
+    removedTrack.tracks.length === 1 &&
+    removedTrack.tracks[0]?.name === "未命名音频" &&
+    missingTrack.index === -1 &&
+    missingTrack.removed === null &&
+    missingTrack.tracks.length === 2,
+  JSON.stringify(removedTrack.removed),
+);
+
+check(
+  "曲目索引被夹到有效范围",
+  clampIndex(-4, 3) === 0 &&
+    clampIndex(9, 3) === 2 &&
+    clampIndex(1.9, 3) === 1 &&
+    clampIndex(Number.NaN, 3) === 0 &&
+    clampIndex(0, 0) === -1,
+  `${clampIndex(-4, 3)}/${clampIndex(9, 3)}/${clampIndex(0, 0)}`,
+);
+
+check(
+  "不循环时末尾没有下一首、开头没有上一首；普通步进正确",
+  nextIndex(2, 3, { loop: "off", shuffle: false }) === -1 &&
+    prevIndex(0, 3, { loop: "off", shuffle: false }) === -1 &&
+    nextIndex(0, 3, { loop: "off", shuffle: false }) === 1 &&
+    prevIndex(2, 3, { loop: "off", shuffle: false }) === 1,
+  `${nextIndex(2, 3, { loop: "off", shuffle: false })}/${prevIndex(0, 3, { loop: "off", shuffle: false })}`,
+);
+
+check(
+  "列表循环在两端回绕；单曲循环只在自动结束时重复当前曲目",
+  nextIndex(2, 3, { loop: "all", shuffle: false }) === 0 &&
+    prevIndex(0, 3, { loop: "all", shuffle: false }) === 2 &&
+    nextIndex(1, 3, { loop: "one", shuffle: false, auto: true }) === 1 &&
+    nextIndex(1, 3, { loop: "one", shuffle: false }) === 2,
+  `${nextIndex(2, 3, { loop: "all", shuffle: false })}/${prevIndex(0, 3, { loop: "all", shuffle: false })}`,
+);
+
+check(
+  "空列表与单曲列表的边界",
+  nextIndex(0, 0, { loop: "all", shuffle: false }) === -1 &&
+    prevIndex(0, 0, { loop: "all", shuffle: false }) === -1 &&
+    nextIndex(0, 1, { loop: "off", shuffle: false }) === -1 &&
+    prevIndex(0, 1, { loop: "all", shuffle: false }) === 0,
+  `${nextIndex(0, 1, { loop: "off", shuffle: false })}/${prevIndex(0, 1, { loop: "all", shuffle: false })}`,
+);
+
+check(
+  "随机播放不返回当前曲目，结果由注入的随机源决定",
+  nextIndex(1, 4, { loop: "off", shuffle: true, rand: () => 0 }) === 0 &&
+    nextIndex(1, 4, { loop: "off", shuffle: true, rand: () => 0.9 }) === 3 &&
+    prevIndex(2, 4, { loop: "all", shuffle: true, rand: () => 0.5 }) === 1 &&
+    nextIndex(1, 1, { loop: "off", shuffle: true, rand: () => 0.5 }) === 0,
+  `${nextIndex(1, 4, { loop: "off", shuffle: true, rand: () => 0.9 })}/${prevIndex(2, 4, { loop: "all", shuffle: true, rand: () => 0.5 })}`,
+);
+
+check(
+  "循环模式的菜单常量是 不循环 / 列表循环 / 单曲循环",
+  LOOP_MODES.join(",") === "off,all,one",
+  LOOP_MODES.join(","),
+);
+
+check(
+  "媒体时钟格式化为 m:ss，超过一小时为 h:mm:ss，坏值显示 0:00",
+  formatTime(0) === "0:00" &&
+    formatTime(5) === "0:05" &&
+    formatTime(65) === "1:05" &&
+    formatTime(3_600) === "1:00:00" &&
+    formatTime(3_661) === "1:01:01" &&
+    formatTime(Number.NaN) === "0:00" &&
+    formatTime(-1) === "0:00" &&
+    formatTime(Number.POSITIVE_INFINITY) === "0:00",
+  `${formatTime(65)}/${formatTime(3_661)}`,
+);
+
+check(
+  "音量夹到 0..1，进度滑块夹到 0..1000",
+  clampVolume(-1) === 0 &&
+    clampVolume(0.25) === 0.25 &&
+    clampVolume(2) === 1 &&
+    clampVolume(Number.NaN) === 1 &&
+    progressSliderValue(0.5) === 500 &&
+    progressSliderValue(-1) === 0 &&
+    progressSliderValue(2) === 1_000 &&
+    progressSliderValue(Number.NaN) === 0,
+  `${clampVolume(2)}/${progressSliderValue(0.5)}`,
+);
+
+const trackFixture: Track = { id: 1, key: "a", name: "A.mp3", url: "blob:a" };
+check(
+  "曲目对象保留 id、key、名称与对象 URL",
+  trackFixture.id === 1 &&
+    trackFixture.key === "a" &&
+    trackFixture.name === "A.mp3" &&
+    trackFixture.url === "blob:a",
+  JSON.stringify(trackFixture),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Palette / weight tokens and the stylesheet's square rules
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "调色板与 owner 的 global.css 语言完全一致",
+  UI_PALETTE.page === "#101010" &&
+    UI_PALETTE.surface === "#202020" &&
+    UI_PALETTE.border === "#303030" &&
+    UI_PALETTE.text === "#e0e0e0" &&
+    UI_PALETTE.muted === "#b0b0b0" &&
+    UI_PALETTE.errorBackground === "#402020" &&
+    UI_PALETTE.errorText === "#ffe0e0" &&
+    UI_PALETTE.errorBorder === "#503030",
+  JSON.stringify(UI_PALETTE),
+);
+
+check(
+  "单一 Medium 字体只用 400/500；600/700 不能声称真实层级，真正加粗需要 Bold 字重",
+  UI_WEIGHTS.body === 400 &&
+    UI_WEIGHTS.emphasis === 500 &&
+    !Object.values(UI_WEIGHTS).some((weight) => weight >= 600),
+  JSON.stringify(UI_WEIGHTS),
+);
+
+check(
+  "index.html 直接使用同一套调色板字面量",
+  Object.values(UI_PALETTE).every((value) => indexHtml.includes(value)) &&
+    /--bg:\s*#101010/.test(indexHtml) &&
+    /--surface|--panel:\s*#202020/.test(indexHtml) &&
+    /--line:\s*#303030/.test(indexHtml) &&
+    /--text:\s*#e0e0e0/.test(indexHtml),
+  Object.values(UI_PALETTE).join(","),
+);
+
+check(
+  "chrome 没有圆角、阴影、模糊或发光",
+  UI_FORBIDDEN_STYLE_PROPERTIES.every((property) => !indexHtml.includes(property)) &&
+    !/filter:\s*blur\(/.test(indexHtml) &&
+    !/filter:\s*drop-shadow\(/.test(indexHtml),
+  UI_FORBIDDEN_STYLE_PROPERTIES.join(","),
+);
+
+check(
+  "样式表不声明 600/700 字重（600 与 500 使用同一 Medium 字形）",
+  !/font-weight:\s*(600|700)\b/.test(indexHtml) &&
+    !/font:\s*(600|700)\s/.test(indexHtml),
+  "font-weight 600/700",
+);
+
+check(
+  "按钮悬停用 brightness(75%)；输入框为 32px 的 #101010 方框",
+  /button:hover:not\(:disabled\)\s*\{\s*filter:\s*brightness\(75%\)/.test(indexHtml) &&
+    /input\s*\{\s*height:\s*32px/.test(indexHtml) &&
+    /input,\s*\n\s*textarea\s*\{[^}]*background:\s*#101010/s.test(indexHtml),
+  "button hover / input height",
+);
+
+check(
+  "toast 从右侧滑入约 1 秒，但仍锚定右下角（命令栏占据底边）",
+  TOAST_SLIDE_MS === 1_000 &&
+    /@keyframes\s+toast-slide-in/.test(indexHtml) &&
+    /animation:\s*toast-slide-in 1s/.test(indexHtml) &&
+    /\.toast-stack\s*\{[^}]*right:\s*14px;[^}]*bottom:\s*calc\(var\(--bottom-bar-height\) \+ 26px\)/s.test(
+      indexHtml,
+    ),
+  `${TOAST_SLIDE_MS}ms`,
+);
+
+check(
+  "错误是唯一使用色相的界面状态（背景 #402020 / 文字 #ffe0e0 / 边框 #503030）",
+  /\.toast-error\s*\{[^}]*border-color:\s*#503030[^}]*background:\s*#402020[^}]*color:\s*#ffe0e0/s.test(
+    indexHtml,
+  ) &&
+    /#status\[data-state="error"\]\s*\{[^}]*border-color:\s*#503030[^}]*background:\s*#402020[^}]*color:\s*#ffe0e0/s.test(
+      indexHtml,
+    ),
+  "error treatment",
+);
+
+check(
+  "没有左侧 10% 导航栏：全画布 RTS 保持小地图左下、命令栏底部",
+  !indexHtml.includes("navigator-ul") &&
+    !indexHtml.includes("navigator-li") &&
+    /class="minimap"/.test(indexHtml) &&
+    /class="bottom-bar"/.test(indexHtml),
+  "full-canvas RTS layout",
 );
 
 // ---------------------------------------------------------------------------------------------

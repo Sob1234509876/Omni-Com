@@ -46,8 +46,9 @@ pnpm install
 pnpm dev
 ```
 
-Open the address Vite prints (usually `http://localhost:5173/`). When **both the host and the port on the page are left empty**, the client connects to the same-origin
-`/ws`, which Vite's dev proxy forwards to `ws://127.0.0.1:25567`; fill in a host and port to connect directly. The same dev proxy also forwards
+Open the address Vite prints (usually `http://localhost:5173/`). The host/port fields live in **设置 → 连接**; when
+**both are left empty**, the client connects to the same-origin `/ws`, which Vite's dev proxy forwards to
+`ws://127.0.0.1:25567`; fill in a host and port there to connect directly. The same dev proxy also forwards
 `/plugin-assets` to the Java server, so during development the textures likewise come from plugins rather than from `public/`. The same proxy forwards
 `/world` to the Java server, which is how the game view polls the live `GET /world/snapshot`.
 
@@ -71,21 +72,122 @@ lines appear in the log overlay as one exchange toast. The timer starts only aft
 while one is waiting, and is cleared on close and before a reconnect. This keeps an idle page alive against the WebSocket idle
 timeout (`/world/snapshot` is plain HTTP and does not refresh the socket); the `PING` button remains a manual one-off.
 
+## Visual language (the owner's `global.css`)
+
+The chrome follows the owner's `global.css` design language. The reference file is **not** shipped with the client:
+its rules are absorbed into `index.html` (not linked from the repository root), so the client has no dependency on a
+root-level stylesheet.
+
+| Role | Value |
+| --- | --- |
+| Page background | `#101010` |
+| Surfaces (panels, chips, toasts, command bar, overlays) | `#202020` |
+| Borders | `#303030`, always 1px |
+| Text | `#e0e0e0`; quieter text `#b0b0b0` |
+| Error treatment (the **only** chromatic use) | `#402020` background, `#ffe0e0` text, `#503030` border |
+
+Everything is square: no `border-radius`, no shadows, no blur, no glow and no `backdrop-filter` anywhere in the
+chrome. Panels are opaque `#202020` surfaces with a 1px `#303030` border; the overlays' containers stay transparent
+(and take no pointer input outside their panel), so the world canvas is never dimmed. Buttons are flat text buttons:
+`#e0e0e0` text, a 1px border, and hover as `filter: brightness(75%)` - never a background or colour change. Text
+inputs are `#101010`, 32px high, with a `1px solid #303030` border and no radius. The error treatment is used for an
+error toast, the status chip's error state and the two inline status lines (warehouse transfer and music); no other
+chrome element introduces a hue.
+
+**Font weight.** The client bundles a single **Medium** cut of JetBrains Mono. The `@font-face` still declares
+`100 900` so the browser does not synthesize a faux bold, but one file cannot create real weight: **600 and 700 render
+exactly like 500**. The stylesheet therefore uses only 400 (body) and 500 (emphasis); a genuine bold heading would need
+a separate **Bold** cut of the font, which this repository does not bundle.
+
+**Deviations from the reference.** Two are deliberate:
+
+1. **Toasts stay bottom-right.** The reference slides a toast in from the right at the top. The client keeps the
+   slide-in animation (about one second, animating the horizontal position) but anchors the stack **bottom-right,
+   above the bottom bar**, because the bottom command bar owns the bottom edge and the top chrome already carries
+   several lines of buttons and the status chip. Anchoring toasts at the top would collide with that chrome.
+2. **No left 10% navigator.** The reference's `app-div` is a `10% / 90%` grid with a navigator column. This client is a
+   **full-canvas RTS**: the minimap is bottom-left and the command bar/context zone own the bottom edge, so a permanent
+   left column would take game view space for navigation that the minimap already provides.
+
+Game content is the exception to "achromatic": the world canvas keeps its terrain, ownership colours, gold selection
+ring and red hostile marks, and the minimap canvas keeps its terrain, ownership dots and red/white edge arrows. Those
+are the game, not UI chrome; every DOM surface around them follows the table above.
+
 ## The toast console and the log overlay
 
 The permanent protocol log panel is gone. Each command/answer exchange now appears as a toast in the bottom-right corner,
 **above the three-zone bottom bar** (the stack is raised by the bar's height so the two never overlap): one line for the
 sent command (`→`) and one for the answer (`←`), both trimmed to a single line so the whole exchange fits one or two
-lines. A normal toast fades after about **4 seconds**; an error toast —an `ERR ...` answer or a client-side refusal such
-as "log in first" —stays about **8 seconds** and is set apart by brightness and weight only (white border and bold white
-text), because the page chrome is greyscale. The newest toast is on top, at most **5** are visible, and a sixth push drops
-the oldest. Batch orders use one toast whose command and answer halves join the per-unit lines with ` · `.
-Snapshot-diff events (`建筑完成：…` / `遭到攻击：…`) use the same info toast (no command half) and are also written to the history.
+lines. A normal toast fades after about **4 seconds** on a `#202020` surface with a 1px `#303030` border; an error toast
+—an `ERR ...` answer or a client-side refusal such as "log in first" —stays about **8 seconds** and uses the one
+chromatic treatment in the chrome: `#402020` background, `#ffe0e0` text, `#503030` border. Each toast slides in from
+the right over about **one second** (the owner's animation), but the stack stays anchored **bottom-right** because the
+command bar owns the bottom edge; see the visual-language section for both deviations. The newest toast is on top, at
+most **5** are visible, and a sixth push drops the oldest. Batch orders use one toast whose command and answer halves
+join the per-unit lines with ` · `. Snapshot-diff events (`建筑完成：…` / `遭到攻击：…`) use the same info toast (no
+command half) and are also written to the history.
+
+**The filter does not touch the log.** The settings panel's message filter is consulted when a toast is **emitted**, so a
+filtered category produces no toast at all. The `#log` history is written by a separate path and always records every
+line; opening **日志** shows the complete history regardless of the filter. Errors are their own filter category: the
+presets always keep them on, and only an explicit uncheck of 错误 hides an error toast.
 
 Nothing is lost: the small **日志** button in the top-right chrome opens a full-screen history overlay with the original
 `#log` text in order. It has a **关闭** (close) button, a **清空** (clear) action that empties both the history and the
 visible toasts, closes on `Esc` or a backdrop click, and returns focus to the button. The status line, the connection
 form, the HUD, the command bar and every element id the TypeScript binds are unchanged.
+
+## Settings
+
+The **设置** button in the top-right chrome opens one grouped panel with three sections. Everything in it is saved
+together under a single versioned `localStorage` key, `omni-com.web-client.settings` (JSON
+`{"version":1,"filters":…,"showPaths":…,"viewHidden":…,"connection":…}`); a missing, non-JSON, wrongly typed or **older
+version** value falls back to the defaults, and **重置** restores and saves the defaults (including clearing the saved
+server address). Credentials are never stored.
+
+- **连接** - the host and port fields moved here from the connection overlay. The connection button, `REGISTER`,
+  `LOGIN`, `PING`, `COUNT`, `engine-info`, `hello` and `QUIT` stay in the overlay opened by **连接**, so the
+  `connection-toggle` behaviour is unchanged; the overlay itself and **设置** each have a button that opens the other
+  panel. The saved address is restored on boot and used by the unchanged `buildSocketUrl` path, so leaving both fields
+  empty still means "same-origin `/ws` through the Vite proxy".
+- **消息筛选** - per-category checkboxes and three presets. The filter is applied **where a toast is emitted**
+  (`ToastConsole.push`), not in the log: a filtered category produces no toast, while the `#log` overlay keeps every
+  line. Categories:
+  - **命令与回答** - ordinary command/answer exchanges: `REGISTER`, `LOGIN`, `COUNT`, `WHOAMI`, `ORDER MOVE`/`STOP`,
+    `REPAIR`, `RECLAIM`, `TRANSFER`, `hello`, `engine-info` and other non-special traffic.
+  - **PING** - the manual `PING` and the automatic 20-second heartbeat `PING`/`PONG` exchanges.
+  - **建造** - `BUILD` (including 继续建造) and `UPGRADE` exchanges.
+  - **生产** - `TRAIN` exchanges.
+  - **攻击/被袭** - `ORDER ATTACK` and `ORDER ATTACKMOVE` exchanges, plus the derived `遭到攻击：…` snapshot events.
+  - **事件** - other unsolicited server notices and the remaining derived snapshot events, such as
+    `建筑完成：…`.
+  - **错误** - every `ERR …` answer and every client-side refusal (for example "log in first"), regardless of which
+    command produced it. An error is classified here **instead of** its command's category.
+
+  The presets are **只显示错误** (only 错误), **安静** (错误 + 事件) and **全部** (everything). No preset can hide an
+  error: all three force 错误 on, and only an explicit uncheck of the 错误 checkbox filters errors out.
+- **界面** - the existing switches: **显示路径** (the same preference as the top-chrome **路径** button) and
+  **隐藏游戏画面** (the same state as the top-chrome view button). Both stay in sync in either direction and are
+  restored on boot; a saved hidden view is applied after startup, exactly like pressing the button.
+
+## Music player
+
+The **音乐** button opens a small square player that builds a playlist from local files chosen with
+`<input type="file" multiple accept="audio/*">`. Each track's name is the file name. The player offers play/pause,
+previous/next, loop **off / all / one**, shuffle, a volume slider and a progress bar with elapsed and total time. All
+styling follows the same palette and square rules.
+
+- **Only object URLs.** Files are played through `URL.createObjectURL(file)`; nothing is uploaded and the player makes
+  no network requests. A URL is revoked when its track is removed and when the page unloads (`beforeunload`).
+- **Keyboard, scoped.** Space toggles play/pause and the arrow keys skip, but only while focus is inside the player
+  panel; form controls and a focused button keep their native behaviour. The handler never runs on the canvas, so the
+  game's WASD, marquee and every other binding are untouched.
+- **Autoplay policy.** Opening the player or adding files never starts playback: the first play comes from the user's
+  click on play/a track. Every `play()` promise is caught; a rejection (or an unplayable file) becomes a status line in
+  the player instead of an unhandled rejection.
+- **Two limitations.** (1) **Refresh loses the playlist**: a plain file input gives the page no re-openable path, so
+  the list is session state by design. (2) The **File System Access API is deliberately not used**, so the player never
+  asks for persistent filesystem permission and never remembers files across visits.
 
 ## LaTeX
 
@@ -96,29 +198,30 @@ If KaTeX is unavailable or throws, that segment falls back to **escaped plain te
 text, never to an exception. KaTeX is loaded **lazily** with `await import("katex")` on the first formula, so a
 page that never shows math never downloads the library. Only `katex/dist/katex.min.css` (which brings the 60
 font files) is imported statically, so Vite bundles it. The math inherits the surrounding chrome colour
-(`color: inherit`), and KaTeX's own red parse-error colour is overridden, so the greyscale chrome stays
-greyscale. Plain text without a `$` is still rendered as the same single text node as before, with no layout
-shift.
+(`color: inherit`), and KaTeX's own red parse-error colour is overridden, so the achromatic chrome stays achromatic
+(only the documented error treatment uses a hue). Plain text without a `$` is still rendered as the same single text
+node as before, with no layout shift.
 
 ## The game view
 
 The game view now fills the whole page: one Canvas 2D world view with every panel floating over it. The permanent
 right-hand protocol column is gone. The HUD sits in the top-left, the minimap in the bottom-left, the **command bar** in
 the bottom-centre and the **context panel** in the bottom-right; the top-right chrome holds the always-visible status
-chip, the `工兵` shortcut, the `基地` (home) and `标记` (marker list) buttons, **日志**, **资源**, **隐藏游戏画面** and
-the small **连接** toggle. The form's
+chip, the `工兵` shortcut, the `基地` (home) and `标记` (marker list) buttons, **日志**, **设置**, **音乐**, **资源**,
+**隐藏游戏画面** and the small **连接** toggle. The form's
 `connect`, `REGISTER`, `LOGIN`, `PING`, `COUNT`, `engine-info`, `hello`, and `QUIT` commands are unchanged; they and
-the `debug.key` field now live in a translucent overlay opened by **连接** and closed by **连接** or `Esc`. The overlay
+the `debug.key` field now live in a square `#202020` overlay opened by **连接** and closed by **连接** or `Esc`. The overlay
 container is transparent and takes no pointer input outside its panel, so the canvas is never dimmed and clicks on the
 world still reach it. Exchanges are shown as toasts, with the full history still available behind the **日志** button.
 No new dependencies are installed: the only runtime dependency is the already-installed `katex` **^0.19.0**, and the two devDependencies remain `typescript` and `vite`.
 
 **UI font.** The interface uses **JetBrains Mono**, bundled from
 [`public/fonts/JetBrainsMono-Medium.ttf`](public/fonts/JetBrainsMono-Medium.ttf). A single `@font-face`
-declares the whole weight range (`font-weight: 100 900`) from that one Medium file, so bold chrome reuses
-the same face instead of a synthesised bold. The system monospace stack (`ui-monospace`, `Cascadia Code`,
-`Consolas`) stays behind it as the fallback, and the base body stack keeps `Microsoft YaHei` for Chinese
-text because the font has no CJK glyphs.
+declares the whole weight range (`font-weight: 100 900`) from that one **Medium** file, so the browser does not
+synthesize a faux bold - but it also cannot create real weight: 600 and 700 look exactly like 500, which is why the
+stylesheet only uses 400 and 500. Real bold needs a separate **Bold** cut, which is not bundled. The system monospace
+stack (`ui-monospace`, `Cascadia Code`, `Consolas`) stays behind it as the fallback, and the base body stack keeps
+`Microsoft YaHei` for Chinese text because the font has no CJK glyphs.
 
 ```shell
 cd web-client
@@ -174,17 +277,14 @@ above the context zone (the context zone scrolls internally); below **520px** th
 height and its panels scroll internally, and the toast stack keeps its place above it; the canvas behind remains
 usable but has less room.
 
-**Monochrome chrome.** The page chrome —panels, buttons, headings, HUD chips, the log, the command bar, the context
-panel, the minimap frame and the status chip —is deliberately greyscale, with no hue at all; the error state is bright
-white text with a white left bar rather than red. The canvas is the exception: it is game content, so it keeps its own
-colours, and so do the minimap's terrain, ownership dots and white camera outline, the build-placement ghost's
-green/red/amber tiles and the chips' ownership-coloured health bars. Every floating surface is also **translucent**: the
-HUD chips, the inventory panel, the minimap panel, the command bar, the context panel, the warehouse panel, the full
-resource page, the connection overlay's panel, the hover tooltip, the toast stack and the log-overlay panel use
-`rgba(0, 0, 0, 0.72)` with a 1px grey border, no blur
-and no glow (`backdrop-filter: none`), so the game view stays visible behind them. Text on those surfaces is `#e6e6e6`
-or white, which keeps at least 7:1 contrast even over the brightest terrain, and nothing ever puts a scrim or a filter
-over the canvas —the connection- and log-overlay containers are transparent and only their panels are darkened. The tab
+**Square, achromatic chrome with one error treatment.** The page chrome —panels, buttons, headings, HUD chips, the log,
+the command bar, the context panel, the minimap frame, the status chip, the settings panel and the music player —is
+square: no radius, shadow, blur or glow, and every surface is an opaque `#202020` panel with a 1px `#303030` border. The
+only chromatic treatment is the error one: `#402020` background, `#ffe0e0` text, `#503030` border (toasts, the status
+chip's error state, the warehouse-transfer status line and the music status line). The canvas is the exception: it is
+game content, so it keeps its own colours, and so do the minimap's terrain, ownership dots and red/white edge arrows,
+the build-placement ghost's green/red/amber tiles and the chips' ownership-coloured health bars. The overlay containers
+stay transparent and take no pointer input outside their panel, so no scrim or filter ever covers the canvas. The tab
 icon comes from [`oc.png`](public/oc.png) (copied unchanged from the repository-root `oc.png`), referenced by the
 `icon` and `apple-touch-icon` links in `index.html`.
 
@@ -221,7 +321,7 @@ The groups are exclusive: a combat unit anywhere in the rectangle suppresses eve
 
 **Double-click selection.** A double click acts on the whole loaded window, not only the clicked entity. On a unit it replaces the selection with every **own unit of the same kind whose ground tile is inside the loaded window** (the same visibility rule the renderer and the picker use); on an **own building** it selects every own building of that kind in the window, so a row of armories can be given one batch TRAIN. An enemy or neutral building still selects just itself. It always replaces the selection and never merges into it. A drag is never part of a double click: the mouseup that ends a marquee, or a click that follows a camera/entity drag, cannot complete one, and the two clicks must land on the same target within 350 ms without moving more than 6 px.
 
-**Hover tooltip.** While the game view is visible and the pointer rests on an entity, a small tooltip follows the cursor. It is a DOM element, not canvas: a fixed **48×48** thumbnail on the left, then the manifest display name, the **owner tag on its own bold line** (`归属：我` / `归属：敌` / `归属：中立` / `归属：未登录`), the health percentage and - for a building - the reported footprint (`尺寸：3×3`), the `生产中 1/3` queue summary (or legacy `生产中×N`) and, when a recipe input is short, the same `缺：金 80/50` line the queue warning shows; an engineer also gets `任务：…`. The thumbnail is drawn from the entity's atlas frame through the same `lookupAtlasEntity` lookup the world renderer uses, so the square shows exactly the plant the map shows; when no atlas frame exists it becomes a neutral grey square carrying the **first character of the kind**. The canvas is a fixed 48×48 CSS square, so the thumbnail never reflows when the tooltip's text lines grow or shrink, and it is pointer-transparent so it never steals a click. The box is greyscale and translucent like the other chrome, sets `pointer-events: none`, stays hidden during a marquee or an armed BUILD placement, and is clamped inside the browser window (near an edge it flips to the left of or above the cursor). One unchanged entity under the cursor for **6 seconds** makes the tooltip suppress itself so it stops covering the map; moving to another entity re-arms it, and jitter inside the same entity never makes it flicker back. After a `$...$` formula upgrades to KaTeX, the box is measured and placed again. A snapshot without `health` / `w` / `h` / `queue` omits those parts instead of inventing values.
+**Hover tooltip.** While the game view is visible and the pointer rests on an entity, a small tooltip follows the cursor. It is a DOM element, not canvas: a fixed **48×48** thumbnail on the left, then the manifest display name, the **owner tag on its own bold line** (`归属：我` / `归属：敌` / `归属：中立` / `归属：未登录`), the health percentage and - for a building - the reported footprint (`尺寸：3×3`), the `生产中 1/3` queue summary (or legacy `生产中×N`) and, when a recipe input is short, the same `缺：金 80/50` line the queue warning shows; an engineer also gets `任务：…`. The thumbnail is drawn from the entity's atlas frame through the same `lookupAtlasEntity` lookup the world renderer uses, so the square shows exactly the plant the map shows; when no atlas frame exists it becomes a neutral grey square carrying the **first character of the kind**. The canvas is a fixed 48×48 CSS square, so the thumbnail never reflows when the tooltip's text lines grow or shrink, and it is pointer-transparent so it never steals a click. The box is a square `#202020` surface with a 1px `#303030` border like the other chrome, sets `pointer-events: none`, stays hidden during a marquee or an armed BUILD placement, and is clamped inside the browser window (near an edge it flips to the left of or above the cursor). One unchanged entity under the cursor for **6 seconds** makes the tooltip suppress itself so it stops covering the map; moving to another entity re-arms it, and jitter inside the same entity never makes it flicker back. After a `$...$` formula upgrades to KaTeX, the box is measured and placed again. A snapshot without `health` / `w` / `h` / `queue` omits those parts instead of inventing values.
 
 **Derived events.** The server has no event feed, so the client compares consecutive snapshots. A building that was not finished (`progress !== 1`) and now reports `progress === 1` toasts `建筑完成：<name>`; **one of the local player's** buildings or units whose health ratio dropped by at least 10 percentage points toasts `遭到攻击：<name>（攻击者：tN）`, naming the highest melee tier among hostile units within four tiles (the snapshot carries no attacker field; the parenthetical is an explicit nearby-hostile inference and says `未知` when none is close). An enemy unit losing health never toasts as an attack on you. Only entities present in both snapshots are compared, and one entity is de-duplicated for five seconds, so a fight that drains health over several 500 ms polls does not toast on every poll. This is entirely client-side - no protocol or server change.
 
@@ -229,7 +329,7 @@ The groups are exclusive: a combat unit anywhere in the rectangle suppresses eve
 
 **Manual transfer form.** The single-warehouse view also carries a small **调拨** form: an item select filled from the source's own contents, an amount input with a `全部` shortcut, a target select filled from the player's other finished warehouses, and a send button. It emits the standard command `TRANSFER <sourceId> <targetId> <item> <amount|all>` (the amount shortcut sends a concrete number, while the protocol and the pure planner also accept `all`) and paints the answer in the panel's own status line: `已调拨：120 金` for `OK 120 gold`, or `调拨失败：<the engine's reason>` verbatim. The pure planner in [`src/render/logistics.ts`](src/render/logistics.ts) refuses an empty item, an item the source does not hold, a blank/zero/negative/fractional amount, the same building and a target that is not one of the player's other finished warehouses before anything is sent; the engine owns the real same-dimension/path rules, so a truly unreachable target comes back as `ERR ... unreachable ...`. The same action is reachable from the selection panel while one own warehouse is selected: the building section's `调拨…` button arms the single-warehouse view and focuses the form. **Deferred:** drag and drop between warehouses is not implemented, and per-warehouse quotas / priorities are a later policy feature (see Q16), so the manual command is the whole logistics surface for now.
 
-**Full resource page.** The `资源` button in the top-right chrome opens a translucent panel (and closes it again; `Esc` and the panel's **关闭** button also close it) listing **every resource that exists in this world**: the item definitions the plugin manifest publishes (its optional `items` table), every item that appears in any of the local player's buildings or its units' cargo, and the two currencies `gold` / `wood`. Rows are de-duplicated by content path, sorted by display name, and an item with no stock keeps an explicit `0` instead of being hidden. Each row shows the owned total (the player's currency balance plus every positive amount in own warehouses and cargo); when a building holds the item, the row also names where it sits (`位置：建筑 #12`), and an item carried only by units says so. The panel's container is transparent and takes no pointer input outside the panel, so there is **no scrim over the canvas** and the world stays interactive.
+**Full resource page.** The `资源` button in the top-right chrome opens a square `#202020` panel (and closes it again; `Esc` and the panel's **关闭** button also close it) listing **every resource that exists in this world**: the item definitions the plugin manifest publishes (its optional `items` table), every item that appears in any of the local player's buildings or its units' cargo, and the two currencies `gold` / `wood`. Rows are de-duplicated by content path, sorted by display name, and an item with no stock keeps an explicit `0` instead of being hidden. Each row shows the owned total (the player's currency balance plus every positive amount in own warehouses and cargo); when a building holds the item, the row also names where it sits (`位置：建筑 #12`), and an item carried only by units says so. The panel's container is transparent and takes no pointer input outside the panel, so there is **no scrim over the canvas** and the world stays interactive.
 
 **Engineer shortcut.** The top-right `工兵` button and the `O` hotkey select every own `unit.engineer` inside the loaded window, replacing the current selection. The snapshot carries no order or busy state, so an idle engineer cannot be distinguished from a working one: the button is deliberately labelled `工兵` rather than `空闲工兵`, and it selects all engineers, not only idle ones.
 
@@ -247,7 +347,9 @@ The status chip names the verdict while hovering: `可建造`, `地形不可建`
 
 **Turret catalogue.** The build catalogue now includes `building.turret.t1`..`t3`, labelled with their costs and range (`building.turret.t2 · 金 260 · 木 70 · 射程 7.5`). They are ordinary 2×2 buildings, so the ghost, the reach rule and the `BUILD` path are unchanged; the selection panel of a turret appends `攻击 18 · 射程 6` from the snapshot's `attackDamage` / `attackRange`.
 
-**Minimap.** The bottom-left corner of the game view holds a fixed **180x180** overview panel on its own small canvas. The panel chrome is greyscale (1px grey border, translucent `rgba(0, 0, 0, 0.72)` background) and only its canvas area takes pointer input, so the rest of the world view keeps normal mouse, wheel and keyboard behaviour; there is no scrim and no filter over the game view. Inside, the loaded window's terrain is drawn as **one pixel per tile** (an offscreen tile-sized canvas scaled up with smoothing disabled), every in-window entity is a **2x2 dot** coloured by the same ownership rule as the ground rings (mine blue, enemy red, neutral grey), and the camera's visible rectangle is a **white 1px outline**. **Click or drag** on the minimap to move the camera: the clicked point is reduced by the letterbox offset, divided by the per-tile scale and **floored**, then added to the signed window origin, so the mapping is exact for negative world coordinates; the camera centres on that floor tile and the target is clamped to the same ±500,000-tile numeric safety bound the camera uses. The terrain image is rebuilt only when the window or its terrain changes, while the dots and the camera rectangle are redrawn every animation frame. When the nearest hostile anchor is **outside the loaded window**, a red **edge arrow** is drawn on the border the direction leaves through, with the distance in tiles underneath (`226 格`); it is the minimap's answer to "which way", and it disappears once the anchor is inside the window. The arrow's geometry is pure (`minimapEdgeGeometry`, `minimapEdgeArrow`, `minimapNearestEdgeArrow`), so the render check pins the sector and the edge it lands on. My own base is drawn as a small **white cross** - clearly different from the red enemy dots and the grey neutral ones - and while it is outside the loaded window it becomes a **white edge arrow with the distance underneath**, mirroring the red enemy arrow but white with a dark outline so the two never mix. Personal markers are **small white outlined squares**; a marker outside the loaded window gets a **white edge arrow carrying its number**, and when more than one is outside only the **nearest** one gets an arrow (the `标记` list still names every marker). All three arrows are the same pure ray calculation, so they cannot disagree about the border they meet.
+**Minimap.** The bottom-left corner of the game view holds a fixed **180x180** overview panel on its own small canvas. The panel chrome is the standard square `#202020` surface with a 1px `#303030` border and only its canvas area takes
+pointer input, so the rest of the world view keeps normal mouse, wheel and keyboard behaviour; there is no scrim and no
+filter over the game view. Inside, the loaded window's terrain is drawn as **one pixel per tile** (an offscreen tile-sized canvas scaled up with smoothing disabled), every in-window entity is a **2x2 dot** coloured by the same ownership rule as the ground rings (mine blue, enemy red, neutral grey), and the camera's visible rectangle is a **white 1px outline**. **Click or drag** on the minimap to move the camera: the clicked point is reduced by the letterbox offset, divided by the per-tile scale and **floored**, then added to the signed window origin, so the mapping is exact for negative world coordinates; the camera centres on that floor tile and the target is clamped to the same ±500,000-tile numeric safety bound the camera uses. The terrain image is rebuilt only when the window or its terrain changes, while the dots and the camera rectangle are redrawn every animation frame. When the nearest hostile anchor is **outside the loaded window**, a red **edge arrow** is drawn on the border the direction leaves through, with the distance in tiles underneath (`226 格`); it is the minimap's answer to "which way", and it disappears once the anchor is inside the window. The arrow's geometry is pure (`minimapEdgeGeometry`, `minimapEdgeArrow`, `minimapNearestEdgeArrow`), so the render check pins the sector and the edge it lands on. My own base is drawn as a small **white cross** - clearly different from the red enemy dots and the grey neutral ones - and while it is outside the loaded window it becomes a **white edge arrow with the distance underneath**, mirroring the red enemy arrow but white with a dark outline so the two never mix. Personal markers are **small white outlined squares**; a marker outside the loaded window gets a **white edge arrow carrying its number**, and when more than one is outside only the **nearest** one gets an arrow (the `标记` list still names every marker). All three arrows are the same pure ray calculation, so they cannot disagree about the border they meet.
 
 **Known starting positions, not a fog-of-war reveal.** The snapshot's player rows carry an optional `anchor` pair (absolute integer tiles) for each faction's **starting tile**: player 1's scene spawn anchor, a human's base-slot anchor, or a bot's deterministic spawn anchor. The top-chrome enemy line, the home line and the minimap arrows read only that published anchor, never a live unit position, so they reveal **no terrain, no entity and no current position** - the owner is allowed to know where the enemy started, and equally where he himself started. This is deliberately not a change to the fog-of-war rules (there are none in this client yet), and a snapshot from an older server without `anchor` simply shows no enemy line, no home line and no arrow.
 
@@ -348,7 +450,7 @@ They take effect after the first click on the view; keyboard events are bound on
 | `H`, the `基地` button, or a click on the home line | centres the camera on **my own base anchor** (the `anchor` of the snapshot row whose id is my player id), exactly like the enemy line's click. The home line reads `我方基地：距 N 格，东南` and switches to `我方基地：可见` while the base is inside the loaded window. With no own anchor (not logged in, an older snapshot) the status line says why instead of doing nothing |
 | `M` | places a **personal marker** at the tile under the cursor, or at the camera centre when the pointer is outside the canvas. Markers are numbered 1..n in placement order, capped at **12**, and a tile that already carries a marker is ignored and reported on the status line |
 | `Shift+M` | removes the **most recently placed** marker (the deliberate, documented choice over `Delete`); an empty list is reported instead of being ignored. Markers are client-only session state: nothing is stored and nothing is sent |
-| `标记` (top-right chrome) | opens or closes the translucent marker list: one clickable row per marker with its number, tile, distance and compass sector (clicking jumps the camera there), plus `清除全部`. `关闭` and `Esc` close the list without deleting a marker |
+| `标记` (top-right chrome) | opens or closes the square marker list: one clickable row per marker with its number, tile, distance and compass sector (clicking jumps the camera there), plus `清除全部`. `关闭` and `Esc` close the list without deleting a marker |
 | `Esc` | closes the connection overlay or the log first, then the **marker list** (never deleting a marker); with none of those open it cancels an armed BUILD placement or attack move, then clears the pending waypoint route, and only then clears the selection |
 | `WASD` / arrow keys | pan the camera |
 | `+` / `-` | zoom in / out around the center of the view |
@@ -458,7 +560,7 @@ footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, o
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 496 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 531 passing checks.
 
 ## hello plugin demo
 
@@ -539,15 +641,19 @@ plugin directory, or an account's password/permissions.
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | page structure (Canvas view + HUD + inventory panel + top-right chrome and connection overlay + minimap + bottom command/context bar + warehouse panel with mark checkboxes, the `全部/总计` scope button and the manual **调拨** form + the home-line chip + `基地` / `标记` buttons + the translucent personal-marker list + full resource page + hover tooltip + toast stack + log overlay), the greyscale translucent chrome and the three-zone bottom-bar / responsive layout, the KaTeX colour overrides that keep math greyscale, no inline scripts; the module entry is `src/main.ts` |
+| `index.html` | page structure (Canvas view + HUD + inventory panel + top-right chrome and connection overlay + minimap + bottom command/context bar + warehouse panel with mark checkboxes, the `全部/总计` scope button and the manual **调拨** form + the home-line chip + `基地` / `标记` buttons + the square personal-marker list + full resource page + grouped settings panel + music player + hover tooltip + toast stack + log overlay), the owner's `global.css` palette absorbed inline (`#101010` / `#202020` / `#303030` / `#e0e0e0`, the single `#402020` / `#ffe0e0` / `#503030` error treatment), the square unshadowed chrome, the three-zone bottom-bar / responsive layout, the KaTeX colour overrides that keep math achromatic, no inline scripts; the module entry is `src/main.ts` |
 | `src/protocol.ts` | OC/1 commands, base64 helpers, sealing/opening the AES-256-GCM envelope |
 | `src/socket.ts` | WebSocket queue of one line command to one reply, timeouts, and close events |
 | `src/commands.ts` | pure gameplay builders (`WHOAMI`, `ORDER MOVE` with 1..8 points, `ORDER ATTACKMOVE`, `BUILD` with the optional `queue` token, `TRAIN`, `REPAIR`, `RECLAIM`, `TRANSFER` with a number or `all`), `buildPlacementBatch` (the Shift plan: lines + keep-armed), `parseWhoAmI`, the `MAX_MOVE_POINTS = 8` cap, the turret cost/range table and the catalogue the context panel offers (including `building.lumbercamp.t1`, `building.warehouse` and `building.turret.t1..t3`) |
 | `src/controlGroups.ts` | pure control-group model: `assign`, `add`, `recall`, `prune` and `describe`, immutable 1..9 bindings with de-duplicated positive ids, and the empty-group status text |
 | `src/heartbeat.ts` | `HEARTBEAT_MS` (20 s), the pure `shouldHeartbeat(state)` start/stop rule, and the heartbeat's documentation |
 | `src/toast.ts` | pure toast rules: 4 s / 8 s lifetimes, `ERR`/refusal tone, the five-toast cap, and one-line trimming |
-| `src/toastview.ts` | DOM half of the toast stack: one exchange element with `→`/`←` lines, per-toast timers, newest on top, oldest dropped |
-| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the Shift-click toggle for units and buildings, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the single-own-unit cargo line (`携带：…`), the dedicated inventory panel (selected units' cargo, aggregate count, total and empty line), the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM with its fixed atlas/placeholder thumbnail, dwell suppression and post-KaTeX re-measure, the client-only warehouse mark state (`标记全部` / `清除`, `已标记：…` HUD line), the warehouse panel's single-vs-total scope toggle, capacity/inbound header and manual **调拨** form (item/amount/target, `全部` shortcut, panel status line, `调拨…` entry in the building section), the full resource page (manifest items + warehouse items + cargo + currencies, sorted with explicit zeros, Esc/button close), the static `katex/dist/katex.min.css` import that pairs with the lazy KaTeX chunk, LaTeX rendering for the log, status, toasts, tooltip, HUD, warehouse panel, inventory panel, resource page and command-bar labels, the warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, feeds the marquee sweep flash, prunes the 300 ms flash entries and the 350 ms order crosshair, and the minimap render plus its click/drag camera jump; the **bring-me-home** wiring (`H` / `基地` / home-line click jumping to my own anchor, the unknown-anchor status text) and the **personal marker** wiring (`M`, `Shift+M`, the `标记` list with clickable rows and `清除全部`, Esc closing the list without deleting anything, the canvas/minimap overlay) |
+| `src/toastview.ts` | DOM half of the toast stack: one exchange element with `→`/`←` lines, per-toast timers, newest on top, oldest dropped; consults the settings filter **before** creating an element, so a filtered category produces no toast |
+| `src/settings.ts` | pure settings + message-filter rules: the seven categories, the 只显示错误 / 安静 / 全部 presets (all keeping 错误 on), the per-category decision, command/notice/error classification, the defaults, and versioned `localStorage` serialisation/parse with the corrupt-or-older fallback |
+| `src/music.ts` | pure music-player rules: playlist add/de-duplicate by key, remove, clamped navigation under loop off/all/one and shuffle with an injected random source, volume clamp, progress slider value, and the `m:ss` / `h:mm:ss` clock formatter |
+| `src/musicview.ts` | DOM half of the music player: the `<audio>` element, file input, object URLs (revoked on removal/unload), playlist rows, play/pause, previous/next, loop/shuffle/volume/progress, the player-scoped Space/arrow keys and the caught `play()` rejection status |
+| `src/theme.ts` | the owner's design tokens as machine-readable constants: the chrome palette, the error treatment, the 400/500 weights (600/700 are not claimed) and the one-second toast slide; `scripts/check-render-math.ts` asserts `index.html` against them |
+| `src/main.ts` | DOM wiring: connect, handshake, automatic heartbeat, buttons, exchange toasts/history overlay, `engine-info`, the connection overlay (toggle, focus, Esc), `WHOAMI`, display-name labels, multi-selection and group orders, control groups (Ctrl/Shift/number, status chip, HUD group prefix, per-snapshot pruning), the resource-rate suffix and the per-item queue list, the Shift-click toggle for units and buildings, the double-click/deep selection refresh, the `工兵`/`O` engineer selection, the single-own-unit cargo line (`携带：…`), the dedicated inventory panel (selected units' cargo, aggregate count, total and empty line), the selection-chip strip and its click-to-select, the context-sensitive command bar / context zone, the armed attack move (`ORDER ATTACKMOVE`), the build-placement ghost (hover reason in the status chip and the "only a legal site sends BUILD" click gate), the hover tooltip DOM with its fixed atlas/placeholder thumbnail, dwell suppression and post-KaTeX re-measure, the client-only warehouse mark state (`标记全部` / `清除`, `已标记：…` HUD line), the warehouse panel's single-vs-total scope toggle, capacity/inbound header and manual **调拨** form (item/amount/target, `全部` shortcut, panel status line, `调拨…` entry in the building section), the full resource page (manifest items + warehouse items + cargo + currencies, sorted with explicit zeros, Esc/button close), the static `katex/dist/katex.min.css` import that pairs with the lazy KaTeX chunk, LaTeX rendering for the log, status, toasts, tooltip, HUD, warehouse panel, inventory panel, resource page and command-bar labels, the warehouse panel, snapshot-diff event toasts, starting the view/HUD, the camera-driven `/world/snapshot` streamer (signed centres, 8-tile edge trigger, request ids, old window kept until the new one arrives, camera never rebuilt for a window), the animation loop that interpolates between the last two frames of the same window, feeds the marquee sweep flash, prunes the 300 ms flash entries and the 350 ms order crosshair, and the minimap render plus its click/drag camera jump; the **bring-me-home** wiring (`H` / `基地` / home-line click jumping to my own anchor, the unknown-anchor status text) and the **personal marker** wiring (`M`, `Shift+M`, the `标记` list with clickable rows and `清除全部`, Esc closing the list without deleting anything, the canvas/minimap overlay), the settings wiring (the 设置 panel, the one-key boot restore, host/port persistence, filter checkboxes/presets feeding `ToastConsole.push`, the 路径/隐藏游戏画面 sync, 重置, Esc) and the music wiring (the 音乐 button, the `MusicPlayerView` instance and its `beforeunload` URL revocation) |
 | `src/render/camera.ts` | world/screen coordinates, visible tile culling, panning, cursor-centered zoom, floor-based camera focus tile, and the ±500,000-tile numeric safety bound for the unbounded world |
 | `src/render/atlas.ts` | plugin manifest parsing (frames, display names and the optional `items` definitions), composite atlas (last wins), the shared `lookupAtlasEntity` / `lookupAtlasTile` lookups used by the renderer and the tooltip thumbnail, label helpers with raw-id fallback, and image loading; returns `null` on failure |
 | `src/render/fallback.ts` | terrain color blocks, unit/building shapes, grid lines, shadows, the selection ring, the thin ownership ring, the greyscale building construction bar, the `生产中 1/3` (legacy `生产中×N`) queue marker, the selected-unit stock tag and the rising/fading haul pop mark drawn when there is no atlas, plus the brief achromatic selection-flash halo (one ring, or two for a click) and the two-concentric-cross order crosshair |
@@ -577,7 +683,7 @@ plugin directory, or an account's password/permissions.
 | `src/render/renderer.ts` | drawing one Canvas 2D frame, DPR handling, y-sorting, animation frames, the white own-unit outline and red enemy base tint, a gold selection ring for every selected entity, the brief selection-flash halo above the sprite and below that ring (including the two-ring click variant and a swept halo before release), the personal marker squares with their numbers, the marquee rectangle, the per-tile green/red/amber placement ghost, the construction bar / `生产中 1/3` production marker above buildings, the selected-unit stock tag, the rising haul pop marks, the dashed route overlay of selected own units with its target dot plus the pending-waypoint crosses, and the backing-pixel order crosshair drawn last above every map mark |
 | `src/render/input.ts` | pointer/keyboard controls bound only to the canvas: click and Shift+click selection, double-click detection with the drag/marquee guard, hover entity picking for the tooltip, empty-ground marquee drag (with the pointerdown baseline handed to the sweep), entity drag selection, middle/Space camera pan, entity picking, right-click orders (with the Shift waypoint flag and the canvas-relative pointer captured before the order), placement clicks, the `O` engineer shortcut, the `H` home jump, the `M` / `Shift+M` marker hotkeys, and the Ctrl/Shift/plain 1..9 control-group key mapping |
 | `public/textures/README.md` | plugin atlas contract (manifest format, examples, anchor) |
-| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates and signed anchors, the inverse scene ownership mapping (players 1+2, a logged-in human id 1 sees the scene as `我`; any other human sees the showroom as `中立`, never `敌`), the eight compass sector strings and the exact enemy line, the enemy edge-arrow sector/edge, the click's camera-centre target, the home anchor (own-row lookup, `我方基地：可见` versus `我方基地：距 226 格，东南`, the unknown-anchor text, the shared jump and the white home arrow geometry), the personal markers (numbering, floor-to-tile, the 12 cap, the duplicate rule, remove-last, clear, the `标记 N：距 M 格，东南` label, the nearest-of-many outside rule and the numbered white edge arrow), queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, the marquee sweep flash (candidate rule, entered-ids set, leave-and-re-enter, release rule), the click flash (empty ground vs exactly one entity, two-ring strength), the order crosshair (the 350 ms scale/alpha curve, CSS → backing pixels at 1× / 2×, the non-clipping edge clamp and the white-only colour), marquee selection (negative tiles, combat > builder > building priority, own-only candidates, empty input, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, `生产中 1/3` / legacy queue marker, demand icon and missing text, stock tag and its selected/carrying/6-tile visibility, engineer task, size label, stock label, unit cargo label with one/two/none/unknown items, income suffix, queue-item ratio and `i/n`, under-construction test), the haul-pop lifetime / throttle / de-duplication rules and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition, thumbnail placeholder choice and idle/clamping rules, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, the mark/unmark / mark-all / clear rules with the marked totals and HUD line, the inventory list for one / several / no units, the full resource list merge (manifest items + warehouse items + cargo + currencies, de-duplicated, sorted, zeros kept), the selection flash (`FLASH_MS = 250`, intensity 1 at the start / 0.5 at half / 0 at and after the end, a negative elapsed time clamped to 1, newly selected ids only, finished-entry pruning, and the achromatic colour), the LaTeX splitter and escaped fallback (plain / one or two inline spans / display / escaped dollar / unterminated dollar / empty pair / mixed / no dollar, `renderTexSegment` with a missing or throwing KaTeX and with the real library), and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full) |
+| `scripts/check-render-math.ts` | offline self-check of the camera (negative floor semantics and the ±500,000-tile safety bound), map determinism, atlas validation, display-name labels and raw-id fallback, the on-disk classic manifest, plugin atlas merging, unbounded signed snapshot parsing and negative-origin translation, the signed window-edge trigger / duplicate-origin guard / request ordering, snapshot `players` parsing including optional income rates and signed anchors, the inverse scene ownership mapping (players 1+2, a logged-in human id 1 sees the scene as `我`; any other human sees the showroom as `中立`, never `敌`), the eight compass sector strings and the exact enemy line, the enemy edge-arrow sector/edge, the click's camera-centre target, the home anchor (own-row lookup, `我方基地：可见` versus `我方基地：距 226 格，东南`, the unknown-anchor text, the shared jump and the white home arrow geometry), the personal markers (numbering, floor-to-tile, the 12 cap, the duplicate rule, remove-last, clear, the `标记 N：距 M 格，东南` label, the nearest-of-many outside rule and the numbered white edge arrow), queueItems parsing, snapshot interpolation, ownership colours, the heartbeat rule, gameplay command builders, the marquee sweep flash (candidate rule, entered-ids set, leave-and-re-enter, release rule), the click flash (empty ground vs exactly one entity, two-ring strength), the order crosshair (the 350 ms scale/alpha curve, CSS → backing pixels at 1× / 2×, the non-clipping edge clamp and the white-only colour), marquee selection (negative tiles, combat > builder > building priority, own-only candidates, empty input, Shift toggle), control groups (assign/add/recall/prune/describe, invalid numbers, empty-group text), the toast lifetime/cap rules, the entity status rules (progress percentage, bar ratio, `生产中 1/3` / legacy queue marker, demand icon and missing text, stock tag and its selected/carrying/6-tile visibility, engineer task, size label, stock label, unit cargo label with one/two/none/unknown items, income suffix, queue-item ratio and `i/n`, under-construction test), the haul-pop lifetime / throttle / de-duplication rules and the optional snapshot fields, the lumber-camp / warehouse catalogue entries, the build-placement ghost (footprint lookup/default, tile order, occupancy, the 16/17-tile reach boundary, state precedence, reason texts and colours), the minimap mapping (layout fitting, both directions including negative origins, floor semantics, the clamped camera jump), the double-click same-kind rule (own only, in-window only, building case), the engineer selection rule, the tooltip text composition, thumbnail placeholder choice and idle/clamping rules, the snapshot diff events (the 10% threshold and the five-second de-duplication), the warehouse total aggregation, the mark/unmark / mark-all / clear rules with the marked totals and HUD line, the inventory list for one / several / no units, the full resource list merge (manifest items + warehouse items + cargo + currencies, de-duplicated, sorted, zeros kept), the selection flash (`FLASH_MS = 300`, intensity 1 at the start / 0.5 at half / 0 at and after the end, a negative elapsed time clamped to 1, newly selected ids only, finished-entry pruning, and the achromatic colour), the LaTeX splitter and escaped fallback (plain / one or two inline spans / display / escaped dollar / unterminated dollar / empty pair / mixed / no dollar, `renderTexSegment` with a missing or throwing KaTeX and with the real library), and the command bar (selection-kind action sets including the mixed unit-and-building unit-actions-only rule, the 12-chip cap and `+N`, the two-character abbreviation, and the health-bar ratio at 0 / 50 / 100 % with an absent report as full), the settings/filter rules (the seven categories, every preset keeping 错误 on, the command/notice classification, and the versioned round-trip plus corrupt/older fallback), the music playlist (add/de-duplicate, remove, loop/shuffle navigation with a seeded random source, the clock and volume/progress clamps), and the palette/weight/stylesheet audit (`#101010` / `#202020` / `#303030` / `#e0e0e0`, the one error treatment, no radius/shadow/blur, no 600/700 and the one-second bottom-right toast slide) |
 | `vite.config.ts` | `/ws`, `/plugin-assets` and `/world` dev proxies, `dist` output directory |
 
 ## Related documents

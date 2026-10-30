@@ -7,8 +7,9 @@
  * how long a toast lives, how an error is recognised, how a long exchange is trimmed and how many
  * toasts may be visible at once.
  *
- * The page chrome is greyscale: an error toast differs from a normal one by brightness and weight, not
- * by hue. That styling lives in `index.html`; here an error is only a longer-lived tone.
+ * The page chrome is achromatic apart from one treatment: an error toast uses the owner's red error colours
+ * (`#402020` background / `#ffe0e0` text / `#503030` border). That styling lives in `index.html`; here an
+ * error is only a longer-lived tone and a classification that cannot be hidden by a filter preset.
  */
 
 /** Lifetime of a normal exchange toast, in milliseconds. */

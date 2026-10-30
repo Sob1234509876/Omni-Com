@@ -59,7 +59,7 @@ export type TooltipThumbnail =
 export interface TooltipContent {
   /** Manifest display name, or the raw kind when the manifest had no name. */
   readonly name: string;
-  /** Ownership tag (`我` / `敌` / `中立` / `未登录`), rendered bold on its own line. */
+  /** Ownership tag (`我` / `敌` / `中立` / `未登录`), rendered at the 500 emphasis weight on its own line. */
   readonly ownerTag: string;
   /** Short greyscale lines: health, building footprint, queue summary. */
   readonly lines: readonly string[];
@@ -138,8 +138,8 @@ export function tooltipIdleExpired(
 /**
  * The text of one entity's tooltip.
  *
- * The owner is its own field, `ownerTag`, so the page can render it in bold instead of burying it in a
- * detail line. The caller passes the shared `ownershipTagFor` label, including `未登录` when the page has
+ * The owner is its own field, `ownerTag`, so the page can render it at the 500 emphasis weight instead of
+ * burying it in a detail line. The caller passes the shared `ownershipTagFor` label, including `未登录` when the page has
  * no local player id. A health ratio the snapshot reports becomes `生命 72%`; an old snapshot without
  * `health` omits the health part rather than inventing a full bar. A building appends its reported
  * footprint (`尺寸：3×3`) and a non-empty production queue appends the same summary the canvas marker
