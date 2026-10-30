@@ -43,6 +43,7 @@ import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
+import io.github.sob1234509876.oc.rts.order.AttackOrder;
 import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.order.MoveOrder;
@@ -774,8 +775,6 @@ public final class RtsScenario {
         check.equal((long) recipe.inputs().amount(iron).toLongSaturated(), demand.items().get(0).need(),
                 "need is the recipe amount of that input");
         check.equal(0L, demand.items().get(0).have(), "have is zero while the building holds nothing");
-        check.equal(0L, demand.items().get(0).stock(),
-                "stock is zero when the owner has no warehouse network");
         check.that(demand.missingItems().size() == 2, "both recipe inputs are reported missing");
 
         var now = queue.producingNow().orElseThrow();
@@ -2803,6 +2802,18 @@ public final class RtsScenario {
         check.equal(goldAtFull, player.logistics().amount(gold),
                 "the refused full-health repair charges nothing");
 
+        // Q16: the queue form appends the repair behind an existing order instead of replacing it.
+        tower.health().damage(4);
+        engine.commands().queueMove(repairer, entrance);
+        var queuedRepair = engine.commands().tryQueueRepair(repairer, tower);
+        check.that(queuedRepair.repairing(), "a queued repair is issued: " + queuedRepair.refusal());
+        check.that(repairer.orders().size() == 2
+                        && repairer.orders().pending().get(1) instanceof RepairOrder,
+                "the queued repair is pushed behind the queued move, not in front of it");
+        engine.commands().stop(repairer);
+        check.equal(goldAtFull, player.logistics().amount(gold),
+                "queueing a repair holds no stock and charges nothing");
+
         // A building type without a repair price is refused outright.
         Building shed = world.spawnBuilding(content.building(SERVICE_SHED), player, new GridPos(30, 10));
         shed.health().damage(10);
@@ -3045,6 +3056,29 @@ public final class RtsScenario {
                 .entity(marcher.id()).orElseThrow();
         check.that(!stopped.hasPath() && stopped.target() == null,
                 "a stopped unit reports no path and no target");
+
+        check.section("18b) the queue forms append orders in order (Q16)");
+        Unit queued = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 50));
+        engine.commands().move(queued, new GridPos(6, 50));
+        check.equal(1, queued.orders().size(), "a plain move is the only order");
+        engine.commands().queueMove(queued, new GridPos(7, 50));
+        check.equal(2, queued.orders().size(), "queueMove appends instead of replacing");
+        var queuedRoute = engine.commands().queueMoveRoute(queued,
+                List.of(new GridPos(8, 50), new GridPos(9, 50)));
+        check.that(queuedRoute.issued(), "queueMoveRoute is issued");
+        check.equal(3, queued.orders().size(), "queueMoveRoute appends one order for the whole route");
+        check.that(queued.orders().pending().get(2) instanceof MoveOrder routeOrder
+                        && routeOrder.route().size() == 2,
+                "the queued route keeps both points in one order");
+        EntityId unreachable = EntityId.of(999_999L);
+        engine.commands().queueAttack(queued, unreachable);
+        engine.commands().queueAttackMove(queued, new GridPos(10, 50));
+        check.equal(5, queued.orders().size(), "queueAttack and queueAttackMove append");
+        check.that(queued.orders().pending().get(3) instanceof AttackOrder
+                        && queued.orders().pending().get(4) instanceof AttackMoveOrder,
+                "the queued orders are an attack, then an attack-move, in push order");
+        engine.commands().stop(queued);
+        check.that(queued.orders().isEmpty(), "stop clears every queued order");
     }
 
 

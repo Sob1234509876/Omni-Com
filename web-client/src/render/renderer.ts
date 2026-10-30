@@ -254,6 +254,14 @@ export interface RenderOptions {
    * `pop.ts` from the polling snapshots, so the renderer has no timer of its own.
    */
   readonly pops: readonly ActivePop[];
+  /**
+   * Radius in tiles of the Q9 inventory tag around the pointer.
+   *
+   * A selected unit is always tagged; an unselected one only inside this radius of the pointer tile.
+   * The page reads it from the persisted settings (`inventoryRadiusTiles`, default 10, adjustable in
+   * the settings page), so the renderer stays a pure function of its options.
+   */
+  readonly inventoryRadiusTiles: number;
 }
 
 interface Size {
@@ -721,13 +729,12 @@ export class WorldRenderer {
           );
         }
       } else {
-        // A selected, loaded unit gets a compact stock tag above its health bar. The radius test is the
-        // pure `stockTagVisible` rule (selected only, carrying only, within 6 tiles of the camera
-        // centre); the camera centre is converted from world pixels back to tiles here.
+        // A loaded unit gets a stock tag when it is selected (wherever it stands) or within the
+        // settings radius of the pointer. Q9: "any unit near the mouse and every selected unit".
         const selected = entity.selected === true || selectedIds.has(entity.id);
-        const centreX = camera.centerX / tileSize;
-        const centreY = camera.centerY / tileSize;
-        if (stockTagVisible(entity, selected, centreX, centreY)) {
+        const pointerX = options.hoverTile === null ? null : options.hoverTile.x + 0.5;
+        const pointerY = options.hoverTile === null ? null : options.hoverTile.y + 0.5;
+        if (stockTagVisible(entity, selected, pointerX, pointerY, options.inventoryRadiusTiles)) {
           const tag = unitStockTagLabel(entity);
           if (tag !== null) {
             drawUnitStockTag(

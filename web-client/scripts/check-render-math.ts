@@ -18,7 +18,9 @@ import {
   BUILDING_PATHS,
   CLASSIC_BUILDING_KINDS,
   UNIT_PATHS,
+  MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
+  batchCommands,
   build,
   buildBatch,
   buildButtonLabel,
@@ -32,6 +34,7 @@ import {
   parseWhoAmI,
   reclaim,
   repair,
+  sequenceLine,
   train,
   trainBatch,
   trainableUnitsForBuilding,
@@ -106,12 +109,9 @@ import {
   releaseFlashIds,
 } from "../src/render/sweep.ts";
 import {
-  STOCK_TAG_RADIUS_TILES,
   combatLabel,
   demandIcon,
   demandMissingText,
-  demandStockText,
-  demandStockTitle,
   formatProgressPercent,
   incomeSuffix,
   progressBarRatio,
@@ -369,11 +369,15 @@ import {
 } from "../src/render/latex.ts";
 import {
   ALL_MESSAGES,
+  DEFAULT_INVENTORY_RADIUS_TILES,
   FILTER_PRESETS,
+  MAX_INVENTORY_RADIUS_TILES,
   MESSAGE_CATEGORIES,
   MESSAGE_CATEGORY_LABELS,
+  MIN_INVENTORY_RADIUS_TILES,
   SETTINGS_STORAGE_KEY,
   SETTINGS_VERSION,
+  clampInventoryRadius,
   classifyCommand,
   classifyNotice,
   classifyToast,
@@ -5890,22 +5894,14 @@ check(
 const shortDemand = {
   ready: false,
   items: [
-    { item: "gold", need: 80, have: 50, stock: 500 },
-    { item: "wood", need: 20, have: 10, stock: 100 },
+    { item: "gold", need: 80, have: 50 },
+    { item: "wood", need: 20, have: 10 },
   ],
 } as const;
 check(
   "缺料提示列出缺的物品与 need/have",
   demandMissingText(shortDemand) === "缺：金 80/50 · 木 20/10",
   demandMissingText(shortDemand),
-);
-check(
-  "需求图标旁显示可调拨仓库量（Q10）",
-  demandStockText(shortDemand) === "仓 500/100" &&
-    demandStockTitle(shortDemand) === "仓库可调拨：金 500 · 木 100" &&
-    demandStockText({ ready: true, items: shortDemand.items }) === "" &&
-    demandStockText({ ready: false, items: [{ item: "gold", need: 5, have: 4 }] }) === "",
-  `${demandStockText(shortDemand)} / ${demandStockTitle(shortDemand)}`,
 );
 check(
   "满足需求或没有缺项时没有缺料提示",
@@ -5934,8 +5930,8 @@ const singleCargoUnit = {
   contents: { gold: 120 },
 } as const;
 check(
-  "库存标签显示首物品与总数（混合时加共 N）",
-  unitStockTagLabel(loadedUnit) === "金 80 · 共 120" &&
+  "库存标签列出全部物品（Q9：显示所有物品）",
+  unitStockTagLabel(loadedUnit) === "金 80 · 木 40" &&
     unitStockTagLabel(singleCargoUnit) === "金 120",
   unitStockTagLabel(loadedUnit),
 );
@@ -5948,19 +5944,33 @@ check(
   String(unitStockTagLabel({ ...loadedUnit, contents: {} })),
 );
 check(
-  "库存标签只在选中、携带、且距镜头中心 6 格内显示",
-  stockTagVisible(loadedUnit, true, 10, 10) &&
-    stockTagVisible(loadedUnit, true, 16, 10) &&
-    !stockTagVisible(loadedUnit, true, 16.01, 10) &&
-    !stockTagVisible(loadedUnit, false, 10, 10) &&
-    !stockTagVisible({ ...loadedUnit, contents: {} }, true, 10, 10) &&
-    !stockTagVisible({ id: 5, kind: "building.warehouse", x: 10, y: 10, contents: { gold: 1 } }, true, 10, 10),
-  String(stockTagVisible(loadedUnit, true, 16.01, 10)),
+  "库存标签：选中总是显示；未选中只在鼠标半径内显示（边界含等号）",
+  stockTagVisible(loadedUnit, true, null, null, 10) &&
+    stockTagVisible(loadedUnit, true, 100, 100, 10) &&
+    stockTagVisible(loadedUnit, false, 10, 20, 10) &&
+    !stockTagVisible(loadedUnit, false, 10, 20.01, 10) &&
+    stockTagVisible(loadedUnit, false, 10, 10, 0) &&
+    !stockTagVisible(loadedUnit, false, null, null, 10) &&
+    !stockTagVisible({ ...loadedUnit, contents: {} }, true, null, null, 10) &&
+    !stockTagVisible(
+      { id: 5, kind: "building.warehouse", x: 10, y: 10, contents: { gold: 1 } },
+      true,
+      null,
+      null,
+      10,
+    ),
+  String(stockTagVisible(loadedUnit, false, 10, 20.01, 10)),
 );
 check(
-  "库存标签半径常量是 6 格",
-  STOCK_TAG_RADIUS_TILES === 6,
-  String(STOCK_TAG_RADIUS_TILES),
+  "补给标签半径默认 10 格，可在设置里调，钳制到 1..32",
+  DEFAULT_INVENTORY_RADIUS_TILES === 10 &&
+    MIN_INVENTORY_RADIUS_TILES === 1 &&
+    MAX_INVENTORY_RADIUS_TILES === 32 &&
+    clampInventoryRadius(0) === 1 &&
+    clampInventoryRadius(33) === 32 &&
+    clampInventoryRadius(7.6) === 8 &&
+    clampInventoryRadius(Number.NaN) === 10,
+  String(clampInventoryRadius(33)),
 );
 check(
   "工程师任务行带 任务： 前缀且忽略空白",
@@ -5971,6 +5981,64 @@ check(
     unitTaskLabel("") === null &&
     unitTaskLabel(undefined) === null,
   String(unitTaskLabel("搬运中 → 兵工厂")),
+);
+
+check(
+  "queue 形式：ORDER MOVE/ATTACK/ATTACKMOVE/BUILD/REPAIR 追加 queue 令牌（Q16）",
+  orderMove(7, 3, -2, true) === "ORDER MOVE 7 3 -2 queue" &&
+    orderMoveRoute(7, [{ x: 1, y: 2 }, { x: 3, y: 4 }], true) === "ORDER MOVE 7 1 2 3 4 queue" &&
+    orderAttack(7, 9, true) === "ORDER ATTACK 7 9 queue" &&
+    orderAttackMove(7, 3, 4, true) === "ORDER ATTACKMOVE 7 3 4 queue" &&
+    build(5, "building.armory.t1", 1, 2, true) === "BUILD 5 building.armory.t1 1 2 queue" &&
+    repair(9, 12, true) === "REPAIR 9 12 queue" &&
+    orderAttack(7, 9) === "ORDER ATTACK 7 9" &&
+    repair(9, 12) === "REPAIR 9 12",
+  `${orderMove(7, 3, -2, true)} / ${orderAttack(7, 9, true)}`,
+);
+check(
+  "BATCH 把一串命令合成一条抽象订单，最多 16 条，分号/换行/空命令在本地拒绝",
+  MAX_BATCH_COMMANDS === 16 &&
+    batchCommands(["BUILD 5 building.armory.t1 1 2 queue", "TRAIN 3 unit.melee.t1"]) ===
+      "BATCH BUILD 5 building.armory.t1 1 2 queue; TRAIN 3 unit.melee.t1" &&
+    (() => {
+      try {
+        batchCommands([]);
+        return false;
+      } catch {
+        return true;
+      }
+    })() &&
+    (() => {
+      try {
+        batchCommands(["PING; PONG"]);
+        return false;
+      } catch {
+        return true;
+      }
+    })() &&
+    (() => {
+      try {
+        batchCommands(Array.from({ length: 17 }, () => "ORDER STOP 5"));
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  batchCommands(["TRAIN 3 unit.melee.t1"]),
+);
+check(
+  "sequenceLine 把单位命令改成 queue 形式，其余命令保持不变（Q16）",
+  sequenceLine("ORDER MOVE 5 1 1") === "ORDER MOVE 5 1 1 queue" &&
+    sequenceLine("ORDER ATTACK 5 9") === "ORDER ATTACK 5 9 queue" &&
+    sequenceLine("ORDER ATTACKMOVE 5 1 1") === "ORDER ATTACKMOVE 5 1 1 queue" &&
+    sequenceLine("BUILD 5 building.armory.t1 1 1") === "BUILD 5 building.armory.t1 1 1 queue" &&
+    sequenceLine("BUILD 5 building.armory.t1 1 1 queue") === "BUILD 5 building.armory.t1 1 1 queue" &&
+    sequenceLine("REPAIR 5 9") === "REPAIR 5 9 queue" &&
+    sequenceLine("TRAIN 3 unit.melee.t1") === "TRAIN 3 unit.melee.t1" &&
+    sequenceLine("UPGRADE 3") === "UPGRADE 3" &&
+    sequenceLine("ORDER STOP 5") === "ORDER STOP 5" &&
+    sequenceLine("  TRANSFER 1 2 gold 5 ") === "TRANSFER 1 2 gold 5",
+  sequenceLine("ORDER MOVE 5 1 1"),
 );
 
 const tooltipEngineer = {
@@ -6035,7 +6103,7 @@ check(
     parsedFirst.producingNow.length === 2 &&
     parsedFirst.demand?.ready === false &&
     parsedFirst.demand.items[0]?.have === 2 &&
-    parsedFirst.demand.items[0]?.stock === 500 &&
+    !("stock" in (parsedFirst.demand.items[0] ?? {})) &&
     parsedFirst.task === "搬运中 → 兵工厂" &&
     parsedFirst.pop?.kind === "pickup" &&
     parsedFirst.pop.tick === 7,
@@ -6237,14 +6305,16 @@ const savedSettings: Settings = {
   ...defaultSettings(),
   showPaths: false,
   viewHidden: true,
+  inventoryRadiusTiles: 12,
   filters: presetFilters("quiet"),
   connection: { host: "127.0.0.1", port: "25567" },
 };
 const restoredSettings = parseSettings(serializeSettings(savedSettings));
 check(
-  "设置序列化后按版本原样恢复（筛选、界面开关与服务器地址）",
+  "设置序列化后按版本原样恢复（筛选、界面开关、补给半径与服务器地址）",
   restoredSettings.showPaths === false &&
     restoredSettings.viewHidden === true &&
+    restoredSettings.inventoryRadiusTiles === 12 &&
     restoredSettings.connection.host === "127.0.0.1" &&
     restoredSettings.connection.port === "25567" &&
     MESSAGE_CATEGORIES.every(
@@ -6257,7 +6327,7 @@ check(
 check(
   "保存值带版本号，并且整份设置只使用一个固定的 localStorage 键",
   serializeSettings(savedSettings) ===
-    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"connection":{"host":"127.0.0.1","port":"25567"}}` &&
+    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"inventoryRadiusTiles":12,"connection":{"host":"127.0.0.1","port":"25567"}}` &&
     SETTINGS_STORAGE_KEY === "omni-com.web-client.settings" &&
     SETTINGS_VERSION === 1,
   SETTINGS_STORAGE_KEY,
@@ -6314,6 +6384,23 @@ check(
       }),
     ).connection.host === "",
   "invalid field types",
+);
+
+check(
+  "补给半径：缺失补默认 10，超范围钳制，类型错误整份回退",
+  parseSettings(
+    JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES }),
+  ).inventoryRadiusTiles === DEFAULT_INVENTORY_RADIUS_TILES &&
+    parseSettings(
+      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: 99 }),
+    ).inventoryRadiusTiles === MAX_INVENTORY_RADIUS_TILES &&
+    parseSettings(
+      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: 0 }),
+    ).inventoryRadiusTiles === MIN_INVENTORY_RADIUS_TILES &&
+    parseSettings(
+      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: "wide" }),
+    ).inventoryRadiusTiles === DEFAULT_INVENTORY_RADIUS_TILES,
+  "inventory radius rules",
 );
 
 // ---------------------------------------------------------------------------------------------

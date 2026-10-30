@@ -192,6 +192,21 @@ public final class CommandService implements UnitDirector {
      */
     @Override
     public MoveResult moveRoute(Unit unit, List<GridPos> route) {
+        return moveRoute(unit, route, false);
+    }
+
+    @Override
+    public MoveResult queueMoveRoute(Unit unit, List<GridPos> route) {
+        return moveRoute(unit, route, true);
+    }
+
+    /**
+     * The shared body of {@link #moveRoute(Unit, List)} and {@link #queueMoveRoute(Unit, List)}.
+     *
+     * <p>Only the last step differs: a plain route replaces the current order, a queued route is pushed
+     * behind it. Every validation runs first, so a refused route changes nothing in either form.
+     */
+    private MoveResult moveRoute(Unit unit, List<GridPos> route, boolean queue) {
         if (!isCommandable(unit)) {
             return MoveResult.refused("the unit cannot be commanded");
         }
@@ -210,8 +225,39 @@ public final class CommandService implements UnitDirector {
             points.add(destination.center());
         }
         MoveOrder order = new MoveOrder(points);
-        unit.orders().replace(context(unit), order);
+        if (queue) {
+            unit.orders().push(order);
+        } else {
+            unit.orders().replace(context(unit), order);
+        }
         return MoveResult.issued(order);
+    }
+
+    @Override
+    public void queueMove(Unit unit, GridPos destination) {
+        Objects.requireNonNull(destination, "destination");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().push(new MoveOrder(destination));
+    }
+
+    @Override
+    public void queueAttack(Unit unit, EntityId target) {
+        Objects.requireNonNull(target, "target");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().push(new AttackOrder(target));
+    }
+
+    @Override
+    public void queueAttackMove(Unit unit, GridPos destination) {
+        Objects.requireNonNull(destination, "destination");
+        if (!isCommandable(unit)) {
+            return;
+        }
+        unit.orders().push(new AttackMoveOrder(destination.center()));
     }
 
     @Override
@@ -432,6 +478,22 @@ public final class CommandService implements UnitDirector {
      */
     @Override
     public RepairResult tryRepair(Unit engineer, Building building) {
+        return repair(engineer, building, false);
+    }
+
+    @Override
+    public RepairResult tryQueueRepair(Unit engineer, Building building) {
+        return repair(engineer, building, true);
+    }
+
+    /**
+     * The shared body of {@link #tryRepair(Unit, Building)} and {@link #tryQueueRepair(Unit, Building)}.
+     *
+     * <p>Every check is identical in both forms; only the last step differs - a plain repair replaces the
+     * engineer's current order, a queued repair is pushed behind it. The affordability probe is released
+     * in either form, so queueing a repair holds no stock while the engineer walks.
+     */
+    private RepairResult repair(Unit engineer, Building building, boolean queue) {
         Objects.requireNonNull(building, "building");
         if (!isCommandable(engineer)) {
             return RepairResult.refused("the engineer cannot be commanded");
@@ -475,7 +537,12 @@ public final class CommandService implements UnitDirector {
             // nothing is withheld from production while the engineer walks to the building.
             probe.get().release();
         }
-        engineer.orders().replace(context(engineer), new RepairOrder(building));
+        RepairOrder order = new RepairOrder(building);
+        if (queue) {
+            engineer.orders().push(order);
+        } else {
+            engineer.orders().replace(context(engineer), order);
+        }
         return RepairResult.repairing(building);
     }
 

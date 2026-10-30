@@ -284,13 +284,11 @@ export interface ProducingNowView {
   readonly length: number;
 }
 
-/** One recipe input, how much of it the producing building holds and what the warehouse could send. */
+/** One recipe input and how much of it the producing building itself holds. */
 export interface DemandItemView {
   readonly item: string;
   readonly need: number;
   readonly have: number;
-  /** Unreserved warehouse amount that a haul could still bring; absent on a pre-Q10 snapshot. */
-  readonly stock?: number;
 }
 
 /**
@@ -1064,7 +1062,6 @@ function snapshotDemand(value: unknown): ProductionDemandView | undefined {
     const item = rawItem["item"];
     const need = finiteNumber(rawItem["need"]);
     const have = finiteNumber(rawItem["have"]);
-    const stock = optionalNonNegativeInteger(rawItem["stock"]);
     if (typeof item !== "string" || item.trim() === "") {
       continue;
     }
@@ -1082,7 +1079,6 @@ function snapshotDemand(value: unknown): ProductionDemandView | undefined {
       item: item.trim(),
       need,
       have: Math.min(have, need),
-      ...(stock === undefined ? {} : { stock }),
     });
   }
   return { ready: value["ready"], items };

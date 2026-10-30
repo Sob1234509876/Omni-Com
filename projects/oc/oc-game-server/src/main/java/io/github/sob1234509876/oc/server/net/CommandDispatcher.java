@@ -44,16 +44,17 @@ import java.util.function.Supplier;
  * COUNT                             -&gt; OK &lt;registered users&gt;
  * REQ &lt;name&gt; &lt;base64-payload&gt;        -&gt; OK &lt;base64-payload&gt; | ERR &lt;message&gt;
  * WHOAMI                            -&gt; OK player &lt;id&gt; | ERR &lt;reason&gt;
- * ORDER MOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; [&lt;x&gt; &lt;y&gt; ...] -&gt; OK | ERR &lt;reason&gt;
- * ORDER ATTACK &lt;entityId&gt; &lt;targetId&gt; -&gt; OK | ERR &lt;reason&gt;
- * ORDER ATTACKMOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; -&gt; OK | ERR &lt;reason&gt;
+ * ORDER MOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; [&lt;x&gt; &lt;y&gt; ...] [queue] -&gt; OK | ERR &lt;reason&gt;
+ * ORDER ATTACK &lt;entityId&gt; &lt;targetId&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
+ * ORDER ATTACKMOVE &lt;entityId&gt; &lt;x&gt; &lt;y&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
  * ORDER STOP &lt;entityId&gt;              -&gt; OK | ERR &lt;reason&gt;
  * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; [queue] -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
  * TRAIN &lt;buildingId&gt; &lt;unitPath&gt;      -&gt; OK | ERR &lt;reason&gt;
  * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
- * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; -&gt; OK | ERR &lt;reason&gt;
+ * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
  * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
  * TRANSFER &lt;sourceId&gt; &lt;targetId&gt; &lt;item&gt; &lt;amount|all&gt; -&gt; OK &lt;moved&gt; &lt;item&gt; | ERR &lt;reason&gt;
+ * BATCH &lt;command&gt;; &lt;command&gt;; ...    -&gt; OK &lt;count&gt; | ERR &lt;index&gt;/&lt;count&gt; &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
  * </pre>
@@ -139,7 +140,20 @@ public final class CommandDispatcher {
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
             java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM",
-                    "TRANSFER");
+                    "TRANSFER", "BATCH");
+
+    /**
+     * Sub-commands one {@code BATCH} may carry.
+     *
+     * <p>Sixteen is enough for a full click sequence (a few builds, a train order, a transfer) and keeps a
+     * batch line far below the transport's {@code maxLineLength} of 4096 bytes. A longer batch is refused
+     * rather than truncated, because dropping the tail would silently change the order the player gave.
+     */
+    public static final int MAX_BATCH_COMMANDS = 16;
+
+    /** The gameplay commands a {@code BATCH} may carry; identity commands such as {@code WHOAMI} cannot. */
+    private static final java.util.Set<String> BATCHABLE_COMMANDS =
+            java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM", "TRANSFER");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -270,6 +284,7 @@ public final class CommandDispatcher {
             case "REPAIR" -> repair(rest, session);
             case "RECLAIM" -> reclaim(rest, session);
             case "TRANSFER" -> transfer(rest, session);
+            case "BATCH" -> batch(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
     }
@@ -316,9 +331,16 @@ public final class CommandDispatcher {
         String kind = tokens[0].toUpperCase(Locale.ROOT);
         return switch (kind) {
             case "MOVE" -> {
-                // One to eight coordinate pairs after the entity id. The historical single-target form
-                // has exactly one pair and stays byte-identical; a longer form is a waypoint route.
-                int pairTokens = tokens.length - 2;
+                // One to eight coordinate pairs after the entity id, optionally followed by the literal
+                // `queue`: the historical single-target form stays byte-identical, a longer form is a
+                // waypoint route, and `queue` appends the route behind the unit's current orders so a
+                // BATCH sequence runs one leg after another instead of the last one replacing the rest.
+                int end = tokens.length;
+                boolean queue = end > 1 && "queue".equalsIgnoreCase(tokens[end - 1]);
+                if (queue) {
+                    end--;
+                }
+                int pairTokens = end - 2;
                 if (pairTokens < 2 || pairTokens % 2 != 0) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
@@ -339,18 +361,25 @@ public final class CommandDispatcher {
                 if (unitId.isEmpty()) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
+                boolean append = queue;
                 yield worldGameplay(session, (host, player) -> {
                     UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
                     if (unit.error() != null) {
                         return unit.error();
                     }
-                    UnitDirector.MoveResult result = host.engine().commands()
-                            .moveRoute(unit.unit(), route);
+                    UnitDirector.MoveResult result = append
+                            ? host.engine().commands().queueMoveRoute(unit.unit(), route)
+                            : host.engine().commands().moveRoute(unit.unit(), route);
                     return result.issued() ? "OK" : "ERR " + result.refusal();
                 });
             }
             case "ATTACK" -> {
-                if (tokens.length != 3) {
+                int end = tokens.length;
+                boolean queue = end > 3 && "queue".equalsIgnoreCase(tokens[end - 1]);
+                if (queue) {
+                    end--;
+                }
+                if (end != 3) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
                 OptionalLong unitId = parseId(tokens[1]);
@@ -358,6 +387,7 @@ public final class CommandDispatcher {
                 if (unitId.isEmpty() || targetId.isEmpty()) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
+                boolean append = queue;
                 yield worldGameplay(session, (host, player) -> {
                     UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
                     if (unit.error() != null) {
@@ -368,12 +398,21 @@ public final class CommandDispatcher {
                     if (target.isEmpty() || !target.get().isAlive()) {
                         return ERR_UNKNOWN_ENTITY;
                     }
-                    host.engine().commands().attack(unit.unit(), target.get().id());
+                    if (append) {
+                        host.engine().commands().queueAttack(unit.unit(), target.get().id());
+                    } else {
+                        host.engine().commands().attack(unit.unit(), target.get().id());
+                    }
                     return "OK";
                 });
             }
             case "ATTACKMOVE" -> {
-                if (tokens.length != 4) {
+                int end = tokens.length;
+                boolean queue = end > 4 && "queue".equalsIgnoreCase(tokens[end - 1]);
+                if (queue) {
+                    end--;
+                }
+                if (end != 4) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
                 OptionalLong unitId = parseId(tokens[1]);
@@ -382,13 +421,18 @@ public final class CommandDispatcher {
                 if (unitId.isEmpty() || x.isEmpty() || y.isEmpty()) {
                     yield PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
                 }
+                boolean append = queue;
                 yield worldGameplay(session, (host, player) -> {
                     UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
                     if (unit.error() != null) {
                         return unit.error();
                     }
-                    host.engine().commands().attackMove(unit.unit(),
-                            new GridPos(x.getAsInt(), y.getAsInt()));
+                    GridPos destination = new GridPos(x.getAsInt(), y.getAsInt());
+                    if (append) {
+                        host.engine().commands().queueAttackMove(unit.unit(), destination);
+                    } else {
+                        host.engine().commands().attackMove(unit.unit(), destination);
+                    }
                     return "OK";
                 });
             }
@@ -549,18 +593,24 @@ public final class CommandDispatcher {
     }
 
     /**
-     * {@code REPAIR <engineerId> <buildingId>}: send one owned engineer to repair an owned, damaged,
-     * finished building.
+     * {@code REPAIR <engineerId> <buildingId> [queue]}: send one owned engineer to repair an owned,
+     * damaged, finished building, optionally behind the orders it already has.
      *
      * <p>Both ids are resolved on the world thread with the usual existence and ownership rules, and the
-     * actual transaction is {@link UnitDirector#tryRepair}: the full remaining cost is probed, the
-     * engineer is ordered to the building's entrance, and the repair order charges each tick's restored
-     * hit points. The answer is {@code OK} or the engine's readable {@code ERR <reason>} (destroyed,
-     * unfinished, full health, no repair price, unaffordable, not yours).
+     * actual transaction is {@link UnitDirector#tryRepair} (or {@link UnitDirector#tryQueueRepair} when
+     * the literal {@code queue} is present): the full remaining cost is probed, the engineer is ordered
+     * to the building's entrance, and the repair order charges each tick's restored hit points. The answer
+     * is {@code OK} or the engine's readable {@code ERR <reason>} (destroyed, unfinished, full health, no
+     * repair price, unaffordable, not yours).
      */
     private PendingAnswer repair(String rest, Session session) {
         String[] tokens = split(rest);
-        if (tokens.length != 2) {
+        int end = tokens.length;
+        boolean queue = end > 2 && "queue".equalsIgnoreCase(tokens[end - 1]);
+        if (queue) {
+            end--;
+        }
+        if (end != 2) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
         OptionalLong engineerId = parseId(tokens[0]);
@@ -568,6 +618,7 @@ public final class CommandDispatcher {
         if (engineerId.isEmpty() || buildingId.isEmpty()) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
+        boolean append = queue;
         return worldGameplay(session, (host, player) -> {
             UnitRef engineer = ownedUnit(host.engine().world(), engineerId.getAsLong(), player);
             if (engineer.error() != null) {
@@ -577,8 +628,9 @@ public final class CommandDispatcher {
             if (building.error() != null) {
                 return building.error();
             }
-            UnitDirector.RepairResult result = host.engine().commands()
-                    .tryRepair(engineer.unit(), building.building());
+            UnitDirector.RepairResult result = append
+                    ? host.engine().commands().tryQueueRepair(engineer.unit(), building.building())
+                    : host.engine().commands().tryRepair(engineer.unit(), building.building());
             return result.repairing() ? "OK" : "ERR " + result.refusal();
         });
     }
@@ -699,6 +751,60 @@ public final class CommandDispatcher {
                     ? "OK " + describe(result.moved())
                     : "ERR " + result.refusal();
         });
+    }
+
+    /**
+     * {@code BATCH <command>; <command>; ...}: one abstract order composed by the client.
+     *
+     * <p>This is Q16's merge: the browser collects a series of orders and operations (a build, a train,
+     * a move, a transfer, ...) and sends them as one line. The method splits the line on {@code ;},
+     * refuses an empty or over-long list, and then executes the sub-commands <strong>in the order
+     * given</strong>, one at a time, through the ordinary {@link #execute(String, Session)} path. Because
+     * each sub-command is applied and answered before the next one is submitted, the world sees the same
+     * sequence it would see from the client sending the lines one by one; the difference is one abstract
+     * order, one round trip and one answer.
+     *
+     * <p><strong>Sequencing of unit orders is the {@code queue} token's job.</strong> The client's
+     * sequence builder appends {@code queue} to {@code ORDER MOVE}, {@code ORDER ATTACK},
+     * {@code ORDER ATTACKMOVE}, {@code BUILD} and {@code REPAIR}, so those sub-orders are pushed onto the
+     * unit's order queue and run one after another. A sub-command without {@code queue} keeps its ordinary
+     * replacing semantics; the batch never changes the grammar behind the client's back.
+     *
+     * <p><strong>A batch is a sequence, not a transaction.</strong> Every sub-command is submitted to the
+     * world in the order given and is applied there; the first failure is reported as
+     * {@code ERR <index>/<count> <reason>} with its one-based index, and the later sub-commands are still
+     * applied in order. That mirrors the engine's order queue, where one failed order does not cancel the
+     * rest; a full success answers {@code OK <count>}. A sub-command outside
+     * {@link #BATCHABLE_COMMANDS} (notably a nested {@code BATCH} or a {@code QUIT}) is refused up front,
+     * before anything is submitted.
+     *
+     * <p>The method itself never waits: it returns a {@link PendingAnswer} whose {@code isDone} covers
+     * every part and whose {@code await} joins the sub-answers. A transport's {@link #execute(String,
+     * Session)} therefore blocks once for the whole batch, and a check can drain the world explicitly.
+     */
+    private PendingAnswer batch(String rest, Session session) {
+        String[] parts = rest.split(";", -1);
+        List<String> commands = new ArrayList<>(parts.length);
+        for (String part : parts) {
+            String command = part.strip();
+            if (command.isEmpty()) {
+                return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+            }
+            commands.add(command);
+        }
+        if (commands.size() > MAX_BATCH_COMMANDS) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        for (String command : commands) {
+            if (!BATCHABLE_COMMANDS.contains(commandWord(command))) {
+                return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+            }
+        }
+        List<PendingAnswer> answers = new ArrayList<>(commands.size());
+        for (String command : commands) {
+            answers.add(submit(command, session));
+        }
+        return PendingAnswer.combined(answers);
     }
 
     /**
@@ -869,29 +975,49 @@ public final class CommandDispatcher {
      * <p>Old commands are already complete, so a transport never blocks for them. Gameplay commands are
      * deferred to the world thread; {@link #await(long)} is the transport's bounded wait and
      * {@link #isDone()} lets a check prove that nothing has been applied yet.
+     *
+     * <p>A {@code BATCH} is one answer made of several deferred sub-commands. The parts are submitted
+     * together, so the world applies them in submission order; {@link #isDone()} is true only when every
+     * part is done, and {@link #await(long)} joins the sub-answers into the batch answer.
      */
     public static final class PendingAnswer {
 
         private final boolean immediate;
         private final String answer;
         private final WorldHost.CommandHandle handle;
+        /** Non-null only for a BATCH: the answers of the sub-commands, in submission order. */
+        private final List<PendingAnswer> parts;
 
-        private PendingAnswer(boolean immediate, String answer, WorldHost.CommandHandle handle) {
+        private PendingAnswer(boolean immediate, String answer, WorldHost.CommandHandle handle,
+                List<PendingAnswer> parts) {
             this.immediate = immediate;
             this.answer = answer;
             this.handle = handle;
+            this.parts = parts;
         }
 
         private static PendingAnswer immediate(String answer) {
-            return new PendingAnswer(true, answer, null);
+            return new PendingAnswer(true, answer, null, null);
         }
 
         private static PendingAnswer deferred(WorldHost.CommandHandle handle) {
-            return new PendingAnswer(false, null, Objects.requireNonNull(handle, "handle"));
+            return new PendingAnswer(false, null, Objects.requireNonNull(handle, "handle"), null);
+        }
+
+        private static PendingAnswer combined(List<PendingAnswer> parts) {
+            return new PendingAnswer(false, null, null, List.copyOf(parts));
         }
 
         /** Whether the answer is ready; an immediate command is always ready. */
         public boolean isDone() {
+            if (parts != null) {
+                for (PendingAnswer part : parts) {
+                    if (!part.isDone()) {
+                        return false;
+                    }
+                }
+                return true;
+            }
             return immediate || handle.isDone();
         }
 
@@ -902,12 +1028,52 @@ public final class CommandDispatcher {
          * @return the answer, or {@code ERR world busy} when the world did not apply it in time
          */
         public String await(long timeoutMillis) {
-            return immediate ? answer : handle.await(timeoutMillis);
+            if (parts == null) {
+                return immediate ? answer : handle.await(timeoutMillis);
+            }
+            long deadline = System.nanoTime() + Math.max(0L, timeoutMillis) * 1_000_000L;
+            return joinParts(false, deadline);
         }
 
         /** Waits without a budget, for callers that are already on a dedicated worker. */
         public String await() {
-            return immediate ? answer : handle.await();
+            if (parts == null) {
+                return immediate ? answer : handle.await();
+            }
+            return joinParts(true, 0L);
+        }
+
+        /**
+         * Joins the sub-answers of a batch into one line.
+         *
+         * <p>The first failed sub-command names the answer (`ERR <index>/<count> <reason>`), and the
+         * remaining sub-commands were still applied in order: a batch is a sequence, not a transaction,
+         * exactly like the engine's order queue where one failed order does not cancel the rest. A full
+         * success answers `OK <count>`.
+         */
+        private String joinParts(boolean unbounded, long deadline) {
+            int failedIndex = -1;
+            String failedReason = null;
+            for (int index = 0; index < parts.size(); index++) {
+                PendingAnswer part = parts.get(index);
+                String partAnswer;
+                if (unbounded) {
+                    partAnswer = part.await();
+                } else {
+                    long remaining = Math.max(0L, (deadline - System.nanoTime()) / 1_000_000L);
+                    partAnswer = part.await(remaining);
+                }
+                if (partAnswer == null) {
+                    return "ERR " + (index + 1) + "/" + parts.size() + " quit";
+                }
+                if (partAnswer.startsWith("ERR") && failedIndex < 0) {
+                    failedIndex = index + 1;
+                    failedReason = partAnswer.length() > 4 ? partAnswer.substring(4).strip() : "refused";
+                }
+            }
+            return failedIndex < 0
+                    ? "OK " + parts.size()
+                    : "ERR " + failedIndex + "/" + parts.size() + " " + failedReason;
         }
     }
 

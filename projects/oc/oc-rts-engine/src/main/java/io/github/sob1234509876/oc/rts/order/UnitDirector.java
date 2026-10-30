@@ -245,6 +245,35 @@ public interface UnitDirector {
     RepairResult tryRepair(Unit engineer, Building building);
 
     /**
+     * Appends one order to the unit's queue instead of replacing what it is doing.
+     *
+     * <p>These are the queue forms the {@code BATCH} macro and the Shift-click build queue use: the
+     * command is validated exactly like its replacing twin (same commandability, reach, ownership and
+     * affordability checks), then the resulting order is pushed behind the ones already queued and runs
+     * after them, one at a time. A refused queue form returns the same readable reason and leaves the
+     * queue untouched, so one bad leg cannot cancel the orders after it.
+     *
+     * <p>Queueing is what makes {@code BATCH} a sequence rather than a race: the server applies the
+     * sub-orders in the order they were given, and the unit executes them in that same order.
+     *
+     * @param unit        the unit to append to
+     * @param destination the tile to walk to
+     */
+    void queueMove(Unit unit, GridPos destination);
+
+    /** Queue form of {@link #moveRoute(Unit, List)}; same validation and the same {@link MoveResult}. */
+    MoveResult queueMoveRoute(Unit unit, List<GridPos> route);
+
+    /** Queue form of {@link #attack(Unit, EntityId)}. */
+    void queueAttack(Unit unit, EntityId target);
+
+    /** Queue form of {@link #attackMove(Unit, GridPos)}. */
+    void queueAttackMove(Unit unit, GridPos destination);
+
+    /** Queue form of {@link #tryRepair(Unit, Building)}. */
+    RepairResult tryQueueRepair(Unit engineer, Building building);
+
+    /**
      * Cancels one of the player's unfinished construction sites and refunds a documented fraction of
      * what was spent on it.
      *

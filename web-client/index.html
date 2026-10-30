@@ -1016,15 +1016,8 @@
         font-weight: 500;
       }
 
-      /* The transferable warehouse amount beside the demand icon (Q10): a small achromatic number. */
-      .hud-queue-stock {
-        flex: 0 0 auto;
-        color: #b0b0b0;
-        font-size: 10px;
-        font-variant-numeric: tabular-nums;
-        line-height: 1;
-        white-space: nowrap;
-      }
+      /* The demand icon is the only Q10 mark: it compares the building's own buffer, so no warehouse
+         number is painted beside it. */
 
       .hud-queue-name {
         max-width: 18ch;
@@ -2116,6 +2109,12 @@
               aria-pressed="true"
               title="路径：显示选中单位的移动路径与待定路径点（点击关闭）"
             >路径</button>
+            <button
+              id="sequence-button"
+              type="button"
+              aria-pressed="false"
+              title="顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）"
+            >顺序</button>
             <button id="open-log" type="button">日志</button>
             <button
               id="open-settings"
@@ -2508,6 +2507,23 @@
             <h3 id="settings-ui-title">界面</h3>
             <label><input id="setting-paths" type="checkbox" checked /> 显示路径（与顶部“路径”按钮同步）</label>
             <label><input id="setting-view" type="checkbox" /> 隐藏游戏画面（与顶部“隐藏游戏画面”按钮同步）</label>
+            <div class="settings-fields">
+              <label>
+                补给标签半径（格）
+                <input
+                  id="setting-inventory-radius"
+                  type="number"
+                  min="1"
+                  max="32"
+                  step="1"
+                  inputmode="numeric"
+                  title="单位携带的库存标签：选中的单位总是显示；未选中的单位只在鼠标这个半径内显示"
+                />
+              </label>
+            </div>
+            <p class="settings-note">
+              库存标签：选中的单位无论多远都显示；未选中的单位只在鼠标附近这个半径内显示。标签列出全部物品。
+            </p>
           </section>
         </div>
       </section>

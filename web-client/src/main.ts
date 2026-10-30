@@ -32,7 +32,9 @@ import {
 import {
   BUILDING_PATHS,
   UNIT_PATHS,
+  MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
+  batchCommands,
   build,
   buildButtonLabel,
   buildPlacementBatch,
@@ -43,6 +45,7 @@ import {
   parseWhoAmI,
   reclaim,
   repair,
+  sequenceLine,
   trainBatch,
   upgrade,
   whoAmI,
@@ -143,8 +146,6 @@ import {
 import {
   demandIcon,
   demandMissingText,
-  demandStockText,
-  demandStockTitle,
   combatLabel,
   formatProgressPercent,
   incomeSuffix,
@@ -211,6 +212,7 @@ import { MusicPlayerView } from "./musicview";
 import {
   FILTER_PRESETS,
   SETTINGS_STORAGE_KEY,
+  clampInventoryRadius,
   defaultSettings,
   isMessageCategory,
   parseSettings,
@@ -324,6 +326,7 @@ const upgradeSection = required<HTMLDivElement>("#upgrade-section");
 const upgradeTarget = required<HTMLSpanElement>("#upgrade-target");
 const upgradeButton = required<HTMLButtonElement>("#upgrade-button");
 const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
+const sequenceButton = required<HTMLButtonElement>("#sequence-button");
 const buildingActionsSection = required<HTMLElement>("#building-actions-section");
 const buildingActionsTarget = required<HTMLSpanElement>("#building-actions-target");
 const continueBuildButton = required<HTMLButtonElement>("#continue-build-button");
@@ -352,6 +355,7 @@ const connectionSettingsLink = required<HTMLButtonElement>("#connection-settings
 const settingsConnectionPanel = required<HTMLButtonElement>("#settings-connection-panel");
 const settingPathsInput = required<HTMLInputElement>("#setting-paths");
 const settingViewInput = required<HTMLInputElement>("#setting-view");
+const settingInventoryRadiusInput = required<HTMLInputElement>("#setting-inventory-radius");
 const filterInputs: readonly HTMLInputElement[] = Array.from(
   document.querySelectorAll<HTMLInputElement>("[data-filter-category]"),
 );
@@ -408,6 +412,7 @@ toastConsole.setFilter((category) => settings.filters[category]);
 function updateSettingsView(): void {
   settingPathsInput.checked = showPaths;
   settingViewInput.checked = viewHidden;
+  settingInventoryRadiusInput.value = String(settings.inventoryRadiusTiles);
   for (const input of filterInputs) {
     const category = input.dataset["filterCategory"];
     if (category !== undefined && isMessageCategory(category)) {
@@ -517,6 +522,14 @@ settingPathsInput.addEventListener("change", () => {
 settingViewInput.addEventListener("change", () => {
   setViewVisible(!settingViewInput.checked);
   updateSettingsView();
+});
+
+settingInventoryRadiusInput.addEventListener("change", () => {
+  const radius = clampInventoryRadius(Number(settingInventoryRadiusInput.value));
+  settings = { ...settings, inventoryRadiusTiles: radius };
+  settingInventoryRadiusInput.value = String(radius);
+  persistSettings();
+  setStatus(`补给标签半径：${radius} 格`, "ok");
 });
 
 /** Restores every saved default and clears the saved server address. */
@@ -676,6 +689,13 @@ let placementPath: string | null = null;
 let pendingRoute: TileCoord[] = [];
 /** Whether the route overlay is drawn; restored from the saved settings (default on). */
 let showPaths = settings.showPaths;
+/**
+ * Q16 sequence mode: while `sequenceArmed`, gameplay actions are recorded into `sequenceLines` instead of
+ * being sent, each rewritten to its `queue` form. Enter (or a second click on 顺序) submits the whole
+ * list as one `BATCH` line; Esc clears it. Session state only, cleared on disconnect.
+ */
+let sequenceArmed = false;
+let sequenceLines: string[] = [];
 /** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
 let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
@@ -897,6 +917,7 @@ function openConnection(): void {
         stopHeartbeat();
         loggedIn = false;
         clearGameplayIdentity();
+        clearSequence(false);
         setCommandsEnabled(false);
         connectButton.textContent = "连接";
         connectButton.disabled = false;
@@ -2599,7 +2620,8 @@ function renderQueueList(building: EntityView | undefined): void {
       ? `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick`
       : `${labelledContent(item.kind)} · ${item.ticks}/${item.total} tick · ${missing}`;
     // The demand icon sits beside the current (first) row. A ready job gets the hollow check, a short one
-    // the warning mark; the warning's own title is the missing-inputs text, which is also on the entity
+    // the warning mark. Q10 rules that the icon compares only the building's own buffer, so no warehouse
+    // figure sits beside it; the warning's title is the missing-inputs text, which is also on the entity
     // tooltip, so both hovers explain the same shortage.
     if (index === 0 && building.demand !== undefined) {
       const icon = document.createElement("span");
@@ -2608,16 +2630,6 @@ function renderQueueList(building: EntityView | undefined): void {
       icon.title = missing === "" ? "材料充足" : `${missing}（需求/持有）`;
       icon.setAttribute("aria-hidden", "true");
       row.append(icon);
-      // Q10: the icon reads the building's own buffer, and the adjacent number says what a haul could
-      // still bring from the owner's unreserved warehouse stock.
-      const stockText = demandStockText(building.demand);
-      if (stockText !== "") {
-        const stock = document.createElement("span");
-        stock.className = "hud-queue-stock";
-        stock.textContent = stockText;
-        stock.title = demandStockTitle(building.demand, itemLabel);
-        row.append(stock);
-      }
     }
     const name = document.createElement("span");
     name.className = "hud-queue-name";
@@ -2697,11 +2709,97 @@ function requireLoggedInForGameplay(): boolean {
 }
 
 /**
+ * Reflects the sequence recorder on its chrome button: `顺序` when empty, `顺序 N` while it holds N
+ * lines, with `armed` matching the recording state.
+ */
+function updateSequenceButton(): void {
+  sequenceButton.classList.toggle("armed", sequenceArmed);
+  sequenceButton.setAttribute("aria-pressed", sequenceArmed ? "true" : "false");
+  sequenceButton.textContent = sequenceLines.length === 0 ? "顺序" : `顺序 ${sequenceLines.length}`;
+  sequenceButton.title = sequenceArmed
+    ? `顺序：已记录 ${sequenceLines.length} 条，点击执行（Enter），Esc 清空`
+    : "顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）";
+}
+
+/**
+ * Clears the recorder; `showStatus` is false for a disconnect, which has its own status line and does
+ * not need a second message about the sequence.
+ */
+function clearSequence(showStatus: boolean): void {
+  const had = sequenceLines.length;
+  const wasArmed = sequenceArmed;
+  sequenceLines = [];
+  sequenceArmed = false;
+  updateSequenceButton();
+  if (showStatus && wasArmed) {
+    setStatus(had === 0 ? "顺序已关闭" : `已清空顺序（${had} 条）`, "idle");
+  }
+}
+
+/**
+ * Records one gameplay action into the sequence instead of sending it.
+ *
+ * Every wire line is rewritten to its `queue` form (`sequenceLine`), so unit orders and builds append to
+ * the unit's order queue and run in recording order instead of replacing each other. The cap is the
+ * server's BATCH cap; an action that would exceed it is refused whole, never truncated.
+ */
+function recordSequence(wireLines: readonly string[], displayLines: readonly string[]): void {
+  const queued = wireLines.map(sequenceLine);
+  if (sequenceLines.length + queued.length > MAX_BATCH_COMMANDS) {
+    refuse(
+      `顺序最多 ${MAX_BATCH_COMMANDS} 条，当前已记录 ${sequenceLines.length} 条，这次要加 ${queued.length} 条`,
+    );
+    return;
+  }
+  sequenceLines.push(...queued);
+  log("info", `顺序 +${queued.length}：${displayLines.join(" · ")}`);
+  setStatus(`顺序 ${sequenceLines.length} 条（Enter 执行 / Esc 清空）`, "idle");
+  updateSequenceButton();
+}
+
+/**
+ * Sends the recorded sequence as one `BATCH` line.
+ *
+ * The whole plan travels as one abstract order (Q16), in recording order, and the server answers once:
+ * `OK <count>` or `ERR <index>/<count> <reason>`. The recorder is cleared before the send so a refused
+ * batch cannot be submitted twice by a second Enter.
+ */
+function executeSequence(): void {
+  if (!requireLoggedInForGameplay()) {
+    return;
+  }
+  if (sequenceLines.length === 0) {
+    setStatus("顺序为空：先点一个命令", "idle");
+    return;
+  }
+  let batchLine: string;
+  try {
+    batchLine = batchCommands(sequenceLines);
+  } catch (error: unknown) {
+    refuse(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  const count = sequenceLines.length;
+  sequenceLines = [];
+  sequenceArmed = false;
+  updateSequenceButton();
+  void sendGameplayBatch(
+    `合并订单（${count} 条）`,
+    [batchLine],
+    [batchLine],
+    `合并订单已提交（${count} 条）`,
+  );
+}
+
+/**
  * Sends one order per selected unit and shows the whole exchange as a single toast.
  *
  * The wire queue is in order, so the commands are awaited one by one. History gets one `→` line and one
  * `←` line per unit; the toast joins the command lines and the answers so a group order still fits the
  * popup's two lines. An `ERR ...` answer makes the toast an error and wins the status line.
+ *
+ * <p>While the Q16 sequence recorder is armed the action is not sent at all: it is appended to
+ * `sequenceLines` instead, and Enter submits the whole list as one `BATCH`.
  */
 async function sendGameplayBatch(
   label: string,
@@ -2719,6 +2817,10 @@ async function sendGameplayBatch(
   }
   if (wireLines.length === 0) {
     refuse("没有可以下达命令的单位");
+    return;
+  }
+  if (sequenceArmed) {
+    recordSequence(wireLines, displayLines);
     return;
   }
   setStatus(`等待 ${label} 的回答…`, "busy");
@@ -3580,8 +3682,9 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
     return true;
   }
   const lines = plan.lines;
-  if (!plan.keepArmed) {
-    // A plain click keeps today's behaviour: one order, then the placement mode closes.
+  if (!plan.keepArmed && !sequenceArmed) {
+    // A plain click keeps today's behaviour: one order, then the placement mode closes. While the Q16
+    // sequence recorder is armed the mode stays open, so several sites can be recorded in one go.
     placementPath = null;
   }
   updateGameplayPanel();
@@ -4406,6 +4509,7 @@ function animationFrame(now: number): void {
       pendingPath: pendingRoute,
       markers,
       pops: activePops(popRecords, now),
+      inventoryRadiusTiles: settings.inventoryRadiusTiles,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.
@@ -4579,6 +4683,50 @@ togglePathsButton.addEventListener("click", () => {
   setShowPaths(!showPaths, true);
 });
 updatePathsButton();
+sequenceButton.addEventListener("click", () => {
+  if (!sequenceArmed) {
+    sequenceArmed = true;
+    updateSequenceButton();
+    setStatus("顺序：命令会先记录，按 Enter 合并提交，Esc 清空", "busy");
+    return;
+  }
+  executeSequence();
+});
+updateSequenceButton();
+
+// The recorder listens in the capture phase so Enter/Esc reach it before the canvas controller; an
+// active placement or the marker list keeps its own Escape handling (the guards below leave those to
+// the canvas, which handles them in its own listener).
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (!sequenceArmed) {
+      return;
+    }
+    if (!logOverlay.hidden || !settingsOverlay.hidden || !musicOverlay.hidden) {
+      // A dialog owns Enter/Escape while it is open; the recorder does not steal either key.
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      executeSequence();
+      return;
+    }
+    if (event.key === "Escape" && placementPath === null && !attackMoveArmed && !markerPanelOpen) {
+      event.preventDefault();
+      clearSequence(true);
+    }
+  },
+  true,
+);
 selectEngineersButton.addEventListener("click", selectEngineers);
 
 // The canvas owns Escape for its own focus; this fallback keeps "close the marker list / cancel

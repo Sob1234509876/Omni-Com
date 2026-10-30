@@ -9,8 +9,10 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
-- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM` and `TRANSFER`, the
-  account-name identity rule, the login and ownership rules, and the world-step boundary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER` and
+  `BATCH`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
+- The `queue` append forms of `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` and
+  the `BATCH` merged order: one client-composed sequence applied in order, one answer.
 - Repair, continue-building and reclaim: the cost per health point, the repair work rate, the half refund, and
   the refusals.
 - Manual warehouse transfers: the `TRANSFER` grammar, the single-warehouse reservation, the free-hauler rule,
@@ -93,6 +95,7 @@ After a successful handshake, one line per command, one line of answer per comma
 | `REPAIR ...` | `OK` or `ERR <reason>` | Sends an owned engineer to repair an owned, damaged, finished building; requires `LOGIN` and ownership |
 | `RECLAIM ...` | `OK <refund>` or `ERR <reason>` | Cancels an owned unfinished site and refunds half of its placement cost; requires `LOGIN` and ownership |
 | `TRANSFER ...` | `OK <moved> <item>` or `ERR <reason>` | Moves stock between two of the player's finished warehouses; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `BATCH ...` | `OK <count>` or `ERR <index>/<count> <reason>` | Applies a `;`-separated series of orders in order and answers once; requires `LOGIN`; see "Gameplay commands" |
 | `QUIT` | `OK bye` | The server sends this line first, then closes the connection |
 
 `REGISTER` and `LOGIN` answer with a human-readable `<message>`; the client may rely only on the leading `OK` / `ERR` to judge success or failure, and must not parse or compare the whole sentence.
@@ -113,7 +116,7 @@ all lowercase, and `ENGINE-INFO` is not folded into it. The failure answers are 
 On success the answer is `OK <base64-payload>`. The server only base64-decodes the request payload into **opaque bytes** for the handler,
 then base64-encodes the bytes the handler returns and sends them back; it does not parse the payload, does not record the payload content, and does not understand the `oc-debug` envelope.
 
-`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
+`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `BATCH`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
 
 `hello` is the sample request provided by the `oc-hello` plugin: the payload is an ordinary UTF-8 name (not an envelope like `oc-debug`'s), and the answer is ordinary UTF-8 text as well.
 
@@ -128,26 +131,37 @@ command dispatcher.
 
 ```text
 WHOAMI                                      -> OK player <id>            (needs LOGIN)
-ORDER MOVE <entityId> <x> <y> [<x> <y> ...] -> OK                        (needs LOGIN, entity must belong to the player, 1..8 points)
-ORDER ATTACK <entityId> <targetId>          -> OK                        (needs LOGIN, entity must belong to the player)
-ORDER ATTACKMOVE <entityId> <x> <y>         -> OK                        (needs LOGIN, entity must belong to the player)
+ORDER MOVE <entityId> <x> <y> [<x> <y> ...] [queue] -> OK                (needs LOGIN, entity must belong to the player, 1..8 points)
+ORDER ATTACK <entityId> <targetId> [queue]   -> OK                        (needs LOGIN, entity must belong to the player)
+ORDER ATTACKMOVE <entityId> <x> <y> [queue]  -> OK                        (needs LOGIN, entity must belong to the player)
 ORDER STOP <entityId>                       -> OK                        (needs LOGIN, entity must belong to the player)
 BUILD <engineerId> <buildingPath> <x> <y> [queue] -> OK <buildingId> | ERR ...  (needs LOGIN, engineer must belong to the player)
 TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (needs LOGIN, building must belong to the player)
 UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (needs LOGIN, building must belong to the player)
-REPAIR <engineerId> <buildingId>            -> OK | ERR ...              (needs LOGIN, both entities must belong to the player)
+REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (needs LOGIN, both entities must belong to the player)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (needs LOGIN, building must belong to the player)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (needs LOGIN, both buildings must belong to the player)
+BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (needs LOGIN, 1..16 sub-commands)
 ```
 
 - `<entityId>`, `<targetId>` and `<buildingId>` are decimal entity ids from `/world/snapshot`. The id in
   an `UPGRADE` success answer is a **new** entity - the replacement has a new id and the old one is gone.
 - `<x>` and `<y>` are decimal tile coordinates.
-- The optional fifth `BUILD` token is the literal `queue` (case-insensitive): the site is placed and charged
-  exactly like the four-token form, but the build order is **appended** to the engineer's queue instead of
-  replacing it. Three `BUILD ... queue` lines therefore leave three sites and three orders in one engineer's
-  queue, executed in arrival order. The four-token form is byte-identical to the historical command and
-  keeps its replace semantics. Any other fifth token is `ERR bad arguments`.
+- The optional `queue` token (case-insensitive, last token) is the **append** form of `ORDER MOVE`,
+  `ORDER ATTACK`, `ORDER ATTACKMOVE`, `BUILD` and `REPAIR`: the command is validated exactly like its plain
+  form, and the resulting order is pushed behind the ones the unit already has instead of replacing them.
+  Three `BUILD ... queue` lines therefore leave three sites and three orders in one engineer's queue,
+  executed in arrival order. The plain form is byte-identical to the historical command and keeps its
+  replace semantics. Any other extra token is `ERR bad arguments`.
+- `BATCH` is the **merged order** (Q16): the client composes a series of commands and sends them as one
+  line, separated by `;` (semicolon, optional spaces), and the server applies them in the given order. It
+  accepts `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM` and `TRANSFER` sub-commands; anything
+  else - including a nested `BATCH`, `WHOAMI` or `QUIT` - is `ERR bad arguments` before anything is
+  applied. One to sixteen sub-commands; more than sixteen is `ERR bad arguments`, not a truncation. A
+  batch is a **sequence, not a transaction**: every sub-command is applied in order, the first failure is
+  reported as `ERR <index>/<count> <reason>` with its one-based index, and the later sub-commands are
+  still applied. A full success answers `OK <count>`. A sub-command that fails to parse removes one order
+  from the sequence but does not stop the rest, exactly like a failed order in a unit's queue.
 - `ORDER MOVE` takes **one to eight coordinate pairs** after the entity id, visited in order; the last pair
   is the final destination. The one-pair form `<entityId> <x> <y>` is byte-identical to the historical
   single-target order. An empty route, an odd number of coordinate tokens, or more than eight pairs is

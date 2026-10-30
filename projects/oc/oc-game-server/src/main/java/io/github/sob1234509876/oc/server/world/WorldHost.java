@@ -2002,7 +2002,6 @@ public final class WorldHost {
             appendJsonString(json, item.item());
             json.append(",\"need\":").append(item.need())
                     .append(",\"have\":").append(item.have())
-                    .append(",\"stock\":").append(item.stock())
                     .append('}');
         }
         json.append("]}");

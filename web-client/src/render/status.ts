@@ -9,7 +9,6 @@
 
 import {
   isBuildingEntityKind,
-  type DemandItemView,
   type EntityView,
   type ProductionDemandView,
   type ProducingNowView,
@@ -97,61 +96,6 @@ export function demandMissingText(
   return parts.length === 0 ? "" : `缺：${parts.join(" · ")}`;
 }
 
-/** The items a warning is about: short inputs in recipe order. */
-function shortItems(demand: ProductionDemandView | undefined): readonly DemandItemView[] {
-  if (demand === undefined || demand.ready) {
-    return [];
-  }
-  return demand.items.filter(
-    (item) => Number.isSafeInteger(item.need) && Number.isSafeInteger(item.have) && item.have < item.need,
-  );
-}
-
-/**
- * The compact transferable-stock number beside the demand icon: `仓 500`, or `仓 500/100` when the
- * recipe has two short inputs.
- *
- * Q10's default is "the arsenal's own stock, with the transferable warehouse amount shown next to it":
- * `ready` and the icon speak for the building buffer, and this line answers what a haul could still
- * bring from the owner's unreserved warehouse stock. Values are per short input in recipe order; an
- * item whose `stock` is absent (a pre-Q10 snapshot) or zero contributes nothing, so an old server
- * simply shows no adjacent number. A ready demand shows nothing, because the local hold already covers
- * the job.
- */
-export function demandStockText(demand: ProductionDemandView | undefined): string {
-  const values: string[] = [];
-  for (const item of shortItems(demand)) {
-    const stock = item.stock;
-    if (stock === undefined || !Number.isSafeInteger(stock) || stock <= 0) {
-      continue;
-    }
-    values.push(String(stock));
-  }
-  return values.length === 0 ? "" : `仓 ${values.join("/")}`;
-}
-
-/**
- * The full tooltip title behind {@link demandStockText}: `仓库可调拨：金 500 · 木 100`.
- *
- * It names the items, which the compact adjacent number cannot, so hovering the stock figure explains
- * where the numbers come from. Empty when there is no short input with a known warehouse amount.
- */
-export function demandStockTitle(
-  demand: ProductionDemandView | undefined,
-  labelForPath: (path: string) => string = itemDisplayName,
-): string {
-  const parts: string[] = [];
-  for (const item of shortItems(demand)) {
-    const stock = item.stock;
-    if (stock === undefined || !Number.isSafeInteger(stock) || stock <= 0) {
-      continue;
-    }
-    const label = labelForPath(item.item).trim();
-    parts.push(`${label === "" ? item.item : label} ${stock}`);
-  }
-  return parts.length === 0 ? "" : `仓库可调拨：${parts.join(" · ")}`;
-}
-
 /** Total number of carried items, counting every positive `contents` amount. */
 function carriedTotal(contents: Readonly<Record<string, number>> | undefined): number {
   if (contents === undefined) {
@@ -167,13 +111,12 @@ function carriedTotal(contents: Readonly<Record<string, number>> | undefined): n
 }
 
 /**
- * The compact tag above a loaded unit: the first item's name and amount, plus the total when the hold
- * holds more than that one kind.
+ * The compact tag above a loaded unit: every item the hold carries, in the shared stable order.
  *
- * Examples are `金 120` for a single stack and `金 80 · 共 120` for a mixed hold. A unit with no cargo,
- * an older snapshot without `contents` and a building row answer `null`, so the renderer draws no tag.
- * The first item follows the shared stable order (gold, wood, then paths lexicographically), so the same
- * hold always produces the same tag.
+ * <p>Q9 asks for "all the items", so the tag lists each positive stack, for example `金 80 · 木 40`.
+ * A unit with no cargo, an older snapshot without `contents` and a building row answer `null`, so the
+ * renderer draws no tag. The order is the shared one (gold, wood, then paths lexicographically), so the
+ * same hold always produces the same tag.
  */
 export function unitStockTagLabel(
   entity: EntityView,
@@ -186,51 +129,52 @@ export function unitStockTagLabel(
   if (contents === undefined) {
     return null;
   }
-  const paths = Object.keys(contents)
-    .filter((path) => {
-      const amount = contents[path];
-      return amount !== undefined && Number.isSafeInteger(amount) && amount > 0;
-    })
-    .sort(compareItemPaths);
-  const firstPath = paths[0];
-  if (firstPath === undefined) {
-    return null;
+  const parts: string[] = [];
+  for (const path of Object.keys(contents).sort(compareItemPaths)) {
+    const amount = contents[path];
+    if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
+      continue;
+    }
+    const label = labelForPath(path).trim();
+    parts.push(`${label === "" ? path : label} ${amount}`);
   }
-  const firstAmount = contents[firstPath] ?? 0;
-  const total = carriedTotal(contents);
-  const label = labelForPath(firstPath).trim();
-  const name = label === "" ? firstPath : label;
-  return total > firstAmount ? `${name} ${firstAmount} · 共 ${total}` : `${name} ${firstAmount}`;
+  return parts.length === 0 ? null : parts.join(" · ");
 }
 
 /**
- * Whether a unit's stock tag may be drawn: the unit must be selected, carry at least one item, and stand
- * within {@link STOCK_TAG_RADIUS_TILES} tiles of the camera centre.
+ * Whether a unit's stock tag may be drawn.
  *
- * The radius is deliberately small: the tag is a close-up read-out, not a map label, so it never
- * clutters a wide view. `centreX` / `centreY` are in absolute world tiles, the same space as
- * `EntityView.x` / `y`; distance is Euclidean and inclusive at the radius.
+ * <p>Q9's rule: a unit that carries something shows its tag when it is **selected** (wherever it is on
+ * the loaded map) or when it stands within `radiusTiles` of the **pointer**. The radius is a settings
+ * value (default {@link DEFAULT_INVENTORY_RADIUS_TILES} in `settings.ts`); the pointer coordinates are
+ * absolute world tiles, or `null` while the pointer is outside the canvas, in which case only the
+ * selection rule applies. The distance is Euclidean and inclusive at the radius. Buildings never get the
+ * tag: a building's stock belongs to the warehouse panel.
  */
-export const STOCK_TAG_RADIUS_TILES = 6;
-
 export function stockTagVisible(
   entity: EntityView,
   selected: boolean,
-  centreX: number,
-  centreY: number,
-  radiusTiles: number = STOCK_TAG_RADIUS_TILES,
+  pointerX: number | null,
+  pointerY: number | null,
+  radiusTiles: number,
 ): boolean {
-  if (!selected || isBuildingEntityKind(entity.kind)) {
+  if (isBuildingEntityKind(entity.kind)) {
     return false;
   }
   if (carriedTotal(entity.contents) <= 0) {
     return false;
   }
-  if (!Number.isFinite(centreX) || !Number.isFinite(centreY)) {
+  if (selected) {
+    return true;
+  }
+  if (pointerX === null || pointerY === null) {
     return false;
   }
-  const radius = Number.isFinite(radiusTiles) ? Math.max(0, radiusTiles) : STOCK_TAG_RADIUS_TILES;
-  return Math.hypot(entity.x - centreX, entity.y - centreY) <= radius;
+  if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
+    return false;
+  }
+  const radius = Number.isFinite(radiusTiles) ? Math.max(0, radiusTiles) : 0;
+  return Math.hypot(entity.x - pointerX, entity.y - pointerY) <= radius;
 }
 
 /**

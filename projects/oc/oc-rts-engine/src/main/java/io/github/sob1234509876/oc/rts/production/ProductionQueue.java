@@ -105,9 +105,8 @@ public final class ProductionQueue {
      * start. A job already in {@code PRODUCING} or {@code WAITING_OUTPUT} has passed that check, so it is
      * reported ready even though the consumed inputs no longer sit in the buffer; every input kind the
      * recipe names is listed once, in recipe order, and {@code have} is capped at {@code need}.
-     * {@link ProductionDemand.ItemNeed#stock()} is the owner's unreserved warehouse total for that item,
-     * which is what a haul could still bring; a building whose owner has no logistics network reports
-     * {@code 0}. Empty when the queue has no unfinished job.
+     * Q10: the comparison is against the building's own buffer only, so the owner's warehouses are
+     * never consulted. Empty when the queue has no unfinished job.
      */
     public Optional<ProductionDemand> demand() {
         ProductionJob current = current();
@@ -115,16 +114,13 @@ public final class ProductionQueue {
             return Optional.empty();
         }
         ItemBundle inputs = current.recipe().inputs();
-        boolean hasLogistics = building.owner().hasLogistics();
-        ItemBundle available = hasLogistics ? building.owner().logistics().available() : ItemBundle.EMPTY;
         List<ProductionDemand.ItemNeed> needs = new ArrayList<>();
         boolean allPresent = true;
         for (ItemBundle.Amount component : inputs.components()) {
             long need = component.amount().toLongSaturated();
             long have = building.inventory().amount(component.item()).min(component.amount())
                     .toLongSaturated();
-            long stock = available.amount(component.item()).toLongSaturated();
-            needs.add(new ProductionDemand.ItemNeed(component.item().key().path(), need, have, stock));
+            needs.add(new ProductionDemand.ItemNeed(component.item().key().path(), need, have));
             if (have < need) {
                 allPresent = false;
             }

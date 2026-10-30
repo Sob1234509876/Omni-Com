@@ -2,7 +2,7 @@ English | [简体中文](TODO_zh_CN.md)
 
 # Omni Com handoff
 
-The handoff moved to **[AI TODO.md](documents/Human/TODOs/AI%20TODO.md)** — the live task list, verified at `HEAD 3b23fbe` (2026-10-25) — with [OPEN QUESTIONS.md](documents/Human/TODOs/OPEN%20QUESTIONS.md) and [VANILLA PLAN.md](documents/Human/TODOs/VANILLA%20PLAN.md) as its companions. This page is a redirect: it keeps only what is still true below, and the repository overview lives in [README.md](README.md).
+The handoff moved to **[AI TODO.md](documents/Human/TODOs/AI%20TODO.md)** — the live task list, verified at `HEAD 3b23fbe` (2026-10-30) — with [OPEN QUESTIONS.md](documents/Human/TODOs/OPEN%20QUESTIONS.md) and [VANILLA PLAN.md](documents/Human/TODOs/VANILLA%20PLAN.md) as its companions. This page is a redirect: it keeps only what is still true below, and the repository overview lives in [README.md](README.md).
 
 ## Still valid here
 
@@ -13,7 +13,7 @@ The handoff moved to **[AI TODO.md](documents/Human/TODOs/AI%20TODO.md)** — th
   .\gradlew.bat --offline --no-daemon --console=plain :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck :projects:oc:oc-game-server-debug:selfcheck :projects:oc:oc-game-server-hello:selfcheck :projects:oc:oc-game-server-classic:selfcheck
   cd web-client; pnpm check:render
   ```
-  Current totals in the working tree (2026-10-25), from the module and client READMEs: googology 698, engine 760, game server 1215, debug 85, hello 126, classic 649, client 496.
+  Current totals in the working tree (2026-10-30), from the module and client READMEs: googology 698, engine 770, game server 1232, debug 85, hello 126, classic 649, client 534.
 - **Never red.** No commit may leave a check failing, and no existing check may be removed or weakened to make a feature pass. If a total changes, grep the old number and update every document that quotes it.
 - **Offline always.** `.\gradlew.bat ... --offline` must work on a machine with no network; a change that needs a download is the wrong change.
 - **Determinism inside the simulation.** No `java.util.Random`, wall clock or threads inside the simulation; use `DeterministicRandom`, fixed ticks and explicit id/coordinate tie-breaks. Only the server's pacing thread may let a clock drive the simulation; transport and storage code may read a clock for timestamps.

@@ -599,6 +599,63 @@ public final class PlayerCommandCheck {
         check.that(!entityRow(host.snapshotJson(), mover.id().value()).contains("\"path\""),
                 "停下的单位快照不再带 path");
 
+        check.section("玩家命令：queue 形式与 BATCH 合并订单（Q16）");
+        Unit queuedUnit = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(30, 44));
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER MOVE " + queuedUnit.id().value() + " 31 44 queue"),
+                "ORDER MOVE ... queue 成功");
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER MOVE " + queuedUnit.id().value() + " 32 44 queue"),
+                "第二条 queue 移动成功");
+        check.that(queuedUnit.orders().size() == 2,
+                "两条 queue 移动按顺序排队，而不是后者替换前者");
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER MOVE " + queuedUnit.id().value() + " 33 44 34 44 queue"),
+                "queue 形式也接受多路径点");
+        check.that(queuedUnit.orders().size() == 3,
+                "第三条 queue 追加为第三个订单");
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER ATTACK " + queuedUnit.id().value() + " " + enemyUnit.id().value() + " queue"),
+                "ORDER ATTACK ... queue 成功");
+        check.equal("OK", run(dispatcher, host, first,
+                        "ORDER ATTACKMOVE " + queuedUnit.id().value() + " 38 44 queue"),
+                "ORDER ATTACKMOVE ... queue 成功");
+        check.equal("ERR unknown entity", run(dispatcher, host, first,
+                        "REPAIR " + builder.id().value() + " 999999 queue"),
+                "REPAIR ... queue 被解析（未知建筑仍回答 ERR unknown entity）");
+
+        String batch = "BATCH ORDER MOVE " + queuedUnit.id().value() + " 35 44 queue; "
+                + "ORDER MOVE " + queuedUnit.id().value() + " 36 44 queue";
+        check.equal("OK 2", run(dispatcher, host, first, batch),
+                "BATCH 按顺序应用两条命令，回答 OK <count>");
+        check.that(queuedUnit.orders().size() == 7, "BATCH 的两条移动都进入同一个队列");
+
+        String partial = "BATCH ORDER MOVE " + queuedUnit.id().value() + " 37 44 queue; "
+                + "ORDER MOVE " + queuedUnit.id().value() + " bad; "
+                + "ORDER MOVE " + queuedUnit.id().value() + " 38 44 queue";
+        check.equal("ERR 2/3 bad arguments", run(dispatcher, host, first, partial),
+                "BATCH 在第二条失败时报告序号，后续命令仍按顺序应用");
+        check.that(queuedUnit.orders().size() == 9, "失败不取消后续命令，第一条与第三条都进入队列");
+
+        StringBuilder tooMany = new StringBuilder("BATCH ");
+        for (int index = 0; index < CommandDispatcher.MAX_BATCH_COMMANDS; index++) {
+            if (index > 0) {
+                tooMany.append("; ");
+            }
+            tooMany.append("ORDER STOP ").append(queuedUnit.id().value());
+        }
+        tooMany.append("; ORDER STOP ").append(queuedUnit.id().value());
+        check.equal("ERR bad arguments", run(dispatcher, host, first, tooMany.toString()),
+                "BATCH 最多 " + CommandDispatcher.MAX_BATCH_COMMANDS + " 条，超出回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "BATCH BATCH ORDER STOP " + queuedUnit.id().value()),
+                "嵌套 BATCH 被拒绝");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "BATCH PING"),
+                "身份命令不能放进 BATCH");
+        check.equal("OK", run(dispatcher, host, first, "ORDER STOP " + queuedUnit.id().value()),
+                "STOP 清空队列");
+        check.that(queuedUnit.orders().isEmpty(), "STOP 后队列为空");
+
         check.section("玩家命令：TRANSFER 在自有仓库之间调拨");
         // A flat corridor keeps the two fixture warehouses reachable on the noise terrain.
         for (int x = 2; x <= 20; x++) {

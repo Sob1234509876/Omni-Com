@@ -808,7 +808,8 @@ public final class WorldHostCheck {
             check.equal(TaskContent.GOLD, stringField(first, "item"), "demand.items[0].item 是配方输入路径");
             check.equal(10L, longField(first, "need"), "need 是配方的输入数量");
             check.equal(0L, longField(first, "have"), "have 是建筑自己持有的数量");
-            check.equal(500L, longField(first, "stock"), "stock 是仓库里可调拨的数量（Q10）");
+            check.that(first != null && !first.containsKey("stock"),
+                    "demand.items 不再带仓库可调拨量（Q10：只看兵工厂自己的缓存）");
 
             ItemBundle inputs = recipe.inputs();
             for (ItemBundle.Amount component : inputs.components()) {

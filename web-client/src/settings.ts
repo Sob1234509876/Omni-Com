@@ -173,12 +173,36 @@ export interface ConnectionSettings {
   readonly port: string;
 }
 
+/**
+ * Default radius, in tiles, of the Q9 inventory tag around the pointer.
+ *
+ * The owner asked for "about 10 tiles" and for the radius to live in the settings page. A selected unit
+ * is always tagged whatever its distance; the radius only decides which *unselected* units show theirs.
+ */
+export const DEFAULT_INVENTORY_RADIUS_TILES = 10;
+
+/** Smallest accepted radius: zero would make the pointer rule meaningless, so one tile is the floor. */
+export const MIN_INVENTORY_RADIUS_TILES = 1;
+
+/** Largest accepted radius; a wider value would tag most of a loaded window. */
+export const MAX_INVENTORY_RADIUS_TILES = 32;
+
+/** Clamps a radius to {@link MIN_INVENTORY_RADIUS_TILES}..{@link MAX_INVENTORY_RADIUS_TILES}. */
+export function clampInventoryRadius(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_INVENTORY_RADIUS_TILES;
+  }
+  return Math.min(MAX_INVENTORY_RADIUS_TILES, Math.max(MIN_INVENTORY_RADIUS_TILES, Math.round(value)));
+}
+
 /** Everything under one storage key. */
 export interface Settings {
   readonly filters: MessageFilters;
   readonly showPaths: boolean;
   readonly viewHidden: boolean;
   readonly connection: ConnectionSettings;
+  /** Radius in tiles of the Q9 inventory tag around the pointer; see {@link clampInventoryRadius}. */
+  readonly inventoryRadiusTiles: number;
 }
 
 /** A fresh copy of the factory defaults; callers may keep and mutate their copy. */
@@ -188,6 +212,7 @@ export function defaultSettings(): Settings {
     showPaths: true,
     viewHidden: false,
     connection: { host: "", port: "" },
+    inventoryRadiusTiles: DEFAULT_INVENTORY_RADIUS_TILES,
   };
 }
 
@@ -259,6 +284,7 @@ export function parseSettings(raw: string | null | undefined): Settings {
   const connection = readConnection(value["connection"]);
   const showPaths = value["showPaths"];
   const viewHidden = value["viewHidden"];
+  const inventoryRadiusTiles = value["inventoryRadiusTiles"];
   if (filters === null || connection === null) {
     return fallback;
   }
@@ -268,11 +294,17 @@ export function parseSettings(raw: string | null | undefined): Settings {
   if (viewHidden !== undefined && typeof viewHidden !== "boolean") {
     return fallback;
   }
+  if (inventoryRadiusTiles !== undefined && typeof inventoryRadiusTiles !== "number") {
+    return fallback;
+  }
   return {
     filters,
     showPaths: showPaths ?? fallback.showPaths,
     viewHidden: viewHidden ?? fallback.viewHidden,
     connection,
+    inventoryRadiusTiles: inventoryRadiusTiles === undefined
+      ? fallback.inventoryRadiusTiles
+      : clampInventoryRadius(inventoryRadiusTiles),
   };
 }
 
@@ -291,6 +323,7 @@ export function serializeSettings(settings: Settings): string {
     },
     showPaths: settings.showPaths,
     viewHidden: settings.viewHidden,
+    inventoryRadiusTiles: settings.inventoryRadiusTiles,
     connection: {
       host: settings.connection.host,
       port: settings.connection.port,

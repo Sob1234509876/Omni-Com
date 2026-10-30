@@ -16,9 +16,9 @@ import java.util.Objects;
  *
  * <p>Only recipe input kinds are listed: a building's unrelated stock never appears, which is what
  * "capped at the recipe's items" means. The quantities are saturated to {@code long} for the wire;
- * the exact {@code Natural} values stay in the engine. {@link ItemNeed#stock()} is the amount the
- * owner's logistics network could still transfer for that item (the unreserved warehouse total), so a
- * HUD can show the local hold and what a haul could bring beside it without a second lookup.
+ * the exact {@code Natural} values stay in the engine. Q10 rules that the comparison is against the
+ * building's **own buffer only**: the warehouse network is never consulted here, so a HUD icon says
+ * whether the producer can start its next job from what it already holds.
  *
  * @param ready whether the current job can run (or has already started) with the held inputs
  * @param items one entry per recipe input kind, in the recipe's declaration order
@@ -29,17 +29,17 @@ public record ProductionDemand(boolean ready, List<ItemNeed> items) {
         items = items == null ? List.of() : List.copyOf(items);
     }
 
-    /** One required input kind and how much of it the building holds and the warehouse could send. */
-    public record ItemNeed(String item, long need, long have, long stock) {
+    /** One required input kind and how much of it the building itself holds. */
+    public record ItemNeed(String item, long need, long have) {
 
         public ItemNeed {
             Objects.requireNonNull(item, "item");
             if (item.isBlank()) {
                 throw new IllegalArgumentException("item path must not be blank");
             }
-            if (need < 0 || have < 0 || stock < 0) {
+            if (need < 0 || have < 0) {
                 throw new IllegalArgumentException(
-                        "need, have and stock must not be negative, was " + need + ", " + have + ", " + stock);
+                        "need and have must not be negative, was " + need + ", " + have);
             }
             have = Math.min(have, need);
         }

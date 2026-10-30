@@ -95,88 +95,73 @@ The owner's ruling is that a `Player` is just a slot and may be either a bot or 
 
 **Status: answered; no code change.** This is the model the server and client already implement, and the ownership rule recorded in Q3 is unchanged.
 
+## Q9. Item 24: which units show their inventory, and within what distance? — **answered by the owner: any unit near the mouse, every selected unit, all items**
+
+The owner's ruling, verbatim:
+
+> 对任意鼠标附近（大概10格吧，放在设置里来调）和所有选择的单位显示，然后显示所有的物品
+
+The tag is therefore no longer a selection-only read-out. A unit that carries something shows its tag when either condition holds:
+
+1. it is **selected** — anywhere on the loaded map, regardless of distance; or
+2. it is **within the mouse radius** of the pointer — default **10 tiles**, adjustable in the settings page (`补给标签半径`, 1–32 tiles, stored with the other settings).
+
+The tag lists **every** carried item, not the first one plus a total: a hold of 80 gold and 40 wood reads `金 80 · 木 40`. Buildings still never get the tag; a building's stock is the warehouse panel's business. The enemy case follows the owner's word "任意" (any): the tag is a proximity read-out like the hover tooltip, so an enemy hauler near the pointer shows its cargo too.
+
+**Implementation.** `stockTagVisible(entity, selected, pointerX, pointerY, radius)` in `render/status.ts` is the pure rule; `renderer.ts` passes the pointer tile centre and the settings radius. `unitStockTagLabel` joins all positive stacks. `settings.ts` gained `inventoryRadiusTiles` (default `DEFAULT_INVENTORY_RADIUS_TILES = 10`, clamped to `MIN_INVENTORY_RADIUS_TILES = 1`..`MAX_INVENTORY_RADIUS_TILES = 32`), serialised under the same versioned key; `index.html` and `main.ts` expose it as a number field in 界面. Checks: the all-items label, selected-regardless-of-distance, the inclusive pointer boundary, the null pointer (selection only), building exclusion, and the settings default/clamp/missing-field rules (client 534).
+
+## Q10. Item 24: does the "enough resources" icon read its own inventory or the warehouse total? — **answered by the owner: only the armory's own buffer**
+
+> 只检查兵工厂自己的缓存
+
+The icon and its `缺：金 80/50` tooltip compare the recipe inputs with the building's own buffer, and nothing beside the icon reports what the warehouses could bring. The engine therefore no longer computes the transferable warehouse amount for the demand view: `ProductionDemand.ItemNeed` is `(item, need, have)` again, `ProductionQueue.demand()` does not touch the owner's logistics, and the snapshot's `demand.items[]` has no `stock` field. The client's `DemandItemView` dropped it too, and `demandStockText` / `demandStockTitle` and the `仓 500` span are gone.
+
+**Status: implemented.** The server check asserts that `demand.items[0]` has no `stock` key after a world step; the client check asserts that a snapshot which still carries one is parsed without exposing it, so an older server cannot resurrect the removed figure. Engine 770 checks (one old stock assertion removed, the queue checks of Q16 added), server 1232.
+
+## Q11. Item 24: does "now producing 1x" mean the current job or the queue length? — **answered by the owner: both**
+
+> 两者结合
+
+The HUD keeps `生产中 1/3`: the one-based position of the running job among the unfinished jobs. No change was needed — this was the recorded default and item 24 already ships it through the `producingNow` object.
+
+## Q12. Item 24: should the pop animation appear above the unit or fly to the target? — **answered by the owner: a simple pop is enough**
+
+> 一个简单的弹出动画就可以了
+
+The existing haul pop stays: one achromatic mark above the engineer, rising and fading over 600 ms, throttled to one per unit per second from the snapshot's `pop` objects. No flying icon and no second animation were added.
+
+## Q13. Item 26: when several engineers are selected and one site is clicked, should they all be sent? — **answered by the owner: every engineer goes**
+
+> 所有工程师都前往
+
+Item 26 already does exactly this: `buildBatch` emits one `BUILD` line per selected engineer for the same footprint; the first line places and charges the site, the rest join the unfinished site through `tryBuild(Unit, Building)`, and `ConstructionSystem` caps the crew at four builders. No change.
+
+## Q14. Item 27: does Shift-click queue tasks or fan one task out? — **answered by the owner: work through the queue**
+
+> 按照队列工作
+
+The Rusted Warfare reading stands: Shift-click in BUILD placement appends `BUILD ... queue` for each selected engineer and keeps the mode armed, and the engineer works through its `orderQueue` in order. A failure of one queued order does not cancel the rest. No change.
+
+## Q15. Item 28: do turrets need population or power? — **answered by the owner: no new resource kinds for now**
+
+> 不需要，现在不打算新增资源种类
+
+Turrets stay gold-and-wood buildings on the ordinary three-tier upgrade ladder. No population pool, no power grid and no generator were added; the classic catalogue keeps its four resources (gold, wood, storage, production).
+
+## Q16. Item 7: how far should the logistics surface go? — **answered by the owner: automatic ordering and client-side merged orders**
+
+> 允许自动下订单以及允许客户端将一系列订单和操作合并（有先后顺序执行）到一个大的抽象订单之类。
+
+The answer has two halves, and both are implemented at the protocol and engine level rather than as a client-side illusion:
+
+1. **A merged order is one command.** `BATCH <cmd>; <cmd>; ...` carries one to sixteen sub-commands (`ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`), which the server applies in the order given and answers once: `OK <count>`, or `ERR <index>/<count> <reason>` naming the first failure. Later sub-commands are still applied — a batch is a sequence, not a transaction, the same rule as a unit's order queue. The parts are submitted together as one `PendingAnswer`, so the whole batch is still one round trip and one answer.
+2. **Automatic ordering is the server issuing the sub-orders.** The client does not send the individual lines itself: it hands the server one abstract order and the server automatically places every sub-order in sequence. The client-side half is the 顺序 recorder: the button arms recording, every gameplay action is rewritten to its `queue` form (`ORDER MOVE/ATTACK/ATTACKMOVE`, `BUILD`, `REPAIR`, via `sequenceLine`), Enter submits the whole list as one `BATCH`, Esc clears it, the list is capped at the same sixteen, and BUILD placement stays armed while recording so several sites can be recorded in one go.
+3. **Reading that was not chosen:** no per-warehouse quota, no keep level and no automatic transfer policy beyond what production already does (a production job requests its missing inputs through `WarehouseLogistics`, and the classic engineer pool dispatches them). If "自动下订单" meant that policy, it is a follow-up on top of this seam, not a prerequisite.
+
+**Implementation.** Engine: `UnitDirector.queueMove/queueMoveRoute/queueAttack/queueAttackMove/tryQueueRepair` (same validation as the replacing forms, then `OrderQueue.push`), 770 checks total. Server: `BATCH` plus the `queue` token on `ORDER MOVE/ATTACK/ATTACKMOVE` and `REPAIR`, `MAX_BATCH_COMMANDS = 16`, `PendingAnswer` composition, 1232 checks total. Client: `batchCommands`, `sequenceLine`, the 顺序 recorder, 534 checks total. Protocol: `oc-protocol.md` and its Chinese twin document the grammar, the sequence semantics and the cap.
+
 # Still open
 
 ## Q5b. `git push` — **open, owner-only**
 
-The working tree is ahead of `Github/master` by more than fifteen commits; every check is green locally but the remote is stale. The agent has no credentials and cannot push. This is the only housekeeping item left from Q5: the build is solved and `web-client/dist/` is current, so a push from the owner's account publishes both the code and the rebuilt client.
-
-## Q9. Item 24: which units show their inventory on top of them, and within what distance? — **open (new)**
-
-Item 24 asks to "see the amount of resource in its inventory on top of that unit". The wording does not say whether the label belongs to every unit with cargo, only to the current selection, or to every visible unit, nor how far away it may still be read. Candidate readings:
-
-- **Selected units only, carrying cargo only, within 6 tiles** (current default). The label is a selection detail like the path line and the ring: it appears above each selected unit that actually carries something, and only while that unit is within six tiles of the camera centre. Cost: a selected hauler far from the camera shows nothing until it comes closer.
-- **Every own unit that carries cargo in the loaded window**, selected or not. More informative at a glance, but the map fills with labels during a large haul and the information duplicates the inventory panel.
-- **Every unit, including enemy and neutral ones.** Useful for scouting, but it leaks enemy logistics and conflicts with the rule that most information stays hidden by default.
-
-**Default while Q9 is unanswered:** the first reading — selected units only, carrying cargo only, within 6 tiles.
-
-## Q10. Item 24: does the "enough resources" icon on an arsenal read its own inventory or the warehouse total? — **open (new)**
-
-The icon is meant to say "everything normal or missing resource". An arsenal holds a local buffer, while the warehouses hold the stock a haul would draw from, so the two can disagree. Candidate readings:
-
-- **The arsenal's own stock**, with the transferable warehouse amount shown next to it (current default). The icon reports whether the building can start its next job from what it already holds; the adjacent number says what a haul could still bring. Cost: two numbers instead of one icon.
-- **The warehouse total only.** Simpler, and answers "can the economy pay for this", but it hides a local shortage that is already delaying production.
-- **Both as one combined figure** (local plus warehouse). One number, but it can say "enough" for a job that will still wait for a haul.
-
-**Default while Q10 is unanswered:** the arsenal's own stock, with the transferable warehouse amount shown next to it.
-
-## Q11. Item 24: does "now producing 1x" mean the current job or the queue length? — **open (new)**
-
-The HUD already says `生产中×N` for a finished producer. The owner's phrase "now producing 1x" can be read as the job at the front of the queue or as how many jobs are waiting. Candidate readings:
-
-- **The current job only** (`生产中 1`). Answers "what is being made"; a queue of three still reads 1.
-- **The queue length only** (`生产中 3`). Answers "how much is pending"; the item being made is not identified.
-- **Both**, formatted `生产中 1/3` (current default): position one of three. One compact string answers both questions; the cost is a slightly wider HUD cell.
-
-**Default while Q11 is unanswered:** both, formatted `生产中 1/3`.
-
-## Q12. Item 24: should the resource pop animation appear above the unit or fly to the target? — **open (new)**
-
-Item 24 asks for "an icon resembling 'resource' pop up when an engineer get or give resources". Candidate readings:
-
-- **A brief pop above the unit** (current default). A small achromatic icon and amount rise and fade at the engineer, matching the existing 250 ms selection flash and the grayscale HUD. Cost: it does not show where the resource went.
-- **An icon that flies from the engineer to the receiving building** (or the reverse when loading). It shows the direction of the transfer, but it adds a moving element to the map, a travel time, and a second kind of animation to suppress.
-- **Both**: a pop at the unit and a short flight to the target. The most legible, and the most motion.
-
-**Default while Q12 is unanswered:** a brief pop above the unit, achromatic.
-
-## Q13. Item 26: when several engineers are selected and one site is clicked, should they all be sent? — **open (new)**
-
-The owner reported "engineers cannot build together". The expected behaviour is not recorded beyond that sentence. Candidate readings:
-
-- **Yes — every selected engineer is sent to the one site** (current default, and what has been implemented): one `BUILD` line per engineer, the first placement charged once, and `ConstructionSystem` capping the crew at four.
-- **Only the first engineer builds and the rest stay idle.** This was the old client behaviour and the reported defect, so it is recorded only as the counter-reading.
-- **The group is split across several sites** chosen automatically. Not asked for; it would need a placement rule the owner has not specified.
-
-**Default while Q13 is unanswered:** the first reading — yes, all selected engineers go to the clicked site, which is what was implemented for item 26.
-
-## Q14. Item 27: does Shift-click on a build entry queue tasks for the current engineer or fan one task out to several? — **open (new)**
-
-Item 27 asks that "By clicking shift, you can add tasks for engineers to build, a bit similar to the feature in Rusted Warfare". The modifier is the same in both readings; what differs is which list grows. Candidate readings:
-
-- **Queue several build tasks for the current engineer** (current default; the Rusted Warfare reading): Shift-click on a building entry appends the task to that engineer's queue, and the engineer works through the queue in order.
-- **Send one task to several engineers**: Shift-click broadcasts the same site or task to every selected engineer, which is a batch order rather than a queue.
-- **Two different modifiers** (plain click queues, Shift-click broadcasts), which needs a third gesture for "queue several" and is not what the item says.
-
-**Default while Q14 is unanswered:** queue several build tasks for the current engineer (the Rusted Warfare reading). **Status: implemented with this default.** Item 27 ships `tryQueueBuild` + the wire token `BUILD ... queue`; the selection rule is still one BUILD per selected engineer per site, and the selected engineer's capped `orderQueue` is listed in the panel. See `AI TODO.md` item 27.
-
-## Q15. Item 28: do turrets need population or power? — **open (new)**
-
-Item 28 asks to "Add turrets for defending bases". The classic catalogue has neither a population nor a power system, only gold, wood, storage and production. Candidate readings:
-
-- **No population or power; gold and wood only, three tiers** (current default): a turret is a building like the armory and the mine, paid once and upgraded in place, with the same three-tier ladder as the other classic buildings.
-- **A power requirement**, which needs a new resource, a generator building and a brown-out rule — a new economy system, not a turret.
-- **A population requirement**, which needs a population pool, housing and a cap — likewise a new system.
-
-**Default while Q15 is unanswered:** no population or power — gold and wood only, three tiers. **Status: implemented with this default.** Item 28 ships `building.turret.t1..t3` at 2×2 with gold/wood costs and the existing in-place upgrade ladder; no population or power system was added. See `AI TODO.md` item 28.
-
-## Q16. Item 7: how far should the logistics surface go? — **open (new)**
-
-Item 7 is the partial one: the warehouse exists and reports its contents, but there is no logistics surface. The owner has not said which controls he wants. Candidate readings:
-
-- **A single-warehouse view now** (current default): select one warehouse and see its own inventory, instead of the current sum over every own building.
-- **A manual transfer command now** (current default): send a hauler or engineer to move a chosen item between two warehouses, or between a warehouse and an arsenal, through an ordinary command line.
-- **Quotas and priorities later**: per-warehouse keep levels, "keep this arsenal fed first", automatic balancing. Powerful, but it needs a policy model, a UI and a deterministic scheduler, so it is deferred.
-
-**Default while Q16 is unanswered:** the first two now (single-warehouse view and a manual transfer command), quotas and priorities later. **Status: implemented with this default.** Item 7 ships the per-warehouse panel view (capacity / used / free slots, inbound count, `全部/总计` toggle) and the `TRANSFER` command on the engine, server and client; per-warehouse quotas, priorities and automatic balancing remain deferred. Drag-and-drop between warehouses is deliberately not implemented. See `AI TODO.md` item 7.
+The working tree is ahead of the remote; every check is green locally but the remote is stale. The agent has no credentials and cannot push. A push from the owner's account publishes both the code and the rebuilt client.

@@ -199,8 +199,8 @@ export function whoAmI(): string {
 }
 
 /** `ORDER MOVE <entityId> <x> <y>`; the coordinates are whole tile indices on the current server. */
-export function orderMove(entityId: number, x: number, y: number): string {
-  return orderMoveRoute(entityId, [{ x, y }]);
+export function orderMove(entityId: number, x: number, y: number, queue = false): string {
+  return orderMoveRoute(entityId, [{ x, y }], queue);
 }
 
 /**
@@ -225,7 +225,11 @@ export interface MovePoint {
  * that only ever moves once is unaffected by waypoints. An empty route, a route longer than the cap and
  * a non-finite coordinate all throw before a line can reach the socket.
  */
-export function orderMoveRoute(entityId: number, points: readonly MovePoint[]): string {
+export function orderMoveRoute(
+  entityId: number,
+  points: readonly MovePoint[],
+  queue = false,
+): string {
   const id = requirePositiveInteger(entityId, "实体 id");
   if (!Array.isArray(points) || points.length === 0) {
     throw new Error("移动路线至少需要一个目标点");
@@ -239,14 +243,19 @@ export function orderMoveRoute(entityId: number, points: readonly MovePoint[]): 
     const y = requireFiniteNumber(point.y, "目标瓦片 y");
     fields.push(String(x), String(y));
   }
-  return `ORDER MOVE ${id} ${fields.join(" ")}`;
+  return `ORDER MOVE ${id} ${fields.join(" ")}${queue ? " queue" : ""}`;
 }
 
-/** `REPAIR <engineerId> <buildingId>`; the engineer repairs a damaged building of the same player. */
-export function repair(engineerId: number, buildingId: number): string {
+/**
+ * `REPAIR <engineerId> <buildingId> [queue]`; the engineer repairs a damaged building of the same player.
+ *
+ * <p>`queue` is the sequence form used by the Q16 merge mode: the repair is pushed behind the engineer's
+ * current orders instead of replacing them.
+ */
+export function repair(engineerId: number, buildingId: number, queue = false): string {
   const engineer = requirePositiveInteger(engineerId, "工程师 id");
   const building = requirePositiveInteger(buildingId, "建筑 id");
-  return `REPAIR ${engineer} ${building}`;
+  return `REPAIR ${engineer} ${building}${queue ? " queue" : ""}`;
 }
 
 /** `RECLAIM <buildingId>` on an own unfinished site; the answer carries the half-cost refund. */
@@ -255,19 +264,29 @@ export function reclaim(buildingId: number): string {
   return `RECLAIM ${id}`;
 }
 
-/** `ORDER ATTACK <entityId> <targetId>`. */
-export function orderAttack(entityId: number, targetId: number): string {
+/**
+ * `ORDER ATTACK <entityId> <targetId> [queue]`.
+ *
+ * <p>`queue` is the sequence form used by the Q16 merge mode: the attack is pushed behind the unit's
+ * current orders instead of replacing them.
+ */
+export function orderAttack(entityId: number, targetId: number, queue = false): string {
   const id = requirePositiveInteger(entityId, "实体 id");
   const target = requirePositiveInteger(targetId, "目标 id");
-  return `ORDER ATTACK ${id} ${target}`;
+  return `ORDER ATTACK ${id} ${target}${queue ? " queue" : ""}`;
 }
 
-/** `ORDER ATTACKMOVE <entityId> <x> <y>`. */
-export function orderAttackMove(entityId: number, x: number, y: number): string {
+/**
+ * `ORDER ATTACKMOVE <entityId> <x> <y> [queue]`.
+ *
+ * <p>`queue` is the sequence form used by the Q16 merge mode: the attack-move is pushed behind the
+ * unit's current orders instead of replacing them.
+ */
+export function orderAttackMove(entityId: number, x: number, y: number, queue = false): string {
   const id = requirePositiveInteger(entityId, "实体 id");
   const targetX = requireFiniteNumber(x, "目标瓦片 x");
   const targetY = requireFiniteNumber(y, "目标瓦片 y");
-  return `ORDER ATTACKMOVE ${id} ${targetX} ${targetY}`;
+  return `ORDER ATTACKMOVE ${id} ${targetX} ${targetY}${queue ? " queue" : ""}`;
 }
 
 /** `ORDER STOP <entityId>`. */
@@ -420,9 +439,64 @@ export function transfer(
   return `TRANSFER ${source} ${target} ${item} ${amount}`;
 }
 
+/** Largest number of sub-commands one `BATCH` line may carry; mirrors the server's cap. */
+export const MAX_BATCH_COMMANDS = 16;
+
+/**
+ * `BATCH <command>; <command>; ...`: one abstract order made of a series of commands.
+ *
+ * <p>Q16: the client merges a series of orders and operations into one line, and the server applies the
+ * sub-commands in the order given. The cap mirrors the server's 16 so an over-long plan is refused
+ * locally instead of learning it from `ERR bad arguments`. An empty list, a blank line, a line with a
+ * `;` already in it or a newline all throw before a line can reach the socket; `;` is the separator and
+ * no ordinary gameplay line contains one.
+ */
+export function batchCommands(lines: readonly string[]): string {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    throw new Error("合并订单至少需要一条命令");
+  }
+  if (lines.length > MAX_BATCH_COMMANDS) {
+    throw new Error(`合并订单最多 ${MAX_BATCH_COMMANDS} 条，当前是 ${lines.length} 条`);
+  }
+  const commands: string[] = [];
+  for (const line of lines) {
+    const command = typeof line === "string" ? line.trim() : "";
+    if (command === "") {
+      throw new Error("合并订单里不能有空命令");
+    }
+    if (/[;\r\n]/u.test(command)) {
+      throw new Error(`合并订单的子命令不能包含分号或换行：'${command}'`);
+    }
+    commands.push(command);
+  }
+  return `BATCH ${commands.join("; ")}`;
+}
+
+/**
+ * The queued form of one command, for a sequence.
+ *
+ * <p>Q16 sequences run one order after another, so the unit-operating commands are rewritten to their
+ * `queue` forms: `ORDER MOVE`, `ORDER ATTACK`, `ORDER ATTACKMOVE`, `BUILD` and `REPAIR`. A command that
+ * already ends in `queue`, and every other verb (`TRAIN`, `UPGRADE`, `RECLAIM`, `TRANSFER`), is returned
+ * unchanged. The rewrite is a pure string operation and the server validates the result like any other
+ * line, so a malformed command still gets a readable `ERR` rather than being "fixed" here.
+ */
+export function sequenceLine(line: string): string {
+  const command = line.trim();
+  if (command === "" || /(?:^|\s)queue$/iu.test(command)) {
+    return command;
+  }
+  if (
+    /^ORDER\s+(?:MOVE|ATTACK|ATTACKMOVE)\b/iu.test(command) ||
+    /^(?:BUILD|REPAIR)\b/iu.test(command)
+  ) {
+    return `${command} queue`;
+  }
+  return command;
+}
+
 /** The exact `WHOAMI` success answer; `playerId` is the engine player id of this connection. */
 const WHOAMI_ANSWER = /^OK player ([1-9][0-9]*)$/u;
-
 /**
  * Parses `OK player <id>` and returns the id, or `null` for every other answer.
  *

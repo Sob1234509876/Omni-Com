@@ -9,7 +9,10 @@
 - 传输：WebSocket 路径、一个文本帧一条命令、`HELLO 1` 版本握手，以及空闲超时与服务端心跳。
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
-- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM` 与 `TRANSFER`，账号名身份规则、登录与所有权规则，以及世界步边界。
+- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER` 与 `BATCH`，
+  账号名身份规则、登录与所有权规则，以及世界步边界。
+- `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` 的 `queue` 追加形式，以及
+  `BATCH` 合并订单：客户端合成的一串订单按顺序应用，只回一条回答。
 - 维修、继续建造与回收：每点血量的费用、维修速率、一半返还，以及各种拒绝。
 - 手动仓库调拨：`TRANSFER` 语法、单仓库预留、空闲搬运工规则、`all`，以及数量夹取。
 - 快照里的单位路径，以及客户端的路径点交互（`Shift`+右键，`路径` 开关）。
@@ -93,6 +96,7 @@ OK OC/1
 | `REPAIR ...` | `OK` 或 `ERR <reason>` | 派自己的工程师修理自己的受损完工建筑；需要 `LOGIN` 与所有权 |
 | `RECLAIM ...` | `OK <refund>` 或 `ERR <reason>` | 取消自己的未完工工地并返还一半放置成本；需要 `LOGIN` 与所有权 |
 | `TRANSFER ...` | `OK <moved> <item>` 或 `ERR <reason>` | 在玩家自己的两座已完工仓库之间搬运库存；需要 `LOGIN` 与所有权；见“游戏命令” |
+| `BATCH ...` | `OK <count>` 或 `ERR <index>/<count> <reason>` | 按顺序应用一串用 `;` 分隔的订单，只回一条回答；需要 `LOGIN`；见“游戏命令” |
 | `QUIT` | `OK bye` | 服务器先回这一行，然后关闭连接 |
 
 `REGISTER` 与 `LOGIN` 的 `<message>` 是给人看的文本，客户端只能依赖开头的 `OK` / `ERR` 判断成败，
@@ -113,7 +117,7 @@ OK OC/1
 成功时回答 `OK <base64-payload>`。服务器只把请求载荷的 base64 解码成**不透明字节**交给处理器，
 再把处理器返回的字节 base64 编码回送；它不解析载荷、不记录载荷内容，也不认识 `oc-debug` 的信封。
 
-`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
+`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`BATCH`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
 
 `hello` 是 `oc-hello` 插件提供的示例请求：载荷是普通 UTF-8 名字（不是 `oc-debug` 那样的信封），回答也是普通 UTF-8 文本。
 
@@ -126,21 +130,33 @@ OK OC/1
 
 ```text
 WHOAMI                                      -> OK player <id>            (需要 LOGIN)
-ORDER MOVE <entityId> <x> <y> [<x> <y> ...] -> OK                        (需要 LOGIN，实体必须属于该玩家，1..8 个点)
-ORDER ATTACK <entityId> <targetId>          -> OK                        (需要 LOGIN，实体必须属于该玩家)
-ORDER ATTACKMOVE <entityId> <x> <y>         -> OK                        (需要 LOGIN，实体必须属于该玩家)
+ORDER MOVE <entityId> <x> <y> [<x> <y> ...] [queue] -> OK                (需要 LOGIN，实体必须属于该玩家，1..8 个点)
+ORDER ATTACK <entityId> <targetId> [queue]   -> OK                        (需要 LOGIN，实体必须属于该玩家)
+ORDER ATTACKMOVE <entityId> <x> <y> [queue]  -> OK                        (需要 LOGIN，实体必须属于该玩家)
 ORDER STOP <entityId>                       -> OK                        (需要 LOGIN，实体必须属于该玩家)
-BUILD <engineerId> <buildingPath> <x> <y>   -> OK <buildingId> | ERR ...  (需要 LOGIN，工程师必须属于该玩家)
+BUILD <engineerId> <buildingPath> <x> <y> [queue] -> OK <buildingId> | ERR ...  (需要 LOGIN，工程师必须属于该玩家)
 TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (需要 LOGIN，建筑必须属于该玩家)
 UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (需要 LOGIN，建筑必须属于该玩家)
-REPAIR <engineerId> <buildingId>            -> OK | ERR ...              (需要 LOGIN，工程师与建筑都必须属于该玩家)
+REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (需要 LOGIN，工程师与建筑都必须属于该玩家)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要 LOGIN，建筑必须属于该玩家)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (需要 LOGIN，两座建筑都必须属于该玩家)
+BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (需要 LOGIN，1..16 条子命令)
 ```
 
 - `<entityId>`、`<targetId>` 与 `<buildingId>` 是 `/world/snapshot` 里的十进制实体 id。`UPGRADE` 成功回答里的
   id 是一个**新**实体——替换出来的建筑有新的 id，旧建筑已经消失。
 - `<x>` 与 `<y>` 是十进制地图格坐标。
+- 可选的 `queue` token（大小写不敏感，放在最后）是 `ORDER MOVE`、`ORDER ATTACK`、`ORDER ATTACKMOVE`、
+  `BUILD` 与 `REPAIR` 的**追加**形式：命令的校验与普通形式完全相同，生成的订单被压到该单位已有订单的
+  后面，而不是替换它们。三条 `BUILD ... queue` 会在同一个工程师的队列里留下三个工地与三个订单，按到达
+  顺序执行。普通形式与历史命令逐字节相同，保持替换语义；任何其它多余 token 都是 `ERR bad arguments`。
+- `BATCH` 是**合并订单**（Q16）：客户端把一串命令合成一行，用 `;`（分号，前后可有空格）分隔，服务器按给定
+  顺序应用。它接受 `ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM` 与 `TRANSFER` 子命令；其它
+  任何子命令——包括嵌套 `BATCH`、`WHOAMI` 或 `QUIT`——在应用任何东西之前就回 `ERR bad arguments`。
+  一条命令可带 1 到 16 条子命令；超过 16 条回 `ERR bad arguments`，不会截断。批次是**顺序，不是事务**：
+  每条子命令按顺序应用，第一条失败以 `ERR <index>/<count> <reason>` 报告（index 从 1 开始），后面的
+  子命令仍然按顺序应用。全部成功回答 `OK <count>`。解析失败的子命令只是少一条订单，不会中断其余命令，
+  与单位订单队列里一条订单失败不取消其余订单的规则一致。
 - `ORDER MOVE` 在实体 id 之后接受 **1 到 8 组坐标**，按顺序走过，最后一组是最终目标。单组形式
   `<entityId> <x> <y>` 与旧的单点移动**逐字节相同**。空路线、坐标 token 数为奇数、或超过 8 组都会回
   `ERR bad arguments`。某一段不可达会让整条命令失败，引擎的 `OrderFinished` 事件会带上说明是哪一段的理由
