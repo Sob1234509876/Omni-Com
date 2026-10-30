@@ -22,6 +22,11 @@ Java 模块无依赖：它们可以离线构建并运行自检。
 ./gradlew build --offline
 ```
 
+Gradle wrapper 把用户目录放在仓库内：未设置 `GRADLE_USER_HOME` 时，`gradlew` / `gradlew.bat` 会把它指向
+`.gradle-user-home/`（wrapper 发行版、缓存与 daemon 日志都在那里；该目录已加入 `.gitignore`）。这样受沙箱
+限制、不能写 `%USERPROFILE%\.gradle` 的构建无需额外权限即可运行，也不会有生成物落到用户目录。想换位置，
+在调用 wrapper 前自己设置 `GRADLE_USER_HOME` 即可。
+
 自检（无测试框架、无网络）：
 
 ```shell

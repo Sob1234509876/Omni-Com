@@ -43,6 +43,12 @@ The neutral wire contract both sides implement is [`protocol/oc-protocol.md`](pr
 ./gradlew build --offline
 ```
 
+The Gradle wrapper keeps its user home inside the checkout: when `GRADLE_USER_HOME` is unset,
+`gradlew` / `gradlew.bat` point it at `.gradle-user-home/` (the wrapper distribution, caches and daemon
+logs live there; the directory is git-ignored). A sandboxed build therefore needs no write access to
+`%USERPROFILE%\.gradle`, and nothing generated lands in the user profile. Set `GRADLE_USER_HOME`
+yourself before invoking the wrapper to use another location.
+
 Self checks (no test framework, no network):
 
 ```shell

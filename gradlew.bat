@@ -35,6 +35,12 @@ set APP_HOME=%DIRNAME%
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
+@rem Keep this project's Gradle user home (wrapper distribution, caches, daemon logs) inside the
+@rem checkout instead of %USERPROFILE%\.gradle. A sandboxed build cannot write to the user profile,
+@rem and a local home keeps every generated file next to the project. Set GRADLE_USER_HOME explicitly
+@rem before running this script to use another location.
+if not defined GRADLE_USER_HOME set "GRADLE_USER_HOME=%APP_HOME%\.gradle-user-home"
+
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 
