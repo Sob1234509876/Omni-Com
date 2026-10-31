@@ -796,6 +796,28 @@ public final class RtsScenario {
         engine.production().cancel(barracks, 1);
         check.equal(1, queue.producingNow().orElseThrow().length(),
                 "cancelling a waiting job shrinks the reported queue length");
+
+        // Forced haul: a named engineer supplies the next waiting recipe of a producer.
+        Building depot = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(30, 10));
+        depositStock(check, player, depot, ItemBundle.builder().add(iron, 100).add(plank, 50).build(),
+                "the forced-haul check stocks a warehouse");
+        Building haulBarracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(40, 10));
+        engine.production().enqueue(haulBarracks, recipe, 1);
+        Unit hauler = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(38, 10));
+        UnitDirector.HaulResult forced = engine.commands().tryHaul(hauler, haulBarracks);
+        check.that(forced.hauled(), "a forced haul reserves the missing inputs: " + forced.refusal());
+        check.equal(hauler.id(), forced.job().hauler().orElseThrow(),
+                "the forced haul names the chosen engineer");
+        check.equal(2, forced.reserved().components().size(),
+                "the reserved bundle is exactly the recipe's two missing inputs");
+        check.that(!hauler.orders().pending().isEmpty()
+                        && hauler.orders().pending().get(0) instanceof HaulOrder,
+                "the engineer's queued order is a HaulOrder");
+        UnitDirector.HaulResult noDemand = engine.commands().tryHaul(hauler, depot);
+        check.that(!noDemand.hauled() && noDemand.refusal().contains("nothing to haul"),
+                "a warehouse with no production queue refuses a forced haul");
     }
 
     // ------------------------------------------------------------------ 5d) engineer task strings

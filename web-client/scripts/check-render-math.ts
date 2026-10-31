@@ -26,6 +26,7 @@ import {
   buildButtonLabel,
   buildPlacementBatch,
   buildingContent,
+  haul,
   orderAttack,
   orderAttackMove,
   orderMove,
@@ -210,6 +211,7 @@ import {
 } from "../src/render/upgrade.ts";
 import {
   CONTINUE_BUILD_ACTION_LABEL,
+  HAUL_ACTION_LABEL,
   REPAIR_ACTION_LABEL,
   RECLAIM_ACTION_LABEL,
   buildingActionModel,
@@ -2312,8 +2314,6 @@ check(
       "building.lumbercamp.t1",
       "building.warehouse",
       "building.turret.t1",
-      "building.turret.t2",
-      "building.turret.t3",
     ]),
   BUILDING_PATHS.join(", "),
 );
@@ -2648,6 +2648,22 @@ check(
       (tile) => tile.state === "blocked" && tile.reason === "blocked-occupied",
     ) &&
     placementReasonText(occupiedPreview.reason) === "位置被占用",
+);
+const plannedPreview = buildPlacementPreview(
+  placementFixture,
+  "building.warehouse",
+  { x: 1, y: 5 },
+  PLACEMENT_ENGINEER,
+  [{ x: 3, y: 5, width: 3, height: 3 }],
+);
+check(
+  "刚下达但快照里还没有的工地也算阻挡（Q2 的第二个及以后工地）",
+  plannedPreview.state === "blocked" &&
+    plannedPreview.reason === "blocked-planned" &&
+    placementReasonText(plannedPreview.reason) === "与刚下达的工地重叠" &&
+    plannedPreview.tiles.some((tile) => tile.reason === "blocked-planned") &&
+    plannedPreview.tiles.some((tile) => tile.state === "legal"),
+  JSON.stringify(plannedPreview.tiles.find((tile) => tile.reason === "blocked-planned")),
 );
 
 /** An own unfinished armory site at (5,5), i.e. exactly the footprint a second engineer aims at. */
@@ -5669,6 +5685,19 @@ check(
     })(),
   `${repair(9, 12)} / ${reclaim(12)}`,
 );
+check(
+  "HAUL 生成强制搬运命令行，非法 id 在本地拒绝",
+  haul(9, 12) === "HAUL 9 12" &&
+    (() => {
+      try {
+        haul(0, 12);
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  haul(9, 12),
+);
 
 const pathPayload = worldViewFromSnapshot({
   tick: 1,
@@ -5863,6 +5892,25 @@ check(
     !engineerlessRepair.repairEnabled &&
     engineerlessRepair.continueLabel === null,
   String(engineerlessRepair?.repairEnabled),
+);
+const producerBuilding: EntityView = {
+  ...damagedBuilding,
+  id: 7,
+  repairCost: undefined,
+  demand: { ready: false, items: [{ item: "gold", need: 20, have: 0 }] },
+};
+const haulModel = buildingActionModel(producerBuilding, 3, servicePlayer, serviceEngineer);
+const engineerlessHaul = buildingActionModel(producerBuilding, 3, servicePlayer, undefined);
+check(
+  "有生产队列的完工建筑提供 强制搬运；没有工兵时禁用但可见",
+  haulModel !== null &&
+    haulModel.haul &&
+    haulModel.haulEnabled &&
+    haulModel.haulLabel === HAUL_ACTION_LABEL &&
+    engineerlessHaul !== null &&
+    engineerlessHaul.haul &&
+    !engineerlessHaul.haulEnabled,
+  `${haulModel?.haulLabel ?? "null"} / ${String(engineerlessHaul?.haulEnabled)}`,
 );
 const unfinishedModel = buildingActionModel(
   unfinishedBuilding,

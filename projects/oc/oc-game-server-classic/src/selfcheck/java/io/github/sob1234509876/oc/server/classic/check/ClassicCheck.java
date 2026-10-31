@@ -443,6 +443,8 @@ public final class ClassicCheck {
         check.equal("哨塔·普通", t1.displayName(), "t1 的显示名");
         check.equal("哨塔·强化", t2.displayName(), "t2 的显示名");
         check.equal("哨塔·精英", t3.displayName(), "t3 的显示名");
+        check.that(t1.isBuildable() && !t2.isBuildable() && !t3.isBuildable(),
+                "只有 t1 可以直接建造；t2/t3 只能由升级得到");
         for (ClassicContent.TurretTier tier : tiers) {
             BuildingType type = registry.building(tier.buildingPath());
             check.equal(tier.size(), type.sizeX(), "t" + tier.tier() + " 的宽度与表一致");
@@ -1436,6 +1438,14 @@ public final class ClassicCheck {
                 "工地是 building.turret.t1");
         check.that(sites.isEmpty() || sites.get(0).origin().chebyshevDistance(new GridPos(20, 20)) <= 64,
                 "哨塔就在 AI 基地的确定性搜索范围内");
+
+        // A direct BUILD of the elite tier is refused; the ladder must be walked by upgrading.
+        Unit turretBuilder = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), enemy,
+                new GridPos(20, 24));
+        var elite = engine.commands().tryBuild(turretBuilder,
+                registry.building(ClassicContent.TURRET_T3), new GridPos(20, 26));
+        check.that(!elite.placed() && elite.refusal().contains("upgrading"),
+                "直接 BUILD 精英哨塔被拒绝，只能升级: " + elite.refusal());
 
         // --- unaffordable: the same decision places no turret at all
         OcRtsEngine poor = aiEngine(registry);

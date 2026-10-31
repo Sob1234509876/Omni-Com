@@ -215,8 +215,38 @@ export type PlacementReason =
   | "legal"
   | "blocked-terrain"
   | "blocked-occupied"
+  | "blocked-planned"
   | "blocked-window"
   | "out-of-reach";
+
+/**
+ * A footprint the client has already ordered but which is not in the snapshot yet.
+ *
+ * <p>A BUILD is answered with the new id, but the next snapshot may be up to a poll away. Until it
+ * arrives the planner must still treat the ordered site as an obstacle, or a second Shift-click can be
+ * painted green on top of a site that is already being built. The page keeps a short-lived list of these
+ * rectangles (`plannedBuilds` in `main.ts`) and hands it to {@link buildPlacementPreview}.
+ */
+export interface PlannedSite {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Whether a planned footprint covers a whole world tile. */
+export function plannedSiteCovers(site: PlannedSite, x: number, y: number): boolean {
+  return x >= site.x && x < site.x + site.width && y >= site.y && y < site.y + site.height;
+}
+
+/** Whether any planned footprint covers a tile. */
+export function tileOccupiedByPlannedSites(
+  planned: readonly PlannedSite[],
+  x: number,
+  y: number,
+): boolean {
+  return planned.some((site) => plannedSiteCovers(site, x, y));
+}
 
 /** One footprint tile with its painted state and the specific reason for it. */
 export interface PlacementTile extends TileCoord {
@@ -268,6 +298,7 @@ const REASON_TEXT: Readonly<Record<PlacementReason, string>> = {
   legal: "可建造",
   "blocked-terrain": "地形不可建",
   "blocked-occupied": "位置被占用",
+  "blocked-planned": "与刚下达的工地重叠",
   "blocked-window": "超出已载入窗口",
   "out-of-reach": "超出工兵范围 16 格",
 };
@@ -378,6 +409,7 @@ export function buildPlacementPreview(
   buildingPath: string,
   origin: TileCoord,
   engineer: EntityView,
+  planned: readonly PlannedSite[] = [],
 ): PlacementPreview {
   const footprint = footprintForKind(buildingPath);
   const engineerTile = entityTile(engineer);
@@ -397,6 +429,9 @@ export function buildPlacementPreview(
     } else if (tileOccupiedByEntities(world.entities, tile.x, tile.y)) {
       state = "blocked";
       reason = "blocked-occupied";
+    } else if (tileOccupiedByPlannedSites(planned, tile.x, tile.y)) {
+      state = "blocked";
+      reason = "blocked-planned";
     } else if (!isBuildableTerrain(terrainAt(world, tile.x, tile.y))) {
       state = "blocked";
       reason = "blocked-terrain";

@@ -376,6 +376,32 @@ public interface UnitDirector {
     TransferResult transfer(Building source, Building target, ItemType item, Natural amount);
 
     /**
+     * Forces one engineer to carry the next missing inputs to one specific producer.
+     *
+     * <p>This is the manual counterpart of the automatic engineer pool: instead of letting the policy
+     * choose a producer and a hauler, the caller names both. The engine looks for the first queued
+     * recipe of {@code target} that is still waiting for materials, reserves exactly its missing inputs
+     * through the owner's {@link io.github.sob1234509876.oc.rts.economy.WarehouseLogistics}, creates an
+     * ordinary delivery job and assigns {@code engineer} to it.
+     *
+     * <p><strong>Force means force.</strong> An engineer with other orders is stopped first (the queue is
+     * cleared through the normal cancel path), so the haul starts immediately; the engineer then walks the
+     * usual haul route. A busy engineer is never silently skipped. Nothing is teleported: the goods leave
+     * the warehouse when the engineer picks them up and enter the producer's buffer on arrival, exactly
+     * like an automatic delivery.
+     *
+     * <p>Readable refusals, all free and without a reservation: an engineer that cannot be commanded or
+     * cannot haul, a producer that is gone/unfinished/owned by another player/in another dimension, a
+     * player without a hauling network, a producer with no waiting recipe that is short of anything, a
+     * recipe the warehouses cannot cover, and a job the hauler cannot take.
+     *
+     * @param engineer the engineer that will carry the goods
+     * @param target   the finished own producer to supply
+     * @return the reserved bundle and job, or the readable refusal reason; never {@code null}
+     */
+    HaulResult tryHaul(Unit engineer, Building target);
+
+    /**
      * Outcome of one upgrade request: either the replacement building or a refusal reason.
      *
      * <p>At most one field is set. The replacement is a new entity with a new id; the old building is
@@ -607,6 +633,50 @@ public interface UnitDirector {
     }
 
     /**
+     * Outcome of one forced haul: the reserved goods and job, or a refusal reason.
+     *
+     * <p>At most one of {@link #job()} and {@link #refusal()} is set. On success {@link #reserved()} is
+     * the bundle that was reserved for the producer and handed to the named engineer; it is in flight,
+     * not delivered yet.
+     *
+     * @param reserved the bundle reserved for the producer; empty on a refusal
+     * @param job      the registered hauling job, or {@code null} on a refusal
+     * @param refusal  why nothing was dispatched, or {@code null} on success
+     */
+    record HaulResult(ItemBundle reserved, DeliveryJob job, String refusal) {
+
+        public HaulResult {
+            reserved = reserved == null ? ItemBundle.EMPTY : reserved;
+            if (job == null) {
+                if (!reserved.isEmpty()) {
+                    throw new IllegalArgumentException("a refused haul reserved nothing");
+                }
+                if (refusal == null) {
+                    throw new IllegalArgumentException("a haul result needs a job or a refusal");
+                }
+            } else if (refusal != null) {
+                throw new IllegalArgumentException("a dispatched haul has no refusal");
+            }
+        }
+
+        /** The engineer was given the job; the goods are in flight. */
+        public static HaulResult hauled(ItemBundle reserved, DeliveryJob job) {
+            return new HaulResult(Objects.requireNonNull(reserved, "reserved"),
+                    Objects.requireNonNull(job, "job"), null);
+        }
+
+        /** Nothing was dispatched, for the given readable reason. */
+        public static HaulResult refused(String reason) {
+            return new HaulResult(ItemBundle.EMPTY, null, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether a hauling job now carries the goods. */
+        public boolean hauled() {
+            return job != null;
+        }
+    }
+
+    /**
      * Sends the unit to another dimension, walking it through the gateways of the world.
      *
      * <p>The unit is ordered to the first gateway on the route, and each arrival hands it to the next hop
@@ -615,7 +685,6 @@ public interface UnitDirector {
      * the order fail rather than a unit teleporting across space.
      */
     void travel(Unit unit, DimensionId target);
-
     /** Cancels the current order of every given unit. */
     void stop(Collection<Unit> units);
 

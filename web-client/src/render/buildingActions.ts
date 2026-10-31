@@ -38,6 +38,9 @@ export const RECLAIM_ACTION_LABEL = "回收";
 /** The label of the continue-building entry. */
 export const CONTINUE_BUILD_ACTION_LABEL = "继续建造";
 
+/** The label of the forced-haul entry: send a specific engineer to supply a producer. */
+export const HAUL_ACTION_LABEL = "强制搬运";
+
 /** One context-panel state for the selected building. */
 export interface BuildingActionModel {
   /** Entity id the commands name. */
@@ -50,18 +53,27 @@ export interface BuildingActionModel {
   readonly repair: boolean;
   /** A `回收 (refund)` entry exists. */
   readonly reclaim: boolean;
+  /**
+   * A `强制搬运` entry exists: the building is finished and has a production queue (`demand` in the
+   * snapshot). The server picks the first queued recipe still waiting for materials, so the entry does
+   * not depend on the current job being short.
+   */
+  readonly haul: boolean;
   /** Whether the continue entry may be clicked (an own engineer is available). */
   readonly continueEnabled: boolean;
   /** Whether the repair entry may be clicked (engineer available and affordable). */
   readonly repairEnabled: boolean;
   /** Whether the reclaim entry may be clicked (it has no cost, so only ownership matters). */
   readonly reclaimEnabled: boolean;
+  /** Whether the haul entry may be clicked (an own engineer is available). */
+  readonly haulEnabled: boolean;
   /** Engine id of the engineer the click will send, or `null` when none is in the window. */
   readonly engineerId: number | null;
   /** Labels for the visible entries, or `null` when the entry is not offered. */
   readonly continueLabel: string | null;
   readonly repairLabel: string | null;
   readonly reclaimLabel: string | null;
+  readonly haulLabel: string | null;
 }
 
 /** `金 30 · 木 0`, the same cost shape the upgrade entry uses. */
@@ -119,7 +131,8 @@ export function buildingActionModel(
   const repair = !unfinished && repairCost !== undefined;
   const reclaim = unfinished && reclaimCost !== undefined;
   const continueBuild = unfinished;
-  if (!repair && !reclaim && !continueBuild) {
+  const haul = !unfinished && entity.demand !== undefined;
+  if (!repair && !reclaim && !continueBuild && !haul) {
     return null;
   }
   return {
@@ -128,13 +141,16 @@ export function buildingActionModel(
     continueBuild,
     repair,
     reclaim,
+    haul,
     continueEnabled: continueBuild && engineerId !== null,
     repairEnabled: repair && engineerId !== null && repairCost !== undefined
       && affordable(repairCost, player),
     reclaimEnabled: reclaim,
+    haulEnabled: haul && engineerId !== null,
     engineerId,
     continueLabel: continueBuild ? CONTINUE_BUILD_ACTION_LABEL : null,
     repairLabel: repair && repairCost !== undefined ? repairLabel(repairCost) : null,
     reclaimLabel: reclaim && reclaimCost !== undefined ? reclaimLabel(reclaimCost) : null,
+    haulLabel: haul ? HAUL_ACTION_LABEL : null,
   };
 }

@@ -2115,6 +2115,12 @@
               aria-pressed="false"
               title="顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）"
             >顺序</button>
+            <button
+              id="follow-button"
+              type="button"
+              aria-pressed="false"
+              title="跟随：把视角锁定到选中的单位；再点一次取消，目标消失时自动取消"
+            >跟随</button>
             <button id="open-log" type="button">日志</button>
             <button
               id="open-settings"
@@ -2388,6 +2394,12 @@
                 <button id="continue-build-button" type="button" disabled>继续建造</button>
                 <button id="repair-button" type="button" disabled>修理</button>
                 <button id="reclaim-button" type="button" disabled>回收</button>
+                <button
+                  id="haul-button"
+                  type="button"
+                  disabled
+                  title="强制搬运：让一名工兵为这座生产建筑搬运下一批缺料"
+                >强制搬运</button>
                 <button
                   id="transfer-focus"
                   type="button"

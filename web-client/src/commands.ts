@@ -13,6 +13,10 @@
  * world does not know is answered with `ERR unknown building`, so keep this list in step with the
  * classic content when it grows. The warehouse is the content's drop-off building and is buildable by
  * the engineer; its cost (100 gold + 40 wood) is charged by the engine, not by this panel.
+ *
+ * <p>Only the **t1 turret** is listed: `building.turret.t2` and `.t3` are upgrade-only tiers
+ * (`.constructible(false)` in the classic content), so a direct `BUILD` of either is refused by the
+ * engine. The higher tiers still appear in the selection panel through the ordinary `UPGRADE` entry.
  */
 export const BUILDING_PATHS = [
   "building.armory.t1",
@@ -20,8 +24,6 @@ export const BUILDING_PATHS = [
   "building.lumbercamp.t1",
   "building.warehouse",
   "building.turret.t1",
-  "building.turret.t2",
-  "building.turret.t3",
 ] as const;
 
 /**
@@ -437,6 +439,19 @@ export function transfer(
     throw new Error(`调拨数量必须是正整数或 all，当前是 ${String(amount)}`);
   }
   return `TRANSFER ${source} ${target} ${item} ${amount}`;
+}
+
+/**
+ * `HAUL <engineerId> <buildingId>`: force one engineer to carry a producer's next missing inputs.
+ *
+ * <p>The server finds the producer's first queued recipe that is still waiting for materials, reserves
+ * exactly those missing inputs and assigns the named engineer, clearing whatever the engineer was doing.
+ * The answer is `OK <amount> <item>` or the engine's readable `ERR <reason>`.
+ */
+export function haul(engineerId: number, buildingId: number): string {
+  const engineer = requirePositiveInteger(engineerId, "工程师 id");
+  const building = requirePositiveInteger(buildingId, "生产建筑 id");
+  return `HAUL ${engineer} ${building}`;
 }
 
 /** Largest number of sub-commands one `BATCH` line may carry; mirrors the server's cap. */

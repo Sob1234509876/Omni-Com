@@ -535,6 +535,7 @@ public final class ClassicContent implements WorldContent {
                     .attack((float) turret.damage(), turret.range())
                     .attackCooldown(turret.attackCooldownTicks())
                     .spriteSet(turret.buildingPath())
+                    .constructible(turret.tier() == 1)
                     .tag(TURRET_TAG);
             if (turret.upgradeTo() != null) {
                 registry.upgradeTo(turret.upgradeTo())

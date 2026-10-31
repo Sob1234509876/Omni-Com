@@ -81,7 +81,7 @@ CombatStats.armourOf(entity);        // 单位或建筑目标的减伤字段
 
 建筑的目标规则与单位共用 `CombatSystem.isEnemy(Entity, Entity)`：不选自己、不选同队盟友、不选已死实体。和单位不同的是，建筑**只射单位**（`nearestEnemyUnitInRange`），不会把射击浪费在远处的敌方建筑上；目标按“中心距最近”选，平局按实体 id。命中走和单位完全相同的 `attack(...)`：护甲减伤、`DamageDealt`（source 是建筑）、死亡时的 `EntityKilled` 与 `World.destroy`、以及从所有单位与建筑目标里清掉死者 id。建筑自己的 `Building.targetId()` 记录当前目标，`attackCooldown()` 记录冷却。
 
-在 classic 内容里，这就是三档哨塔：`.attack(...)` 与 `.attackCooldown(...)` 写在 `building.turret.t1..t3` 上，射程 6 / 7.5 / 9，伤害 18 / 32 / 55。它没有人口或电力需求（Q15），只是普通的金 + 木建筑，因此可被工程师正常 BUILD，也可用已有的原地升级阶梯升到下一档。
+在 classic 内容里，这就是三档哨塔：`.attack(...)` 与 `.attackCooldown(...)` 写在 `building.turret.t1..t3` 上，射程 6 / 7.5 / 9，伤害 18 / 32 / 55。它没有人口或电力需求（Q15），只是普通的金 + 木建筑；只有 t1 可以被工程师直接 BUILD，t2/t3 声明 `.constructible(false)`，只能沿已有的原地升级阶梯升上去。
 
 ## 四、一次命中：伤害、冷却、两个事件
 
@@ -240,4 +240,4 @@ int stalledTicksBeforeFailure = AttackOrder.STALLED_TICKS_BEFORE_FAILURE; // 300
 - 单位与生命：[Unit.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Unit.java)、[Health.java](../src/main/java/io/github/sob1234509876/oc/rts/entity/Health.java)
 - 世界与事件：[World.java](../src/main/java/io/github/sob1234509876/oc/rts/World.java)、[Events.java](../src/main/java/io/github/sob1234509876/oc/rts/event/Events.java)
 - 接线（相位 450 在此登记）：[OcRtsEngineBuilder.java](../src/main/java/io/github/sob1234509876/oc/rts/OcRtsEngineBuilder.java)
-- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节 59 项 + 第 12b 节建筑目标 31 项；整份 770 项）
+- 可运行证据：[RtsScenario.java](../src/selfcheck/java/io/github/sob1234509876/oc/rts/scenario/RtsScenario.java)（第 12 节 59 项 + 第 12b 节建筑目标 31 项；整份 776 项）

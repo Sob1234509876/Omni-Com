@@ -9,14 +9,15 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
-- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER` and
-  `BATCH`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `HAUL`
+  and `BATCH`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
 - The `queue` append forms of `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` and
   the `BATCH` merged order: one client-composed sequence applied in order, one answer.
 - Repair, continue-building and reclaim: the cost per health point, the repair work rate, the half refund, and
   the refusals.
 - Manual warehouse transfers: the `TRANSFER` grammar, the single-warehouse reservation, the free-hauler rule,
-  `all`, and the clamps.
+  `all`, and the clamps. Forced hauls: `HAUL` clears the named engineer's orders and reserves the producer's
+  next missing inputs.
 - Unit paths in the snapshot and the client's waypoint interaction (`Shift`+right-click).
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
@@ -95,6 +96,7 @@ After a successful handshake, one line per command, one line of answer per comma
 | `REPAIR ...` | `OK` or `ERR <reason>` | Sends an owned engineer to repair an owned, damaged, finished building; requires `LOGIN` and ownership |
 | `RECLAIM ...` | `OK <refund>` or `ERR <reason>` | Cancels an owned unfinished site and refunds half of its placement cost; requires `LOGIN` and ownership |
 | `TRANSFER ...` | `OK <moved> <item>` or `ERR <reason>` | Moves stock between two of the player's finished warehouses; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `HAUL ...` | `OK <amount> <item>` or `ERR <reason>` | Forces one owned engineer to supply one owned producer; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `BATCH ...` | `OK <count>` or `ERR <index>/<count> <reason>` | Applies a `;`-separated series of orders in order and answers once; requires `LOGIN`; see "Gameplay commands" |
 | `QUIT` | `OK bye` | The server sends this line first, then closes the connection |
 
@@ -116,7 +118,7 @@ all lowercase, and `ENGINE-INFO` is not folded into it. The failure answers are 
 On success the answer is `OK <base64-payload>`. The server only base64-decodes the request payload into **opaque bytes** for the handler,
 then base64-encodes the bytes the handler returns and sends them back; it does not parse the payload, does not record the payload content, and does not understand the `oc-debug` envelope.
 
-`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `BATCH`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
+`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `HAUL`, `BATCH`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
 
 `hello` is the sample request provided by the `oc-hello` plugin: the payload is an ordinary UTF-8 name (not an envelope like `oc-debug`'s), and the answer is ordinary UTF-8 text as well.
 
@@ -141,6 +143,7 @@ UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (nee
 REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (needs LOGIN, both entities must belong to the player)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (needs LOGIN, building must belong to the player)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (needs LOGIN, both buildings must belong to the player)
+HAUL <engineerId> <buildingId>             -> OK <amount> <item> | ERR ... (needs LOGIN, both entities must belong to the player)
 BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (needs LOGIN, 1..16 sub-commands)
 ```
 
@@ -155,7 +158,7 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   replace semantics. Any other extra token is `ERR bad arguments`.
 - `BATCH` is the **merged order** (Q16): the client composes a series of commands and sends them as one
   line, separated by `;` (semicolon, optional spaces), and the server applies them in the given order. It
-  accepts `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM` and `TRANSFER` sub-commands; anything
+  accepts `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER` and `HAUL` sub-commands; anything
   else - including a nested `BATCH`, `WHOAMI` or `QUIT` - is `ERR bad arguments` before anything is
   applied. One to sixteen sub-commands; more than sixteen is `ERR bad arguments`, not a truncation. A
   batch is a **sequence, not a transaction**: every sub-command is applied in order, the first failure is
@@ -176,6 +179,13 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   resolves it to the source's current unreserved stock and the engine clamps it again. The amount is
   clamped to the source's unreserved stock and the target's current room, so a larger number is not an
   error - the answer names what really moves.
+- `HAUL <engineerId> <buildingId>` is the **forced haul**: the building must be an owned, finished producer
+  with a queued recipe that is still waiting for materials. The server reserves exactly that recipe's
+  missing inputs in the owner's warehouses, **clears the engineer's current orders** and assigns it the
+  ordinary delivery job, so the named engineer stops whatever it was doing and starts the haul at once.
+  The answer is `OK <amount> <item>` for the reserved bundle or `ERR <reason>`; a refusal reserves nothing
+  and changes no order. A building with no waiting recipe answers `ERR ... no queued recipe is waiting for
+  materials`.
 - The command word is case-insensitive like every other command word; the `ORDER` sub-word is
   case-insensitive too (`MOVE` and `move` mean the same thing). Content paths and arguments are not folded.
 

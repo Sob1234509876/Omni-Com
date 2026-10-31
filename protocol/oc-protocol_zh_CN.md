@@ -9,12 +9,13 @@
 - 传输：WebSocket 路径、一个文本帧一条命令、`HELLO 1` 版本握手，以及空闲超时与服务端心跳。
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
-- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER` 与 `BATCH`，
+- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`HAUL` 与 `BATCH`，
   账号名身份规则、登录与所有权规则，以及世界步边界。
 - `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` 的 `queue` 追加形式，以及
   `BATCH` 合并订单：客户端合成的一串订单按顺序应用，只回一条回答。
 - 维修、继续建造与回收：每点血量的费用、维修速率、一半返还，以及各种拒绝。
-- 手动仓库调拨：`TRANSFER` 语法、单仓库预留、空闲搬运工规则、`all`，以及数量夹取。
+- 手动仓库调拨：`TRANSFER` 语法、单仓库预留、空闲搬运工规则、`all`，以及数量夹取。强制搬运：`HAUL` 会清空指定
+  工兵的订单，并为生产建筑预留下一批缺料。
 - 快照里的单位路径，以及客户端的路径点交互（`Shift`+右键，`路径` 开关）。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
 - 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
@@ -96,6 +97,7 @@ OK OC/1
 | `REPAIR ...` | `OK` 或 `ERR <reason>` | 派自己的工程师修理自己的受损完工建筑；需要 `LOGIN` 与所有权 |
 | `RECLAIM ...` | `OK <refund>` 或 `ERR <reason>` | 取消自己的未完工工地并返还一半放置成本；需要 `LOGIN` 与所有权 |
 | `TRANSFER ...` | `OK <moved> <item>` 或 `ERR <reason>` | 在玩家自己的两座已完工仓库之间搬运库存；需要 `LOGIN` 与所有权；见“游戏命令” |
+| `HAUL ...` | `OK <amount> <item>` 或 `ERR <reason>` | 强制一名己方工兵为一座己方生产建筑搬运；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `BATCH ...` | `OK <count>` 或 `ERR <index>/<count> <reason>` | 按顺序应用一串用 `;` 分隔的订单，只回一条回答；需要 `LOGIN`；见“游戏命令” |
 | `QUIT` | `OK bye` | 服务器先回这一行，然后关闭连接 |
 
@@ -117,7 +119,7 @@ OK OC/1
 成功时回答 `OK <base64-payload>`。服务器只把请求载荷的 base64 解码成**不透明字节**交给处理器，
 再把处理器返回的字节 base64 编码回送；它不解析载荷、不记录载荷内容，也不认识 `oc-debug` 的信封。
 
-`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`BATCH`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
+`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`HAUL`、`BATCH`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
 
 `hello` 是 `oc-hello` 插件提供的示例请求：载荷是普通 UTF-8 名字（不是 `oc-debug` 那样的信封），回答也是普通 UTF-8 文本。
 
@@ -140,6 +142,7 @@ UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (需
 REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (需要 LOGIN，工程师与建筑都必须属于该玩家)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要 LOGIN，建筑必须属于该玩家)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (需要 LOGIN，两座建筑都必须属于该玩家)
+HAUL <engineerId> <buildingId>             -> OK <amount> <item> | ERR ... (需要 LOGIN，工兵与建筑都必须属于该玩家)
 BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (需要 LOGIN，1..16 条子命令)
 ```
 
@@ -151,7 +154,7 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   后面，而不是替换它们。三条 `BUILD ... queue` 会在同一个工程师的队列里留下三个工地与三个订单，按到达
   顺序执行。普通形式与历史命令逐字节相同，保持替换语义；任何其它多余 token 都是 `ERR bad arguments`。
 - `BATCH` 是**合并订单**（Q16）：客户端把一串命令合成一行，用 `;`（分号，前后可有空格）分隔，服务器按给定
-  顺序应用。它接受 `ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM` 与 `TRANSFER` 子命令；其它
+  顺序应用。它接受 `ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER` 与 `HAUL` 子命令；其它
   任何子命令——包括嵌套 `BATCH`、`WHOAMI` 或 `QUIT`——在应用任何东西之前就回 `ERR bad arguments`。
   一条命令可带 1 到 16 条子命令；超过 16 条回 `ERR bad arguments`，不会截断。批次是**顺序，不是事务**：
   每条子命令按顺序应用，第一条失败以 `ERR <index>/<count> <reason>` 报告（index 从 1 开始），后面的
@@ -168,6 +171,11 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   `ERR the amount must be positive` 拒绝。`all` 表示“来源还能给出的全部”：服务器把它解析成来源当前
   未被预留的库存，引擎再夹一次。数量最终被夹到来源未预留库存与目标当前剩余空间，所以填大了不算错误，
   回答里的数字就是真正会移动的数量。
+- `HAUL <engineerId> <buildingId>` 是**强制搬运**：建筑必须是自己的一座已完工生产建筑，且队列里有一个仍在
+  等待材料的配方。服务器在玩家仓库里预留该配方缺的输入，**清空指定工兵当前的订单**并把它指派给这条普通的
+  送货任务，所以被点名的工兵会停下手里的事、立刻开始搬运。回答是预留的 `OK <amount> <item>` 或
+  `ERR <reason>`；拒绝不会预留任何东西，也不会改动任何订单。没有待料配方的建筑回答
+  `ERR ... no queued recipe is waiting for materials`。
 - 命令字与其它命令一样大小写不敏感；`ORDER` 的子命令也大小写不敏感（`MOVE` 与 `move` 等价）。
   内容路径与参数不做大小写折叠。
 

@@ -46,6 +46,7 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final Natural storageSlots;
     private final Set<String> storageTags;
     private final boolean warehouse;
+    private final boolean buildable;
     private final Set<String> producerTags;
     private final String spriteSetId;
     private final Set<String> tags;
@@ -69,6 +70,7 @@ public final class BuildingType implements Comparable<BuildingType> {
             Natural storageSlots,
             Set<String> storageTags,
             boolean warehouse,
+            boolean buildable,
             Set<String> producerTags,
             String spriteSetId,
             Set<String> tags) {
@@ -100,6 +102,7 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.storageSlots = storageSlots;
         this.storageTags = Collections.unmodifiableSet(new LinkedHashSet<>(storageTags));
         this.warehouse = warehouse;
+        this.buildable = buildable;
         this.producerTags = Collections.unmodifiableSet(new LinkedHashSet<>(producerTags));
         this.spriteSetId = spriteSetId;
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(tags));
@@ -285,6 +288,18 @@ public final class BuildingType implements Comparable<BuildingType> {
      */
     public boolean isWarehouse() {
         return warehouse;
+    }
+
+    /**
+     * Whether a builder may place this type directly with a {@code BUILD} command.
+     *
+     * <p>It is {@code true} unless the content declares {@code .constructible(false)}. An upgrade-only
+     * tier (the classic turret t2/t3, for example) is still a real building type: it exists for
+     * {@link #upgradeTo()} and for spawning in a scenario, but a direct placement is refused by
+     * {@link io.github.sob1234509876.oc.rts.order.CommandService}, so the ladder cannot be skipped.
+     */
+    public boolean isBuildable() {
+        return buildable;
     }
 
     /** Tags matched against {@link Recipe#producerTags()}; empty means the building cannot produce. */

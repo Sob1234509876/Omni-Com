@@ -38,6 +38,7 @@ import {
   build,
   buildButtonLabel,
   buildPlacementBatch,
+  haul,
   orderAttack,
   orderAttackMove,
   orderMoveRoute,
@@ -106,9 +107,11 @@ import { marqueeTileRange, toggleSelection } from "./render/marquee";
 import { MinimapRenderer, minimapCameraTarget } from "./render/minimap";
 import {
   buildPlacementPreview,
+  footprintForKind,
   placementReasonText,
   type PlacementPreview,
   type PlacementTileState,
+  type PlannedSite,
 } from "./render/placement";
 import { WorldRenderer } from "./render/renderer";
 import {
@@ -142,6 +145,7 @@ import {
   engineerForPlacement,
   engineerSelection,
   engineersForPlacement,
+  isEngineerKind,
 } from "./render/selection";
 import {
   demandIcon,
@@ -327,11 +331,13 @@ const upgradeTarget = required<HTMLSpanElement>("#upgrade-target");
 const upgradeButton = required<HTMLButtonElement>("#upgrade-button");
 const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
 const sequenceButton = required<HTMLButtonElement>("#sequence-button");
+const followButton = required<HTMLButtonElement>("#follow-button");
 const buildingActionsSection = required<HTMLElement>("#building-actions-section");
 const buildingActionsTarget = required<HTMLSpanElement>("#building-actions-target");
 const continueBuildButton = required<HTMLButtonElement>("#continue-build-button");
 const repairButton = required<HTMLButtonElement>("#repair-button");
 const reclaimButton = required<HTMLButtonElement>("#reclaim-button");
+const haulButton = required<HTMLButtonElement>("#haul-button");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -685,6 +691,22 @@ let myPlayerId: number | null = null;
 let loginName: string | null = null;
 /** Building path armed for placement, or null when the canvas is not in placement mode. */
 let placementPath: string | null = null;
+/**
+ * BUILD sites the client has ordered but the snapshot does not show yet.
+ *
+ * <p>Each entry is a footprint plus the moment it was ordered. The placement preview treats it as an
+ * obstacle (`blocked-planned`), so a second Shift-click on/overlapping a just-ordered site is refused
+ * locally instead of being painted green and then refused by the server. An entry disappears as soon as
+ * a matching own building appears at that origin, or after {@link PLANNED_BUILD_TTL_MS}.
+ */
+interface PlannedBuild extends PlannedSite {
+  readonly path: string;
+  readonly at: number;
+  /** True for a build the Q16 recorder holds but has not sent yet; clearing the recorder drops these. */
+  readonly recorded: boolean;
+}
+let plannedBuilds: PlannedBuild[] = [];
+const PLANNED_BUILD_TTL_MS = 5_000;
 /** Pending waypoints of the current selection (Shift+right-click), in click order. */
 let pendingRoute: TileCoord[] = [];
 /** Whether the route overlay is drawn; restored from the saved settings (default on). */
@@ -696,6 +718,14 @@ let showPaths = settings.showPaths;
  */
 let sequenceArmed = false;
 let sequenceLines: string[] = [];
+/**
+ * Entity id the camera is locked to, or null when the view is free.
+ *
+ * The lock is a hard follow: every frame recentres the camera on the unit's interpolated position, so
+ * WASD/edge panning is overridden until the 跟随 button is pressed again. The lock is released when the
+ * unit leaves the world (killed, despawned, or a reconnect replaced the world).
+ */
+let lockedEntityId: number | null = null;
 /** True while the attack-move button waits for a target tile; the next left click sends ATTACKMOVE. */
 let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
@@ -918,6 +948,9 @@ function openConnection(): void {
         loggedIn = false;
         clearGameplayIdentity();
         clearSequence(false);
+        plannedBuilds = [];
+        lockedEntityId = null;
+        updateFollowButton();
         setCommandsEnabled(false);
         connectButton.textContent = "连接";
         connectButton.disabled = false;
@@ -1500,11 +1533,21 @@ function placementEngineer(): EntityView | undefined {
 /**
  * The own engineer that receives a building service for a selected building.
  *
- * A selected building is not an engineer, so the panel cannot reuse `placementEngineer`; it picks the
- * first own engineer in the loaded window, which is the same rule the `工兵` button uses. The id is shown
- * in the entry's tooltip so the operator knows who will walk.
+ * The panel first looks for an own engineer the player selected alongside the building (Shift+click),
+ * so `强制搬运` can name a specific unit; without one it falls back to the first own engineer in the
+ * loaded window, which is the same rule the `工兵` button uses. The id is shown in the entry's tooltip
+ * so the operator knows who will walk.
  */
 function serviceEngineer(): EntityView | undefined {
+  // Prefer an engineer the player explicitly selected alongside the building (Shift+click), so
+  // `强制搬运` can name a specific unit; otherwise fall back to the first own engineer in the window,
+  // which is the same rule the `工兵` button uses.
+  const selected = selectedEntities().find(
+    (entity) => !isBuildingEntityKind(entity.kind) && isMine(entity) && isEngineerKind(entity.kind),
+  );
+  if (selected !== undefined) {
+    return selected;
+  }
   const engineers = engineerSelection(world, myPlayerId);
   const first = engineers[0];
   return first === undefined ? undefined : entityById(world, first);
@@ -1562,6 +1605,70 @@ function appendPendingWaypoint(tile: TileCoord): void {
  * ghost and the status line always describe the same tile. The same site state gates the click, so the
  * picture, the reason in the status line and the sent (or withheld) command cannot disagree.
  */
+/**
+ * Records one just-ordered (or recorded-but-not-sent) BUILD footprint.
+ *
+ * The footprint comes from the client catalogue; an unknown kind uses the same 3x3 fallback the ghost
+ * uses. The list is capped by pruning expired entries on every frame, so it cannot grow with clicks.
+ */
+function recordPlannedBuild(path: string, tile: TileCoord, recorded: boolean): void {
+  const footprint = footprintForKind(path);
+  plannedBuilds = [
+    ...plannedBuilds,
+    {
+      path,
+      x: tile.x,
+      y: tile.y,
+      width: footprint.width,
+      height: footprint.height,
+      at: performance.now(),
+      recorded,
+    },
+  ].slice(-32);
+}
+
+/** The planned rectangles in the shape `buildPlacementPreview` accepts. */
+function plannedSiteRects(): readonly PlannedSite[] {
+  return plannedBuilds;
+}
+
+/** Drops recorder-only entries when the sequence is cleared; nothing was ordered, so nothing is blocked. */
+function clearRecordedPlannedBuilds(): void {
+  plannedBuilds = plannedBuilds.filter((planned) => !planned.recorded);
+}
+
+/**
+ * Drops a planned site once the snapshot confirms it, or after its short lifetime.
+ *
+ * A confirmed site is an own building of the same kind whose footprint origin matches; the server always
+ * places at the requested origin, so this is the exact match the client can test. A refused BUILD has no
+ * such entity and simply expires, which keeps a refused click from blocking the tile forever.
+ */
+function prunePlannedBuilds(now: number): void {
+  if (plannedBuilds.length === 0) {
+    return;
+  }
+  plannedBuilds = plannedBuilds.filter((planned) => {
+    if (now - planned.at > PLANNED_BUILD_TTL_MS) {
+      return false;
+    }
+    return !world.entities.some((entity) =>
+      entity.playerId === myPlayerId
+      && isBuildingEntityKind(entity.kind)
+      && kindName(entity.kind) === kindName(planned.path)
+      && entityFootprintOrigin(entity).x === planned.x
+      && entityFootprintOrigin(entity).y === planned.y,
+    );
+  });
+}
+
+/**
+ * The pure build preview, including the client's optimistic occupancy.
+ *
+ * `plannedSiteRects()` are sites the client already ordered (or recorded) but the snapshot has not shown
+ * yet; `buildPlacementPreview` paints their tiles `blocked` with the `blocked-planned` reason, which is
+ * the fix for "the second queued building is not judged against the first one".
+ */
 function placementPreviewAt(tile: TileCoord | null): PlacementPreview | null {
   if (placementPath === null || tile === null) {
     return null;
@@ -1570,7 +1677,7 @@ function placementPreviewAt(tile: TileCoord | null): PlacementPreview | null {
   if (engineer === undefined) {
     return null;
   }
-  return buildPlacementPreview(world, placementPath, tile, engineer);
+  return buildPlacementPreview(world, placementPath, tile, engineer, plannedSiteRects());
 }
 
 /** The existing status-line states, chosen by ghost state without adding any colour to the chrome. */
@@ -2730,6 +2837,7 @@ function clearSequence(showStatus: boolean): void {
   const wasArmed = sequenceArmed;
   sequenceLines = [];
   sequenceArmed = false;
+  clearRecordedPlannedBuilds();
   updateSequenceButton();
   if (showStatus && wasArmed) {
     setStatus(had === 0 ? "顺序已关闭" : `已清空顺序（${had} 条）`, "idle");
@@ -2752,9 +2860,52 @@ function recordSequence(wireLines: readonly string[], displayLines: readonly str
     return;
   }
   sequenceLines.push(...queued);
+  // A recorded BUILD is not sent yet, but the next recorded click must already see its footprint: the
+  // same optimistic occupancy the direct Shift-click path uses, marked so clearing the recorder drops it.
+  for (const line of queued) {
+    const parsed = /^BUILD\s+\d+\s+(\S+)\s+(-?\d+)\s+(-?\d+)/u.exec(line);
+    if (parsed !== null) {
+      const x = Number(parsed[2]);
+      const y = Number(parsed[3]);
+      if (Number.isSafeInteger(x) && Number.isSafeInteger(y)) {
+        recordPlannedBuild(parsed[1] ?? "", { x, y }, true);
+      }
+    }
+  }
   log("info", `顺序 +${queued.length}：${displayLines.join(" · ")}`);
   setStatus(`顺序 ${sequenceLines.length} 条（Enter 执行 / Esc 清空）`, "idle");
   updateSequenceButton();
+}
+
+/**
+ * Reflects the follow lock on its chrome button: `跟随` when free, `跟随中` while following.
+ *
+ * The lock is a hard follow, so the only ways out are the button, the target leaving the world, or a
+ * disconnect; manual panning is overridden by the next frame rather than silently cancelling the lock.
+ */
+function updateFollowButton(): void {
+  const following = lockedEntityId !== null;
+  followButton.classList.toggle("armed", following);
+  followButton.setAttribute("aria-pressed", following ? "true" : "false");
+  followButton.textContent = following ? "跟随中" : "跟随";
+  followButton.title = following
+    ? `跟随 e${lockedEntityId}：视角锁定中，再点一次取消`
+    : "跟随：把视角锁定到选中的单位；再点一次取消，目标消失时自动取消";
+}
+
+/** Recentres the camera on the locked unit once per frame; absence releases the lock. */
+function followLockedUnit(): void {
+  if (lockedEntityId === null) {
+    return;
+  }
+  const target = entityById(world, lockedEntityId);
+  if (target === undefined) {
+    lockedEntityId = null;
+    updateFollowButton();
+    setStatus("跟随目标已消失，视角锁定已取消", "idle");
+    return;
+  }
+  camera.setCenter(target.x * TILE_SIZE_PX, target.y * TILE_SIZE_PX);
 }
 
 /**
@@ -3113,36 +3264,40 @@ function updateGameplayPanel(): void {
   // Building services: 继续建造 / 修理 / 回收 / 调拨. The pure rule decides which entries exist and what
   // they cost; this half only paints the buttons and keeps the engineer-less case visible but disabled.
   const buildingActions = selectedBuildingActions();
+  const buildingTarget = selectedBuildingEntity();
   const ownWarehouseSelected =
     single !== undefined && isMine(single) && isWarehouseKind(single.kind);
   const showBuildingActions =
     (buildingActions !== null
-      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim))
+      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim
+        || buildingActions.haul))
     || ownWarehouseSelected;
   buildingActionsSection.hidden = !showBuildingActions;
   if (!showBuildingActions || buildingActions === null) {
     continueBuildButton.hidden = true;
     repairButton.hidden = true;
     reclaimButton.hidden = true;
+    haulButton.hidden = true;
     continueBuildButton.disabled = true;
     repairButton.disabled = true;
     reclaimButton.disabled = true;
+    haulButton.disabled = true;
     if (ownWarehouseSelected) {
-      const selected = singleSelectedEntity();
       void renderLatexInto(
         buildingActionsTarget,
-        selected === undefined ? "" : `· e${selected.id} ${contentLabel(selected.kind)}`,
+        buildingTarget === undefined
+          ? ""
+          : `· e${buildingTarget.id} ${contentLabel(buildingTarget.kind)}`,
       );
     } else {
       void renderLatexInto(buildingActionsTarget, "");
     }
   } else {
-    const selected = singleSelectedEntity();
     void renderLatexInto(
       buildingActionsTarget,
-      selected === undefined
+      buildingTarget === undefined
         ? ""
-        : `· e${selected.id} ${contentLabel(selected.kind)}`,
+        : `· e${buildingTarget.id} ${contentLabel(buildingTarget.kind)}`,
     );
     continueBuildButton.hidden = !buildingActions.continueBuild;
     continueBuildButton.disabled = !(gameplayReady && buildingActions.continueEnabled);
@@ -3167,6 +3322,15 @@ function updateGameplayPanel(): void {
     reclaimButton.title =
       `RECLAIM ${buildingActions.buildingId}：移除未完工工地，返还 ${buildingActions.reclaimLabel ?? "一半成本"}`;
     void renderLatexInto(reclaimButton, buildingActions.reclaimLabel ?? "回收");
+
+    haulButton.hidden = !buildingActions.haul;
+    haulButton.disabled = !(gameplayReady && buildingActions.haulEnabled);
+    haulButton.title =
+      buildingActions.engineerId === null
+        ? "强制搬运：载入窗口内没有自己的工兵"
+        : `HAUL ${buildingActions.engineerId} ${buildingActions.buildingId}：清空该工兵当前订单，` +
+          "让它立刻去仓库取这座生产建筑下一批缺料";
+    void renderLatexInto(haulButton, buildingActions.haulLabel ?? "强制搬运");
   }
   transferFocusButton.hidden = !ownWarehouseSelected;
   transferFocusButton.disabled = !ownWarehouseSelected;
@@ -3429,7 +3593,24 @@ async function sendUpgradeBatch(plan: UpgradeBatchPlan): Promise<void> {
  * the selection and the stock even if a snapshot arrived between the paint and the click.
  */
 function selectedBuildingActions() {
-  return buildingActionModel(singleSelectedEntity(), myPlayerId, myPlayerRow(), serviceEngineer());
+  return buildingActionModel(selectedBuildingEntity(), myPlayerId, myPlayerRow(), serviceEngineer());
+}
+
+/**
+ * The one selected building, if the selection names exactly one.
+ *
+ * A plain click selects the building alone; Shift+click can add one or more engineers so `强制搬运`
+ * knows which unit to send. Two or more buildings are ambiguous and offer no building-service entry.
+ */
+function selectedBuildingEntity(): EntityView | undefined {
+  const buildings = selectedEntities().filter((entity) => isBuildingEntityKind(entity.kind));
+  if (buildings.length === 1) {
+    return buildings[0];
+  }
+  if (buildings.length > 1) {
+    return undefined;
+  }
+  return singleSelectedEntity();
 }
 
 /**
@@ -3489,6 +3670,30 @@ function doReclaimBuilding(): void {
     "RECLAIM",
     reclaim(actions.buildingId),
     `已回收 e${actions.buildingId}（${actions.reclaimLabel ?? "回收"}）`,
+  );
+}
+
+/**
+ * `强制搬运`: sends `HAUL <engineerId> <buildingId>` for the selected own producer.
+ *
+ * The server clears that engineer's current orders, finds the producer's next queued recipe still
+ * waiting for materials, reserves exactly the missing inputs and assigns the engineer, so the click is
+ * the manual override of the automatic engineer pool rather than another move order.
+ */
+function doForceHaul(): void {
+  const actions = selectedBuildingActions();
+  if (actions === null || !actions.haul) {
+    refuse("先选中自己的生产建筑（有生产队列），再强制搬运");
+    return;
+  }
+  if (actions.engineerId === null) {
+    refuse("载入窗口内没有自己的工兵：无法强制搬运");
+    return;
+  }
+  void sendGameplayCommand(
+    "HAUL",
+    haul(actions.engineerId, actions.buildingId),
+    `已让 e${actions.engineerId} 为 e${actions.buildingId} 搬运下一批缺料`,
   );
 }
 
@@ -3659,7 +3864,7 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
   // The ghost and the click share one verdict. An illegal site keeps the mode armed and names the
   // reason instead of sending a BUILD the server is guaranteed to refuse. A joinable own site is legal
   // by the same rule, which is what lets several engineers build together.
-  const preview = buildPlacementPreview(world, path, tile, engineer);
+  const preview = buildPlacementPreview(world, path, tile, engineer, plannedSiteRects());
   if (preview.state !== "legal") {
     refuse(`BUILD 未发送：${placementReasonText(preview.reason)}`);
     updateHud(true);
@@ -3682,6 +3887,11 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
     return true;
   }
   const lines = plan.lines;
+  if (preview.joinSiteId === null && !sequenceArmed) {
+    // The site is ordered now but appears in the snapshot only on the next poll. Mark its footprint as
+    // planned so the very next Shift-click is blocked by it (`blocked-planned`) instead of painted green.
+    recordPlannedBuild(path, tile, false);
+  }
   if (!plan.keepArmed && !sequenceArmed) {
     // A plain click keeps today's behaviour: one order, then the placement mode closes. While the Q16
     // sequence recorder is armed the mode stays open, so several sites can be recorded in one go.
@@ -4463,6 +4673,7 @@ function animationFrame(now: number): void {
       );
     }
     input.update(deltaSeconds);
+    followLockedUnit();
     // Follow the camera: once its focus reaches the loaded window's edge, ask for a new window now
     // instead of waiting for the next poll.
     maybeStreamWindow(now);
@@ -4479,6 +4690,7 @@ function animationFrame(now: number): void {
     // Drop finished flash entries before drawing; the map then holds only the recent selection. The
     // strong-id set follows the map, so a click's stronger halo cannot outlive its timer.
     pruneFlashes(flashes, now);
+    prunePlannedBuilds(now);
     for (const id of strongFlashes) {
       if (!flashes.has(id)) {
         strongFlashes.delete(id);
@@ -4669,6 +4881,7 @@ upgradeButton.addEventListener("click", doUpgradeAction);
 continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);
+haulButton.addEventListener("click", doForceHaul);
 
 /** Reflects the 路径 preference on its chrome button; the settings checkbox is kept in sync too. */
 function updatePathsButton(): void {
@@ -4693,6 +4906,23 @@ sequenceButton.addEventListener("click", () => {
   executeSequence();
 });
 updateSequenceButton();
+followButton.addEventListener("click", () => {
+  if (lockedEntityId !== null) {
+    lockedEntityId = null;
+    updateFollowButton();
+    setStatus("已取消跟随", "idle");
+    return;
+  }
+  const target = selectedEntities().find((entity) => !isBuildingEntityKind(entity.kind));
+  if (target === undefined) {
+    refuse("先选中一个单位，再点跟随");
+    return;
+  }
+  lockedEntityId = target.id;
+  updateFollowButton();
+  setStatus(`跟随 e${target.id}：视角锁定，再点一次取消`, "ok");
+});
+updateFollowButton();
 
 // The recorder listens in the capture phase so Enter/Esc reach it before the canvas controller; an
 // active placement or the marker list keeps its own Escape handling (the guards below leave those to

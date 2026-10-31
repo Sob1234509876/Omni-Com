@@ -27,6 +27,9 @@ import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
 import io.github.sob1234509876.oc.rts.movement.Motion;
+import io.github.sob1234509876.oc.rts.production.ProductionJob;
+import io.github.sob1234509876.oc.rts.production.ProductionQueue;
+import io.github.sob1234509876.oc.rts.production.ProductionState;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -352,6 +355,10 @@ public final class CommandService implements UnitDirector {
         Objects.requireNonNull(origin, "origin");
         if (!isCommandable(unit)) {
             return BuildResult.refused("the builder cannot be commanded");
+        }
+        if (!type.isBuildable()) {
+            return BuildResult.refused("cannot build " + type.key().path()
+                    + " directly: it can only be reached by upgrading the previous tier");
         }
         DimensionId dimension = unit.dimensionId();
         if (!isWithinBuildReach(world, unit, type, origin)) {
@@ -939,6 +946,103 @@ public final class CommandService implements UnitDirector {
             return TransferResult.refused("no free engineer is available to haul " + describe(bundle));
         }
         return TransferResult.dispatched(bundle, job);
+    }
+
+    /**
+     * Forces one named engineer to carry the next missing inputs to one producer.
+     *
+     * <p>The producer's queue is walked in production order, and the first recipe still in
+     * {@link ProductionState#WAITING_MATERIALS} supplies the demand. Its missing inputs are reserved
+     * through the ordinary logistics network, registered as a normal delivery job, and assigned to the
+     * named engineer. The engineer's current orders are cleared first, which is the "force" part: a
+     * builder that was raising something drops it and starts the haul immediately.
+     */
+    @Override
+    public HaulResult tryHaul(Unit engineer, Building target) {
+        Objects.requireNonNull(target, "target");
+        if (!isCommandable(engineer)) {
+            return HaulResult.refused("the engineer cannot be commanded");
+        }
+        if (!engineer.type().canHaul()) {
+            return HaulResult.refused(engineer.type().key().path() + " cannot haul goods");
+        }
+        if (!target.isAlive()) {
+            return HaulResult.refused("cannot haul for building " + target.id().value() + ": it was destroyed");
+        }
+        if (!target.isConstructed()) {
+            return HaulResult.refused("cannot haul for " + target.type().key().path() + " at "
+                    + target.origin() + ": it is still under construction");
+        }
+        if (!target.owner().equals(engineer.owner())) {
+            return HaulResult.refused("cannot haul for the building at " + target.origin()
+                    + ": it belongs to another player");
+        }
+        if (!target.dimensionId().equals(engineer.dimensionId())) {
+            return HaulResult.refused("cannot haul for the building at " + target.origin()
+                    + ": it is in another dimension");
+        }
+        WarehouseLogistics network = WarehouseLogistics.of(engineer.owner());
+        if (network == null) {
+            return HaulResult.refused("cannot haul for " + engineer.owner().name()
+                    + ": the player has no warehouse network");
+        }
+        HaulingSystem hauling = network.hauling().orElse(null);
+        if (hauling == null) {
+            return HaulResult.refused("cannot haul for " + engineer.owner().name()
+                    + ": no hauling system is attached to the warehouse network");
+        }
+        ItemBundle missing = waitingInputs(target);
+        if (missing.isEmpty()) {
+            return HaulResult.refused("nothing to haul for " + target.type().key().path() + " at "
+                    + target.origin() + ": no queued recipe is waiting for materials");
+        }
+        if (!network.hasAvailable(missing)) {
+            return HaulResult.refused("the warehouses cannot cover " + describe(missing)
+                    + " for " + target.type().key().path() + " at " + target.origin());
+        }
+        Optional<DeliveryJob> created = network.requestDeliveryJob(target, missing);
+        if (created.isEmpty()) {
+            return HaulResult.refused("cannot reserve " + describe(missing) + " for "
+                    + target.type().key().path() + " at " + target.origin());
+        }
+        DeliveryJob job = created.get();
+        if (!engineer.orders().isEmpty()) {
+            engineer.orders().clear(context(engineer));
+        }
+        if (!hauling.assignHauler(job, engineer)) {
+            return HaulResult.refused("the engineer cannot take the haul (it may already carry another job)");
+        }
+        return HaulResult.hauled(missing, job);
+    }
+
+    /** The inputs of the first queued recipe of a producer that is still waiting for materials. */
+    private ItemBundle waitingInputs(Building target) {
+        ProductionQueue queue = world.production().queue(target).orElse(null);
+        if (queue == null) {
+            return ItemBundle.EMPTY;
+        }
+        for (ProductionJob job : queue.jobs()) {
+            if (job.state() != ProductionState.WAITING_MATERIALS) {
+                continue;
+            }
+            ItemBundle missing = missingInputs(target.inventory(), job.recipe().inputs());
+            if (!missing.isEmpty()) {
+                return missing;
+            }
+        }
+        return ItemBundle.EMPTY;
+    }
+
+    /** The part of {@code inputs} the inventory does not hold yet. */
+    private static ItemBundle missingInputs(Inventory inventory, ItemBundle inputs) {
+        ItemBundle.Builder missing = ItemBundle.builder();
+        for (ItemBundle.Amount component : inputs.components()) {
+            Natural present = inventory.amount(component.item());
+            if (present.compareTo(component.amount()) < 0) {
+                missing.add(component.item(), component.amount().subtract(present));
+            }
+        }
+        return missing.build();
     }
 
     /** Inserts as much of the bundle as the inventory accepts and returns the remainder. */

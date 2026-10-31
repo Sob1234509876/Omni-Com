@@ -504,6 +504,20 @@ public final class ContentRegistry {
         }
 
         /**
+         * Declares whether a builder may place this building directly with {@code BUILD}.
+         *
+         * <p>Defaults to {@code true}. Set it to {@code false} for a tier that must only be reached by
+         * upgrading the previous one: the type still exists (an upgrade target, a spawned scenario
+         * building) but a direct placement is refused, so the ladder cannot be skipped.
+         *
+         * @param value whether the type is directly buildable
+         */
+        public Builder constructible(boolean value) {
+            draft(BuildingDraft.class, "building").buildable = value;
+            return this;
+        }
+
+        /**
          * Tier of the current building; {@code 1} when not set.
          *
          * <p>It is matched against {@link Recipe#requiredBuildingLevel()}: a building only runs recipes
@@ -737,6 +751,7 @@ public final class ContentRegistry {
                             building.storageSlots,
                             building.storageTags,
                             building.warehouse,
+                            building.buildable,
                             building.producerTags,
                             building.spriteSet,
                             building.tags);
@@ -921,6 +936,7 @@ public final class ContentRegistry {
         String upgradeTo;
         Natural storageSlots = Natural.ZERO;
         boolean warehouse;
+        boolean buildable = true;
         String spriteSet = "building/unknown";
         final Set<String> storageTags = new LinkedHashSet<>();
         final Set<String> producerTags = new LinkedHashSet<>();

@@ -54,6 +54,7 @@ import java.util.function.Supplier;
  * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
  * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
  * TRANSFER &lt;sourceId&gt; &lt;targetId&gt; &lt;item&gt; &lt;amount|all&gt; -&gt; OK &lt;moved&gt; &lt;item&gt; | ERR &lt;reason&gt;
+ * HAUL &lt;engineerId&gt; &lt;buildingId&gt;  -&gt; OK &lt;amount&gt; &lt;item&gt; | ERR &lt;reason&gt;
  * BATCH &lt;command&gt;; &lt;command&gt;; ...    -&gt; OK &lt;count&gt; | ERR &lt;index&gt;/&lt;count&gt; &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
@@ -140,7 +141,7 @@ public final class CommandDispatcher {
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
             java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM",
-                    "TRANSFER", "BATCH");
+                    "TRANSFER", "HAUL", "BATCH");
 
     /**
      * Sub-commands one {@code BATCH} may carry.
@@ -153,7 +154,7 @@ public final class CommandDispatcher {
 
     /** The gameplay commands a {@code BATCH} may carry; identity commands such as {@code WHOAMI} cannot. */
     private static final java.util.Set<String> BATCHABLE_COMMANDS =
-            java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM", "TRANSFER");
+            java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM", "TRANSFER", "HAUL");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -284,6 +285,7 @@ public final class CommandDispatcher {
             case "REPAIR" -> repair(rest, session);
             case "RECLAIM" -> reclaim(rest, session);
             case "TRANSFER" -> transfer(rest, session);
+            case "HAUL" -> haul(rest, session);
             case "BATCH" -> batch(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
@@ -750,6 +752,45 @@ public final class CommandDispatcher {
             return result.transferred()
                     ? "OK " + describe(result.moved())
                     : "ERR " + result.refusal();
+        });
+    }
+
+    /**
+     * {@code HAUL <engineerId> <buildingId>}: force one owned engineer to supply one owned producer.
+     *
+     * <p>The engine transaction is {@link UnitDirector#tryHaul}: it finds the producer's first queued
+     * recipe that is still waiting for materials, reserves exactly its missing inputs in the owner's
+     * warehouses, registers a normal delivery job and assigns the named engineer to it. The engineer's
+     * current orders are cleared first, so a builder drops what it is doing and starts the haul now; that
+     * is the "force" in the command. Both ids follow the ordinary existence/ownership rules, and every
+     * refusal is the engine's readable sentence (not a producer, nothing missing, stock not coverable,
+     * no hauling system, the engineer cannot take the job).
+     *
+     * <p>The answer is {@code OK <amount> <item>} naming the reserved bundle, or {@code ERR <reason>}. A
+     * refusal reserves nothing and changes no order.
+     */
+    private PendingAnswer haul(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length != 2) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong engineerId = parseId(tokens[0]);
+        OptionalLong buildingId = parseId(tokens[1]);
+        if (engineerId.isEmpty() || buildingId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        return worldGameplay(session, (host, player) -> {
+            UnitRef engineer = ownedUnit(host.engine().world(), engineerId.getAsLong(), player);
+            if (engineer.error() != null) {
+                return engineer.error();
+            }
+            BuildingRef building = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
+            if (building.error() != null) {
+                return building.error();
+            }
+            UnitDirector.HaulResult result = host.engine().commands()
+                    .tryHaul(engineer.unit(), building.building());
+            return result.hauled() ? "OK " + describe(result.reserved()) : "ERR " + result.refusal();
         });
     }
 

@@ -15,6 +15,7 @@ import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
+import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
 import io.github.sob1234509876.oc.rts.order.MoveOrder;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.server.auth.AuthService;
@@ -805,6 +806,28 @@ public final class PlayerCommandCheck {
                 + "；实际搬运工仍由最近的空闲单位规则选出");
         // The truly unreachable case (a walled-in target) needs impassable terrain; the engine scenario
         // covers it, and this catalogue has no impassable terrain to build the fixture from.
+
+        check.section("玩家命令：HAUL 强制指定工兵为生产建筑搬运");
+        Building haulArmory = world.spawnBuilding(host.content().building(ARMORY_T1), human,
+                new GridPos(40, 4));
+        host.engine().production().enqueue(haulArmory, host.content().recipe(TRAIN_T1), 2);
+        Unit haulEngineer = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(38, 6));
+        String haulAnswer = run(dispatcher, host, first,
+                "HAUL " + haulEngineer.id().value() + " " + haulArmory.id().value());
+        check.that(haulAnswer.startsWith("OK "), "HAUL 成功并回答预留的物资: " + haulAnswer);
+        check.that(haulEngineer.orders().pending().size() == 1
+                        && haulEngineer.orders().pending().get(0) instanceof HaulOrder,
+                "HAUL 给工兵一条搬运订单");
+        check.equal("ERR bad arguments", run(dispatcher, host, first,
+                        "HAUL " + haulEngineer.id().value()),
+                "HAUL 参数不足回答 ERR bad arguments");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "HAUL " + enemyUnit.id().value() + " " + haulArmory.id().value()),
+                "用别人的工兵 HAUL 回答 ERR not yours");
+        String haulNothing = run(dispatcher, host, first,
+                "HAUL " + haulEngineer.id().value() + " " + warehouse.id().value());
+        check.that(haulNothing.startsWith("ERR ") && haulNothing.contains("nothing to haul"),
+                "没有生产队列的建筑不能强制搬运: " + haulNothing);
 
         check.section("玩家命令：运行中的世界也会经由同一队列作答");
         host.start();

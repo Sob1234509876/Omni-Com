@@ -18,7 +18,7 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (649 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (651 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` and a 96x160 `assets/atlas.png` |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -120,8 +120,9 @@ write `BuildingType.attackDamage/attackRange/attackCooldownTicks`.
 The three tiers share the 2x2 footprint because the engine's in-place upgrade replaces a building with a type
 of the same size; the footprint is still declared per tier. The upgrade arithmetic follows the other classic
 ladders: `t1 cost + t1 upgrade = t2 cost` (140 + 190 = 330) and `t2 cost + t2 upgrade = t3 cost`
-(330 + 350 = 680), counted in gold + wood units. All three tiers are buildable by an engineer through the
-ordinary `BUILD` path, and the context panel's `升级` entry walks the ladder.
+(330 + 350 = 680), counted in gold + wood units. **Only `t1` is directly buildable**: `t2` and `t3` declare
+`.constructible(false)`, so an engineer's `BUILD` of either is refused by the engine and the context panel's
+`升级` entry is the only way up the ladder. The AI follows the same rule: it places a t1 and upgrades it.
 
 ## The economy rule
 
@@ -369,10 +370,10 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 649 checks passed.
+classic plugin self check: all 651 checks passed.
 ```
 
-649 is the sum of the same sixteen sections plus the turret and queued-requirements checks, with the
+651 is the sum of the same sixteen sections plus the turret and queued-requirements checks, with the
 regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
 STOP must be followed by an applicable move and build against a real `CommandService`, each of the twelve
@@ -407,7 +408,7 @@ known starting position, not a fog-of-war reveal.
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
 | `src/main/resources/assets/atlas.png` | the 96x160 unit and building atlas (one 32x32 cell per building kind, three turret cells on the new row) |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 649 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 651 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

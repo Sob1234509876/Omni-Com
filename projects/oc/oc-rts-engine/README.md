@@ -55,7 +55,7 @@ raising one site faster, three Shift-queued builds running in order, a turret sh
 unit, and an ASCII picture of the world. A successful run ends with:
 
 ```text
-RTS engine scenario: all 770 checks passed.
+RTS engine scenario: all 776 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own

@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1232 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1237 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,10 +33,10 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 1232 checks passed.
+game server self check: all 1237 checks passed.
 ```
 
-1232 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+1237 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
@@ -49,7 +49,7 @@ buildable spawn anchor found from `(0,0)` inside a 64-tile bound, the windowed s
 answers, and the income rates, per-job `queueItems`, `producingNow` / `demand`, engineer `task`, the
 one-second haul `pop`, and the new `orderQueue` / `attackDamage` / `attackRange` fields of a snapshot row),
 `WorldTickHookCheck` 23 (the
-plugin tick hook contract and its ordering), `PlayerCommandCheck` 222 (`WHOAMI`, account identity, the
+plugin tick hook contract and its ordering), `PlayerCommandCheck` 227 (`WHOAMI`, account identity, the
 world-thread command queue, movement orders, ownership, building cost, the `queue` append forms of
 `BUILD` / `ORDER` / `REPAIR`, the `BATCH` merged order with its 16-command cap and its first-failure
 index, the production tier gate, the builder's reach rule, the `UPGRADE` ownership/cost rules, the
@@ -99,7 +99,7 @@ derive a 32 byte session key from the shared secret, then AES-256-GCM frames. Th
 the server hello 69; each direction gets its own 4 byte nonce prefix and a 64 bit counter, a frame is a 4 byte
 big endian length followed by the ciphertext and its 128 bit tag, and the counter makes a replayed frame fail
 its tag. On top of the frames is a line protocol: `PING`, `REGISTER`, `LOGIN`, `COUNT`, `REQ`, `WHOAMI`,
-`ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `QUIT`.
+`ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `HAUL`, `BATCH`, `QUIT`.
 
 **The browser endpoint.** `GET` and `HEAD` are served from `--static-root`, the built web client; `/ws` is
 upgraded to an RFC 6455 WebSocket whose first text frame must be `HELLO 1`, answered with `OK OC/1`;
@@ -155,8 +155,8 @@ same connection: without it the answer is `ERR login first`, before the handler 
 name, an over long name or a payload that is not base64 is `ERR unknown request`, and a throwing handler is
 `ERR request failed`.
 
-**Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM` and `TRANSFER`
-are parsed by the same `CommandDispatcher` the
+**Gameplay commands.** `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`,
+`HAUL` and `BATCH` are parsed by the same `CommandDispatcher` the
 browser endpoint uses, but they are applied by `WorldHost` on the world thread at the start of the next fixed
 step. The authenticated account name is the identity: the first gameplay command creates the player for that
 account (the first human is player 3; player 1 is the sample scene and player 2 is the classic bot system's
@@ -177,7 +177,10 @@ header prints. `TRANSFER <source> <target> <item> <amount|all>` is the manual lo
 buildings must be the player's finished warehouses in the same dimension, the engine reserves on the named
 source only, requires a free hauler at command time and lets the ordinary hauling path carry the goods; it
 answers `OK <moved> <item>` (for example `OK 120 gold`) or the engine's readable `ERR` reason, and `all` means
-the source's current free stock. See `protocol/oc-protocol.md` for the wire grammar.
+the source's current free stock. `HAUL <engineerId> <buildingId>` is the forced haul: the named engineer's
+current orders are cleared, the producer's first queued recipe still waiting for materials supplies the
+demand, and exactly those missing inputs are reserved and assigned to that engineer; the answer is
+`OK <amount> <item>` or the engine's readable refusal. See `protocol/oc-protocol.md` for the wire grammar.
 
 **Autosave and shutdown.** A daemon timer named `oc-autosave` flushes the user records every `--save-seconds`
 seconds (60 by default), which is a no-op when nothing changed. `stop()` then runs in a fixed order: stop the
@@ -204,7 +207,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 1232 check self check program
+src/selfcheck/java/.../server/check/    the 1237 check self check program
 help/                                   the five chapters, in Chinese
 ```
 
