@@ -25,7 +25,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The classic game's engineer crew policy: a pool of nearby engineers serves one arsenal at a time.
+ * The classic game's engineer crew policy: every nearby engineer serves every producer that needs goods.
  *
  * <p>This hook replaces the engine's per-job nearest-idle search with the policy the owner asked for
  * in item 29. It owns no roster and writes no state on a unit: every pass rescans the world, so an
@@ -36,16 +36,15 @@ import java.util.Set;
  * <h2>The rules</h2>
  *
  * <ol>
- *   <li><strong>One arsenal at a time.</strong> For each player, only the nearest
- *       <em>unsatisfied</em> producer is served during a pass. "Unsatisfied" means the building has a
- *       pending delivery job, or a queued production job whose inputs are missing and affordable from
- *       the warehouses. The order is <strong>nearest-first, measured from the player's oldest living
- *       building</strong> (the base anchor), with the building id as the tie breaker.</li>
- *   <li><strong>A radius, not a role.</strong> Every own, living, idle engineer (a unit whose order
- *       queue is empty) that can haul, stands in the arsenal's dimension and is within
- *       {@value #RECRUIT_RADIUS_TILES} tiles of the arsenal joins the crew. There is no per-arsenal
- *       quota: the number of engineers is the number of jobs the arsenal still needs. Engineers
- *       farther away are not nominated; the arsenal simply waits for one to come closer.</li>
+ *   <li><strong>Every unsatisfied producer is served.</strong> A pass walks all of the player's finished
+ *       producers, nearest to the player's oldest living building (the base anchor) first, ties by id,
+ *       and serves each one that still needs goods. The earlier policy stopped after the nearest arsenal,
+ *       which left the engineers around every other arsenal idle; that was the reported defect.</li>
+ *   <li><strong>A radius per producer, not a quota.</strong> For one producer, every own, living, idle
+ *       engineer (a unit whose order queue is empty) that can haul, stands in the producer's dimension
+ *       and is within {@value #RECRUIT_RADIUS_TILES} tiles joins its crew. There is no per-arsenal
+ *       quota: the number of engineers is the number of jobs the producer still needs. A producer with
+ *       nobody in range is left for a later pass and does not block the other producers.</li>
  *   <li><strong>A busy engineer is not interrupted.</strong> A unit with any order (moving, building,
  *       repairing, fighting, already hauling) is never recruited; it joins the crew only after its
  *       queue is empty again. The pool never replaces a queue.</li>
@@ -69,8 +68,9 @@ import java.util.Set;
  * them from its buffer exactly as if it had ordered them itself - only the wait is removed.
  *
  * <p>Pre-staging is bounded by the crew and by the stock: one job is created per waiting recipe and
- * only while an idle engineer is available to carry it. Once the nearest arsenal has no unassigned job
- * left, the pass does nothing more; the next pass may serve the next arsenal.
+ * only while an idle engineer is available to carry it. Every producer is visited in the same pass,
+ * nearest to the base first; a producer whose crew is empty is retried on a later pass and does not
+ * stop the producers behind it.
  *
  * <h2>Why the engine needed a seam</h2>
  *
@@ -166,10 +166,12 @@ public final class ClassicEngineerPool implements WorldTickHook {
     // ------------------------------------------------------------------ one player's pass
 
     /**
-     * Serves the nearest unsatisfied arsenal of one player, if its crew is not empty.
+     * Serves every producer of one player that still needs goods, nearest to the base first.
      *
-     * <p>Nothing is changed for a player with no warehouses, no hauling system or no producer in need,
-     * which is the normal state of the bot (it stocks its own building) and of the opening scene.
+     * <p>Nothing is changed for a player with no warehouses, no hauling system or no producer, which is
+     * the normal state of the bot (it stocks its own building) and of the opening scene. A producer with
+     * nobody in range is skipped without stopping the others - the defect this pass fixes was that one
+     * unserved arsenal starved every arsenal behind it.
      */
     private static void servePlayer(World world, Player player) {
         WarehouseLogistics logistics = WarehouseLogistics.of(player);
@@ -180,22 +182,50 @@ public final class ClassicEngineerPool implements WorldTickHook {
         if (hauling == null || hauling.directDelivery()) {
             return;
         }
-        List<Building> buildings = ownBuildings(world, player);
-        GridPos base = oldestOrigin(buildings);
+        List<Building> producers = producerBuildings(world, player);
+        if (producers.isEmpty()) {
+            return;
+        }
+        GridPos base = oldestOrigin(ownBuildings(world, player));
+        for (Building arsenal : orderByBase(producers, base)) {
+            List<Unit> crew = recruitables(world, player, arsenal, hauling);
+            if (crew.isEmpty()) {
+                // Nobody is close enough to this arsenal yet; a later pass retries it, and the other
+                // producers are still served in this one.
+                continue;
+            }
+            int used = assignWaitingJobs(hauling, arsenal, crew);
+            stageQueuedDemands(world, logistics, hauling, arsenal, crew, used);
+        }
+    }
+
+    /** The player's living, finished producers, in entity id order. */
+    private static List<Building> producerBuildings(World world, Player player) {
+        List<Building> producers = new ArrayList<>();
+        for (Building building : world.buildingsOf(player)) {
+            if (building.isAlive() && building.isConstructed() && building.type().canProduce()) {
+                producers.add(building);
+            }
+        }
+        producers.sort(Comparator.comparing(Building::id));
+        return producers;
+    }
+
+    /**
+     * Orders producers nearest-first from the player's base, ties by entity id.
+     *
+     * <p>The order only decides which arsenal gets the first choice of the idle engineers; every arsenal
+     * is still visited, so it cannot make a farther arsenal starve.
+     */
+    private static List<Building> orderByBase(List<Building> producers, GridPos base) {
+        List<Building> ordered = new ArrayList<>(producers);
         if (base == null) {
-            return;
+            return ordered;
         }
-        Building arsenal = nearestUnsatisfied(world, player, logistics, hauling, buildings, base);
-        if (arsenal == null) {
-            return;
-        }
-        List<Unit> crew = recruitables(world, player, arsenal, hauling);
-        if (crew.isEmpty()) {
-            // The nearest arsenal keeps the focus even when nobody is close enough to serve it yet.
-            return;
-        }
-        int used = assignWaitingJobs(hauling, arsenal, crew);
-        stageQueuedDemands(world, logistics, hauling, arsenal, crew, used);
+        ordered.sort(Comparator
+                .comparingDouble((Building building) -> building.position().distanceSquared(base.center()))
+                .thenComparing(Building::id));
+        return ordered;
     }
 
     /**
@@ -276,65 +306,6 @@ public final class ClassicEngineerPool implements WorldTickHook {
     }
 
     // ------------------------------------------------------------------ selection
-
-    /**
-     * The nearest unsatisfied producer of the player, or {@code null} when everything is supplied.
-     *
-     * <p>Distance is measured from the oldest living building and ties are broken by entity id, which
-     * makes the same world state always pick the same arsenal.
-     */
-    private static Building nearestUnsatisfied(World world, Player player, WarehouseLogistics logistics,
-            HaulingSystem hauling, List<Building> buildings, GridPos base) {
-        Building best = null;
-        float bestDistance = 0f;
-        for (Building building : buildings) {
-            if (!building.isAlive() || !building.isConstructed() || !building.type().canProduce()) {
-                continue;
-            }
-            if (!hasDemand(world, logistics, hauling, building)) {
-                continue;
-            }
-            float distance = building.position().distanceSquared(base.center());
-            if (best == null || distance < bestDistance
-                    || (distance == bestDistance && building.id().compareTo(best.id()) < 0)) {
-                best = building;
-                bestDistance = distance;
-            }
-        }
-        return best;
-    }
-
-    /**
-     * Whether a producer still needs the pool.
-     *
-     * <p>A pending delivery job always counts, even one already in transit: the arsenal keeps the
-     * focus until its shipments have arrived, which is what "one arsenal at a time" means. Without a
-     * pending job, a queued job waiting for materials counts only when those materials are actually
-     * missing and the warehouses can cover them; an unaffordable demand must not block the next
-     * arsenal forever.
-     */
-    private static boolean hasDemand(World world, WarehouseLogistics logistics, HaulingSystem hauling,
-            Building arsenal) {
-        for (DeliveryJob job : hauling.jobs()) {
-            if (job.isPending() && job.target() == arsenal) {
-                return true;
-            }
-        }
-        ProductionQueue queue = world.production().queue(arsenal).orElse(null);
-        if (queue == null) {
-            return false;
-        }
-        for (ProductionJob job : queue.jobs()) {
-            if (job.state() != ProductionState.WAITING_MATERIALS) {
-                continue;
-            }
-            ItemBundle missing = missingInputs(arsenal, job.recipe());
-            if (!missing.isEmpty() && logistics.hasAvailable(missing)) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     /**
      * The idle engineers inside the recruit radius of the arsenal, nearest first.

@@ -17,8 +17,14 @@
 
 import type { TileCoord } from "./camera";
 
-/** Radius the page requests, in tiles; the server answers a `2 * r` square window. */
-export const SNAPSHOT_RADIUS_TILES = 32;
+/**
+ * Radius the page requests, in tiles; the server answers a `2 * r` square window.
+ *
+ * <p>Forty tiles is **five 16-tile chunks across** (the window is 80 tiles wide), the owner's requested
+ * view size; the previous value was 32, which showed four chunks. The server clamps a request to its own
+ * maximum, so an older server still answers a valid (smaller) window.
+ */
+export const SNAPSHOT_RADIUS_TILES = 40;
 
 /** How close, in tiles, the camera may get to the window edge before a new window is requested. */
 export const SNAPSHOT_EDGE_MARGIN_TILES = 8;

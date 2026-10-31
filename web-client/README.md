@@ -364,7 +364,7 @@ filter over the game view. Inside, the loaded window's terrain is drawn as **one
 - **On screen.** Each in-window marker is a small **hollow white square with its number** on the canvas - achromatic, like the rest of the chrome, so it never competes with the ownership colours or the gold selection ring - and a **small outlined white square** on the minimap. A marker outside the loaded window is not drawn on the canvas; the minimap gives it a **white edge arrow carrying its number**, and when several markers are outside only the **nearest** one gets an arrow (the list still names every marker, and the arrows' colour and number keep them apart from the red enemy arrow). The rules live in [`src/render/markers.ts`](src/render/markers.ts) and are pinned by the offline check (cap, duplicate rule, nearest-of-many, the two label formats, the unknown-anchor text and the camera targets).
 
 **Server world.** The game view is no longer limited to the built-in demo island. While the view is visible,
-`main.ts` polls `GET /world/snapshot?cx=<cameraTileX>&cy=<cameraTileY>&r=32` every 500 ms (skipping a request while
+`main.ts` polls `GET /world/snapshot?cx=<cameraTileX>&cy=<cameraTileY>&r=40` every 500 ms (skipping a request while
 the previous one is still in flight) and keeps the last two snapshots as frames for the animation loop to interpolate
 between (see **Movement smoothness** below). The server world is **unbounded**: a snapshot carries only one square
 window, `originX` / `originY` are its absolute top-left tile, `width` / `height` are the **window** size, and entities
@@ -540,7 +540,7 @@ while the site is unfinished, and a small `生产中 1/3` marker (legacy `生产
 roof, so they never cover the sprite.
 
 > The initial map is the deterministic `demoWorld(seed)` placeholder. As soon as the Java server answers
-> `/world/snapshot`, the view switches to that real engine world: an unbounded world, one 64 x 64 window at a time,
+> `/world/snapshot`, the view switches to that real engine world: an unbounded world, one 80 x 80 window at a time,
 > following the camera; the render layer does not change because both sources use the same `WorldView` shape.
 
 The rendering math and the pure client rules (camera floor semantics and the ±500,000-tile numeric safety bound,

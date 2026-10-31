@@ -159,8 +159,14 @@ public final class WorldHost {
      */
     public static final int SEARCH_RADIUS_TILES = 64;
 
-    /** Radius of a snapshot window when the request names none, in tiles. */
-    public static final int DEFAULT_SNAPSHOT_RADIUS = 32;
+    /**
+     * Radius of a snapshot window when the request names none, in tiles.
+     *
+     * <p>Forty tiles is an 80 x 80 window, five 16-tile chunks across: the owner asked for a five-chunk
+     * view instead of the old four-chunk (32-tile radius) one. The maximum stays 64, so the document's
+     * 128 x 128 bound is unchanged; {@link #MIN_SNAPSHOT_RADIUS} is still 16.
+     */
+    public static final int DEFAULT_SNAPSHOT_RADIUS = 40;
 
     /** Smallest snapshot radius a request may ask for, in tiles. */
     public static final int MIN_SNAPSHOT_RADIUS = 16;
@@ -490,7 +496,7 @@ public final class WorldHost {
                 .seed(seed)
                 .ticksPerSecond(TICKS_PER_SECOND)
                 .chunkSize(NoiseTerrainGenerator.DEFAULT_CHUNK_SIZE)
-                .viewRadiusChunks(2)
+                .viewRadiusChunks(3)
                 .generator(new NoiseTerrainGenerator(seed, biomes))
                 .infiniteTerrain(seed)
                 .maxLoadedChunks(chunkBudget)
@@ -1520,7 +1526,7 @@ public final class WorldHost {
      *
      * <p>The shape is intentionally small and stable:
      * <pre>{@code
-     * {"tick":42,"originX":-32,"originY":-32,"width":64,"height":64,"tilePixels":16,
+     * {"tick":42,"originX":-40,"originY":-40,"width":80,"height":80,"tilePixels":16,
      *  "tiles":[["grass","grass", ...], ...],
      *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0,
      *               "w":1,"h":1,"progress":1.00,"queue":0},

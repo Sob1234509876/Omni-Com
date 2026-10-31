@@ -306,8 +306,10 @@ public final class WorldHostCheck {
                     "无参数快照的宽度是默认半径的两倍");
             check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L, longField(defaults, "height"),
                     "无参数快照的高度是默认半径的两倍");
-            check.equal(64, tileRows(host.snapshotJson()).size(), "无参数快照的 tiles 有 64 行");
-            check.equal(64 * 64, tileCount(host.snapshotJson()), "无参数快照的 tiles 恰好有 4096 个条目");
+            check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2, tileRows(host.snapshotJson()).size(),
+                    "无参数快照的 tiles 行数等于默认窗口高度");
+            check.equal((WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2) * (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2),
+                    tileCount(host.snapshotJson()), "无参数快照的 tiles 条目数等于窗口面积");
 
             // A request at the origin proves the origin may go negative: there is no corner to clip against.
             Map<String, Object> origin = MiniJson.parseObject(host.snapshotJson(0, 0, 16));

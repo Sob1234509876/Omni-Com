@@ -2444,11 +2444,13 @@ public final class ClassicCheck {
         check.that(nearJobs.stream().allMatch(job -> job.hauler().isPresent()),
                 "两个需求都由半径内的空闲工兵承担");
         check.equal(2, distinctHaulers(nearJobs), "两个需求由两个不同的工兵承担");
-        check.equal(1L, world.unitsOf(player).stream()
+        check.equal(0L, world.unitsOf(player).stream()
                         .filter(engineer -> engineer.orders().isEmpty()).count(),
-                "第三个空闲工兵留在池里，没有需求和它匹配");
-        check.that(farJobs.size() == 1 && farJobs.get(0).hauler().isEmpty(),
-                "远处兵营的需求在近处兵营未满足前不被服务（一次只服务最近的兵营）");
+                "第三个空闲工兵去了远处兵营，不再留在池里");
+        check.that(farJobs.size() == 1 && farJobs.get(0).hauler().isPresent(),
+                "远处兵营在同一趟被服务（不再一次只服务最近的兵营）");
+        check.equal(3, distinctHaulers(allPendingJobs(hauling)),
+                "两座兵营的三个需求由三个不同的工兵承担");
         check.that(engineers.stream().allMatch(engineer ->
                         engineer.position().distanceSquared(near.position())
                                 <= ClassicEngineerPool.RECRUIT_RADIUS_TILES
@@ -2468,13 +2470,13 @@ public final class ClassicCheck {
         check.that(!busy.orders().isEmpty() && nearJobs.stream()
                         .noneMatch(job -> job.hauler().map(id -> id.equals(busy.id())).orElse(false)),
                 "正在移动的工兵不会被池打断，也不会被记到需求上");
-        check.that(nearJobs.size() == 4 && nearJobs.stream().anyMatch(job ->
+        check.that(nearJobs.size() == 3 && nearJobs.stream().anyMatch(job ->
                         job.hauler().map(id -> id.equals(newcomer.id())).orElse(false)),
-                "新产出的工兵在下一次池通过时自动加入，并接到第四个需求");
-        check.equal(4, distinctHaulers(nearJobs),
-                "四个需求由四个不同的工兵承担，没有工兵同时服务两个兵营");
-        check.that(pendingJobsFor(hauling, far).stream().allMatch(job -> job.hauler().isEmpty()),
-                "近处兵营仍待办时，远处兵营仍然没有搬运工");
+                "新产出的工兵在下一次池通过时自动加入，并接到第三个需求");
+        check.equal(4, distinctHaulers(allPendingJobs(hauling)),
+                "两座兵营的四个需求由四个不同工兵承担，没有工兵同时服务两个兵营");
+        check.that(pendingJobsFor(hauling, far).stream().allMatch(job -> job.hauler().isPresent()),
+                "近处兵营仍待办时，远处兵营保持自己的搬运工");
 
         // Assignment is not sticky: losing the near armory frees the crew for the next demand.
         world.destroy(near);
@@ -2482,14 +2484,24 @@ public final class ClassicCheck {
         // One engine tick lets the haul orders that named the lost armory observe the failed job and
         // finish, so their engineers are idle again when the next pool pass runs.
         engine.tick();
+        engine.production().enqueue(far, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 1);
         pool.tick(world, ClassicEngineerPool.POOL_INTERVAL_TICKS * 3L);
         List<DeliveryJob> afterLoss = pendingJobsFor(hauling, far);
-        check.that(afterLoss.size() == 1 && afterLoss.get(0).hauler().isPresent(),
-                "近处兵营失去后，空闲工兵回到池里并接下远处兵营的需求");
-        check.that(afterLoss.stream().allMatch(job -> job.hauler().isPresent()),
-                "远处兵营的需求最终由池派出工兵");
+        check.that(afterLoss.size() >= 1 && afterLoss.stream().allMatch(job -> job.hauler().isPresent()),
+                "近处兵营失去后，空闲工兵回到池里并接下远处兵营的新需求");
         check.that(ClassicEngineerPool.POOL_INTERVAL_TICKS == 5,
                 "池每 5 tick 通过一次（新工兵最迟 5 tick 内入池）");
+    }
+
+    /** Every pending delivery job of the world, in registration order. */
+    private static List<DeliveryJob> allPendingJobs(HaulingSystem hauling) {
+        List<DeliveryJob> jobs = new ArrayList<>();
+        for (DeliveryJob job : hauling.jobs()) {
+            if (job.isPending()) {
+                jobs.add(job);
+            }
+        }
+        return jobs;
     }
 
     /** Pending delivery jobs currently targeting one building, in registration order. */

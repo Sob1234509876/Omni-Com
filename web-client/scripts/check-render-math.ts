@@ -1501,9 +1501,9 @@ check(
 check(
   "构造出的窗口请求 URL 使用负中心（不被当成越界）",
   snapshotUrl("", { cx: -1_250, cy: -582, r: SNAPSHOT_RADIUS_TILES }) ===
-    "/world/snapshot?cx=-1250&cy=-582&r=32" &&
-    snapshotUrl("http://127.0.0.1:25567/", { cx: -1, cy: -32, r: 32 }) ===
-      "http://127.0.0.1:25567/world/snapshot?cx=-1&cy=-32&r=32" &&
+    "/world/snapshot?cx=-1250&cy=-582&r=40" &&
+    snapshotUrl("http://127.0.0.1:25567/", { cx: -1, cy: -32, r: 40 }) ===
+      "http://127.0.0.1:25567/world/snapshot?cx=-1&cy=-32&r=40" &&
     snapshotUrl("", null) === "/world/snapshot",
 );
 
@@ -1512,37 +1512,64 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 const streamBounds = {
-  originX: -1_282,
-  originY: -614,
-  width: 64,
-  height: 64,
+  originX: -1_250 - SNAPSHOT_RADIUS_TILES,
+  originY: -582 - SNAPSHOT_RADIUS_TILES,
+  width: SNAPSHOT_RADIUS_TILES * 2,
+  height: SNAPSHOT_RADIUS_TILES * 2,
 };
 
 check(
-  "窗口边缘触发：负坐标窗口距边缘正好 8 格时请求新窗口",
+  "窗口边缘触发：距边缘正好 8 格时请求新窗口",
   SNAPSHOT_EDGE_MARGIN_TILES === 8 &&
-    SNAPSHOT_RADIUS_TILES === 32 &&
-    shouldStreamWindow(streamBounds, { x: -1_274, y: -590 }) &&
-    shouldStreamWindow(streamBounds, { x: -1_227, y: -590 }) &&
-    shouldStreamWindow(streamBounds, { x: -1_250, y: -606 }) &&
-    shouldStreamWindow(streamBounds, { x: -1_250, y: -559 }) &&
-    shouldRequestWindow(streamBounds, { x: -1_274, y: -590 }) &&
-    shouldRequestWindow(streamBounds, { x: -1_227, y: -590 }) &&
-    shouldRequestWindow(streamBounds, { x: -1_250, y: -606 }) &&
-    shouldRequestWindow(streamBounds, { x: -1_250, y: -559 }),
+    SNAPSHOT_RADIUS_TILES === 40 &&
+    shouldStreamWindow(streamBounds, { x: streamBounds.originX + 8, y: -590 }) &&
+    shouldStreamWindow(streamBounds, {
+      x: streamBounds.originX + streamBounds.width - 1 - 8,
+      y: -590,
+    }) &&
+    shouldStreamWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 8 }) &&
+    shouldStreamWindow(streamBounds, {
+      x: -1_250,
+      y: streamBounds.originY + streamBounds.height - 1 - 8,
+    }) &&
+    shouldRequestWindow(streamBounds, { x: streamBounds.originX + 8, y: -590 }) &&
+    shouldRequestWindow(streamBounds, {
+      x: streamBounds.originX + streamBounds.width - 1 - 8,
+      y: -590,
+    }) &&
+    shouldRequestWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 8 }) &&
+    shouldRequestWindow(streamBounds, {
+      x: -1_250,
+      y: streamBounds.originY + streamBounds.height - 1 - 8,
+    }),
 );
 check(
   "窗口边缘触发：距边缘 9 格时保持当前窗口",
-  !shouldStreamWindow(streamBounds, { x: -1_273, y: -590 }) &&
-    !shouldRequestWindow(streamBounds, { x: -1_273, y: -590 }) &&
-    !shouldRequestWindow(streamBounds, { x: -1_228, y: -590 }) &&
-    !shouldRequestWindow(streamBounds, { x: -1_250, y: -605 }) &&
-    !shouldRequestWindow(streamBounds, { x: -1_250, y: -560 }),
+  !shouldStreamWindow(streamBounds, { x: streamBounds.originX + 9, y: -590 }) &&
+    !shouldStreamWindow(streamBounds, {
+      x: streamBounds.originX + streamBounds.width - 1 - 9,
+      y: -590,
+    }) &&
+    !shouldStreamWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 9 }) &&
+    !shouldStreamWindow(streamBounds, {
+      x: -1_250,
+      y: streamBounds.originY + streamBounds.height - 1 - 9,
+    }) &&
+    !shouldRequestWindow(streamBounds, { x: streamBounds.originX + 9, y: -590 }) &&
+    !shouldRequestWindow(streamBounds, {
+      x: streamBounds.originX + streamBounds.width - 1 - 9,
+      y: -590,
+    }) &&
+    !shouldRequestWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 9 }) &&
+    !shouldRequestWindow(streamBounds, {
+      x: -1_250,
+      y: streamBounds.originY + streamBounds.height - 1 - 9,
+    }),
 );
 check(
-  "有符号中心的窗口原点就是 centre - radius，且同一原点不会重复请求",
-  snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).x === -1_282 &&
-    snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).y === -614 &&
+  "有符号中心的窗口原点就是 centre - radius（默认半径 40、窗口 80），且同一原点不会重复请求",
+  snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).x === streamBounds.originX &&
+    snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).y === streamBounds.originY &&
     !windowNeedsStream(streamBounds, { x: -1_250, y: -582 }) &&
     windowNeedsStream(streamBounds, { x: -1_250, y: -590 }),
 );
@@ -1581,8 +1608,18 @@ check(
 
 // The page keeps the loaded window unless the tracker accepts a non-null response. Model that rule
 // with two windows around a negative centre: the newer answer lands first, then the older one.
-const oldWindow = { originX: -1_100, originY: -1_100, width: 64, height: 64 };
-const newWindow = { originX: -1_132, originY: -1_132, width: 64, height: 64 };
+const oldWindow = {
+  originX: -1_100,
+  originY: -1_100,
+  width: SNAPSHOT_RADIUS_TILES * 2,
+  height: SNAPSHOT_RADIUS_TILES * 2,
+};
+const newWindow = {
+  originX: -1_100 - SNAPSHOT_RADIUS_TILES,
+  originY: -1_100 - SNAPSHOT_RADIUS_TILES,
+  width: SNAPSHOT_RADIUS_TILES * 2,
+  height: SNAPSHOT_RADIUS_TILES * 2,
+};
 let loadedWindow = oldWindow;
 if (requestTracker.accept(secondRequestId)) {
   loadedWindow = newWindow;

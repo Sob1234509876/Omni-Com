@@ -175,8 +175,8 @@ charges nothing.
 
 The server's `TRANSFER <source> <target> <item> <amount|all>` works in a classic world: send gold or wood
 from one of your finished warehouses to another, and a real engineer carries it. The classic engineer pool
-turns the hauling system's automatic hauler search off (`setAutoHaulerAssignment(false)`) so it can serve
-one arsenal at a time, but the transfer command does not depend on that search: it dispatches the nearest
+turns the hauling system's automatic hauler search off (`setAutoHaulerAssignment(false)`) so the pool can
+choose which engineer serves which arsenal, but the transfer command does not depend on that search: it dispatches the nearest
 free engineer explicitly (`HaulingSystem.dispatchNearestHauler`). A player with no free engineer therefore
 gets a readable `ERR no free engineer ...` instead of a job that waits forever, and the pool only ever
 assigns jobs whose target is the arsenal, so it never steals a transfer job. The warehouse panel's
@@ -192,10 +192,11 @@ one hauls". It does not give every engineer a fixed arsenal; it recomputes a cre
   stands in the arsenal's dimension and it is within `ClassicEngineerPool.RECRUIT_RADIUS_TILES = 24` tiles of
   the arsenal. A busy engineer (moving, building, repairing, fighting or already hauling) is never
   interrupted; it becomes eligible again once its queue is empty.
-- **One arsenal at a time.** Each player is served at only the **nearest unsatisfied** producer, ordered by
-  squared distance from the player's oldest living building and then by building id. An arsenal stays
-  "unsatisfied" while it has a pending delivery or an affordable waiting recipe, so the crew does not move on
-  to a second arsenal halfway through the first one's shipments.
+- **Every arsenal in one pass.** A pass walks all of the player's finished producers, nearest to the base
+  first (squared distance from the oldest living building, ties by id), and serves every one that still
+  needs goods. The earlier "nearest unsatisfied only" rule left the engineers around the other arsenals
+  idle, which was the reported defect. A producer with nobody within the radius is skipped for this pass
+  and does not stop the producers behind it.
 - **No sticky assignment.** After a haul finishes its order queue is empty again and the next pass may hand
   it the next demand. An engineer named by any pending job is excluded, so one unit never serves two
   arsenals at once.
@@ -376,7 +377,7 @@ regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
 STOP must be followed by an applicable move and build against a real `CommandService`, each of the twelve
 classic buildings must own a distinct atlas cell, the three turret tiers must be buildable, upgrade in place and
-carry the documented weapon numbers, and the engineer pool must serve one arsenal at a time
+carry the documented weapon numbers, and the engineer pool must serve **every** arsenal in the same pass
 from a 24-tile crew, enrol a newly produced engineer without a restart and never assign one engineer to
 two arsenals. The gate section is the strict part: it proves
 against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
@@ -399,7 +400,7 @@ known starting position, not a fog-of-war reveal.
 | `src/main/java/.../classic/ClassicEconomy.java` | the world tick hook that pays mine and lumber camp income once per 60 ticks |
 | `src/main/java/.../classic/ClassicAi.java` | the deterministic controller of one bot player (the no-argument form is the historical single enemy) |
 | `src/main/java/.../classic/ClassicBots.java` | the bot player system: count, faction seeds, spawn anchors and one controller per bot |
-| `src/main/java/.../classic/ClassicEngineerPool.java` | the engineer crew policy: a 24-tile radius, one arsenal at a time, pre-staged queue demand |
+| `src/main/java/.../classic/ClassicEngineerPool.java` | the engineer crew policy: a 24-tile radius, every arsenal served in one pass, pre-staged queue demand |
 | `src/main/java/.../classic/BotFaction.java` | one bot's player id, faction seed, style and spawn anchor |
 | `src/main/java/.../classic/BotStrategy.java` | the per-bot strategy record, its ranges and the deterministic deriver |
 | `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the three hooks, reads `--bots` from the plugin options |
