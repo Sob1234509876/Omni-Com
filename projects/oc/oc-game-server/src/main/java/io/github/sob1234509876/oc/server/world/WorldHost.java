@@ -59,6 +59,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -570,6 +571,11 @@ public final class WorldHost {
             contentCatalogueJson = null;
             LOG.log(System.Logger.Level.INFO, "dimension " + event.dimension().key()
                     + " registered at tick " + event.tick() + "; content version is now " + contentVersion);
+            // Push the bump to the connected clients as a NOTIFY frame, the same fact their next
+            // snapshot would tell them a poll interval later. The broadcast hands the frame to the
+            // registered transport observers, which send it off the world thread; a client that connects
+            // afterwards misses the frame by design and reads the version from its bootstrap document.
+            broadcastContentVersion();
         });
         // Player 1 is the sample-scene / human anchor. Its faction anchor is the tile the whole scene was
         // laid out around, so a snapshot can report where the human side started without inventing one.
@@ -1893,13 +1899,75 @@ public final class WorldHost {
     private volatile long contentVersion = 1L;
 
     /**
+     * Prefix of the server initiated push frame the host broadcasts when the version above bumps.
+     *
+     * <p>The full frame is this prefix followed by one compact JSON object,
+     * {@code NOTIFY {"type":"contentVersion","value":<version>}}. It rides the game WebSocket as an
+     * ordinary text frame; the client routes by the prefix instead of treating it as a command answer.
+     * The wire contract lives in {@code protocol/oc-protocol.md}; see
+     * {@link #addNotificationBroadcaster(NotificationBroadcaster)} for who carries it.
+     */
+    public static final String NOTIFY_FRAME_PREFIX = "NOTIFY ";
+
+    /**
+     * The push observers registered on this host, in registration order.
+     *
+     * <p>A {@link CopyOnWriteArrayList} because registration happens once per transport at startup while
+     * the broadcasts happen on the world thread: the list must be safe to iterate with no lock while a
+     * late registration may still slip in. The host never removes a broadcaster; a transport that dies
+     * unregisters by failing its own sends, which implementations contain per session.
+     */
+    private final List<NotificationBroadcaster> broadcasters = new CopyOnWriteArrayList<>();
+
+    /**
+     * Registers one push observer; see {@link NotificationBroadcaster} for the contract.
+     *
+     * <p>Called once per transport by {@code OcGameServer.start()}: the game WebSocket handler registers
+     * itself so every completed handshake session receives the frame. Registering the same broadcaster
+     * twice would deliver every frame twice, so callers register one instance once. Registration is
+     * allowed before or after {@link #start()}; a frame broadcast before any broadcaster exists is simply
+     * not pushed, which is harmless because the frame is only a hint.
+     *
+     * @param broadcaster the observer that carries the frame to its audience; never {@code null}
+     */
+    public void addNotificationBroadcaster(NotificationBroadcaster broadcaster) {
+        broadcasters.add(Objects.requireNonNull(broadcaster, "broadcaster"));
+    }
+
+    /**
+     * Builds and broadcasts one {@code contentVersion} push frame to every registered broadcaster.
+     *
+     * <p>Runs on the thread that published {@link Events.DimensionAdded} - the world thread holding the
+     * simulation lock on the legitimate path. The per broadcaster {@code try}/{@code catch} is the
+     * isolation that keeps a broken observer from breaking the world: an implementation that throws has
+     * already violated its contract, but the world must survive it anyway. The frame is built before the
+     * loop so every observer sees the same bytes of one version.
+     */
+    private void broadcastContentVersion() {
+        if (broadcasters.isEmpty()) {
+            return;
+        }
+        String frame = NOTIFY_FRAME_PREFIX + "{\"type\":\"contentVersion\",\"value\":"
+                + contentVersion + "}";
+        for (int index = 0; index < broadcasters.size(); index++) {
+            try {
+                broadcasters.get(index).broadcast(frame);
+            } catch (RuntimeException failure) {
+                LOG.log(System.Logger.Level.WARNING, "notification broadcaster failed: " + failure);
+            }
+        }
+    }
+
+    /**
      * The current version of the static per-world payload.
      *
      * <p>Starts at 1 and increments every time a dimension is registered on a world that is already
      * running (see {@link #bootstrapJson()}). Clients compare this against the value they fetched with
      * the bootstrap document; a mismatch means the dimension roster changed and the bootstrap document
      * must be fetched again. This is a diagnostic read for checks and clients; the wire form is the
-     * {@code contentVersion} field of the two documents.
+     * {@code contentVersion} field of the two documents, and the push form is the
+     * {@code NOTIFY {"type":"contentVersion",...}} frame of
+     * {@link #addNotificationBroadcaster(NotificationBroadcaster)}.
      *
      * @return the current content version, at least 1
      */

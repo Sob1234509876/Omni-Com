@@ -6,7 +6,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 
 ## What this document covers
 
-- Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
+- Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, the idle timeout / server heartbeat, and the server-initiated `NOTIFY` push frames.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
 - Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `ASSIST`,
@@ -35,7 +35,7 @@ English | [简体中文](oc-protocol_zh_CN.md)
 | HTTP address | `http://<host>:25567/`, serving the static files of the same `web-client/dist/`, the plugin assets under `/plugin-assets`, the world snapshot at `/world/snapshot` and the one-time world bootstrap at `/world/bootstrap` |
 | Frame type | **TEXT** frames only; a binary frame is not a command, so the server answers ERR and keeps the connection open, and the client ignores it and shows a notice |
 | Frame content | Each TEXT frame carries **exactly one command line**, UTF-8, without CR/LF |
-| Answer | **Exactly one line** of answer per command; the client must not pack several commands into one frame |
+| Answer | **Exactly one line** of answer per command; the client must not pack several commands into one frame. The server may also send an unsolicited TEXT frame that is **not** an answer - the `NOTIFY` push frame, see "Server-initiated NOTIFY frames" below |
 | Close | On the normal path only `QUIT` closes the connection; a failed handshake closes it; on a timeout or a frame-rule violation an implementation may close it, with a readable reason |
 
 A client cannot send commands right after connecting: **the first frame must be the version handshake** (see the next section). The server accepts no other command before a successful handshake. Inside a command line the command word (`PING`, `REQ`, and so on) is **case-insensitive**; arguments are passed as-is, with no case folding.
@@ -677,7 +677,7 @@ The document is built **once per host** and then served byte for byte from the h
   - `content` is the **raw content catalogue** (the server-provided key-value pairs of the i18n scheme): `"dimensions"` (the per-key display names), `"items"`, `"buildings"`, `"units"` and `"recipes"`, each keyed by content path, with the same fields and the same "omit when it carries no information" rules the snapshot documented before the move.
 - A successful answer is `200` with `Content-Type: application/json; charset=utf-8`, `Cache-Control: public, no-cache` and an `ETag` over the exact bytes served; a request whose `If-None-Match` names the current ETag is answered `304 Not Modified` with no body. Only `GET` and `HEAD` are allowed, other methods answer `405` with `Allow: GET, HEAD`.
 - **Why `no-cache` instead of the former `max-age=31536000, immutable`:** the document is static *until a dimension is added*, and the old year-long immutable promise would have let a browser serve a dimension roster that has silently gone stale and never refetch it. `public, no-cache` keeps caching useful while dropping the immutability claim: a browser may still store the document but must revalidate it with the `ETag` before every use, so an unchanged world costs one small `304` per page load instead of a full re-download, and a version bump changes the bytes, which changes the `ETag`, which turns the next revalidation into a fresh `200` with the new roster. The `contentVersion` handshake below is the application layer of the same contract and does not depend on cache timing at all.
-- **`contentVersion` semantics.** The version starts at `1` when the host is built and increments by exactly `1` each time a dimension is registered on a world that is already running (the engine publishes a `DimensionAdded` event at that moment; the dimensions the content declares at server start do not bump it, because they are part of the document's first build). There is no removal API, so the version never decreases. Everything else in the document - the catalogue, the BUILD array, `tilePixels` - is registry-immutable and never contributes to the version.
+- **`contentVersion` semantics.** The version starts at `1` when the host is built and increments by exactly `1` each time a dimension is registered on a world that is already running (the engine publishes a `DimensionAdded` event at that moment; the dimensions the content declares at server start do not bump it, because they are part of the document's first build). There is no removal API, so the version never decreases. Everything else in the document - the catalogue, the BUILD array, `tilePixels` - is registry-immutable and never contributes to the version. A bump is additionally announced to the connected WebSocket sessions with a server-initiated `NOTIFY {"type":"contentVersion",...}` push frame (see "Server-initiated NOTIFY frames"), but that frame is only a latency hint; this snapshot-based handshake remains the contract that correctness rests on.
 - **Client handshake (expected behaviour on a version mismatch).** The bootstrap document and every snapshot poll both carry `contentVersion`. A client records the version it fetched the bootstrap document with, and on every snapshot poll compares that recorded value with the snapshot's `contentVersion`:
   1. Equal (the normal case): keep using the cached bootstrap document; no request is spent.
   2. Mismatch: fetch `GET /world/bootstrap` **once** (it returns `200` with the new bytes and a new `ETag`), rebuild everything derived from it - the dimension switcher, the per-dimension render targets, anything keyed by a roster entry - and store the new version as the recorded one.
@@ -690,12 +690,43 @@ The document is built **once per host** and then served byte for byte from the h
 
 
 
+## Server-initiated NOTIFY frames
+
+Besides the strict one-command-in, one-answer-out flow, the server may send an **unsolicited TEXT frame** whose content starts with the prefix `NOTIFY `:
+
+```text
+NOTIFY {"type":"contentVersion","value":2}
+```
+
+The prefix is followed by **one compact JSON object** whose `type` field selects the meaning and whose other fields carry that type's payload. `NOTIFY` is the only unsolicited TEXT frame shape the server sends; everything else it sends is a command answer or the transport framing of the heartbeat section.
+
+| Item | Contract |
+| --- | --- |
+| Direction | Server to client only; a client never sends a `NOTIFY` frame, and one that arrives from the client is just an unknown command (`ERR unknown command`) |
+| Routing | The client routes every inbound TEXT frame **by prefix**: a frame whose content starts with `NOTIFY ` is a push frame, anything else is a command answer |
+| Not an answer | A `NOTIFY` frame belongs to **no pending command**. It must not consume a pending answer slot, must not be fed to the command parser, and receiving it never disturbs the one-line-of-answer-per-command pairing |
+| Audience | Every WebSocket session that has completed the version handshake (`HELLO 1` answered with `OK OC/1`), **whether it has logged in or not** - `contentVersion` is not sensitive, the same value rides the unauthenticated snapshot route. A session still inside the handshake never receives one, so the first frame a client sees is always its own `OK OC/1` |
+| Reliability | Best effort. A lost or dropped frame is harmless by design; there is no replay, no queueing and no acknowledgement |
+| Extensibility | Later versions may add new `type` values (for example a plugin reload or a world restart); a client that does not know a type **ignores the frame**. `contentVersion` is the only type defined today |
+
+### The `contentVersion` type
+
+```text
+NOTIFY {"type":"contentVersion","value":2}
+```
+
+- `value` is a decimal integer, the new `contentVersion` - the same number the next snapshot poll and the refetched bootstrap document carry. The version starts at `1` and increments by exactly `1` each time a dimension is registered on a world that is already running (see "World bootstrap" for what that means); one bump pushes **exactly one** such frame to every greeted session.
+- The frame is a **wake up hint, not state**. A client that receives it performs exactly the action its snapshot poll would have taken on a version mismatch: fetch `GET /world/bootstrap` **once** and rebuild everything derived from it. The bootstrap document's own handshake rules - one refetch per mismatch, no looping, keep the old document when the refetch fails - apply unchanged; the push merely replaces "wait for the next poll" with "act now".
+- A session that connects **after** the bump receives no replay: the current version is part of its first snapshot and of the first bootstrap document it fetches, so there is nothing to catch up on.
+- The frame never changes correctness. A client that ignores `NOTIFY` entirely keeps working exactly as before; it learns about a roster change one poll interval (500 ms) later through the snapshot's `contentVersion` field, which remains the authoritative fallback. The push is a latency optimisation over that handshake, never a replacement for it.
+
 ## Version compatibility
 
 **This document's version number is the protocol's version number.** The current version is `1`, written on the wire as `HELLO 1` and `OK OC/1`.
 
 - When this document changes an existing frame rule, an existing command, any existing answer, the base64 convention, the envelope layout, the key length, the window length, or the magic, the version number must increase (`2`, `OK OC/2`, and so on), and this document, the server, and the client must be changed together.
 - Adding a command that an old client never sends is backward compatible and does not by itself require a version increase. The gameplay commands - including `REPAIR`, `RECLAIM`, `TRANSFER`, and the optional waypoint points of `ORDER MOVE` - are such an addition: they keep OC/1 and leave every existing command byte-identical. An existing `ORDER MOVE <id> <x> <y>` is still exactly that line and still means exactly that one destination.
+- The server-initiated `NOTIFY` push frame is the same kind of additive change on the server-to-client direction: no existing answer line changed, no existing command changed, and an old client is only ever given frames it can already route (answers) plus new `NOTIFY` frames it must route by prefix and may ignore. The one client-side obligation is the routing rule itself - inbound TEXT frames are dispatched on the `NOTIFY ` prefix instead of being treated as "the answer to whatever was sent last" - which is a coordinated change with the client, and a client that never acts on the frame loses nothing but latency (see the fallback rule above).
 - The version number is the **only** basis on which the two ends judge compatibility; do not guess compatibility from "the field still looks present" or "the string still parses".
 - Adding report fields only, or changing only the human-readable text of `REGISTER`/`LOGIN`, is not a protocol change; the client should not depend on that content anyway.
 - An old client meeting a new version receives a handshake answer other than `OK OC/1` and disconnects under the handshake rules; a new client meeting an old server does the same. This is the deliberate failure mode: refusing is safer than half-compatibility.

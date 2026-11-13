@@ -522,7 +522,7 @@ HUD 固定在视图左上角，并实时显示：
 pnpm check:render
 ```
 
-它先做类型检查，然后直接用 Node 24 的 TypeScript 类型剥离运行 [`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。该脚本当前打印 403 项通过检查。
+它先做类型检查，然后直接用 Node 24 的 TypeScript 类型剥离运行 [`scripts/check-render-math.ts`](scripts/check-render-math.ts)，逐行打印 `ok` / `fail`。该脚本当前打印 405 项通过检查。
 
 ## hello 插件示例
 

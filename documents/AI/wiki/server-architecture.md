@@ -251,6 +251,22 @@ tick 矛盾）。手写 StringBuilder JSON，零依赖。
   切换器等派生态，并更新记录值（不要循环：重取后的下一份快照携带的就是刚拉到的版本；重取后仍
   不一致是服务器 bug）。重取失败保留旧文档照常可玩。字段全部按可选解析。协议文档
   "世界引导"一节是权威形状定义与握手契约（en+zh 同步）。
+- **NOTIFY 推送帧（服务端主动出站）**：为了消掉"等下一轮轮询才发现版本变了"的延迟，
+  `Events.DimensionAdded` 处理器在抬版本、丢缓存之后还会调用 `broadcastContentVersion()`：把
+  `NOTIFY {"type":"contentVersion","value":N}` 交给注册的广播器。广播器是反转接口
+  `world/NotificationBroadcaster.java`（`WorldHost.addNotificationBroadcaster` 注册，
+  `CopyOnWriteArrayList` 保存，注册在启动时、广播在世界线程上）；`ws/CommandWebSocketHandler.java`
+  实现它并在 `OcGameServer.start()` 里注册。受众是**每条完成 HELLO 握手的会话**——无论是否登录
+  （`contentVersion` 不敏感，同一个值就挂在免登录的快照路由上）；仍在握手中的会话不推，因为它的
+  `pushSocket` 字段在写完 `OK OC/1` 之后才发布，客户端看到的第一帧永远是握手回答。线程安全的关键：
+  广播发生在持有 `stateLock` 的世界线程上，但实现只往专属守护线程池（`oc-ws-push`，单线程、空闲
+  30s 回收、无界队列）扔一个遍历任务就立即返回，逐会话 try/catch 隔离——一个死/慢会话只损失自己的
+  帧，它的读超时最终会关闭 socket、从而解除可能的写阻塞，世界线程绝不被 socket I/O 拖住。帧只是
+  **唤醒提示，不是状态**：提升之后才连接的会话不收重放，它从自己的引导文档与快照里读到当前版本；
+  丢帧无害，快照的 contentVersion 握手仍是权威兜底。线契约（按 `NOTIFY ` 前缀路由、不占用等待中的
+  回答槽、`type` 可扩展）见协议文档"服务端主动推送的 NOTIFY 帧"一节（en+zh 同步）。自检：
+  `WebSocketCheck.notifyContentVersion` 一个组合探针覆盖"恰好一帧 + 晚连接无重放"；
+  `WorldHostCheck` 的版本握手探针保持不变。
 
 ### 5.1 顶层字段
 
@@ -322,6 +338,11 @@ tick 矛盾）。手写 StringBuilder JSON，零依赖。
 - 浏览器走 WebSocket（`ws/CommandWebSocketHandler.java`）：一文本帧一命令行；**先发版本行 `HELLO 1`**，
   服务器答 `OK OC/1`，否则拒绝（这是浏览器通道的游戏协议版本机制；加密 TCP 通道用握手里的版本字节，
   见 `net/SecureChannel.java`，OC/2，GCM，60 秒防重放窗口）。空闲超时 300 s，服务器每 25 s 发 ping。
+- **服务器也可以主动说话（唯一的出站例外）**：`CommandWebSocketHandler` 实现了
+  `world/NotificationBroadcaster` 并被注册进 `WorldHost`（见 `OcGameServer.start()`），世界在
+  contentVersion 变化的那一刻把 `NOTIFY {"type":"contentVersion",...}` 推送给每条已完成握手的会话——
+  异步、逐会话隔离、不重放；这不是命令回答，客户端按前缀路由。机制与线程安全分析见 §5.0 的
+  "NOTIFY 推送帧"条目，线契约见协议文档同名一节。
 - **账号即身份**：`LOGIN <name> <password>` 成功后 `Session.markAuthenticated(name)`
   （PBKDF2-HMAC-SHA256，21 万次迭代，128 位随机盐；`auth/Pbkdf2PasswordHasher.java`）。
   每条游戏命令在世界线程内以账号名调 `WorldHost.joinPlayer(name)`：首次绑定最小空闲人类槽（3..8），

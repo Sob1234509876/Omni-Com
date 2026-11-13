@@ -4,7 +4,15 @@
  * One command is sent per TEXT frame, and one answer is resolved per command. Answers are matched in
  * order, which is safe because a WebSocket preserves message order in both directions. A timeout closes
  * the connection: after a missing answer the queue can no longer be trusted.
+ *
+ * Server-pushed `NOTIFY ` frames are the one exception to that queue: {@link routeFrame} classifies
+ * each received line BEFORE any pending answer is shifted, and a notification is handed to
+ * {@link SocketHooks.onNotify} instead, so a push never consumes (and desyncs) a pending command's
+ * answer slot. An unparsable notification is also diverted - logged once and dropped by the caller -
+ * never resolved as an answer.
  */
+
+import { routeFrame } from "./notify.ts";
 
 export interface CloseInfo {
   readonly code: number;
@@ -18,6 +26,11 @@ export interface SocketHooks {
   readonly onError?: (error: Error) => void;
   /** Non-fatal notice, such as an ignored binary frame; the connection stays open. */
   readonly onNotice?: (message: string) => void;
+  /**
+   * A server-pushed `NOTIFY ` frame, diverted before the answer queue; the connection stays open.
+   * The line arrives unparsed (it may even be unparsable) - the caller owns the defensive parsing.
+   */
+  readonly onNotify?: (line: string) => void;
   readonly onLine?: (line: string) => void;
 }
 
@@ -111,6 +124,13 @@ export function connect(url: string, options: SocketOptions = {}): CommandSocket
     }
     if (broken) {
       options.onLine?.(line);
+      return;
+    }
+    // The prefix split happens BEFORE the answer matcher: a notification is diverted here and never
+    // shifts (and would otherwise desync) the in-order pending-answer queue below.
+    const route = routeFrame(line);
+    if (route.kind !== "answer") {
+      options.onNotify?.(line);
       return;
     }
     const entry = pending.shift();

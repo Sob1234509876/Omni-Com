@@ -49,7 +49,9 @@ import java.util.concurrent.TimeUnit;
  * static web client, the loaded plugins' assets under {@code /plugin-assets/} and speak the same commands
  * over a WebSocket. When that port is {@code 0} no HTTP socket is bound at all, and the server behaves
  * exactly as it did before the endpoint existed. {@link #stop()} closes both sockets in the same shutdown
- * step.
+ * step. When a world is hosted as well, the browser handler registers itself as that world's
+ * {@link io.github.sob1234509876.oc.server.world.NotificationBroadcaster}, so the world can push a
+ * {@code NOTIFY} frame to every greeted WebSocket session the moment its content version changes.
  *
  * <p><strong>The server side world is optional.</strong> With {@code --world on} (the default) the endpoint
  * also gets one {@link WorldHost} and publishes its snapshot at {@code GET /world/snapshot}. The world is
@@ -459,8 +461,16 @@ public final class OcGameServer {
             worldHost = host;
         }
         if (webSocketConfig.port() != 0) {
-            HttpWebServer browser = new HttpWebServer(webSocketConfig,
-                    new CommandWebSocketHandler(server.dispatcher()), pluginLoader, host);
+            CommandWebSocketHandler browserHandler = new CommandWebSocketHandler(server.dispatcher());
+            if (host != null) {
+                // The inversion that carries the server initiated push frames: the world cannot know that
+                // browsers exist, so the handler - which owns the greeted session registry - registers
+                // itself as the world's NotificationBroadcaster. When a dimension is registered on the
+                // running world the host hands the handler one NOTIFY frame and every greeted WebSocket
+                // session receives it; the TCP channel has no push audience and stays request/response.
+                host.addNotificationBroadcaster(browserHandler);
+            }
+            HttpWebServer browser = new HttpWebServer(webSocketConfig, browserHandler, pluginLoader, host);
             try {
                 browser.start();
             } catch (IOException failure) {

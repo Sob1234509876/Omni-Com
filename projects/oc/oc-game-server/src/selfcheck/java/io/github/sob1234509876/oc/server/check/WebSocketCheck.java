@@ -1,6 +1,10 @@
 package io.github.sob1234509876.oc.server.check;
 
 import io.github.sob1234509876.oc.rts.content.ScenarioWorldContent;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
+import io.github.sob1234509876.oc.rts.map.ChunkedMap;
+import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.server.OcGameServer;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.auth.LocalUserStore;
@@ -19,6 +23,7 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -143,6 +148,7 @@ public final class WebSocketCheck {
         probe(check, "空闲超时参数", () -> idleConfiguration(check, auth, registry, store));
         probe(check, "服务端 ping 心跳", () -> serverHeartbeat(check, auth, registry, store));
         probe(check, "同账号重连", () -> sameAccountReconnect(check, auth, registry, store));
+        probe(check, "NOTIFY 推送帧", () -> notifyContentVersion(check, auth, registry, store));
         check.note("WebSocket 检查完成；RFC 6455 示例键的期望 accept 值是 " + RFC_ACCEPT);
     }
 
@@ -595,6 +601,70 @@ public final class WebSocketCheck {
         }
     }
 
+    /**
+     * Proves the server initiated NOTIFY push over the game WebSocket, end to end.
+     *
+     * <p>One combined probe covers the whole push behaviour: a real world runs under a real endpoint whose
+     * handler is registered as the world's {@code NotificationBroadcaster}; a session that has completed
+     * the version handshake receives exactly one {@code NOTIFY {"type":"contentVersion",...}} text frame
+     * with the bumped value when a dimension is registered through the engine API; and a session opened
+     * after the bump receives no replay - the frame is only a wake up hint, the late session reads the
+     * version from its next snapshot or bootstrap document. The expected frame is spelled out byte for
+     * byte here instead of being derived from the handler, so a wire format regression cannot hide behind
+     * a shared constant; the engine event and the version handshake itself are already covered by
+     * {@code WorldHostCheck} and stay there.
+     */
+    private static void notifyContentVersion(Check check, AuthService auth, RequestRegistry registry,
+            Path store) throws IOException {
+        WorldHost host = new WorldHost(1L, new ScenarioWorldContent());
+        HttpWebServer server = null;
+        try {
+            host.start();
+            WebSocketConfig config = new WebSocketConfig(0, InetAddress.getLoopbackAddress().getHostAddress(),
+                    "/ws", store + "-web", 1024, 4096, 10_000, List.of());
+            CommandWebSocketHandler handler = new CommandWebSocketHandler(auth, registry, () -> host);
+            // The registration OcGameServer.start() performs in production is repeated here so the probe
+            // owns both ends of the seam and a missed registration cannot silently pass the check.
+            host.addNotificationBroadcaster(handler);
+            server = new HttpWebServer(config, handler);
+            server.start();
+            int port = server.port();
+            long versionBefore = host.contentVersion();
+            long versionAfter = versionBefore + 1;
+            String expectedFrame = WorldHost.NOTIFY_FRAME_PREFIX
+                    + "{\"type\":\"contentVersion\",\"value\":" + versionAfter + "}";
+
+            try (RawClient early = RawClient.connect(port)) {
+                early.upgrade();
+                // The registration must fire the engine's DimensionAdded event on the world thread; the
+                // same command shape WorldHostCheck uses, so the push is exercised on the legitimate path.
+                host.submitCommand(running -> {
+                            running.engine().world().addDimension(
+                                    DimensionId.of("moon"), DimensionProfile.moon(),
+                                    new ChunkedMap(new FlatChunkGenerator(
+                                            running.engine().world().content().terrain("grass"))));
+                            return "OK";
+                        })
+                        .await();
+                check.equal(expectedFrame, early.awaitText(),
+                        "版本提升之前完成握手的会话恰好收到一帧 NOTIFY，携带提升后的 contentVersion "
+                                + versionAfter + "，帧与协议文档逐字节一致");
+                check.that(early.silenceWithin(400),
+                        "NOTIFY 之后 400ms 内没有第二个文本帧（一次版本提升恰好推送一帧，不重复不补发）");
+            }
+            try (RawClient late = RawClient.connect(port)) {
+                late.upgrade();
+                check.that(late.silenceWithin(400),
+                        "版本提升之后打开的会话不会收到重放的 NOTIFY 帧（推送只是提示，状态在引导文档里）");
+            }
+        } finally {
+            if (server != null) {
+                server.stop();
+            }
+            host.stop();
+        }
+    }
+
     /** Whether {@code --ws-idle} rejects a value; the helper keeps the assertions one line each. */
     private static boolean rejectsBadIdle(String seconds) {
         try {
@@ -854,6 +924,26 @@ public final class WebSocketCheck {
                 if (frame.opcode() == OPCODE_CLOSE) {
                     return frame;
                 }
+            }
+        }
+
+        /**
+         * Whether the server stays completely silent (no frame of any kind) for a short quiet window.
+         *
+         * <p>Lowers the socket read timeout for the window and restores it afterwards, so the helper is
+         * composable with {@code awaitText}. The server's heartbeat pings are 25 seconds apart by default,
+         * far outside the windows the checks use, so silence here really means "no push frame arrived".
+         */
+        boolean silenceWithin(int quietMillis) throws IOException {
+            int previous = socket.getSoTimeout();
+            socket.setSoTimeout(quietMillis);
+            try {
+                readFrame();
+                return false;
+            } catch (SocketTimeoutException quiet) {
+                return true;
+            } finally {
+                socket.setSoTimeout(previous);
             }
         }
 

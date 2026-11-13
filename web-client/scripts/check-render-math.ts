@@ -272,6 +272,12 @@ import {
 } from "../src/bootstrap.ts";
 import { ATTACK_PATH_COLOR } from "../src/render/paths.ts";
 import {
+  isKnownNotifyType,
+  parseContentVersionNotify,
+  parseNotify,
+  routeFrame,
+} from "../src/notify.ts";
+import {
   RASTER_BUCKET_MAX_PX,
   RASTER_CACHE_MAX_ENTRIES,
   rasterBucket,
@@ -7346,6 +7352,78 @@ check(
       decide(stored, 2, undefined) === "none";
     clearWorldBootstrap();
     return snapshotParsed && docParsed && decided && detected && refetched;
+  })(),
+);
+
+check(
+  "NOTIFY 推送帧：前缀分流先于答案匹配（answer 永不变成 push、push 永不占用答案槽位）；防御解析（坏 JSON/非对象/坏 type → 丢弃，不抛错）；contentVersion 提取非负整数；未知 type 经注册表被忽略",
+  (() => {
+    // The pure router — exactly the split the socket's receive path applies BEFORE the in-order
+    // answer matcher. Every ordinary answer line (and a non-canonical NOTIFY variant the server
+    // never sends) stays an answer.
+    const answered =
+      routeFrame("OK player 7").kind === "answer" &&
+      routeFrame("PONG").kind === "answer" &&
+      routeFrame("ERR bad arguments").kind === "answer" &&
+      routeFrame("").kind === "answer" &&
+      routeFrame('notify {"type":"contentVersion","value":2}').kind === "answer" &&
+      routeFrame('NOTIFY{"type":"contentVersion","value":2}').kind === "answer";
+    // A readable push becomes a typed notification carrying the whole payload object.
+    const push = routeFrame('NOTIFY {"type":"contentVersion","value":2}');
+    const parsed =
+      push.kind === "notify" &&
+      push.message.type === "contentVersion" &&
+      push.message.payload["value"] === 2 &&
+      parseNotify('NOTIFY {"type":"contentVersion","value":2}')?.type === "contentVersion";
+    // Unparsable frames degrade to `drop` (the caller logs once and drops), never throw.
+    const dropped =
+      routeFrame("NOTIFY {oops").kind === "drop" &&
+      routeFrame("NOTIFY ").kind === "drop" &&
+      routeFrame("NOTIFY [1,2]").kind === "drop" &&
+      routeFrame('NOTIFY "contentVersion"').kind === "drop" &&
+      routeFrame("NOTIFY 42").kind === "drop" &&
+      routeFrame('NOTIFY {"value":2}').kind === "drop" &&
+      routeFrame('NOTIFY {"type":42}').kind === "drop" &&
+      routeFrame('NOTIFY {"type":""}').kind === "drop" &&
+      routeFrame('NOTIFY {"type":"  "}').kind === "drop";
+    // The registry: the known type dispatches, unknown types are ignored by design.
+    const registry =
+      isKnownNotifyType("contentVersion") && !isKnownNotifyType("futureThing");
+    if (push.kind !== "notify") {
+      return false;
+    }
+    // The `contentVersion` extractor: a readable value only as a non-negative safe integer; an
+    // unknown type yields nothing even with a well-formed payload.
+    const extracted =
+      parseContentVersionNotify(push.message) === 2 &&
+      parseContentVersionNotify({ type: "contentVersion", payload: { value: "2" } }) ===
+        undefined &&
+      parseContentVersionNotify({ type: "contentVersion", payload: {} }) === undefined &&
+      parseContentVersionNotify({ type: "contentVersion", payload: { value: 2.5 } }) ===
+        undefined &&
+      parseContentVersionNotify({ type: "contentVersion", payload: { value: -1 } }) ===
+        undefined &&
+      parseContentVersionNotify({ type: "futureThing", payload: { value: 2 } }) === undefined;
+    // The desync proof, mirroring the socket's dispatch loop: the router decides BEFORE the queue
+    // is touched, so pushes (readable or garbage) never shift a pending answer slot.
+    const queue: string[] = ["answer-1", "answer-2"];
+    let pushes = 0;
+    for (const frame of [
+      'NOTIFY {"type":"contentVersion","value":2}',
+      "NOTIFY {oops",
+      "OK 3",
+    ]) {
+      const route = routeFrame(frame);
+      if (route.kind === "answer") {
+        queue.shift();
+      } else {
+        pushes += 1;
+      }
+    }
+    return (
+      answered && parsed && dropped && registry && extracted && pushes === 2 &&
+      queue.length === 1 && queue[0] === "answer-2"
+    );
   })(),
 );
 

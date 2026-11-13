@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (827 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (830 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,15 +33,16 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 827 checks passed.
+game server self check: all 830 checks passed.
 ```
 
-827 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+830 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
-real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
-(upgrade, the version handshake, frame rules, origin rules, the configurable idle timeout and the server
-heartbeat), `HttpCheck` 47 (static files, traversal, caching, a missing static root), `PluginAssetsCheck` 80
+real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 91
+(upgrade, the version handshake, frame rules, origin rules, the configurable idle timeout, the server
+heartbeat and the server-initiated NOTIFY push frame), `HttpCheck` 47 (static files, traversal, caching, a
+missing static root), `PluginAssetsCheck` 80
 (manifest merging and the asset route over real plugin jars), `WorldHostCheck` 168 (the daemon tick thread,
 the unbounded `InfiniteTerrainMap` and its 4096-chunk budget, the world starting without a map edge, the
 buildable spawn anchor found from `(0,0)` inside a 64-tile bound, the windowed snapshot and its `cx` / `cy` /
@@ -207,7 +208,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 827 check self check program
+src/selfcheck/java/.../server/check/    the 830 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

@@ -3,11 +3,15 @@ package io.github.sob1234509876.oc.server.ws;
 import io.github.sob1234509876.oc.server.auth.AuthService;
 import io.github.sob1234509876.oc.server.net.CommandDispatcher;
 import io.github.sob1234509876.oc.server.plugin.RequestRegistry;
+import io.github.sob1234509876.oc.server.world.NotificationBroadcaster;
 import io.github.sob1234509876.oc.server.world.WorldHost;
 
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -44,10 +48,32 @@ import java.util.function.Supplier;
  * threads, and a browser tab is not guaranteed to close politely. The state itself is only touched on the
  * connection's reader thread.
  *
+ * <p><strong>Server initiated push frames.</strong> The command direction is one frame in, one line out -
+ * but the server may also speak first: it implements {@link NotificationBroadcaster}, so
+ * {@link WorldHost} can hand it a push frame ({@code NOTIFY {...}}) the moment rarely changing world state
+ * changes, and every session that has completed the version handshake receives it as an ordinary text
+ * frame. The frame is a wake up hint, never state: a session that connects afterwards simply reads the
+ * current version from its next snapshot or bootstrap document, nothing is replayed, and correctness never
+ * depends on the frame arriving. The audience is deliberately every greeted session, logged in or not:
+ * {@code contentVersion} is not sensitive - the same value rides the unauthenticated snapshot route - and
+ * requiring a login would only make the hint less useful. A session still inside the handshake is skipped:
+ * its {@code pushSocket} is published only after the {@code OK OC/1} answer has been written, so the first
+ * frame such a client ever sees stays the handshake answer and the server never pushes before the client
+ * has agreed on OC/1.
+ *
+ * <p><strong>The push never touches the world thread.</strong> {@link WorldHost} broadcasts while it holds
+ * the simulation lock, so {@link #broadcast(String)} only enqueues one task on a dedicated daemon executor
+ * and returns; the socket writes happen on that thread. Each send is isolated in its own try/catch, so one
+ * dead or slow session costs its own frame and nothing else, and a send failure just closes that session -
+ * exactly like a failed heartbeat ping. The executor's single thread serialises the sends the same way the
+ * endpoint's heartbeat scheduler does; the frames are tiny, and a peer that stops reading is eventually
+ * unblocked because its own idle timeout closes the socket from the reader side. The thread times out when
+ * idle, so an endpoint without pushes costs no thread at all.
+ *
  * <p>No message, name or password from this class is logged. The dispatcher also logs no command line, so a
  * password sent over the browser endpoint never reaches a log file, exactly as on the TCP channel.
  */
-public final class CommandWebSocketHandler implements WebSocketHandler {
+public final class CommandWebSocketHandler implements WebSocketHandler, NotificationBroadcaster {
 
     private static final System.Logger LOG = System.getLogger(CommandWebSocketHandler.class.getName());
 
@@ -77,6 +103,21 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
 
     private final CommandDispatcher dispatcher;
     private final Map<String, ConnectionState> sessions = new ConcurrentHashMap<>();
+
+    /**
+     * The one daemon thread the push frames are written on, shared by every session of this handler.
+     *
+     * <p>See the class comment on why the sends must not run on the world thread. The queue is unbounded
+     * because the frames are rare and tiny, so {@link #broadcast(String)} enqueueing one from the world
+     * thread can never block; {@code allowCoreThreadTimeOut} returns the thread to the void when no push
+     * has happened for a while, which keeps a handler that is created per check from parking threads.
+     */
+    private final ThreadPoolExecutor pushExecutor = new ThreadPoolExecutor(0, 1, 30L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(), runnable -> {
+                Thread thread = new Thread(runnable, "oc-ws-push");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     /**
      * Creates a handler over the services the game already uses.
@@ -112,6 +153,7 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
      */
     public CommandWebSocketHandler(CommandDispatcher dispatcher) {
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+        pushExecutor.allowCoreThreadTimeOut(true);
     }
 
     @Override
@@ -148,6 +190,36 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
     }
 
     /**
+     * Pushes one server initiated frame to every greeted session, off the calling thread.
+     *
+     * <p>The caller is the {@link WorldHost} on the world thread holding the simulation lock, so this
+     * method does nothing but enqueue one task and return - the socket writes happen on the push executor,
+     * never on the world thread. The task walks the session map (a concurrent map, safe to iterate while
+     * connections open and close), skips the sessions that have not published their handshake yet and
+     * isolates every send: a closed session reports {@code IllegalStateException}, a dead socket reports
+     * {@code UncheckedIOException} and closes itself, and either way the failure costs that one session its
+     * frame and the rest of the audience still receives theirs. A frame lost this way is harmless by
+     * design; the snapshot's {@code contentVersion} handshake is the fallback that catches the client up.
+     */
+    @Override
+    public void broadcast(String frame) {
+        pushExecutor.execute(() -> {
+            for (ConnectionState state : sessions.values()) {
+                WebSocketSession target = state.pushSocket;
+                if (target == null || !target.open()) {
+                    continue;
+                }
+                try {
+                    target.sendText(frame);
+                } catch (RuntimeException failure) {
+                    LOG.log(System.Logger.Level.DEBUG, "push frame dropped for browser client "
+                            + target.id() + ": " + failure.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
      * Applies the text version handshake that must precede every browser command.
      *
      * <p>The three failure shapes are deliberately distinct so a client author can tell them apart: a first
@@ -172,6 +244,9 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
                 }
                 state.greeted = true;
                 session.sendText(HELLO_ANSWER);
+                // Only now does the session join the push audience: the handshake answer is already on
+                // the wire, so a NOTIFY frame can never overtake the OK OC/1 the client agreed to first.
+                state.pushSocket = session;
                 return;
             }
         }
@@ -215,10 +290,22 @@ public final class CommandWebSocketHandler implements WebSocketHandler {
      *
      * <p>Both fields are read and written only on the connection's reader thread, so no synchronisation is
      * needed; the map needs a concurrent type only because connections come and go on different threads.
+     * The exception is {@code pushSocket}, which the push executor reads from another thread: it is
+     * {@code volatile} and published exactly once, after the handshake answer has been written, so the
+     * push task either does not see the session at all or sees it fully greeted.
      */
     private static final class ConnectionState {
 
         private final CommandDispatcher.Session session = new CommandDispatcher.Session();
         private boolean greeted;
+
+        /**
+         * The session as a push target, or {@code null} until the version handshake completed.
+         *
+         * <p>Set once, on the reader thread, right after the handshake answer has been written; never
+         * cleared. {@code onClose} removes the whole state from the map instead, so a closed session
+         * drops out of the audience together with its state.
+         */
+        private volatile WebSocketSession pushSocket;
     }
 }

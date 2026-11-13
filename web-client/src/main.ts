@@ -20,6 +20,7 @@ import {
   sealEnvelope,
 } from "./protocol";
 import { connect, type CommandSocket } from "./socket";
+import { isKnownNotifyType, parseContentVersionNotify, routeFrame } from "./notify";
 import {
   EMPTY_CONTROL_GROUPS,
   add as addToControlGroup,
@@ -1222,6 +1223,12 @@ function openConnection(): void {
         }
         log("info", message);
         toastMessage(message, "info");
+      },
+      onNotify: (line) => {
+        if (seq !== connectionSeq) {
+          return;
+        }
+        handleNotifyFrame(line);
       },
       onLine: (line) => {
         if (seq !== connectionSeq) {
@@ -4982,6 +4989,45 @@ async function ensureWorldBootstrap(): Promise<void> {
   }
 }
 
+/** Whether an unparsable `NOTIFY` push has already been logged; the rest are dropped silently. */
+let notifyDropWarned = false;
+
+/**
+ * Handles one server-pushed `NOTIFY` frame diverted by the socket (never an answer slot).
+ *
+ * The parsing is defensive ({@link ./notify.ts!routeFrame}): an unparsable frame is logged once and
+ * dropped, never thrown; an unknown but readable `type` is ignored, so a newer server's extra push
+ * kinds change nothing here. The registry's `contentVersion` handler feeds the pushed value into
+ * {@link considerBootstrapRefetch} — the same decision point the snapshot handshake uses — so the
+ * bootstrap document is refetched immediately instead of waiting for the next 500 ms poll. The push
+ * is a wake-up hint only: the snapshot `contentVersion` handshake stays the correctness fallback,
+ * and the storm guard plus settle marker keep push + snapshot double-refetch from looping.
+ */
+function handleNotifyFrame(line: string): void {
+  const route = routeFrame(line);
+  if (route.kind === "answer") {
+    // The socket only diverts `NOTIFY `-prefixed frames here; an answer reaching this path would be
+    // an internal routing bug, so it is dropped rather than fed to the wrong handler.
+    return;
+  }
+  if (route.kind === "drop") {
+    if (!notifyDropWarned) {
+      notifyDropWarned = true;
+      log("info", `无法解析服务端推送帧，已忽略：${line.slice(0, 120)}`);
+    }
+    return;
+  }
+  log("recv", line);
+  if (!isKnownNotifyType(route.message.type)) {
+    // Unknown push type: ignored by design (registry in `notify.ts`); the queue is untouched.
+    return;
+  }
+  const pushedVersion = parseContentVersionNotify(route.message);
+  if (pushedVersion !== undefined) {
+    considerBootstrapRefetch(pushedVersion);
+  }
+}
+
 /**
  * The snapshot `contentVersion` a mismatch refetch already covered, or `undefined`. A mismatch that
  * survives its one refetch keeps this value set, so the handshake settles (the refetched document is
@@ -5040,6 +5086,28 @@ async function refetchWorldBootstrap(snapshotVersion: number): Promise<void> {
 }
 
 /**
+ * The one refetch decision point shared by every `contentVersion` observation.
+ *
+ * Both the snapshot poll's version handshake and a pushed `NOTIFY contentVersion` frame land here:
+ * the pure {@link bootstrapVersionHandshake} compares the observed version against the stored
+ * document, and only an unhandled mismatch fires {@link refetchWorldBootstrap} (with its one-in-flight
+ * guard and storm interval). A push and the next matching snapshot therefore cannot double-refetch:
+ * the first observation marks the version handled, and the second either compares equal (fresh
+ * document) or settles.
+ */
+function considerBootstrapRefetch(observedVersion: number): void {
+  if (
+    bootstrapVersionHandshake(
+      getWorldBootstrap(),
+      observedVersion,
+      bootstrapMismatchHandled,
+    ) === "refetch"
+  ) {
+    void refetchWorldBootstrap(observedVersion);
+  }
+}
+
+/**
  * Adopts one valid snapshot.
  *
  * A snapshot of the same window is interpolated from the previous frame as before. A snapshot of a
@@ -5056,17 +5124,12 @@ function applySnapshot(rawSnapshot: ServerWorldView): void {
   // `contentVersion`. A readable snapshot version that differs from the recorded one means a
   // dimension was registered mid-run, so the bootstrap document is refetched once and everything
   // derived from it is rebuilt. An unreadable version on either side (old server, demo world) does
-  // nothing, and a mismatch that survives its refetch settles instead of looping.
+  // nothing, and a mismatch that survives its refetch settles instead of looping. The same decision
+  // point serves a pushed `NOTIFY contentVersion` frame, so a push and the next snapshot cannot
+  // double-refetch.
   const snapshotVersion = rawSnapshot.contentVersion;
-  if (
-    snapshotVersion !== undefined &&
-    bootstrapVersionHandshake(
-      getWorldBootstrap(),
-      snapshotVersion,
-      bootstrapMismatchHandled,
-    ) === "refetch"
-  ) {
-    void refetchWorldBootstrap(snapshotVersion);
+  if (snapshotVersion !== undefined) {
+    considerBootstrapRefetch(snapshotVersion);
   }
   // The server echoes the drawn dimension back; adopting it keeps the view state and the fetch
   // parameter in step even when the first snapshot arrived without an explicit dim.
