@@ -191,7 +191,8 @@ public final class PathService implements SimulationSystem {
             GridPos start = unit.position().tile();
             // A search never crosses dimensions: the unit's own map and its own path finder are used, so a
             // goal that happens to share coordinates with another dimension cannot be walked to by mistake.
-            GridPos target = walkableTarget(world.map(unit.dimensionId()), goal.tile());
+            // The obstacle-aware view redirects a goal onto a building footprint to the nearest free tile.
+            GridPos target = walkableTarget(world.dimension(unit.dimensionId()).pathTerrain(), goal.tile());
             Optional<Path> found = world.pathFinder(unit.dimensionId())
                     .findPath(start, target, request.options().withMaxExpansions(allowance));
             if (found.isPresent() && !found.get().waypoints().isEmpty()) {

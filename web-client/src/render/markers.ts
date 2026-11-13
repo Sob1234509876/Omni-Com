@@ -33,6 +33,7 @@ import {
   minimapEdgeGeometry,
   type MinimapEdgeGeometry,
 } from "./minimap.ts";
+import { t } from "../i18n.ts";
 import { tileInWindow, type PlayerView, type WorldView } from "./view.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -42,13 +43,25 @@ import { tileInWindow, type PlayerView, type WorldView } from "./view.ts";
 /**
  * The status-line text when there is no home anchor to jump to.
  *
- * <p>This is the exact wording the page prints after `H` / `基地`: the feature says so instead of doing
+ * <p>This is the exact message the page prints after `H` / `基地`: the feature says so instead of doing
  * nothing silently. Both causes are named because they are indistinguishable from the client: a snapshot
  * from an older server carries no `anchor` field at all, and a page that has not logged in has no own
  * player row to look in.
  */
-export const HOME_ANCHOR_UNKNOWN_TEXT =
-  "我方基地未知：快照没有你的 anchor（未登录或旧服务端）";
+/**
+ * (Moved below; kept for the doc anchor.)
+ */
+export const HOME_ANCHOR_UNKNOWN_TEXT = "home.unknown";
+
+/**
+ * The status-line text when there is no home anchor to jump to.
+ *
+ * The page resolves the sentinel key through {@link t}, so the message is a dictionary entry like
+ * every other UI string (English UI reads English, zh-CN keeps the original wording).
+ */
+export function homeAnchorUnknownText(): string {
+  return t(HOME_ANCHOR_UNKNOWN_TEXT);
+}
 
 /**
  * The absolute anchor tile of **the local player's own row**, or `null` when it cannot be known.
@@ -153,15 +166,36 @@ export function homeCameraTarget(anchor: TileCoord, tileSize: number): Point {
 export const MAX_MARKERS = 12;
 
 /**
- * One personal marker: its 1-based placement number and its absolute world tile.
+ * One personal marker: its 1-based placement number, its absolute world tile and the dimension it
+ * was made in.
  *
  * <p>The number is part of the model, not the array index, because the canvas, the minimap arrow and the
  * marker list all name the same marker. Placement numbers are contiguous (a duplicate never consumes a
  * number, and removal only ever drops the newest entry), so `number === index + 1` always holds.
+ *
+ * <p>The dimension is part of the mark (playtester item 18): a marker remembers the dimension key it
+ * was placed in (`"overworld"`, `"hell"`, whatever the world declares), its label names that dimension,
+ * and a jump to it only switches the view when the drawn dimension differs. The default dimension is
+ * stored explicitly as `"overworld"` so a marker can always be compared against a world's dimension.
  */
 export interface Marker {
   readonly number: number;
   readonly tile: TileCoord;
+  /** Dimension key the marker belongs to; `"overworld"` is the engine's default dimension. */
+  readonly dimension: string;
+}
+
+/** The dimension key a world is currently drawn from, normalised the same way {@link Marker} stores it. */
+export function worldDimensionKey(world: Pick<WorldView, "dimension">): string {
+  return world.dimension ?? "overworld";
+}
+
+/** Whether a marker belongs to the dimension `world` is currently drawn from. */
+export function markerInDrawnDimension(
+  marker: Marker,
+  world: Pick<WorldView, "dimension">,
+): boolean {
+  return marker.dimension === worldDimensionKey(world);
 }
 
 /** The outcome of one placement attempt, with the unchanged list on every refusal path. */
@@ -171,25 +205,31 @@ export type MarkerPlacement =
   | { readonly kind: "full"; readonly markers: readonly Marker[] };
 
 /**
- * Places one marker at a whole world tile.
+ * Places one marker at a whole world tile in the given dimension.
  *
  * <p>The rules are exactly the feature's: a tile that already carries a marker is a `duplicate` (the
  * existing marker is returned so the caller can name it, and the list is not touched), the list is
  * capped at {@link MAX_MARKERS} (`full`), and otherwise the new marker becomes number `n + 1`. The tile
  * is floored first, so a fractional caller coordinate lands on the same tile the renderer and the
- * minimap draw - "duplicates within one tile" therefore means one floored tile.
+ * minimap draw - "duplicates within one tile" therefore means one floored tile. The duplicate test is
+ * tile-only within one dimension: the same tile in another dimension is a different place and gets its
+ * own marker.
  */
-export function placeMarker(markers: readonly Marker[], tile: TileCoord): MarkerPlacement {
+export function placeMarker(
+  markers: readonly Marker[],
+  tile: TileCoord,
+  dimension: string = "overworld",
+): MarkerPlacement {
   const target = { x: Math.floor(tile.x), y: Math.floor(tile.y) };
   for (const marker of markers) {
-    if (marker.tile.x === target.x && marker.tile.y === target.y) {
+    if (marker.tile.x === target.x && marker.tile.y === target.y && marker.dimension === dimension) {
       return { kind: "duplicate", marker, markers };
     }
   }
   if (markers.length >= MAX_MARKERS) {
     return { kind: "full", markers };
   }
-  const marker: Marker = { number: markers.length + 1, tile: target };
+  const marker: Marker = { number: markers.length + 1, tile: target, dimension };
   return { kind: "placed", marker, markers: [...markers, marker] };
 }
 
@@ -229,13 +269,23 @@ export function markerAt(markers: readonly Marker[], tile: TileCoord): Marker | 
  * <p>The sector is the enemy line's {@link compassSector}, so a marker and a hostile base in the same
  * direction can never be described with two different words. A marker on the camera's own tile has no
  * direction and the label then says only the distance.
+ *
+ * <p>A marker from another dimension is suffixed with that dimension's display name
+ * (`· <dimension>`), because the distance is meaningless across dimensions — the jump has to switch
+ * the view first. The caller passes the name it resolves (client dictionary, server catalogue name,
+ * or the raw key); `undefined` keeps the bare distance-only label.
  */
-export function formatMarkerLabel(marker: Marker, centre: TileCoord): string {
+export function formatMarkerLabel(
+  marker: Marker,
+  centre: TileCoord,
+  dimensionName?: string,
+): string {
   const distance = tileDistance(centre, marker.tile);
   const sector = compassSector(marker.tile.x - centre.x, marker.tile.y - centre.y);
-  return sector === null
+  const base = sector === null
     ? `标记 ${marker.number}：距 ${distance} 格`
     : `标记 ${marker.number}：距 ${distance} 格，${sector}`;
+  return dimensionName === undefined ? base : `${base} · ${dimensionName}`;
 }
 
 /**
@@ -265,7 +315,10 @@ export function nearestOutsideMarker(
   let nearest: Marker | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
   for (const marker of markers) {
-    if (tileInWindow(world, marker.tile.x, marker.tile.y)) {
+    // A marker from another dimension is always "outside": the drawn window shows one dimension
+    // only, so its white arrow is the hint that the jump will switch the view. A marker of the drawn
+    // dimension is skipped exactly when its tile is inside the loaded window.
+    if (markerInDrawnDimension(marker, world) && tileInWindow(world, marker.tile.x, marker.tile.y)) {
       continue;
     }
     const distance = tileDistance(centre, marker.tile);

@@ -16,6 +16,7 @@
 
 import type { TileCoord, TileRange } from "./camera";
 import { t } from "../i18n.ts";
+import { parseContentCatalogue, type ContentCatalogue } from "../content.ts";
 import { selectByPriority } from "./selection.ts";
 
 export type TerrainId = string;
@@ -449,10 +450,18 @@ export interface WorldView {
    * `buildable` array.
    *
    * The BUILD menu renders one button per entry, so the served catalogue is the panel's only source; a
-   * malformed entry is dropped, and `undefined` means the server predates the field (or the demo world),
-   * which is exactly the case the classic five-entry fallback menu covers.
+   * malformed entry is dropped. `undefined` means the server predates the field (or the demo world),
+   * which is exactly the case where the BUILD panel shows no buttons at all — there is no client-side
+   * fallback catalogue (item 1).
    */
   readonly buildable?: readonly string[];
+  /**
+   * The server's raw `content` catalogue (dimension / unit / building names, costs, sizes, recipes),
+   * parsed defensively into the client-side store, or `undefined` when the snapshot predates the
+   * field. The HUD derives its deficit numbers from this store in the browser and the i18n registry
+   * registers its names; absence keeps every display exactly as it was.
+   */
+  readonly content?: ContentCatalogue;
 }
 
 /** One entry of the snapshot's `dimensions` roster. */
@@ -1743,6 +1752,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
 
   const projectiles = snapshotProjectiles(payload["projectiles"]);
   const buildable = snapshotBuildable(payload["buildable"]);
+  const content = parseContentCatalogue(payload["content"]);
 
   return {
     tick,
@@ -1755,6 +1765,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     ...(rawPlayers === undefined ? {} : { players }),
     ...(projectiles === undefined ? {} : { projectiles }),
     ...(buildable === undefined ? {} : { buildable }),
+    ...(content === undefined ? {} : { content }),
     ...snapshotWorldMeta(payload),
   };
 }

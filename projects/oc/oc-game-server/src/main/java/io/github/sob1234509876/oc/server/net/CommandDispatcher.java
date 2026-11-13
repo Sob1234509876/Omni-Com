@@ -11,6 +11,7 @@ import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
@@ -56,7 +57,8 @@ import java.util.function.Supplier;
  * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
  * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
  * TRANSFER &lt;sourceId&gt; &lt;targetId&gt; &lt;item&gt; &lt;amount|all&gt; -&gt; OK &lt;moved&gt; &lt;item&gt; | ERR &lt;reason&gt;
- * HAUL &lt;engineerId&gt; &lt;buildingId&gt;  -&gt; OK &lt;amount&gt; &lt;item&gt; | ERR &lt;reason&gt;
+ * ASSIST &lt;unitId&gt; &lt;buildingId&gt;      -&gt; OK &lt;action&gt; [&lt;amount&gt; &lt;item&gt;] | ERR &lt;reason&gt;
+ * TRAVEL &lt;unitId&gt;... &lt;gatewayId|dimension&gt; -&gt; OK &lt;count&gt; | ERR &lt;reason&gt;
  * BATCH &lt;command&gt;; &lt;command&gt;; ...    -&gt; OK &lt;count&gt; | ERR &lt;index&gt;/&lt;count&gt; &lt;reason&gt;
  * QUIT                              -&gt; {@link #BYE}, then the caller closes
  * anything else                     -&gt; ERR unknown command
@@ -143,7 +145,7 @@ public final class CommandDispatcher {
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
             java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "UPGRADEUNIT", "REPAIR",
-                    "RECLAIM", "TRANSFER", "HAUL", "BATCH");
+                    "RECLAIM", "TRANSFER", "ASSIST", "TRAVEL", "BATCH");
 
     /**
      * Sub-commands one {@code BATCH} may carry.
@@ -157,7 +159,7 @@ public final class CommandDispatcher {
     /** The gameplay commands a {@code BATCH} may carry; identity commands such as {@code WHOAMI} cannot. */
     private static final java.util.Set<String> BATCHABLE_COMMANDS =
             java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "UPGRADEUNIT", "REPAIR", "RECLAIM",
-                    "TRANSFER", "HAUL");
+                    "TRANSFER", "ASSIST", "TRAVEL");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -289,7 +291,8 @@ public final class CommandDispatcher {
             case "REPAIR" -> repair(rest, session);
             case "RECLAIM" -> reclaim(rest, session);
             case "TRANSFER" -> transfer(rest, session);
-            case "HAUL" -> haul(rest, session);
+            case "ASSIST" -> assist(rest, session);
+            case "TRAVEL" -> travel(rest, session);
             case "BATCH" -> batch(rest, session);
             default -> PendingAnswer.immediate("ERR unknown command");
         };
@@ -819,42 +822,150 @@ public final class CommandDispatcher {
     }
 
     /**
-     * {@code HAUL <engineerId> <buildingId>}: force one owned engineer to supply one owned producer.
+     * {@code ASSIST <unitId> <buildingId>}: the right-click assist. One owned unit with builder
+     * capability and cargo capacity is given the job one owned building needs right now, decided by the
+     * engine on the world thread.
      *
-     * <p>The engine transaction is {@link UnitDirector#tryHaul}: it finds the producer's first queued
-     * recipe that is still waiting for materials, reserves exactly its missing inputs in the owner's
-     * warehouses, registers a normal delivery job and assigns the named engineer to it. The engineer's
-     * current orders are cleared first, so a builder drops what it is doing and starts the haul now; that
-     * is the "force" in the command. Both ids follow the ordinary existence/ownership rules, and every
-     * refusal is the engine's readable sentence (not a producer, nothing missing, stock not coverable,
-     * no hauling system, the engineer cannot take the job).
+     * <p>The engine transaction is {@link UnitDirector#tryAssist}: a building under construction is
+     * joined (a free build join), a damaged building is repaired, and a finished, undamaged producer
+     * whose first queued recipe is still short of inputs is supplied - the missing stock is reserved in
+     * the nearest own warehouse that can cover it, a normal delivery job is registered and the assisting
+     * unit is assigned to it, dropping whatever it was doing. Any other state is a readable refusal.
      *
-     * <p>The answer is {@code OK <amount> <item>} naming the reserved bundle, or {@code ERR <reason>}. A
-     * refusal reserves nothing and changes no order.
+     * <p>Both ids follow the ordinary existence/ownership rules. The answer is
+     * {@code OK <action>} where {@code <action>} is {@code build}, {@code repair} or {@code haul}, with
+     * {@code OK haul} additionally naming the reserved bundle exactly like the old transfer answer; a
+     * refusal answers {@code ERR <reason>} and changes nothing.
      */
-    private PendingAnswer haul(String rest, Session session) {
+    private PendingAnswer assist(String rest, Session session) {
         String[] tokens = split(rest);
         if (tokens.length != 2) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
-        OptionalLong engineerId = parseId(tokens[0]);
+        OptionalLong unitId = parseId(tokens[0]);
         OptionalLong buildingId = parseId(tokens[1]);
-        if (engineerId.isEmpty() || buildingId.isEmpty()) {
+        if (unitId.isEmpty() || buildingId.isEmpty()) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
         return worldGameplay(session, (host, player) -> {
-            UnitRef engineer = ownedUnit(host.engine().world(), engineerId.getAsLong(), player);
-            if (engineer.error() != null) {
-                return engineer.error();
+            UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
+            if (unit.error() != null) {
+                return unit.error();
             }
             BuildingRef building = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
             if (building.error() != null) {
                 return building.error();
             }
-            UnitDirector.HaulResult result = host.engine().commands()
-                    .tryHaul(engineer.unit(), building.building());
-            return result.hauled() ? "OK " + describe(result.reserved()) : "ERR " + result.refusal();
+            UnitDirector.AssistResult result = host.engine().commands()
+                    .tryAssist(unit.unit(), building.building());
+            if (!result.assisted()) {
+                return "ERR " + result.refusal();
+            }
+            if (UnitDirector.AssistResult.ACTION_HAUL.equals(result.action())) {
+                return "OK " + result.action() + " " + describe(result.reserved());
+            }
+            return "OK " + result.action();
         });
+    }
+
+    /**
+     * {@code TRAVEL <unitId> [<unitId> ...] <gatewayBuildingId|dimension>}: send owned units through a
+     * gate into another dimension.
+     *
+     * <p>The last token is the destination and may be either a numeric building id - which must exist,
+     * be alive and carry the {@code gateway} tag - or a dimension key such as {@code hell}. In both
+     * forms the destination has to be linked: the world's gateway graph must have a route, otherwise the
+     * command answers {@code ERR dimension not linked} without touching any unit. Every unit id before
+     * the destination follows the ordinary existence and ownership rules; at most eight units may travel
+     * in one command.
+     *
+     * <p>The transaction is {@link UnitDirector#travel}: each unit is given a travel order that walks it
+     * to the first gateway on its route and hands it across on arrival, the same mechanics a denizen
+     * invasion uses. A unit that stands in a dimension without a route to the destination makes the
+     * whole command fail - travel is all-or-nothing at the validation level, and the per-unit orders
+     * that were already issued on a partial route stay issued.
+     */
+    private PendingAnswer travel(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length < 2 || tokens.length > UnitDirector.MAX_MOVE_POINTS + 1) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        String destination = tokens[tokens.length - 1];
+        List<Long> unitIds = new ArrayList<>(tokens.length - 1);
+        for (int index = 0; index < tokens.length - 1; index++) {
+            OptionalLong unitId = parseId(tokens[index]);
+            if (unitId.isEmpty()) {
+                return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+            }
+            unitIds.add(unitId.getAsLong());
+        }
+        OptionalLong gatewayId = parseId(destination);
+        return worldGameplay(session, (host, player) -> {
+            World world = host.engine().world();
+            DimensionId target;
+            if (gatewayId.isPresent()) {
+                Building gate = building(world, gatewayId.getAsLong());
+                if (gate == null) {
+                    return ERR_UNKNOWN_ENTITY;
+                }
+                if (!gate.type().hasTag(WorldHost.GATEWAY_TAG)) {
+                    return "ERR building is not a gateway";
+                }
+                DimensionId here = world.dimensionOf(gate).id();
+                target = null;
+                for (var dimension : world.dimensions()) {
+                    if (dimension.id().equals(here)) {
+                        continue;
+                    }
+                    if (world.route(here, dimension.id())
+                            .filter(route -> !route.isEmpty()).isPresent()) {
+                        target = dimension.id();
+                        break;
+                    }
+                }
+                if (target == null) {
+                    return "ERR dimension not linked";
+                }
+            } else {
+                DimensionId named;
+                try {
+                    named = DimensionId.of(destination);
+                } catch (IllegalArgumentException malformed) {
+                    return "ERR unknown dimension";
+                }
+                if (!world.hasDimension(named)) {
+                    return "ERR unknown dimension";
+                }
+                target = named;
+            }
+            List<Unit> units = new ArrayList<>(unitIds.size());
+            for (Long unitId : unitIds) {
+                UnitRef unit = ownedUnit(world, unitId, player);
+                if (unit.error() != null) {
+                    return unit.error();
+                }
+                if (world.route(unit.unit().dimensionId(), target)
+                        .filter(route -> !route.isEmpty()).isEmpty()) {
+                    return "ERR dimension not linked";
+                }
+                units.add(unit.unit());
+            }
+            for (Unit unit : units) {
+                host.engine().commands().travel(unit, target);
+            }
+            return "OK " + units.size();
+        });
+    }
+
+    /** A living building by id, regardless of owner, or {@code null}. */
+    private static Building building(World world, long id) {
+        if (id <= 0L) {
+            return null;
+        }
+        return world.findEntity(EntityId.of(id))
+                .filter(entity -> entity.isAlive() && entity instanceof Building)
+                .map(entity -> (Building) entity)
+                .orElse(null);
     }
 
     /**

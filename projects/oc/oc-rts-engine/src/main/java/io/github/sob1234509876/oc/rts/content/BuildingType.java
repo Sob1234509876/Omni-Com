@@ -32,6 +32,16 @@ import java.util.Set;
 public final class BuildingType implements Comparable<BuildingType> {
 
     /**
+     * Content tag that marks a building as a passage between dimensions (a gate or a landing pad).
+     *
+     * <p>The tag has two readers: the server's snapshot publishes a route target for a row whose type
+     * carries it, and the engine's movement obstruction layer keeps the footprint of a gateway-tagged
+     * building walkable, because a traveller has to step onto the pad to cross. Every other building
+     * blocks pathing and stepping.
+     */
+    public static final String GATEWAY_TAG = "gateway";
+
+    /**
      * One successor of an upgrade step: the building type this one turns into and the items the owner
      * pays for the replacement. The cost belongs to the source type, exactly like the single-target
      * ladder it generalises.

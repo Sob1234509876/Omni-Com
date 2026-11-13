@@ -132,7 +132,9 @@ public final class MovementSystem implements SimulationSystem {
         }
 
         Vec2 step = velocity.scaled(deltaSeconds);
-        Vec2 resolved = resolveStep(world.map(unit.dimensionId()), position, step);
+        // The step is resolved against the obstacle-aware view: a building footprint is a wall, so the
+        // unit slides along it instead of walking across it, matching what its path may use.
+        Vec2 resolved = resolveStep(world.dimension(unit.dimensionId()).pathTerrain(), position, step);
         float travelled = position.distance(resolved);
         if (travelled > MOVEMENT_EPSILON) {
             unit.setPosition(resolved);

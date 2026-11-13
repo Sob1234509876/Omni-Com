@@ -317,16 +317,45 @@ export function transfer(
 }
 
 /**
- * `HAUL <engineerId> <buildingId>`: force one engineer to carry a producer's next missing inputs.
+ * `TRAVEL <unitId...> <gatewayId>`: send one or more units through a gateway building.
  *
- * <p>The server finds the producer's first queued recipe that is still waiting for materials, reserves
- * exactly those missing inputs and assigns the named engineer, clearing whatever the engineer was doing.
- * The answer is `OK <amount> <item>` or the engine's readable `ERR <reason>`.
+ * <p>The server walks every named unit to the gateway and moves it to the dimension the gate reaches.
+ * The ids stay in selection order, a duplicated or non-positive id throws before a line can reach the
+ * socket, and an empty list is a programming error like every other batch builder. The answer is one
+ * `OK` per the server's ruling or the engine's readable `ERR <reason>`; the client surfaces either
+ * like any other command error.
  */
-export function haul(engineerId: number, buildingId: number): string {
-  const engineer = requirePositiveInteger(engineerId, "工程师 id");
-  const building = requirePositiveInteger(buildingId, "生产建筑 id");
-  return `HAUL ${engineer} ${building}`;
+export function travel(unitIds: readonly number[], gatewayId: number): string {
+  const gateway = requirePositiveInteger(gatewayId, "传送门 id");
+  if (!Array.isArray(unitIds) || unitIds.length === 0) {
+    throw new Error("TRAVEL 至少需要一个单位 id");
+  }
+  const seen = new Set<number>();
+  const ids: string[] = [];
+  for (const unitId of unitIds) {
+    const id = requirePositiveInteger(unitId, "单位 id");
+    if (seen.has(id)) {
+      throw new Error(`TRAVEL 的单位 id 不能重复：${id}`);
+    }
+    seen.add(id);
+    ids.push(String(id));
+  }
+  return `TRAVEL ${ids.join(" ")} ${gateway}`;
+}
+
+/**
+ * `ASSIST <unitId> <buildingId>`: send one engineer to help a building, the server deciding what
+ * "help" means for that building right now — resuming construction, repairing, or fetching the
+ * producer's missing inputs.
+ *
+ * <p>The client does not classify the building: it sends the pair for every capable engineer the
+ * player selected (one line per unit) and lets the engine answer. The answer is `OK` or the engine's
+ * readable `ERR <reason>`, surfaced like any other command error.
+ */
+export function assist(unitId: number, buildingId: number): string {
+  const unit = requirePositiveInteger(unitId, "工程师 id");
+  const building = requirePositiveInteger(buildingId, "建筑 id");
+  return `ASSIST ${unit} ${building}`;
 }
 
 /** Largest number of sub-commands one `BATCH` line may carry; mirrors the server's cap. */

@@ -831,6 +831,8 @@ public final class ClassicContent implements WorldContent {
         }
 
         // ------------------------------------------------------------------ mines
+        // Tier 2 and 3 are upgrade-only: the BUILD catalogue never offers them and canPlace refuses a
+        // direct placement, so the only route to a better mine runs through the previous tier's upgrade.
         for (MineTier mine : MINE_TIERS) {
             registry.building(mine.buildingPath())
                     .name(mine.displayName())
@@ -842,6 +844,7 @@ public final class ClassicContent implements WorldContent {
                     .buildTime(mine.buildTimeTicks())
                     .storage(6)
                     .spriteSet(mine.buildingPath())
+                    .constructible(mine.tier() == 1)
                     .tag(MINE_TAG)
                     .tag(INCOME_TAG_PREFIX + mine.goldPerMinute());
             if (mine.upgradeTo() != null) {
@@ -850,6 +853,7 @@ public final class ClassicContent implements WorldContent {
         }
 
         // ------------------------------------------------------------------ lumber camps
+        // Upgrade-only above tier 1, same rule as the mines.
         for (LumberCampTier camp : LUMBER_CAMP_TIERS) {
             registry.building(camp.buildingPath())
                     .name(camp.displayName())
@@ -862,6 +866,7 @@ public final class ClassicContent implements WorldContent {
                     .buildTime(camp.buildTimeTicks())
                     .storage(6)
                     .spriteSet(camp.buildingPath())
+                    .constructible(camp.tier() == 1)
                     .tag(LUMBER_TAG)
                     .tag(WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute());
             if (camp.upgradeTo() != null) {
@@ -925,6 +930,9 @@ public final class ClassicContent implements WorldContent {
                 .buildTime(240)
                 .storage(8)
                 .producer(ARMORY_TAG)
+                // Upgrade-only, like the purgatory variant: the armory ladder starts at t1 and grows
+                // in place, so the BUILD catalogue never offers the taller tier directly.
+                .constructible(false)
                 .spriteSet(ARMORY_T2)
                 .tag("armory")
                 .building(WAREHOUSE)

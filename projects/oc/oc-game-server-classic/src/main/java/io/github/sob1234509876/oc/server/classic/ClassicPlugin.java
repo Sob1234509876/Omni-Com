@@ -67,8 +67,8 @@ public final class ClassicPlugin implements Plugin {
     /** Spawns and drives the hell denizens, registered after the gates they spawn around. */
     private final HellDenizens hellDenizens = new HellDenizens();
 
-    /** Rolls the one-in-ten-thousand wild spawn for every chunk a player enters for the first time. */
-    private final WildSpawns wildSpawns = new WildSpawns();
+    /** Rolls the one-in-a-hundred enemy outpost for every chunk a player enters for the first time. */
+    private final EnemyOutposts outposts = new EnemyOutposts();
 
     /** Creates the plugin; the loader uses the implicit public no-argument constructor it sees here. */
     public ClassicPlugin() {
@@ -112,7 +112,7 @@ public final class ClassicPlugin implements Plugin {
         context.registerWorldTickHook(engineerPool);
         context.registerWorldTickHook(hellGates);
         context.registerWorldTickHook(hellDenizens);
-        context.registerWorldTickHook(wildSpawns);
+        context.registerWorldTickHook(outposts);
     }
 
     /** The catalogue this plugin registered; exposed so the self check can assert it is the same object. */
@@ -137,6 +137,6 @@ public final class ClassicPlugin implements Plugin {
 
     /** The hooks this plugin registers, in registration order; the same list {@link #onLoad} adds. */
     public List<WorldTickHook> worldTickHooks() {
-        return List.of(economy, bots, engineerPool, hellGates, hellDenizens, wildSpawns);
+        return List.of(economy, bots, engineerPool, hellGates, hellDenizens, outposts);
     }
 }

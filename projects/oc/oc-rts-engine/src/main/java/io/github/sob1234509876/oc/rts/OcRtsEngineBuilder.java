@@ -304,8 +304,11 @@ public final class OcRtsEngineBuilder {
         }
 
         for (Map.Entry<DimensionId, StreamingTerrainMap> entry : maps.entrySet()) {
+            // The finder searches the dimension's obstacle-aware view: a route may not lead through a
+            // building footprint, so the search sees the tiles a living building covers as impassable.
             world.setPathFinder(entry.getKey(),
-                    new AStarPathFinder(entry.getValue(), AStarPathFinder.minimumMoveCost(content)));
+                    new AStarPathFinder(world.dimension(entry.getKey()).pathTerrain(),
+                            AStarPathFinder.minimumMoveCost(content)));
         }
         AStarPathFinder pathFinder = (AStarPathFinder) world.pathFinder();
 

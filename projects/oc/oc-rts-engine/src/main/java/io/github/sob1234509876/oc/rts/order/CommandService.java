@@ -101,6 +101,9 @@ public final class CommandService implements UnitDirector {
     /** Reason attached to a build order whose site was destroyed by something else. */
     public static final String REASON_SITE_DESTROYED = "the construction site was destroyed";
 
+    /** Content tag that marks a unit as a builder; the capability gate of the assist command. */
+    private static final String BUILDER_TAG = "builder";
+
     private final World world;
     private final FormationPlanner planner;
     private final int ticksPerSecond;
@@ -692,7 +695,7 @@ public final class CommandService implements UnitDirector {
         if (Math.max(gapX, gapY) > MAX_BUILD_PATH_TILES) {
             return false;
         }
-        TerrainMap map = world.map(unit.dimensionId());
+        TerrainMap map = world.dimension(unit.dimensionId()).pathTerrain();
         TileRect approach = footprint.expanded(1);
         for (int y = approach.minY(); y <= approach.maxY(); y++) {
             for (int x = approach.minX(); x <= approach.maxX(); x++) {
@@ -1116,70 +1119,140 @@ public final class CommandService implements UnitDirector {
     }
 
     /**
-     * Forces one named engineer to carry the next missing inputs to one producer.
+     * The implementation of the contextual assist documented on
+     * {@link UnitDirector#tryAssist(Unit, Building)}.
      *
-     * <p>The producer's queue is walked in production order, and the first recipe still in
-     * {@link ProductionState#WAITING_MATERIALS} supplies the demand. Its missing inputs are reserved
-     * through the ordinary logistics network, registered as a normal delivery job, and assigned to the
-     * named engineer. The engineer's current orders are cleared first, which is the "force" part: a
-     * builder that was raising something drops it and starts the haul immediately.
+     * <p>The checks run in a fixed order and every refusal is free; the behaviour branch is decided from
+     * the building's state, not from the caller. Build and repair reuse the ordinary join/repair
+     * transactions, so their refusals (out of reach, unaffordable, full health) are exactly the ones a
+     * player already knows from BUILD and REPAIR. The haul branch reserves the missing inputs of the
+     * first queued recipe that is still waiting for materials - preferring the nearest own warehouse
+     * that can cover the whole bundle - registers a normal delivery job and gives it to the assisting
+     * unit, whose previous orders are cleared first: an assist replaces what the unit was doing.
      */
     @Override
-    public HaulResult tryHaul(Unit engineer, Building target) {
-        Objects.requireNonNull(target, "target");
-        if (!isCommandable(engineer)) {
-            return HaulResult.refused("the engineer cannot be commanded");
+    public AssistResult tryAssist(Unit unit, Building building) {
+        Objects.requireNonNull(building, "building");
+        if (!isCommandable(unit)) {
+            return AssistResult.refused("the unit cannot be commanded");
         }
-        if (!engineer.type().canHaul()) {
-            return HaulResult.refused(engineer.type().key().path() + " cannot haul goods");
+        if (!unit.type().hasTag(BUILDER_TAG)) {
+            return AssistResult.refused(unit.type().key().path() + " is not a builder");
         }
-        if (!target.isAlive()) {
-            return HaulResult.refused("cannot haul for building " + target.id().value() + ": it was destroyed");
+        if (!unit.type().canHaul()) {
+            return AssistResult.refused(unit.type().key().path() + " cannot carry goods");
         }
-        if (!target.isConstructed()) {
-            return HaulResult.refused("cannot haul for " + target.type().key().path() + " at "
-                    + target.origin() + ": it is still under construction");
+        if (!building.isAlive()) {
+            return AssistResult.refused("cannot assist building " + building.id().value()
+                    + ": it was destroyed");
         }
-        if (!target.owner().equals(engineer.owner())) {
-            return HaulResult.refused("cannot haul for the building at " + target.origin()
+        if (!building.owner().equals(unit.owner())) {
+            return AssistResult.refused("cannot assist the building at " + building.origin()
                     + ": it belongs to another player");
         }
-        if (!target.dimensionId().equals(engineer.dimensionId())) {
-            return HaulResult.refused("cannot haul for the building at " + target.origin()
+        if (!building.dimensionId().equals(unit.dimensionId())) {
+            return AssistResult.refused("cannot assist the building at " + building.origin()
                     + ": it is in another dimension");
         }
-        WarehouseLogistics network = WarehouseLogistics.of(engineer.owner());
+        if (!building.isConstructed()) {
+            BuildResult joined = joinSite(unit, building, false);
+            return joined.placed()
+                    ? AssistResult.assisted(AssistResult.ACTION_BUILD, building)
+                    : AssistResult.refused(joined.refusal());
+        }
+        if (!building.missingHealth().isZero() && building.type().canRepair()) {
+            RepairResult repairing = repair(unit, building, false);
+            return repairing.repairing()
+                    ? AssistResult.assisted(AssistResult.ACTION_REPAIR, building)
+                    : AssistResult.refused(repairing.refusal());
+        }
+        return assistHaul(unit, building);
+    }
+
+    /**
+     * The haul branch of an assist: fetch the missing inputs of the first waiting recipe from the
+     * nearest own warehouse that can cover them, and give the job to the assisting unit.
+     */
+    private AssistResult assistHaul(Unit unit, Building building) {
+        WarehouseLogistics network = WarehouseLogistics.of(unit.owner());
         if (network == null) {
-            return HaulResult.refused("cannot haul for " + engineer.owner().name()
+            return AssistResult.refused("cannot assist " + building.owner().name()
                     + ": the player has no warehouse network");
         }
         HaulingSystem hauling = network.hauling().orElse(null);
         if (hauling == null) {
-            return HaulResult.refused("cannot haul for " + engineer.owner().name()
+            return AssistResult.refused("cannot assist " + unit.owner().name()
                     + ": no hauling system is attached to the warehouse network");
         }
-        ItemBundle missing = waitingInputs(target);
+        ItemBundle missing = waitingInputs(building);
         if (missing.isEmpty()) {
-            return HaulResult.refused("nothing to haul for " + target.type().key().path() + " at "
-                    + target.origin() + ": no queued recipe is waiting for materials");
+            return AssistResult.refused("nothing to assist at " + building.origin() + ": "
+                    + building.type().key().path() + " is finished, undamaged and no queued recipe"
+                    + " is waiting for materials");
         }
-        if (!network.hasAvailable(missing)) {
-            return HaulResult.refused("the warehouses cannot cover " + describe(missing)
-                    + " for " + target.type().key().path() + " at " + target.origin());
+        Logistics.Reservation claim = null;
+        Building nearest = nearestWarehouseCovering(network, building.position(), missing);
+        if (nearest != null) {
+            Optional<Logistics.Reservation> reserved = network.reserveFrom(nearest, missing);
+            if (reserved.isPresent()) {
+                claim = reserved.get();
+            }
         }
-        Optional<DeliveryJob> created = network.requestDeliveryJob(target, missing);
-        if (created.isEmpty()) {
-            return HaulResult.refused("cannot reserve " + describe(missing) + " for "
-                    + target.type().key().path() + " at " + target.origin());
+        DeliveryJob job;
+        if (claim != null) {
+            job = new DeliveryJob(building, missing, claim, world.tickNumber());
+            hauling.submit(job);
+        } else {
+            // No single warehouse covers the whole bundle: let the network spread it, or refuse readable
+            // when even together the warehouses cannot pay.
+            Optional<DeliveryJob> created = network.requestDeliveryJob(building, missing);
+            if (created.isEmpty()) {
+                return AssistResult.refused("the warehouses cannot cover " + describe(missing)
+                        + " for " + building.type().key().path() + " at " + building.origin());
+            }
+            job = created.get();
         }
-        DeliveryJob job = created.get();
-        if (!engineer.orders().isEmpty()) {
-            engineer.orders().clear(context(engineer));
+        if (!unit.orders().isEmpty()) {
+            unit.orders().clear(context(unit));
         }
-        if (!hauling.assignHauler(job, engineer)) {
-            return HaulResult.refused("the engineer cannot take the haul (it may already carry another job)");
+        if (!hauling.assignHauler(job, unit)) {
+            return AssistResult.refused("the unit cannot take the haul (it may already carry another job)");
         }
-        return HaulResult.hauled(missing, job);
+        return AssistResult.hauled(building, missing);
+    }
+
+    /**
+     * The nearest own warehouse whose free stock covers the whole bundle, ties broken by entity id, or
+     * {@code null} when no single warehouse fits. Distance is measured from the building the goods are
+     * wanted at, so the assist sends the hauler to the closest shelf that really holds everything.
+     */
+    private static Building nearestWarehouseCovering(WarehouseLogistics network, Vec2 at,
+            ItemBundle bundle) {
+        Building best = null;
+        float bestDistance = 0f;
+        for (Building warehouse : network.warehouses()) {
+            if (!warehouse.isAlive() || !warehouse.isConstructed()) {
+                continue;
+            }
+            boolean covers = true;
+            for (ItemBundle.Amount component : bundle.components()) {
+                if (network.freeAmount(warehouse, component.item())
+                        .compareTo(component.amount()) < 0) {
+                    covers = false;
+                    break;
+                }
+            }
+            if (!covers) {
+                continue;
+            }
+            float distance = warehouse.position().distanceSquared(at);
+            if (best == null || distance < bestDistance
+                    || (distance == bestDistance && warehouse.id().compareTo(best.id()) < 0)) {
+                best = warehouse;
+                bestDistance = distance;
+            }
+        }
+        return best;
     }
 
     /** The inputs of the first queued recipe of a producer that is still waiting for materials. */

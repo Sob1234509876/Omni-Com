@@ -419,7 +419,7 @@ public final class AStarPathFinder implements PathFinder {
         }
 
         private Node create(int x, int y, float g, float h, int parent) {
-            Node node = new Node(nodes.size(), x, y, g, g + h, parent);
+            Node node = new Node(nodes.size(), x, y, g, g + h, h, parent);
             nodes.add(node);
             nodeIds.put(key(x, y), node.id);
             return node;
@@ -514,7 +514,10 @@ public final class AStarPathFinder implements PathFinder {
 
         /**
          * Total order over nodes: cost first, then the distance left, then row before column. The last
-         * two terms exist only to make the expansion order independent of map iteration order.
+         * two terms exist only to make the expansion order independent of map iteration order. The
+         * heuristic is read from the node's cached field: it never changes for a tile, and the heap
+         * compares nodes O(log n) times each, so recomputing the arithmetic on every comparison was the
+         * hottest inner loop of a large search.
          */
         private int compare(int leftId, int rightId) {
             Node left = nodes.get(leftId);
@@ -523,7 +526,7 @@ public final class AStarPathFinder implements PathFinder {
             if (byCost != 0) {
                 return byCost;
             }
-            int byHeuristic = Float.compare(heuristic(left.x, left.y), heuristic(right.x, right.y));
+            int byHeuristic = Float.compare(left.h, right.h);
             if (byHeuristic != 0) {
                 return byHeuristic;
             }
@@ -542,6 +545,8 @@ public final class AStarPathFinder implements PathFinder {
         final int id;
         final int x;
         final int y;
+        /** Cached octile heuristic of this tile; fixed at creation, read by every heap comparison. */
+        final float h;
         float g;
         float f;
         /** Cost this node had when its newest heap entry was written; a mismatch marks a stale entry. */
@@ -549,13 +554,14 @@ public final class AStarPathFinder implements PathFinder {
         int parent;
         byte state = NEW;
 
-        Node(int id, int x, int y, float g, float f, int parent) {
+        Node(int id, int x, int y, float g, float f, float h, int parent) {
             this.id = id;
             this.x = x;
             this.y = y;
             this.g = g;
             this.queuedG = g;
             this.f = f;
+            this.h = h;
             this.parent = parent;
         }
     }

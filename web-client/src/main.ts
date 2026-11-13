@@ -30,12 +30,10 @@ import {
   type ControlGroups,
 } from "./controlGroups";
 import {
-  MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
-  batchCommands,
+  assist,
   build,
   buildPlacementBatch,
-  haul,
   orderAttack,
   orderAttackMove,
   orderMoveRoute,
@@ -43,14 +41,13 @@ import {
   parseWhoAmI,
   reclaim,
   repair,
-  sequenceLine,
   trainBatch,
+  travel,
   upgrade,
   upgradeUnit,
   whoAmI,
 } from "./commands";
 import {
-  atlasLabel,
   entityDisplayName,
   itemDisplayLabel,
   loadPluginAtlas,
@@ -59,25 +56,19 @@ import {
 } from "./render/atlas";
 import { HEARTBEAT_MS, shouldHeartbeat } from "./heartbeat";
 import { Camera, type TileCoord, type TileRange } from "./render/camera";
+
 import {
-  anchorCameraTarget,
-  enemyAnchorEntries,
-  enemyLineText,
-  type EnemyAnchorEntry,
-} from "./render/enemy";
-import {
-  HOME_ANCHOR_UNKNOWN_TEXT,
+  homeAnchorUnknownText,
   MAX_MARKERS,
   clearMarkers,
-  formatHomeLine,
   formatMarkerLabel,
-  homeAnchorEntry,
   homeCameraTarget,
   markerCameraTarget,
   nearestOutsideMarker,
   ownAnchorOf,
   placeMarker,
   removeLastMarker,
+  worldDimensionKey,
   type Marker,
 } from "./render/markers";
 import { EventDeduplicator, diffSnapshotEvents } from "./render/events";
@@ -114,7 +105,6 @@ import {
 import { WorldRenderer } from "./render/renderer";
 import { chunkKey } from "./render/shadow";
 import {
-  FALLBACK_BUILD_PATHS,
   commandBarModel,
   trainMenu,
   selectionChipList,
@@ -131,11 +121,19 @@ import {
   type ResourceMarks,
 } from "./render/resources";
 import {
+  currentI18nLanguage,
   genericContentLabel,
+  dimensionLabel,
   initI18n,
   resolveLanguage,
   t,
 } from "./i18n";
+import {
+  constructionDeficit,
+  formatDeficit,
+  producerDeficit,
+  registerCatalogueNames,
+} from "./content";
 import {
   transferAnswerLabel,
   transferFormModel,
@@ -154,6 +152,7 @@ import {
   isBuilderUnit,
 } from "./render/selection";
 import {
+  compareItemPaths,
   demandIcon,
   demandMissingText,
   combatLabel,
@@ -271,12 +270,9 @@ const clearLogButton = required<HTMLButtonElement>("#log-clear");
 const toastStack = required<HTMLDivElement>("#toast-stack");
 const gameCanvas = required<HTMLCanvasElement>("#world-canvas");
 const minimapCanvas = required<HTMLCanvasElement>("#minimap-canvas");
-const hudAtlas = required<HTMLSpanElement>("#hud-atlas");
 const hudWorld = required<HTMLSpanElement>("#hud-world");
 const hudWindow = required<HTMLSpanElement>("#hud-window");
 const hudPlayer = required<HTMLSpanElement>("#hud-player");
-const enemyLine = required<HTMLButtonElement>("#enemy-line");
-const homeLine = required<HTMLButtonElement>("#home-line");
 const homeButton = required<HTMLButtonElement>("#home-button");
 const markerButton = required<HTMLButtonElement>("#marker-button");
 const markerPanel = required<HTMLElement>("#marker-panel");
@@ -286,7 +282,6 @@ const markerEmpty = required<HTMLParagraphElement>("#marker-empty");
 const markerClearButton = required<HTMLButtonElement>("#marker-clear");
 const markerCloseButton = required<HTMLButtonElement>("#marker-close");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
-const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
 const hudSelected = required<HTMLSpanElement>("#hud-selected");
 const hudBuildingText = required<HTMLSpanElement>("#hud-building-text");
@@ -357,14 +352,12 @@ const jumpButton = required<HTMLButtonElement>("#jump-button");
 const gatewaySection = required<HTMLDivElement>("#gateway-section");
 const gatewayButton = required<HTMLButtonElement>("#gateway-button");
 const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
-const sequenceButton = required<HTMLButtonElement>("#sequence-button");
 const followButton = required<HTMLButtonElement>("#follow-button");
 const buildingActionsSection = required<HTMLElement>("#building-actions-section");
 const buildingActionsTarget = required<HTMLSpanElement>("#building-actions-target");
 const continueBuildButton = required<HTMLButtonElement>("#continue-build-button");
 const repairButton = required<HTMLButtonElement>("#repair-button");
 const reclaimButton = required<HTMLButtonElement>("#reclaim-button");
-const haulButton = required<HTMLButtonElement>("#haul-button");
 
 const commandButtons: readonly HTMLButtonElement[] = [
   pingButton,
@@ -459,6 +452,8 @@ function applyI18n(): void {
 /** Resolves the language setting, repaints the static labels and every state-derived label. */
 function applyLanguage(): void {
   initI18n(resolveLanguage(settings.language, navigator.language));
+  // The document language follows the UI language so screen readers and font selection agree.
+  document.documentElement.lang = resolveLanguage(settings.language, navigator.language);
   // The status line is live state (the last command answer), not a label: applyI18n would overwrite it
   // with the static boot text, so its current wording is kept across the repaint.
   const liveStatus = statusLine.textContent ?? "";
@@ -467,7 +462,6 @@ function applyLanguage(): void {
   settingLanguageSelect.value = settings.language;
   updateViewToggleButton();
   updatePathsButton();
-  updateSequenceButton();
   updateFollowButton();
   updateSettingsView();
   updateHud(true);
@@ -480,6 +474,9 @@ function applyLanguage(): void {
 // The UI language resolves once at boot from the stored setting (default `auto`) and the browser; the
 // static index.html labels are translated in place before the chrome is first used.
 initI18n(resolveLanguage(settings.language, navigator.language));
+// The document language follows the resolved UI language from boot (applyLanguage only runs on a
+// later switch), so the <html lang> agrees with what the page actually prints.
+document.documentElement.lang = currentI18nLanguage();
 applyI18n();
 
 /** The saved server address is restored into the fields that moved to the settings panel. */
@@ -590,7 +587,10 @@ for (const button of presetButtons) {
     settings = { ...settings, filters: presetFilters(preset.id) };
     persistSettings();
     updateSettingsView();
-    setStatus(`${t("console.filters")}：${t(`preset.${preset.id}`)}`, "idle");
+    setStatus(
+      t("preset.applied", { filters: t("console.filters"), preset: t(`preset.${preset.id}`) }),
+      "idle",
+    );
   });
 }
 
@@ -623,7 +623,7 @@ settingInventoryRadiusInput.addEventListener("change", () => {
   settings = { ...settings, inventoryRadiusTiles: radius };
   settingInventoryRadiusInput.value = String(radius);
   persistSettings();
-  setStatus(`补给标签半径：${radius} 格`, "ok");
+  setStatus(t("settings.radiusApplied", { radius }), "ok");
 });
 
 /** Applies the chosen language, saves it and repaints every label the page owns. */
@@ -638,7 +638,7 @@ settingLanguageSelect.addEventListener("change", () => {
       : settings.language === "en"
         ? t("settings.langEn")
         : t("settings.langZh");
-  setStatus(`${t("settings.language")}：${chosen}`, "ok");
+  setStatus(t("settings.languageApplied", { language: t("settings.language"), chosen }), "ok");
 });
 
 /** Restores every saved default and clears the saved server address and remembered account. */
@@ -938,13 +938,6 @@ let pendingRoute: TileCoord[] = [];
 /** Whether the route overlay is drawn; restored from the saved settings (default on). */
 let showPaths = settings.showPaths;
 /**
- * Q16 sequence mode: while `sequenceArmed`, gameplay actions are recorded into `sequenceLines` instead of
- * being sent, each rewritten to its `queue` form. Enter (or a second click on 顺序) submits the whole
- * list as one `BATCH` line; Esc clears it. Session state only, cleared on disconnect.
- */
-let sequenceArmed = false;
-let sequenceLines: string[] = [];
-/**
  * Entity id the camera is locked to, or null when the view is free.
  *
  * The lock is a hard follow: every frame recentres the camera on the unit's interpolated position, so
@@ -1048,6 +1041,7 @@ function clearGameplayIdentity(): void {
   placementPath = null;
   attackMoveArmed = false;
   pendingRoute = [];
+  attackOrderedIds.clear();
   // Group ids belong to one world's entity id space; a disconnect must not leave a binding that a
   // later world could resolve to a different entity.
   controlGroups = EMPTY_CONTROL_GROUPS;
@@ -1073,7 +1067,7 @@ function formatHost(host: string): string {
     return host;
   }
   if (colonCount === 1) {
-    throw new Error("主机框只填地址，不要带端口；端口请填在旁边的端口框");
+    throw new Error(t("connection.hostNoPort"));
   }
   return `[${host}]`;
 }
@@ -1085,19 +1079,19 @@ function buildSocketUrl(): string {
 
   if (host === "" && portText === "") {
     if (window.location.host === "") {
-      throw new Error("当前页面没有主机名，请填写主机与端口");
+      throw new Error(t("connection.noHostHere"));
     }
     return `${scheme}://${window.location.host}/ws`;
   }
   if (host === "") {
-    throw new Error("填了端口就要填主机；想走同源代理请把主机与端口都留空");
+    throw new Error(t("connection.portNeedsHost"));
   }
   if (/[\s/]/u.test(host)) {
-    throw new Error("主机名不能包含空白或 /");
+    throw new Error(t("connection.hostClean"));
   }
   const port = portText === "" ? 25567 : Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`端口必须是 1..65535 的整数，当前是 '${portText}'`);
+    throw new Error(t("connection.portRange", { port: portText }));
   }
   return `${scheme}://${formatHost(host)}:${port}/ws`;
 }
@@ -1109,7 +1103,7 @@ async function handshake(seq: number): Promise<void> {
   }
   const line = hello();
   log("send", line);
-  setStatus("等待版本握手…", "busy");
+  setStatus(t("status.handshake"), "busy");
   try {
     const answer = await active.send(line);
     if (seq !== connectionSeq) {
@@ -1118,7 +1112,7 @@ async function handshake(seq: number): Promise<void> {
     log("recv", answer);
     toastExchange(line, answer);
     if (answer !== HELLO_ANSWER) {
-      const message = `协议版本不匹配：期望 ${HELLO_ANSWER}，收到 ${answer}`;
+      const message = t("status.versionMismatch", { expected: HELLO_ANSWER, actual: answer });
       refuse(message);
       active.close("protocol version mismatch");
       return;
@@ -1127,9 +1121,9 @@ async function handshake(seq: number): Promise<void> {
     connected = true;
     clearGameplayIdentity();
     setCommandsEnabled(true);
-    connectButton.textContent = "断开";
+    connectButton.textContent = t("chrome.disconnect");
     connectButton.disabled = false;
-    setStatus(`已连接 · 协议 ${PROTOCOL_NAME}`, "ok");
+    setStatus(t("status.connected", { protocol: PROTOCOL_NAME }), "ok");
     // The heartbeat starts only now: the handshake proved the command queue is usable.
     startHeartbeat();
     // The saved account logs in by itself once the socket is usable; see `autoLogin`.
@@ -1161,8 +1155,8 @@ function openConnection(): void {
   }
 
   const seq = ++connectionSeq;
-  log("info", `连接 ${url}`);
-  setStatus("连接中…", "busy");
+  log("info", t("log.connecting", { url }));
+  setStatus(t("status.connecting"), "busy");
   connectButton.disabled = true;
 
   try {
@@ -1172,7 +1166,7 @@ function openConnection(): void {
         if (seq !== connectionSeq) {
           return;
         }
-        log("info", "WebSocket 已打开，开始版本握手");
+        log("info", t("status.opened"));
         void handshake(seq);
       },
       onClose: (info) => {
@@ -1184,24 +1178,28 @@ function openConnection(): void {
         stopHeartbeat();
         loggedIn = false;
         clearGameplayIdentity();
-        clearSequence(false);
         plannedBuilds = [];
         lockedEntityId = null;
         updateFollowButton();
         setCommandsEnabled(false);
-        connectButton.textContent = "连接";
+        connectButton.textContent = t("chrome.connect");
         connectButton.disabled = false;
         // Keep a more specific error (version mismatch, connection failure) visible after the close event.
         if (statusLine.dataset.state !== "error") {
           setStatus(
-            `已断开（code ${info.code}${info.reason === "" ? "" : `，${info.reason}`}）`,
+            info.reason === ""
+              ? t("status.disconnected", { code: info.code })
+              : t("status.disconnectedReason", { code: info.code, reason: info.reason }),
             "idle",
           );
         }
         log(
           "info",
-          `连接关闭：code=${info.code} reason=${info.reason === "" ? "无" : info.reason} ` +
-            `clean=${String(info.wasClean)}`,
+          t("status.closeLine", {
+            code: info.code,
+            reason: info.reason === "" ? t("status.closeNoReason") : info.reason,
+            clean: String(info.wasClean),
+          }),
         );
       },
       onError: (error) => {
@@ -1237,8 +1235,8 @@ function disconnect(): void {
   if (active === null) {
     return;
   }
-  log("info", "正在断开…");
-  setStatus("正在断开…", "busy");
+  log("info", t("status.disconnecting"));
+  setStatus(t("status.disconnecting"), "busy");
   connectButton.disabled = true;
   active.close("user closed");
 }
@@ -1292,13 +1290,13 @@ async function sendHeartbeat(): Promise<void> {
     log("recv", answer);
     toastExchange(line, answer);
     if (answer !== "PONG") {
-      const message = `心跳收到意外回答：${answer}`;
+      const message = t("heartbeat.unexpected", { answer });
       log("error", message);
       toastMessage(message, "error");
     }
   } catch (error: unknown) {
     if (socket === active) {
-      const message = `心跳失败：${error instanceof Error ? error.message : String(error)}`;
+      const message = t("heartbeat.failed", { message: error instanceof Error ? error.message : String(error) });
       log("error", message);
       toastMessage(message, "error");
     }
@@ -1317,11 +1315,11 @@ async function sendAnswered(
 ): Promise<string | undefined> {
   const active = socket;
   if (active === null) {
-    refuse("还没有连接");
+    refuse(t("refuse.noConnection"));
     return undefined;
   }
   log("send", displayLine);
-  setStatus(`等待 ${label} 的回答…`, "busy");
+  setStatus(t("refuse.waiting", { label }), "busy");
   try {
     const answer = await active.send(line);
     log("recv", answer);
@@ -1339,9 +1337,9 @@ async function doPing(): Promise<void> {
     return;
   }
   if (answer === "PONG") {
-    setStatus("PING → PONG", "ok");
+    setStatus(t("ping.pong"), "ok");
   } else {
-    refuse(`PING 收到意外回答：${answer}`);
+    refuse(t("ping.unexpected", { answer }));
   }
 }
 
@@ -1351,9 +1349,9 @@ async function doCount(): Promise<void> {
     return;
   }
   if (isOkAnswer(answer)) {
-    setStatus(`已注册账号：${answer.slice(2).trim()}`, "ok");
+    setStatus(t("count.ok", { detail: answer.slice(2).trim() }), "ok");
   } else {
-    setStatus(`COUNT 被拒绝：${answer}`, "error");
+    setStatus(t("count.refused", { answer }), "error");
   }
 }
 
@@ -1365,7 +1363,7 @@ async function applyLoginSuccess(user: string, answer: string): Promise<void> {
   placementPath = null;
   updateGameplayPanel();
   updateHud(true);
-  setStatus(`已登录：${answer.slice(2).trim()}`, "ok");
+  setStatus(t("auth.loginOk", { detail: answer.slice(2).trim() }), "ok");
   await fetchWhoAmI();
 }
 
@@ -1373,11 +1371,11 @@ async function doLogin(): Promise<void> {
   const user = userInput.value.trim();
   const password = passwordInput.value;
   if (user === "") {
-    refuse("请先填写用户名");
+    refuse(t("auth.needUser"));
     return;
   }
   if (password === "") {
-    refuse("请先填写密码");
+    refuse(t("auth.needPassword"));
     return;
   }
 
@@ -1388,7 +1386,7 @@ async function doLogin(): Promise<void> {
     reportError(error);
     return;
   }
-  const answer = await sendAnswered("LOGIN", line, `LOGIN ${user} <密码已隐藏>`);
+  const answer = await sendAnswered("LOGIN", line, t("log.loginHidden", { user }));
   if (answer === undefined) {
     return;
   }
@@ -1397,7 +1395,7 @@ async function doLogin(): Promise<void> {
   } else {
     loggedIn = false;
     clearGameplayIdentity();
-    setStatus(`登录失败：${answer}`, "error");
+    setStatus(t("auth.loginFail", { answer }), "error");
   }
 }
 
@@ -1426,10 +1424,10 @@ async function autoLogin(): Promise<void> {
   try {
     line = login(user, password);
   } catch (error) {
-    log("info", `自动登录未发送：${error instanceof Error ? error.message : String(error)}`);
+    log("info", t("log.autoLoginSkipped", { message: error instanceof Error ? error.message : String(error) }));
     return;
   }
-  log("send", `LOGIN ${user} <密码已隐藏>`);
+  log("send", t("log.loginHidden", { user }));
   try {
     const answer = await active.send(line);
     if (socket !== active) {
@@ -1437,15 +1435,15 @@ async function autoLogin(): Promise<void> {
     }
     log("recv", answer);
     if (isOkAnswer(answer)) {
-      log("info", "已用保存的账号自动登录");
+      log("info", t("log.autoLoginOk"));
       await applyLoginSuccess(user, answer);
     } else {
       loggedIn = false;
-      log("info", `自动登录失败：${answer}（保存的账号或密码可能已失效，可手动登录）`);
+      log("info", t("log.autoLoginFail", { answer }));
     }
   } catch (error) {
     if (socket === active) {
-      log("info", `自动登录失败：${error instanceof Error ? error.message : String(error)}`);
+      log("info", t("log.autoLoginError", { message: error instanceof Error ? error.message : String(error) }));
     }
   }
 }
@@ -1486,25 +1484,25 @@ async function fetchWhoAmI(): Promise<void> {
     // A roster row may already carry the id; prefer that over leaving ownership unknown forever.
     reconcileLocalPlayerId();
     if (myPlayerId === null) {
-      refuse(`WHOAMI 收到意外回答：${answer}（可先用快照 players 里的账号名恢复）`);
+      refuse(t("auth.whoamiUnexpected", { answer }));
     }
     return;
   }
   myPlayerId = playerId;
   updateHud(true);
   updateGameplayPanel();
-  setStatus(`已登录 · player ${playerId}`, "ok");
+  setStatus(t("auth.playerOk", { id: playerId }), "ok");
 }
 
 async function doRegister(): Promise<void> {
   const user = userInput.value.trim();
   const password = passwordInput.value;
   if (user === "") {
-    refuse("请先填写用户名");
+    refuse(t("auth.needUser"));
     return;
   }
   if (password === "") {
-    refuse("请先填写密码");
+    refuse(t("auth.needPassword"));
     return;
   }
 
@@ -1515,23 +1513,20 @@ async function doRegister(): Promise<void> {
     reportError(error);
     return;
   }
-  const answer = await sendAnswered("REGISTER", line, `REGISTER ${user} <密码已隐藏>`);
+  const answer = await sendAnswered("REGISTER", line, t("log.registerHidden", { user }));
   if (answer === undefined) {
     return;
   }
   if (isOkAnswer(answer)) {
-    setStatus(
-      `已注册 ${user}：${answer.slice(2).trim()}（注册不会自动登录，现在点 LOGIN）`,
-      "ok",
-    );
+    setStatus(t("auth.registerOk", { user, detail: answer.slice(2).trim() }), "ok");
   } else {
-    setStatus(`注册失败：${answer}`, "error");
+    setStatus(t("auth.registerFail", { answer }), "error");
   }
 }
 
 async function doEngineInfo(): Promise<void> {
   if (!loggedIn) {
-    refuse("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端");
+    refuse(t("auth.needLoginReq"));
     return;
   }
 
@@ -1561,12 +1556,12 @@ async function doEngineInfo(): Promise<void> {
     return;
   }
   if (!isOkAnswer(answer)) {
-    setStatus(`engine-info 被拒绝：${answer}`, "error");
+    setStatus(t("engineinfo.refused", { answer }), "error");
     return;
   }
   const payloadBase64 = answer.slice(2).trim();
   if (payloadBase64 === "") {
-    refuse("engine-info 的 OK 回答里没有 base64 载荷");
+    refuse(t("engineinfo.emptyPayload"));
     return;
   }
 
@@ -1582,7 +1577,7 @@ async function doEngineInfo(): Promise<void> {
     try {
       text = decoder.decode(plaintextBytes);
     } catch {
-      throw new Error("信封里的明文不是合法的 UTF-8 文本");
+      throw new Error(t("engineinfo.notUtf8"));
     }
 
     let rendered: string;
@@ -1594,11 +1589,11 @@ async function doEngineInfo(): Promise<void> {
       rendered = text;
     }
 
-    log("info", `engine-info 报告（${plaintextBytes.length} 字节明文）：\n${rendered}`);
+    log("info", t("log.engineInfoReport", { bytes: plaintextBytes.length, report: rendered }));
     if (text.startsWith("ERR ")) {
-      refuse(`oc-debug 拒绝：${text}`);
+      refuse(t("engineinfo.pluginRefused", { text }));
     } else {
-      setStatus("engine-info 已解开：只读报告", "ok");
+      setStatus(t("engineinfo.opened"), "ok");
     }
   } catch (error) {
     reportError(error);
@@ -1607,7 +1602,7 @@ async function doEngineInfo(): Promise<void> {
 
 async function doHello(): Promise<void> {
   if (!loggedIn) {
-    refuse("请先 LOGIN：REQ 只接受同一条连接上已登录的客户端");
+    refuse(t("auth.needLoginReq"));
     return;
   }
 
@@ -1625,19 +1620,19 @@ async function doHello(): Promise<void> {
     return;
   }
   if (!isOkAnswer(answer)) {
-    setStatus(`hello 被拒绝：${answer}`, "error");
+    setStatus(t("hello.refused", { answer }), "error");
     return;
   }
   const payloadBase64 = answer.slice(2).trim();
   if (payloadBase64 === "") {
-    refuse("hello 的 OK 回答里没有 base64 载荷");
+    refuse(t("hello.emptyPayload"));
     return;
   }
 
   try {
     const plaintext = new TextDecoder("utf-8", { fatal: true }).decode(base64ToBytes(payloadBase64));
-    log("info", `hello 回答：${plaintext}`);
-    setStatus("hello 已由 oc-hello 回答", "ok");
+    log("info", t("log.helloAnswer", { text: plaintext }));
+    setStatus(t("hello.answered"), "ok");
   } catch (error) {
     reportError(error);
   }
@@ -1649,9 +1644,9 @@ async function doQuit(): Promise<void> {
     return;
   }
   if (answer === "OK bye") {
-    setStatus("服务器已确认 QUIT，连接即将关闭", "ok");
+    setStatus(t("quit.confirmed"), "ok");
   } else {
-    refuse(`QUIT 收到意外回答：${answer}`);
+    refuse(t("quit.unexpected", { answer }));
   }
 }
 
@@ -1754,8 +1749,15 @@ let worldTick = 0;
  * camera itself never crosses worlds, it only ever looks at whichever window the last fetch returned.
  */
 let viewDimension: string | undefined;
-/** The hostile anchored players behind the current top-chrome line, nearest first. */
-let enemyLineEntries: EnemyAnchorEntry[] = [];
+/**
+ * Entity ids the client has issued an attack order for (ORDER ATTACK / ORDER ATTACKMOVE).
+ *
+ * The snapshot does not carry an order kind, so this client-side bookkeeping is what the route
+ * overlay reads to draw an attack unit's committed path red (item 15). Entries are pruned with the
+ * selection: an id leaves the set when its unit leaves the world or stops moving (no `path`), which
+ * is exactly when its attack route stops being drawn anyway.
+ */
+const attackOrderedIds = new Set<number>();
 /**
  * The last two server snapshots, oldest first. Every animation frame draws between them so a 500 ms
  * poll looks continuous; both are null while the demo world is shown, which has no snapshots to
@@ -1863,7 +1865,7 @@ function clearPendingRoute(showStatus: boolean): boolean {
   }
   pendingRoute = [];
   if (showStatus) {
-    setStatus("已清除路径点", "idle");
+    setStatus(t("route.cleared"), "idle");
   }
   updateGameplayPanel();
   updateHud(true);
@@ -1882,18 +1884,18 @@ function appendPendingWaypoint(tile: TileCoord): void {
   const last = pendingRoute[pendingRoute.length - 1];
   if (last !== undefined && last.x === tile.x && last.y === tile.y) {
     setStatus(
-      `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：同一个点不重复添加 · 右键提交 · Esc 清除`,
+      t("route.duplicate", { count: pendingRoute.length, max: MAX_MOVE_POINTS }),
       "busy",
     );
     return;
   }
   if (pendingRoute.length >= MAX_MOVE_POINTS) {
-    refuse(`路径点最多 ${MAX_MOVE_POINTS} 个；右键提交当前路线，或 Esc 清除`);
+    refuse(t("route.cap", { max: MAX_MOVE_POINTS }));
     return;
   }
   pendingRoute = [...pendingRoute, { x: tile.x, y: tile.y }];
   setStatus(
-    `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：Shift+右键加点 · 右键提交 · Esc 清除`,
+    t("route.append", { count: pendingRoute.length, max: MAX_MOVE_POINTS }),
     "busy",
   );
   updateGameplayPanel();
@@ -1933,11 +1935,6 @@ function recordPlannedBuild(path: string, tile: TileCoord, recorded: boolean): v
 /** The planned rectangles in the shape `buildPlacementPreview` accepts. */
 function plannedSiteRects(): readonly PlannedSite[] {
   return plannedBuilds;
-}
-
-/** Drops recorder-only entries when the sequence is cleared; nothing was ordered, so nothing is blocked. */
-function clearRecordedPlannedBuilds(): void {
-  plannedBuilds = plannedBuilds.filter((planned) => !planned.recorded);
 }
 
 /**
@@ -2006,7 +2003,7 @@ function updatePlacementStatus(): void {
   }
   const preview = placementPreviewAt(hoverTile);
   if (preview === null) {
-    setStatus(`BUILD ${labelledContent(placementPath)}：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
+    setStatus(t("placement.armed", { name: labelledContent(placementPath) }), "busy");
     return;
   }
   setStatus(placementReasonText(preview.reason), placementStatusState(preview.state));
@@ -2017,6 +2014,14 @@ function pruneSelection(): void {
   const livingIds = new Set<number>();
   for (const entity of world.entities) {
     livingIds.add(entity.id);
+  }
+  // Attack-route recolour bookkeeping: an id leaves the set when its unit left the world or stopped
+  // moving (no remaining path), because either way there is no attack route left to draw red.
+  for (const id of [...attackOrderedIds]) {
+    const entity = entityById(world, id);
+    if (entity === undefined || entity.path === undefined) {
+      attackOrderedIds.delete(id);
+    }
   }
   // Groups are pruned on the same snapshot as the selection, so a recalled group can never select an
   // id the server no longer reports.
@@ -2189,9 +2194,8 @@ function renderWarehouseRows(model: WarehousePanelModel): void {
     box.type = "checkbox";
     box.dataset["path"] = item.path;
     box.checked = resourceMarks.has(item.path);
-    box.title =
-      `标记 ${item.name}：只在客户端记住这个物品，勾选的物品在本面板保持高亮`;
-    box.setAttribute("aria-label", `标记 ${item.name}`);
+    box.title = t("logistics.markBoxTitle", { name: item.name });
+    box.setAttribute("aria-label", t("logistics.markBoxAria", { name: item.name }));
     box.addEventListener("change", () => {
       resourceMarks = toggleResourceMark(resourceMarks, item.path);
       refreshMarkViews();
@@ -2273,7 +2277,9 @@ function refreshWarehouseTransferState(model: WarehousePanelModel): void {
   const held = model.sourceItems.find((item) => item.path === itemPath)?.amount;
   warehouseTransferAllButton.disabled = held === undefined;
   warehouseTransferAllButton.title =
-    held === undefined ? "来源仓库没有可调拨的物品" : `把数量填成 ${held}`;
+    held === undefined
+      ? t("transfer.fillTitleNone")
+      : t("transfer.fillTitleHave", { held });
   const targetId = Number(warehouseTransferTarget.value);
   const form = transferFormModel(
     model.single,
@@ -2344,52 +2350,126 @@ function refreshMarkViews(): void {
 let inventorySignature = "";
 
 /**
- * Rebuilds the dedicated inventory HUD under the top-left chips.
+ * The deficit lines of one selected building, computed entirely in the client from raw data.
+ *
+ * With the served `content` catalogue present, a producer's input deficit is the current task's
+ * recipe inputs minus the building's own `contents`, and an unfinished site's construction deficit is
+ * its catalogue cost minus the paid share (the raw `progress` fraction). Without the catalogue — an
+ * older server, the demo world — the answer is `undefined` for both and the HUD keeps the current
+ * display, because the client never invents derived numbers.
+ */
+function selectedBuildingDeficitLines(building: EntityView): readonly string[] {
+  const lines: string[] = [];
+  if (underConstruction(building)) {
+    const build = formatDeficit(constructionDeficit(world.content, building), itemLabel);
+    if (build !== undefined) {
+      lines.push(t("deficit.buildLabel", { items: build }));
+    }
+    return lines;
+  }
+  const inputs = formatDeficit(producerDeficit(world.content, building), itemLabel);
+  if (inputs !== undefined) {
+    lines.push(t("deficit.inputLabel", { items: inputs }));
+  }
+  return lines;
+}
+
+/**
+ * Rebuilds the dedicated inventory HUD under the top-left chips (item 4).
  *
  * The selected units' cargo is aggregated by the same `resources.ts` helper as the warehouse total;
- * one unit shows its own rows, several units show the aggregate plus a count line, and a selection with
- * no cargo says so explicitly instead of looking empty. Buildings do not contribute cargo.
+ * one unit shows its own rows, several units show the aggregate plus a count line, and a selection
+ * with no cargo says so explicitly instead of looking empty. A selected building joins the same
+ * panel: its stock rows are listed and, when the client can derive them from the served `content`
+ * catalogue, what the building *lacks* (producer inputs / the remaining construction cost) — always
+ * shown, never hover-gated, and never asked from the server.
  */
 function updateInventoryPanel(): void {
   const selection = selectedEntities();
   const totals = inventoryTotals(selection, itemLabel);
+  const building = selection.length === 1 && isBuildingEntity(selection[0]!)
+    ? selection[0]
+    : undefined;
+  const deficitLines = building === undefined ? [] : selectedBuildingDeficitLines(building);
   const signature =
     `${totals.unitCount}|${totals.carryingCount}|${totals.total}|` +
-    totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|");
+    totals.items.map((item) => `${item.path}:${item.name}:${item.amount}`).join("|") +
+    `|${building?.id ?? "none"}|${building === undefined ? "" : JSON.stringify(building.contents ?? {})}|` +
+    deficitLines.join("§");
   if (signature === inventorySignature) {
     return;
   }
   inventorySignature = signature;
 
   const units = selection.filter((entity) => !isBuildingEntity(entity));
-  if (totals.unitCount === 0) {
+  if (building !== undefined) {
+    inventorySummary.textContent = t("inventory.buildingLabel", {
+      id: building.id,
+      name: contentLabel(building.kind),
+    });
+  } else if (totals.unitCount === 0) {
     inventorySummary.textContent = t("inventory.none");
   } else if (totals.unitCount === 1) {
     const unit = units[0];
     inventorySummary.textContent =
-      unit === undefined ? t("inventory.units", { count: 1 }) : `e${unit.id} ${contentLabel(unit.kind)}`;
+      unit === undefined ? t("inventory.units", { count: 1 }) : t("unit.summary", { id: unit.id, name: contentLabel(unit.kind) });
   } else {
     inventorySummary.textContent =
       t("inventory.mixed", { count: totals.unitCount, carrying: totals.carryingCount });
   }
 
-  const rows = totals.items.map((item) => {
+  // The rows: the unit cargo aggregate, or — for a selected building — its own stock. Building stock
+  // reuses the row shape; an item-only aggregate is the wrong shape for one building, so its raw
+  // `contents` rows are listed directly in the shared stable item order.
+  const rows: HTMLLIElement[] = [];
+  if (building !== undefined) {
+    const contents = building.contents ?? {};
+    for (const path of Object.keys(contents).sort(compareItemPaths)) {
+      const amount = contents[path];
+      if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
+        continue;
+      }
+      const row = document.createElement("li");
+      row.className = "inventory-item";
+      const name = document.createElement("span");
+      name.className = "inventory-item-name";
+      void renderLatexInto(name, itemLabel(path));
+      const amountSpan = document.createElement("span");
+      amountSpan.className = "inventory-amount";
+      amountSpan.textContent = String(amount);
+      row.append(name, amountSpan);
+      rows.push(row);
+    }
+  } else {
+    for (const item of totals.items) {
+      const row = document.createElement("li");
+      row.className = "inventory-item";
+      const name = document.createElement("span");
+      name.className = "inventory-item-name";
+      void renderLatexInto(name, item.name);
+      const amount = document.createElement("span");
+      amount.className = "inventory-amount";
+      amount.textContent = String(item.amount);
+      row.append(name, amount);
+      rows.push(row);
+    }
+  }
+  // What the building lacks, right under its stock — the deficit half of item 4.
+  for (const line of deficitLines) {
     const row = document.createElement("li");
-    row.className = "inventory-item";
+    row.className = "inventory-item inventory-deficit";
     const name = document.createElement("span");
     name.className = "inventory-item-name";
-    void renderLatexInto(name, item.name);
-    const amount = document.createElement("span");
-    amount.className = "inventory-amount";
-    amount.textContent = String(item.amount);
-    row.append(name, amount);
-    return row;
-  });
+    void renderLatexInto(name, line);
+    row.append(name);
+    rows.push(row);
+  }
   inventoryItems.replaceChildren(...rows);
   inventoryItems.hidden = rows.length === 0;
   void renderLatexInto(inventoryTotal, t("inventory.totalLabel", { total: totals.total }));
-  inventoryTotal.hidden = rows.length === 0;
-  inventoryEmpty.hidden = !(totals.unitCount > 0 && rows.length === 0);
+  inventoryTotal.hidden = building !== undefined || rows.length === 0;
+  inventoryEmpty.hidden =
+    building === undefined && totals.unitCount > 0 && rows.length === 0;
 }
 
 warehouseMarkAllButton.addEventListener("click", () => {
@@ -2415,7 +2495,7 @@ warehouseScopeButton.addEventListener("click", () => {
   const model = currentWarehouseModel();
   updateWarehousePanel(model);
   setStatus(
-    model.scope === "single" ? "仓库面板：只看选中的仓库" : "仓库面板：全部仓库合计",
+    model.scope === "single" ? t("settings.warehouseSingle") : t("settings.warehouseTotal"),
     "idle",
   );
 });
@@ -2430,7 +2510,7 @@ warehouseTransferAllButton.addEventListener("click", () => {
     (item) => item.path === warehouseTransferItem.value,
   )?.amount;
   if (held === undefined) {
-    setWarehouseTransferStatus("来源仓库没有这件物品", "error", false);
+    setWarehouseTransferStatus(t("transfer.noItemPanel"), "error", false);
     return;
   }
   warehouseTransferAmount.value = String(held);
@@ -2465,11 +2545,11 @@ warehouseTransferForm.addEventListener("submit", (event) => {
 function focusWarehouseTransfer(): void {
   const single = singleSelectedEntity();
   if (single === undefined || !isMine(single) || !isWarehouseRow(single)) {
-    refuse("先选中自己的一座仓库，再从建筑面板调拨");
+    refuse(t("transfer.needOwnPanel"));
     return;
   }
   if (underConstruction(single)) {
-    refuse("仓库尚未完工：完工后才能调拨");
+    refuse(t("transfer.sourceUnfinishedPanel"));
     return;
   }
   warehouseScope = "single";
@@ -2481,7 +2561,7 @@ function focusWarehouseTransfer(): void {
     setStatus(model.transferReason, "error");
     return;
   }
-  setStatus(`调拨：从 e${single.id} 选择物品、数量与目标仓库`, "idle");
+  setStatus(t("transfer.focusStatus", { id: single.id }), "idle");
 }
 
 transferFocusButton.addEventListener("click", focusWarehouseTransfer);
@@ -2518,7 +2598,7 @@ function doWarehouseTransfer(): void {
     refuse("还没有连接");
     return;
   }
-  setWarehouseTransferStatus(`等待 TRANSFER 的回答…`, "busy", false);
+  setWarehouseTransferStatus(t("transfer.waiting"), "busy", false);
   log("send", form.line);
   void active
     .send(form.line)
@@ -2542,29 +2622,6 @@ function doWarehouseTransfer(): void {
     });
 }
 
-/**
- * Refreshes the top-chrome enemy line from the current snapshot's player anchors and the camera centre.
- *
- * <p>The line is the answer to "which way is the enemy base" without a fog-of-war reveal: the anchor is
- * a published starting position, so it is known even when it is thousands of tiles away. The text is
- * rebuilt from the current camera tile each HUD tick, which is why the distance and sector update while
- * the owner pans. The entries are kept so a click can jump to the nearest anchor without recomputing.
- *
- * <p>A world with no hostile anchored player (the demo, a sandbox, or a snapshot from an older server)
- * hides the line instead of showing an empty "敌方".
- */
-function updateEnemyLine(centre: TileCoord): void {
-  const entries = enemyAnchorEntries(world.players, myPlayerId, centre);
-  enemyLineEntries = entries;
-  const text = enemyLineText(entries);
-  enemyLine.hidden = text === "";
-  enemyLine.textContent = text;
-  enemyLine.title =
-    entries.length === 0
-      ? ""
-      : `点击把镜头移到最近的敌方锚点 (${entries[0]!.anchor.x},${entries[0]!.anchor.y})`;
-}
-
 // ---------------------------------------------------------------------------------------------
 // "Bring me home" and the personal markers. The pure rules live in `render/markers.ts`; this half owns
 // the DOM (the top-chrome home line, the `基地` jump, the marker list panel) and the status-line wording.
@@ -2580,27 +2637,6 @@ let markerPanelOpen = false;
 let markerRowSignature = "";
 
 /**
- * Refreshes the home line from my own `players` row and the current camera.
- *
- * <p>`null` is the ordinary older-snapshot / not-logged-in case, and the line then stays hidden; `H` and
- * the `基地` button still work as actions and explain the absence on the status line.
- */
-function updateHomeLine(centre: TileCoord): void {
-  const entry = homeAnchorEntry(world, myPlayerId, centre);
-  if (entry === null) {
-    homeLine.hidden = true;
-    homeLine.textContent = "";
-    homeLine.title = HOME_ANCHOR_UNKNOWN_TEXT;
-    return;
-  }
-  homeLine.hidden = false;
-  homeLine.textContent = formatHomeLine(entry);
-  homeLine.title = entry.visible
-    ? `我方基地 (${entry.anchor.x},${entry.anchor.y}) 已在已载入窗口内；点击居中的镜头（H）`
-    : `点击把镜头移到我的基地 (${entry.anchor.x},${entry.anchor.y})（H）`;
-}
-
-/**
  * Centres the camera on my own base anchor, or says why it cannot.
  *
  * <p>The anchor comes from the snapshot row whose id is my engine player id. It is the same
@@ -2610,22 +2646,44 @@ function updateHomeLine(centre: TileCoord): void {
 function jumpToHome(): void {
   const anchor = ownAnchorOf(world.players, myPlayerId);
   if (anchor === null) {
-    setStatus(HOME_ANCHOR_UNKNOWN_TEXT, "busy");
-    log("info", HOME_ANCHOR_UNKNOWN_TEXT);
+    const unknown = homeAnchorUnknownText();
+    setStatus(unknown, "busy");
+    log("info", unknown);
     return;
   }
   const target = homeCameraTarget(anchor, camera.tileSize);
   camera.setCenter(target.x, target.y);
   updateHud(true);
-  setStatus(`镜头已移到我的基地 (${anchor.x},${anchor.y})`, "ok");
+  setStatus(t("home.jump", { x: anchor.x, y: anchor.y }), "ok");
 }
 
-/** Centres the camera on one marker; the row click and the marker's own jump share this. */
+/**
+ * Centres the camera on one marker; the row click and the marker's own jump share this.
+ *
+ * A marker remembers its dimension (item 18): when the drawn dimension differs the view switches
+ * there first (which also re-aims the camera through the new window), and the status line says so.
+ */
 function jumpToMarker(marker: Marker): void {
+  if (marker.dimension !== worldDimensionKey(world) && worldSource === "server") {
+    switchView(marker.dimension === "overworld" ? undefined : marker.dimension, marker.tile);
+    setStatus(
+      t("marker.jumpDimension", {
+        dimension: dimensionDisplayName(marker.dimension),
+        number: marker.number,
+        x: marker.tile.x,
+        y: marker.tile.y,
+      }),
+      "ok",
+    );
+    return;
+  }
   const target = markerCameraTarget(marker, camera.tileSize);
   camera.setCenter(target.x, target.y);
   updateHud(true);
-  setStatus(`镜头已移到标记 ${marker.number} (${marker.tile.x},${marker.tile.y})`, "ok");
+  setStatus(
+    t("marker.jump", { number: marker.number, x: marker.tile.x, y: marker.tile.y }),
+    "ok",
+  );
 }
 
 /**
@@ -2634,22 +2692,28 @@ function jumpToMarker(marker: Marker): void {
  */
 function placeMarkerHere(): void {
   const tile = input.hoverTile ?? camera.centerTile();
-  const result = placeMarker(markers, tile);
+  // The mark remembers the dimension it was made in (item 18): the drawn world's dimension key,
+  // normalised so the default dimension is always the explicit "overworld".
+  const result = placeMarker(markers, tile, worldDimensionKey(world));
   switch (result.kind) {
     case "duplicate":
-      setStatus(`瓦片 (${tile.x},${tile.y}) 已有标记 ${result.marker.number}，没有重复放置`, "busy");
+      setStatus(
+        t("marker.duplicate", { x: tile.x, y: tile.y, number: result.marker.number }),
+        "busy",
+      );
       return;
     case "full":
-      setStatus(
-        `标记已满 ${MAX_MARKERS} 个：Shift+M 删除最近一个，或点“清除全部”`,
-        "error",
-      );
+      setStatus(t("marker.full", { max: MAX_MARKERS }), "error");
       return;
     default:
       markers = result.markers;
       updateHud(true);
       setStatus(
-        `已放置标记 ${result.marker.number}：瓦片 (${result.marker.tile.x},${result.marker.tile.y})`,
+        t("marker.placed", {
+          number: result.marker.number,
+          x: result.marker.tile.x,
+          y: result.marker.tile.y,
+        }),
         "ok",
       );
   }
@@ -2659,33 +2723,35 @@ function placeMarkerHere(): void {
 function removeLastMarkerHere(): void {
   const result = removeLastMarker(markers);
   if (result.removed === null) {
-    setStatus("没有可删除的标记：M 放置，Shift+M 删除最近一个", "idle");
+    setStatus(t("marker.removedLast"), "idle");
     return;
   }
   markers = result.markers;
   updateHud(true);
-  setStatus(`已删除标记 ${result.removed.number}`, "ok");
+  setStatus(t("marker.removed", { number: result.removed.number }), "ok");
 }
 
 /** `清除全部`: clears the whole personal marker list; nothing leaves the page. */
 function clearAllMarkers(): void {
   if (markers.length === 0) {
-    setStatus("标记列表已经是空的", "idle");
+    setStatus(t("marker.listEmpty"), "idle");
     return;
   }
   const count = markers.length;
   markers = clearMarkers();
   updateHud(true);
-  setStatus(`已清除全部 ${count} 个标记`, "ok");
+  setStatus(t("marker.cleared", { count }), "ok");
 }
 
 /** Reflects the marker count / open state on the `标记` button and the `清除全部` action. */
 function updateMarkerChrome(): void {
   markerButton.classList.toggle("armed", markerPanelOpen);
   markerButton.setAttribute("aria-expanded", markerPanelOpen ? "true" : "false");
-  markerButton.title =
-    `标记（${markers.length}/${MAX_MARKERS}）：M 在光标地块放置 · Shift+M 删除最近一个 · ` +
-    `点击${markerPanelOpen ? "关闭" : "打开"}列表；标记只存在于本页会话，不会发给服务器`;
+  markerButton.title = t("marker.buttonTitle", {
+    count: markers.length,
+    max: MAX_MARKERS,
+    action: markerPanelOpen ? t("marker.closeAction") : t("marker.openAction"),
+  });
   markerClearButton.disabled = markers.length === 0;
   markerCount.textContent = `${markers.length}/${MAX_MARKERS}`;
 }
@@ -2696,7 +2762,7 @@ function updateMarkerChrome(): void {
  */
 function updateMarkerRows(centre: TileCoord = camera.centerTile()): void {
   const signature = markers
-    .map((marker) => `${marker.number}:${marker.tile.x},${marker.tile.y}`)
+    .map((marker) => `${marker.number}:${marker.tile.x},${marker.tile.y}:${marker.dimension}`)
     .join("|");
   if (signature !== markerRowSignature) {
     markerRowSignature = signature;
@@ -2707,7 +2773,11 @@ function updateMarkerRows(centre: TileCoord = camera.centerTile()): void {
       button.type = "button";
       button.className = "marker-row";
       button.dataset["marker"] = String(marker.number);
-      button.title = `把镜头移到标记 ${marker.number} (${marker.tile.x},${marker.tile.y})`;
+      button.title = t("marker.rowTitle", {
+        number: marker.number,
+        x: marker.tile.x,
+        y: marker.tile.y,
+      });
       button.addEventListener("click", () => jumpToMarker(marker));
       item.append(button);
       rows.push(item);
@@ -2718,8 +2788,14 @@ function updateMarkerRows(centre: TileCoord = camera.centerTile()): void {
   markers.forEach((marker, index) => {
     const button = buttons[index];
     if (button !== undefined) {
+      // A marker from another dimension names that dimension on its row (item 18): the distance is
+      // per-dimension, so the label says which world the jump will land in.
+      const dimensionName =
+        marker.dimension === worldDimensionKey(world)
+          ? undefined
+          : dimensionDisplayName(marker.dimension);
       button.textContent =
-        `${formatMarkerLabel(marker, centre)} · 瓦片 (${marker.tile.x},${marker.tile.y})`;
+        `${formatMarkerLabel(marker, centre, dimensionName)} · 瓦片 (${marker.tile.x},${marker.tile.y})`;
     }
   });
   markerRows.hidden = markers.length === 0;
@@ -2749,13 +2825,13 @@ function setMarkerPanelOpen(open: boolean, moveFocus = true): void {
   (first ?? markerCloseButton).focus({ preventScroll: true });
 }
 
-/** The display name of one dimension key, from the snapshot roster with the overworld default. */
-function dimensionDisplayName(world: WorldView, key: string): string {
-  const found = world.dimensions?.find((dimension) => dimension.key === key);
-  if (found !== undefined) {
-    return found.name;
-  }
-  return key === "overworld" ? "主世界" : key;
+/**
+ * The display name of one dimension key: the client dictionary first (`dim.<key>`), then the server
+ * `content` catalogue's registered name, then the snapshot roster's name, then the raw key.
+ */
+function dimensionDisplayName(key: string, fallback?: string): string {
+  const rosterName = world.dimensions?.find((dimension) => dimension.key === key)?.name;
+  return dimensionLabel(key, rosterName ?? fallback);
 }
 
 /**
@@ -2773,8 +2849,9 @@ function refreshDimensionButtons(snapshot: ServerWorldView): void {
   const buttons = roster.map((dimension) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = dimension.name;
-    button.title = `切换视角到${dimension.name}`;
+    const name = dimensionDisplayName(dimension.key, dimension.name);
+    button.textContent = name;
+    button.title = t("dim.switchTitle", { name });
     const drawn = (viewDimension ?? snapshot.dimension ?? "overworld") === dimension.key;
     button.classList.toggle("armed", drawn);
     button.setAttribute("aria-pressed", drawn ? "true" : "false");
@@ -2782,7 +2859,7 @@ function refreshDimensionButtons(snapshot: ServerWorldView): void {
       if (worldSource === "server") {
         switchView(dimension.key, camera.centerTile());
       } else {
-        setStatus("未连接服务器，没有可切换的维度", "idle");
+        setStatus(t("dim.notConnected"), "idle");
       }
     });
     return button;
@@ -2795,15 +2872,15 @@ function jumpToCoordinates(): void {
   const x = Number.parseInt(jumpX.value, 10);
   const y = Number.parseInt(jumpY.value, 10);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    setStatus("跳转需要两个整数坐标", "idle");
+    setStatus(t("dim.jumpNeedInts"), "idle");
     return;
   }
   if (worldSource !== "server") {
-    setStatus("未连接服务器，没有可跳转的世界", "idle");
+    setStatus(t("dim.noWorld"), "idle");
     return;
   }
   switchView(viewDimension, { x, y });
-  setStatus(`视角已跳转到 ${x},${y}`, "idle");
+  setStatus(t("dim.jumped", { x, y }), "idle");
 }
 
 /** The snapshot's chunk list as the renderer's key set; `undefined` draws no shadow. */
@@ -2825,10 +2902,6 @@ function updateHud(force = false, now = performance.now()): void {
   lastHudUpdate = now;
   reconcileLocalPlayerId();
   void renderLatexInto(
-    hudAtlas,
-    atlas === null ? atlasLabel([]) : atlasLabel(atlas.sources.map((source) => source.plugin)),
-  );
-  void renderLatexInto(
     hudWorld,
     worldSource === "server"
       ? `${t("hud.world")}：server · tick ${worldTick}`
@@ -2837,10 +2910,15 @@ function updateHud(force = false, now = performance.now()): void {
   // The world is unbounded, so the HUD shows where the camera is and which window is loaded. Both
   // may be negative and keep counting as the owner pans in any direction.
   const focus = camera.centerTile();
-  const dimensionLabel = world.dimensionName ?? t("dim.default");
+  // The drawn dimension's display name: client dictionary first, then the server `content`
+  // catalogue's registered name, then the snapshot's own `dimensionName`, then the raw key.
+  const dimensionText = dimensionDisplayName(
+    world.dimension ?? "overworld",
+    world.dimensionName,
+  );
   void renderLatexInto(
     hudWindow,
-    `${dimensionLabel} · ` +
+    `${dimensionText} · ` +
       t("hud.windowLine", { x: focus.x, y: focus.y, wx: world.originX, wy: world.originY }),
   );
   void renderLatexInto(
@@ -2851,10 +2929,8 @@ function updateHud(force = false, now = performance.now()): void {
         ? `${t("hud.player")}：${t("hud.pending")}`
         : `${t("hud.player")}：${myPlayerId}`,
   );
-  updateEnemyLine(focus);
-  // The home line and the marker list are rebuilt from the same camera tile, so the distance they print
-  // always matches the enemy line's arithmetic. The marker list also stays in sync while it is open.
-  updateHomeLine(focus);
+  // The marker list is rebuilt from the same camera tile as the HUD line, so the distance it prints
+  // always matches the chip arithmetic. The list also stays in sync while it is open.
   updateMarkerChrome();
   if (markerPanelOpen) {
     updateMarkerRows(focus);
@@ -2863,8 +2939,7 @@ function updateHud(force = false, now = performance.now()): void {
     hudTile,
     hoverTile === null ? `${t("hud.tile")}：—` : `${t("hud.tile")}：${hoverTile.x}, ${hoverTile.y}`,
   );
-  void renderLatexInto(hudZoom, `${t("hud.zoom")}：${camera.zoom.toFixed(2)}×`);
-  void renderLatexInto(hudFps, fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—");
+  void renderLatexInto(hudFps, fps > 0 ? `${t("hud.fps")}：${Math.round(fps)}` : `${t("hud.fps")}：—`);
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
   const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
@@ -2917,6 +2992,12 @@ function updateHud(force = false, now = performance.now()): void {
     const attack = combatLabel(selectedBuilding);
     if (attack !== null) {
       buildingText += ` · ${attack}`;
+    }
+    // What the building lacks, computed in the client from the served `content` catalogue (item 4):
+    // a producer's missing recipe inputs, or an unfinished site's remaining construction cost. No
+    // catalogue, no line — the HUD never invents a derived number and never asks the server for one.
+    for (const deficit of selectedBuildingDeficitLines(selectedBuilding)) {
+      buildingText += ` · ${deficit}`;
     }
   }
   void renderLatexInto(hudBuildingText, buildingText);
@@ -2994,7 +3075,7 @@ function renderQueueList(building: EntityView | undefined): void {
       const icon = document.createElement("span");
       icon.className = `hud-queue-demand ${building.demand.ready ? "ready" : "warning"}`;
       icon.textContent = demandIcon(building.demand);
-      icon.title = missing === "" ? "材料充足" : `${missing}（需求/持有）`;
+      icon.title = missing === "" ? t("status.inputsReady") : `${missing}${t("status.needHave")}`;
       icon.setAttribute("aria-hidden", "true");
       row.append(icon);
     }
@@ -3038,8 +3119,8 @@ function renderOrderQueue(unit: EntityView | undefined): void {
   const rows: HTMLDivElement[] = [];
   const header = document.createElement("div");
   header.className = "hud-queue-now";
-  header.textContent = `任务队列 ${labels.length}`;
-  header.title = "按执行顺序排列；超过 8 项时最后一项是截断标记";
+  header.textContent = t("status.orderQueue", { count: labels.length });
+  header.title = t("status.orderQueueTitle");
   rows.push(header);
   for (let index = 0; index < labels.length; index += 1) {
     const label = labels[index];
@@ -3069,73 +3150,10 @@ function renderOrderQueue(unit: EntityView | undefined): void {
 
 function requireLoggedInForGameplay(): boolean {
   if (!loggedIn || socket === null) {
-    refuse("请先 LOGIN：游戏命令需要同一条连接上的登录");
+    refuse(t("auth.needLogin"));
     return false;
   }
   return true;
-}
-
-/**
- * Reflects the sequence recorder on its chrome button: `顺序` when empty, `顺序 N` while it holds N
- * lines, with `armed` matching the recording state.
- */
-function updateSequenceButton(): void {
-  sequenceButton.classList.toggle("armed", sequenceArmed);
-  sequenceButton.setAttribute("aria-pressed", sequenceArmed ? "true" : "false");
-  sequenceButton.textContent =
-    sequenceLines.length === 0 ? t("chrome.sequence") : `${t("chrome.sequence")} ${sequenceLines.length}`;
-  sequenceButton.title = sequenceArmed
-    ? `顺序：已记录 ${sequenceLines.length} 条，点击执行（Enter），Esc 清空`
-    : "顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）";
-}
-
-/**
- * Clears the recorder; `showStatus` is false for a disconnect, which has its own status line and does
- * not need a second message about the sequence.
- */
-function clearSequence(showStatus: boolean): void {
-  const had = sequenceLines.length;
-  const wasArmed = sequenceArmed;
-  sequenceLines = [];
-  sequenceArmed = false;
-  clearRecordedPlannedBuilds();
-  updateSequenceButton();
-  if (showStatus && wasArmed) {
-    setStatus(had === 0 ? "顺序已关闭" : `已清空顺序（${had} 条）`, "idle");
-  }
-}
-
-/**
- * Records one gameplay action into the sequence instead of sending it.
- *
- * Every wire line is rewritten to its `queue` form (`sequenceLine`), so unit orders and builds append to
- * the unit's order queue and run in recording order instead of replacing each other. The cap is the
- * server's BATCH cap; an action that would exceed it is refused whole, never truncated.
- */
-function recordSequence(wireLines: readonly string[], displayLines: readonly string[]): void {
-  const queued = wireLines.map(sequenceLine);
-  if (sequenceLines.length + queued.length > MAX_BATCH_COMMANDS) {
-    refuse(
-      `顺序最多 ${MAX_BATCH_COMMANDS} 条，当前已记录 ${sequenceLines.length} 条，这次要加 ${queued.length} 条`,
-    );
-    return;
-  }
-  sequenceLines.push(...queued);
-  // A recorded BUILD is not sent yet, but the next recorded click must already see its footprint: the
-  // same optimistic occupancy the direct Shift-click path uses, marked so clearing the recorder drops it.
-  for (const line of queued) {
-    const parsed = /^BUILD\s+\d+\s+(\S+)\s+(-?\d+)\s+(-?\d+)/u.exec(line);
-    if (parsed !== null) {
-      const x = Number(parsed[2]);
-      const y = Number(parsed[3]);
-      if (Number.isSafeInteger(x) && Number.isSafeInteger(y)) {
-        recordPlannedBuild(parsed[1] ?? "", { x, y }, true);
-      }
-    }
-  }
-  log("info", `顺序 +${queued.length}：${displayLines.join(" · ")}`);
-  setStatus(`顺序 ${sequenceLines.length} 条（Enter 执行 / Esc 清空）`, "idle");
-  updateSequenceButton();
 }
 
 /**
@@ -3150,8 +3168,8 @@ function updateFollowButton(): void {
   followButton.setAttribute("aria-pressed", following ? "true" : "false");
   followButton.textContent = following ? t("chrome.following") : t("chrome.follow");
   followButton.title = following
-    ? `跟随 e${lockedEntityId}：视角锁定中，再点一次取消`
-    : "跟随：把视角锁定到选中的单位；再点一次取消，目标消失时自动取消";
+    ? t("chrome.followTitleLocked", { id: lockedEntityId ?? 0 })
+    : t("chrome.followTitleFree");
 }
 
 /** Recentres the camera on the locked unit once per frame; absence releases the lock. */
@@ -3163,44 +3181,10 @@ function followLockedUnit(): void {
   if (target === undefined) {
     lockedEntityId = null;
     updateFollowButton();
-    setStatus("跟随目标已消失，视角锁定已取消", "idle");
+    setStatus(t("chrome.followLost"), "idle");
     return;
   }
   camera.setCenter(target.x * TILE_SIZE_PX, target.y * TILE_SIZE_PX);
-}
-
-/**
- * Sends the recorded sequence as one `BATCH` line.
- *
- * The whole plan travels as one abstract order (Q16), in recording order, and the server answers once:
- * `OK <count>` or `ERR <index>/<count> <reason>`. The recorder is cleared before the send so a refused
- * batch cannot be submitted twice by a second Enter.
- */
-function executeSequence(): void {
-  if (!requireLoggedInForGameplay()) {
-    return;
-  }
-  if (sequenceLines.length === 0) {
-    setStatus("顺序为空：先点一个命令", "idle");
-    return;
-  }
-  let batchLine: string;
-  try {
-    batchLine = batchCommands(sequenceLines);
-  } catch (error: unknown) {
-    refuse(error instanceof Error ? error.message : String(error));
-    return;
-  }
-  const count = sequenceLines.length;
-  sequenceLines = [];
-  sequenceArmed = false;
-  updateSequenceButton();
-  void sendGameplayBatch(
-    `合并订单（${count} 条）`,
-    [batchLine],
-    [batchLine],
-    `合并订单已提交（${count} 条）`,
-  );
 }
 
 /**
@@ -3210,8 +3194,8 @@ function executeSequence(): void {
  * `←` line per unit; the toast joins the command lines and the answers so a group order still fits the
  * popup's two lines. An `ERR ...` answer makes the toast an error and wins the status line.
  *
- * <p>While the Q16 sequence recorder is armed the action is not sent at all: it is appended to
- * `sequenceLines` instead, and Enter submits the whole list as one `BATCH`.
+ * The whole exchange travels through the one in-order command queue, so the lines are awaited one by
+ * one and the answers stay in the order they were sent.
  */
 async function sendGameplayBatch(
   label: string,
@@ -3228,14 +3212,10 @@ async function sendGameplayBatch(
     return;
   }
   if (wireLines.length === 0) {
-    refuse("没有可以下达命令的单位");
+    refuse(t("refuse.noUnits"));
     return;
   }
-  if (sequenceArmed) {
-    recordSequence(wireLines, displayLines);
-    return;
-  }
-  setStatus(`等待 ${label} 的回答…`, "busy");
+  setStatus(t("refuse.waiting", { label }), "busy");
   const commandText = displayLines.join(" · ");
   const answers: string[] = [];
   for (const [index, line] of wireLines.entries()) {
@@ -3269,7 +3249,7 @@ async function sendGameplayBatch(
   }
   const unexpected = answers.find((answer) => !isOkAnswer(answer));
   if (unexpected !== undefined) {
-    setStatus(`${label} 收到意外回答：${unexpected}`, "error");
+    setStatus(t("refuse.unexpected", { label, answer: unexpected }), "error");
     return;
   }
   const details = answers
@@ -3353,12 +3333,22 @@ function renderSelectionChips(resolved: readonly EntityView[]): void {
     button.className = "selection-chip";
     button.dataset["entityId"] = String(chip.entityId);
     const healthPercent = Math.round(chip.healthRatio * 100);
-    button.title =
-      `e${chip.entityId} ${chip.name} · [${ownershipTag(chip.ownership)}] · ` +
-      `生命 ${healthPercent}% · 点击只选中它`;
+    button.title = t("combat.health", {
+      id: chip.entityId,
+      name: chip.name,
+      tag: ownershipTag(chip.ownership),
+      percent: healthPercent,
+      action: t("ui.selectedTag"),
+    });
     button.setAttribute(
       "aria-label",
-      `e${chip.entityId} ${chip.name}，生命 ${healthPercent}%，点击只选中它`,
+      t("combat.health", {
+        id: chip.entityId,
+        name: chip.name,
+        tag: ownershipTag(chip.ownership),
+        percent: healthPercent,
+        action: t("ui.selectedTag"),
+      }),
     );
     const label = document.createElement("span");
     label.className = "selection-chip-label";
@@ -3383,7 +3373,7 @@ function renderSelectionChips(resolved: readonly EntityView[]): void {
     const more = document.createElement("span");
     more.className = "selection-chip selection-chip-more";
     more.textContent = chips.overflowLabel;
-    more.title = `还有 ${chips.overflow} 个选中单位未显示`;
+    more.title = t("chips.more", { count: chips.overflow });
     nodes.push(more);
   }
 
@@ -3394,19 +3384,19 @@ function renderSelectionChips(resolved: readonly EntityView[]): void {
 /** The command bar's one hint line, with the armed placement / attack-move modes taking precedence. */
 function commandBarNote(model: CommandBarModel): string {
   if (placementPath !== null) {
-    return `BUILD ${labelledContent(placementPath)}：左键放置 · Shift+左键排队 · Esc 取消`;
+    return t("placement.armed", { name: labelledContent(placementPath) });
   }
   if (attackMoveArmed) {
-    return "攻击移动：左键点目标地面 · Esc 取消";
+    return t("attackMove.target");
   }
   if (pendingRoute.length > 0) {
-    return `路径点 ${pendingRoute.length}/${MAX_MOVE_POINTS}：Shift+右键加点 · 右键提交 · Esc 清除`;
+    return t("route.hint", { count: pendingRoute.length, max: MAX_MOVE_POINTS });
   }
   if (!(loggedIn && socket !== null)) {
-    return `${model.hint} · 先连接并 LOGIN`;
+    return t("command.needLoginHint", { hint: model.hint });
   }
   if (myPlayerId === null && model.selectedCount > 0) {
-    return loggedIn ? `${model.hint} · 正在从 WHOAMI / players 恢复玩家 id…` : model.hint;
+    return t("command.resolvingId", { hint: model.hint });
   }
   return model.hint;
 }
@@ -3466,7 +3456,7 @@ function updateGameplayPanel(): void {
     showTrain && trainBuilding !== undefined
       ? selectedOwnBuildings.length === 1
         ? `· e${trainBuilding.id} ${contentLabel(trainBuilding.kind)}`
-        : `· ${selectedOwnBuildings.length} 座 ${contentLabel(trainBuilding.kind)}（一次点击各排一个）`
+        : `· ${selectedOwnBuildings.length} × ${contentLabel(trainBuilding.kind)}${t("train.parallelNote")}`
       : "",
   );
   // The train menu comes from the building row's `trains` (content-driven); rebuild the buttons when
@@ -3497,7 +3487,7 @@ function updateGameplayPanel(): void {
     showBuild && single !== undefined
       ? `· e${single.id} ${contentLabel(single.kind)}`
       : showBuild
-        ? `· ${model.unitCount} 个工兵`
+        ? `· ${model.unitCount} × ${t("content.unit.engineer")}`
         : "",
   );
   for (const button of buildButtons) {
@@ -3537,7 +3527,7 @@ function updateGameplayPanel(): void {
   const gatewayTarget = gatewayOffer === undefined || batchUpgrade !== null ? undefined : gatewayOffer;
   gatewaySection.hidden = gatewayTarget === undefined;
   if (gatewayTarget !== undefined) {
-    const label = dimensionDisplayName(world, gatewayTarget.to);
+    const label = dimensionDisplayName(gatewayTarget.to);
     void renderLatexInto(
       gatewayButton,
       t("gateway.goTo", {
@@ -3546,7 +3536,11 @@ function updateGameplayPanel(): void {
         y: gatewayTarget.arrival.y,
       }),
     );
-    gatewayButton.title = `切换视角到${label}的 (${gatewayTarget.arrival.x},${gatewayTarget.arrival.y})；不移动任何单位`;
+    gatewayButton.title = t("gateway.goToTitle", {
+      dimension: label,
+      x: gatewayTarget.arrival.x,
+      y: gatewayTarget.arrival.y,
+    });
     gatewayButton.disabled = worldSource !== "server";
   }
 
@@ -3558,8 +3552,8 @@ function updateGameplayPanel(): void {
     void renderLatexInto(unitUpgradeTarget, `· e${unitOffer.unitId} ${contentLabel(single?.kind ?? "")}`);
     void renderLatexInto(unitUpgradeButton, unitOffer.label);
     unitUpgradeButton.title = unitOffer.affordable
-      ? `UPGRADEUNIT ${unitOffer.unitId}：花费金 ${unitOffer.gold}、木 ${unitOffer.wood}`
-      : `UPGRADEUNIT ${unitOffer.unitId}：资源不足（需要金 ${unitOffer.gold}、木 ${unitOffer.wood}）`;
+      ? t("upgrade.unitTitle", { id: unitOffer.unitId, gold: unitOffer.gold, wood: unitOffer.wood })
+      : t("upgrade.unitPoor", { id: unitOffer.unitId, gold: unitOffer.gold, wood: unitOffer.wood });
     unitUpgradeButton.disabled = !(gameplayReady && unitOffer.affordable);
   } else {
     unitUpgradeButton.disabled = true;
@@ -3581,7 +3575,7 @@ function updateGameplayPanel(): void {
     );
     upgradeButton.title =
       `${batchUpgrade.summary}：${batchUpgrade.lines.join("、")}` +
-      (skipDetail === "" ? "" : `；跳过 ${skipDetail}`);
+      (skipDetail === "" ? "" : `${t("upgrade.skipDetail")}${skipDetail}`);
     upgradeButton.disabled = !(gameplayReady && batchUpgrade.lines.length > 0);
   } else if (upgradeOffer !== undefined) {
     void renderLatexInto(
@@ -3590,8 +3584,18 @@ function updateGameplayPanel(): void {
     );
     void renderLatexInto(upgradeButton, upgradeOffer.label);
     upgradeButton.title = upgradeOffer.affordable
-      ? `UPGRADE ${upgradeOffer.buildingId} ${upgradeOffer.target}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
-      : `UPGRADE ${upgradeOffer.buildingId} ${upgradeOffer.target}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
+      ? t("upgrade.buildingTitle", {
+          id: upgradeOffer.buildingId,
+          target: upgradeOffer.target,
+          gold: upgradeOffer.gold,
+          wood: upgradeOffer.wood,
+        })
+      : t("upgrade.buildingPoor", {
+          id: upgradeOffer.buildingId,
+          target: upgradeOffer.target,
+          gold: upgradeOffer.gold,
+          wood: upgradeOffer.wood,
+        });
     upgradeButton.disabled = !(gameplayReady && upgradeOffer.affordable);
   }
   // Every generated button paints exactly one upgrade route: the offer/plan at its own variant index,
@@ -3616,7 +3620,7 @@ function updateGameplayPanel(): void {
       );
       button.title =
         `${plan.summary}：${plan.lines.join("、")}` +
-        (skipDetail === "" ? "" : `；跳过 ${skipDetail}`);
+        (skipDetail === "" ? "" : `${t("upgrade.skipDetail")}${skipDetail}`);
       button.disabled = !(gameplayReady && plan.lines.length > 0);
     } else {
       const offer = upgradeOffers[variantIndex];
@@ -3626,8 +3630,18 @@ function updateGameplayPanel(): void {
       }
       void renderLatexInto(button, offer.label);
       button.title = offer.affordable
-        ? `UPGRADE ${offer.buildingId} ${offer.target}：花费金 ${offer.gold}、木 ${offer.wood}`
-        : `UPGRADE ${offer.buildingId} ${offer.target}：资源不足（需要金 ${offer.gold}、木 ${offer.wood}）`;
+        ? t("upgrade.buildingTitle", {
+            id: offer.buildingId,
+            target: offer.target,
+            gold: offer.gold,
+            wood: offer.wood,
+          })
+        : t("upgrade.buildingPoor", {
+            id: offer.buildingId,
+            target: offer.target,
+            gold: offer.gold,
+            wood: offer.wood,
+          });
       button.disabled = !(gameplayReady && offer.affordable);
     }
   }
@@ -3640,19 +3654,16 @@ function updateGameplayPanel(): void {
     single !== undefined && isMine(single) && isWarehouseRow(single);
   const showBuildingActions =
     (buildingActions !== null
-      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim
-        || buildingActions.haul))
+      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim))
     || ownWarehouseSelected;
   buildingActionsSection.hidden = !showBuildingActions;
   if (!showBuildingActions || buildingActions === null) {
     continueBuildButton.hidden = true;
     repairButton.hidden = true;
     reclaimButton.hidden = true;
-    haulButton.hidden = true;
     continueBuildButton.disabled = true;
     repairButton.disabled = true;
     reclaimButton.disabled = true;
-    haulButton.disabled = true;
     if (ownWarehouseSelected) {
       void renderLatexInto(
         buildingActionsTarget,
@@ -3674,41 +3685,38 @@ function updateGameplayPanel(): void {
     continueBuildButton.disabled = !(gameplayReady && buildingActions.continueEnabled);
     continueBuildButton.title =
       buildingActions.engineerId === null
-        ? "继续建造：载入窗口内没有自己的工兵"
-        : `BUILD ${buildingActions.engineerId} ${buildingActions.kind}：附着到半成品工地，不再次收费`;
-    void renderLatexInto(continueBuildButton, buildingActions.continueLabel ?? "继续建造");
+        ? t("ctx.continueBuildNoEngineer")
+        : t("ctx.continueBuildTitle", { engineer: buildingActions.engineerId, kind: buildingActions.kind });
+    void renderLatexInto(continueBuildButton, buildingActions.continueLabel ?? t("ctx.continueBuild"));
 
     repairButton.hidden = !buildingActions.repair;
     repairButton.disabled = !(gameplayReady && buildingActions.repairEnabled);
     repairButton.title =
       buildingActions.engineerId === null
-        ? "修理：载入窗口内没有自己的工兵"
+        ? t("ctx.repairNoEngineer")
         : buildingActions.repairEnabled
-          ? `REPAIR ${buildingActions.engineerId} ${buildingActions.buildingId}：${buildingActions.repairLabel ?? ""}`
-          : `修理：资源不足（${buildingActions.repairLabel ?? "未知费用"}）`;
-    void renderLatexInto(repairButton, buildingActions.repairLabel ?? "修理");
+          ? t("ctx.repairTitle", {
+              engineer: buildingActions.engineerId,
+              building: buildingActions.buildingId,
+              cost: buildingActions.repairLabel ?? "",
+            })
+          : t("ctx.repairPoor", { cost: buildingActions.repairLabel ?? "" });
+    void renderLatexInto(repairButton, buildingActions.repairLabel ?? t("ctx.repair"));
 
     reclaimButton.hidden = !buildingActions.reclaim;
     reclaimButton.disabled = !(gameplayReady && buildingActions.reclaimEnabled);
-    reclaimButton.title =
-      `RECLAIM ${buildingActions.buildingId}：移除未完工工地，返还 ${buildingActions.reclaimLabel ?? "一半成本"}`;
-    void renderLatexInto(reclaimButton, buildingActions.reclaimLabel ?? "回收");
-
-    haulButton.hidden = !buildingActions.haul;
-    haulButton.disabled = !(gameplayReady && buildingActions.haulEnabled);
-    haulButton.title =
-      buildingActions.engineerId === null
-        ? "强制搬运：载入窗口内没有自己的工兵"
-        : `HAUL ${buildingActions.engineerId} ${buildingActions.buildingId}：清空该工兵当前订单，` +
-          "让它立刻去仓库取这座生产建筑下一批缺料";
-    void renderLatexInto(haulButton, buildingActions.haulLabel ?? "强制搬运");
+    reclaimButton.title = t("ctx.reclaimTitle", {
+      building: buildingActions.buildingId,
+      cost: buildingActions.reclaimLabel ?? t("ctx.reclaimFallback"),
+    });
+    void renderLatexInto(reclaimButton, buildingActions.reclaimLabel ?? t("ctx.reclaim"));
   }
   transferFocusButton.hidden = !ownWarehouseSelected;
   transferFocusButton.disabled = !ownWarehouseSelected;
   transferFocusButton.title =
     ownWarehouseSelected && single !== undefined && underConstruction(single)
-      ? "调拨：仓库完工后才可用"
-      : "在仓库面板里从这座仓库调拨物品";
+      ? t("ctx.transferFocusUnfinished")
+      : t("ctx.transferFocusTitle");
 
   renderSelectionChips(resolved);
   void renderLatexInto(gameplayNote, commandBarNote(model));
@@ -3729,9 +3737,9 @@ function doOrderStop(): void {
   if (units.length === 0) {
     const selected = selectedEntities();
     if (selected.length > 0 && selected.every(isBuildingEntity)) {
-      refuse("停止只能下达给单位，不能下达给建筑");
+      refuse(t("refuse.stopNotBuildings"));
     } else {
-      refuse("先选中自己的单位，再点停止");
+      refuse(t("refuse.selectForStop"));
     }
     return;
   }
@@ -3739,8 +3747,8 @@ function doOrderStop(): void {
   const first = units[0];
   const confirmation =
     units.length === 1 && first !== undefined
-      ? `已停止 ${describeEntity(first)}`
-      : `已停止 ${units.length} 个单位`;
+      ? t("confirm.stoppedOne", { entity: describeEntity(first) })
+      : t("confirm.stoppedMany", { count: units.length });
   void sendGameplayBatch("ORDER STOP", lines, lines, confirmation);
 }
 
@@ -3766,7 +3774,7 @@ function armAttackMove(): void {
   }
   attackMoveArmed = true;
   gameCanvas.focus({ preventScroll: true });
-  setStatus(`攻击移动：左键点击目标地面（${units.length} 个单位），Esc 取消`, "busy");
+  setStatus(t("attackMove.armed", { count: units.length }), "busy");
   updateGameplayPanel();
   updateHud(true);
 }
@@ -3778,7 +3786,7 @@ function cancelAttackMove(showStatus: boolean): void {
   }
   attackMoveArmed = false;
   if (showStatus) {
-    setStatus("已取消攻击移动", "idle");
+    setStatus(t("attackMove.cancelled"), "idle");
   }
   updateGameplayPanel();
   updateHud(true);
@@ -3789,17 +3797,22 @@ function doAttackMove(tile: TileCoord): void {
   const units = selectedOwnUnits();
   attackMoveArmed = false;
   if (units.length === 0) {
-    refuse("选中里已经没有自己的单位，攻击移动没有发送");
+    refuse(t("refuse.attackMoveNoUnits"));
     updateGameplayPanel();
     updateHud(true);
     return;
   }
   const lines = units.map((unit) => orderAttackMove(unit.id, tile.x, tile.y));
+  // The route overlay reads this set to draw the attack-move leg red (item 15); pruneSelection
+  // drops an id once the unit stops moving or leaves the world.
+  for (const unit of units) {
+    attackOrderedIds.add(unit.id);
+  }
   const first = units[0];
   const confirmation =
     units.length === 1 && first !== undefined
-      ? `已攻击移动 ${describeEntity(first)} 到 ${tile.x},${tile.y}`
-      : `${units.length} 个单位攻击移动到 ${tile.x},${tile.y}`;
+      ? t("confirm.attackMoveOne", { entity: describeEntity(first), x: tile.x, y: tile.y })
+      : t("confirm.attackMoveMany", { count: units.length, x: tile.x, y: tile.y });
   void sendGameplayBatch("ORDER ATTACKMOVE", lines, lines, confirmation);
   updateGameplayPanel();
   updateHud(true);
@@ -3822,7 +3835,7 @@ function doTrain(unitPath: string): void {
     buildings.length === selected.length &&
     buildings.every((building) => kindName(building.kind) === kindName(buildings[0]!.kind));
   if (!oneKind) {
-    refuse("先选中自己的同类型建筑（可以多座），再训练单位");
+    refuse(t("refuse.trainMixed"));
     return;
   }
   let lines: string[];
@@ -3835,8 +3848,12 @@ function doTrain(unitPath: string): void {
   const first = buildings[0];
   const confirmation =
     buildings.length === 1 && first !== undefined
-      ? `已下训练 ${labelledContent(unitPath)}`
-      : `${buildings.length} 座 ${labelledContent(buildings[0]!.kind)} 各排入一个 ${labelledContent(unitPath)}`;
+      ? t("confirm.trainOne", { name: labelledContent(unitPath) })
+      : t("confirm.trainMany", {
+          count: buildings.length,
+          kind: labelledContent(buildings[0]!.kind),
+          name: labelledContent(unitPath),
+        });
   void sendGameplayBatch("TRAIN", lines, lines, confirmation);
 }
 
@@ -3851,23 +3868,27 @@ function doTrain(unitPath: string): void {
 function doUpgrade(variantIndex = 0): void {
   const selected = singleSelectedEntity();
   if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
-    refuse("先选中自己的建筑，再升级");
+    refuse(t("refuse.upgradeBuilding"));
     return;
   }
   const offers = upgradeEntries(selected, myPlayerId, myPlayerRow(), contentLabel);
   const offer = offers[variantIndex];
   if (offer === undefined) {
-    refuse(variantIndex === 0 ? "选中的建筑没有可用的升级" : "选中的建筑没有这个升级变体");
+    refuse(variantIndex === 0 ? t("refuse.upgradeNone") : t("refuse.upgradeNoneVariant"));
     return;
   }
   if (!offer.affordable) {
-    refuse(`资源不足：升级需要金 ${offer.gold}、木 ${offer.wood}`);
+    refuse(t("refuse.cannotAfford", { gold: offer.gold, wood: offer.wood }));
     return;
   }
   void sendGameplayCommand(
     "UPGRADE",
     upgrade(offer.buildingId, offer.target),
-    `已升级 e${offer.buildingId} ${contentLabel(selected.kind)} → ${offer.targetName}`,
+    t("confirm.upgradedBuilding", {
+      id: offer.buildingId,
+      name: contentLabel(selected.kind),
+      target: offer.targetName,
+    }),
   );
 }
 
@@ -3875,11 +3896,11 @@ function doUpgrade(variantIndex = 0): void {
 function doUpgradeAll(variantIndex = 0): void {
   const plan = upgradeBatchPlan(selectedEntities(), myPlayerId, myPlayerRow(), variantIndex);
   if (plan === null) {
-    refuse("先选中自己的同类型建筑（可以多座），再升级全部");
+    refuse(t("refuse.trainMixed"));
     return;
   }
   if (plan.lines.length === 0) {
-    refuse(`没有可升级的建筑：${upgradeSkipDetail(plan)}`);
+    refuse(t("upgrade.noneEligible", { detail: upgradeSkipDetail(plan) }));
     return;
   }
   void sendUpgradeBatch(plan);
@@ -3921,10 +3942,10 @@ async function sendUpgradeBatch(plan: UpgradeBatchPlan): Promise<void> {
   }
   const active = socket;
   if (active === null) {
-    refuse("还没有连接");
+    refuse(t("refuse.noConnection"));
     return;
   }
-  setStatus(`等待批量 UPGRADE 的回答…`, "busy");
+  setStatus(t("refuse.waiting", { label: "UPGRADE" }), "busy");
   const answers: string[] = [];
   let rejected = plan.skipped.length;
   for (const line of plan.lines) {
@@ -3949,7 +3970,7 @@ async function sendUpgradeBatch(plan: UpgradeBatchPlan): Promise<void> {
     }
   }
   for (const skip of plan.skipped) {
-    log("info", `跳过 e${skip.buildingId}：${upgradeSkipText(skip.reason)}`);
+    log("info", t("log.skipLine", { buildingId: skip.buildingId, reason: upgradeSkipText(skip.reason) }));
   }
   toastConsole.push({
     tone: rejected > 0 ? "error" : "info",
@@ -3999,11 +4020,11 @@ function doContinueBuild(): void {
   const building = singleSelectedEntity();
   const actions = selectedBuildingActions();
   if (building === undefined || actions === null || !actions.continueBuild) {
-    refuse("先选中自己未完工的工地，再继续建造");
+    refuse(t("refuse.continueBuild"));
     return;
   }
   if (actions.engineerId === null) {
-    refuse("载入窗口内没有自己的工兵：无法继续建造");
+    refuse(t("refuse.continueBuildNoEngineer"));
     return;
   }
   const origin = entityFootprintOrigin(building);
@@ -4018,15 +4039,15 @@ function doContinueBuild(): void {
 function doRepairBuilding(): void {
   const actions = selectedBuildingActions();
   if (actions === null || !actions.repair) {
-    refuse("先选中自己受损的完工建筑，再修理");
+    refuse(t("refuse.repair"));
     return;
   }
   if (actions.engineerId === null) {
-    refuse("载入窗口内没有自己的工兵：无法修理");
+    refuse(t("refuse.repairNoEngineer"));
     return;
   }
   if (!actions.repairEnabled) {
-    refuse(`资源不足：修理需要 ${actions.repairLabel ?? "未知费用"}`);
+    refuse(t("refuse.repairPoor", { cost: actions.repairLabel ?? "" }));
     return;
   }
   void sendGameplayCommand(
@@ -4040,37 +4061,13 @@ function doRepairBuilding(): void {
 function doReclaimBuilding(): void {
   const actions = selectedBuildingActions();
   if (actions === null || !actions.reclaim) {
-    refuse("先选中自己未完工的工地，再回收");
+    refuse(t("refuse.reclaim"));
     return;
   }
   void sendGameplayCommand(
     "RECLAIM",
     reclaim(actions.buildingId),
     `已回收 e${actions.buildingId}（${actions.reclaimLabel ?? "回收"}）`,
-  );
-}
-
-/**
- * `强制搬运`: sends `HAUL <engineerId> <buildingId>` for the selected own producer.
- *
- * The server clears that engineer's current orders, finds the producer's next queued recipe still
- * waiting for materials, reserves exactly the missing inputs and assigns the engineer, so the click is
- * the manual override of the automatic engineer pool rather than another move order.
- */
-function doForceHaul(): void {
-  const actions = selectedBuildingActions();
-  if (actions === null || !actions.haul) {
-    refuse("先选中自己的生产建筑（有生产队列），再强制搬运");
-    return;
-  }
-  if (actions.engineerId === null) {
-    refuse("载入窗口内没有自己的工兵：无法强制搬运");
-    return;
-  }
-  void sendGameplayCommand(
-    "HAUL",
-    haul(actions.engineerId, actions.buildingId),
-    `已让 e${actions.engineerId} 为 e${actions.buildingId} 搬运下一批缺料`,
   );
 }
 
@@ -4081,7 +4078,7 @@ function armBuild(buildingPath: string): void {
   }
   const engineer = placementEngineer();
   if (engineer === undefined) {
-    refuse("先选中自己的工程师，再点 BUILD");
+    refuse(t("refuse.selectEngineerBuild"));
     return;
   }
   // Placement and attack-move both wait for the next left click; only one may be armed.
@@ -4089,7 +4086,7 @@ function armBuild(buildingPath: string): void {
   placementPath = buildingPath;
   // Moving focus to the canvas keeps the existing Escape shortcut (bound to the canvas) working.
   gameCanvas.focus({ preventScroll: true });
-  setStatus(`BUILD ${labelledContent(buildingPath)}：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
+  setStatus(t("placement.armed", { name: labelledContent(buildingPath) }), "busy");
   updateGameplayPanel();
   updateHud(true);
 }
@@ -4101,7 +4098,7 @@ function cancelPlacement(showStatus: boolean): void {
   const path = placementPath;
   placementPath = null;
   if (showStatus) {
-    setStatus(`已取消 BUILD ${labelledContent(path)}`, "idle");
+    setStatus(t("placement.cancelled", { name: labelledContent(path) }), "idle");
   }
   updateGameplayPanel();
   updateHud(true);
@@ -4142,25 +4139,71 @@ function doRightClick(
   point: { readonly x: number; readonly y: number },
 ): void {
   if (placementPath !== null) {
-    setStatus(`BUILD ${labelledContent(placementPath)} 放置中：左键放置 · Shift+左键排队 · Esc 取消`, "busy");
+    setStatus(t("placement.pending", { name: labelledContent(placementPath) }), "busy");
     return;
   }
   if (attackMoveArmed) {
     // A right click is the ordinary move/attack order, so it must not double as an attack-move
     // target. Report how to leave the mode instead of sending a surprise order.
-    setStatus("攻击移动：左键点目标地面，Esc 取消", "busy");
+    setStatus(t("attackMove.target"), "busy");
     return;
   }
   if (!requireLoggedInForGameplay()) {
     return;
   }
+  const target = entityById(world, targetId);
+
+  // Item 8 (TRAVEL): right-clicking a gateway building with own units selected walks those units
+  // through the gate. The served `gateway` object on the row is the gate; a server without the
+  // TRAVEL command simply answers `ERR ...`, surfaced like any other command error.
+  if (target !== undefined && isBuildingEntityKind(target.kind) && target.gateway !== undefined) {
+    const travellers = selectedOwnUnits();
+    if (travellers.length === 0) {
+      refuse(t("refuse.travelNoUnits"));
+      return;
+    }
+    let line: string;
+    try {
+      line = travel(travellers.map((unit) => unit.id), target.id);
+    } catch (error: unknown) {
+      refuse(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    void sendGameplayCommand(
+      "TRAVEL",
+      line,
+      t("confirm.travel", { count: travellers.length, gateway: target.id }),
+    );
+    return;
+  }
+
+  // Item 19 (ASSIST): right-clicking an own building with capable engineer(s) selected sends one
+  // ASSIST per unit. The server decides what assisting means here (resume construction, repair, or
+  // fetch the missing production inputs); the client never classifies the building itself.
+  if (target !== undefined && isMine(target) && isBuildingEntityKind(target.kind)) {
+    const helpers = selectedEntities().filter(
+      (entity) => isMine(entity) && !isBuildingEntityKind(entity.kind) && isBuilderUnit(entity),
+    );
+    if (helpers.length > 0) {
+      const lines = helpers.map((helper) => assist(helper.id, target.id));
+      const confirmation =
+        helpers.length === 1
+          ? t("confirm.assistOne", { unit: helpers[0]!.id, building: target.id })
+          : t("confirm.assistMany", { count: helpers.length, building: target.id });
+      void sendGameplayBatch("ASSIST", lines, lines, confirmation);
+      updateGameplayPanel();
+      updateHud(true);
+      return;
+    }
+  }
+
   const units = selectedOwnUnits();
   if (units.length === 0) {
     const selected = selectedEntities();
     if (selected.length > 0 && selected.every(isBuildingEntity)) {
-      refuse("右键命令只能下达给单位，不能下达给建筑");
+      refuse(t("refuse.unitsNotBuildings"));
     } else {
-      refuse("先选中自己的单位，再右键下达命令");
+      refuse(t("refuse.needOwnUnits"));
     }
     return;
   }
@@ -4168,14 +4211,17 @@ function doRightClick(
     appendPendingWaypoint(tile);
     return;
   }
-  const target = entityById(world, targetId);
   if (target !== undefined && !isMine(target)) {
     pendingRoute = [];
     const lines = units.map((unit) => orderAttack(unit.id, target.id));
     const confirmation =
       units.length === 1
-        ? `已攻击 ${describeEntity(target)}`
-        : `${units.length} 个单位攻击 ${describeEntity(target)}`;
+        ? t("confirm.attackOne", { target: describeEntity(target) })
+        : t("confirm.attackMany", { count: units.length, target: describeEntity(target) });
+    // The route overlay reads this set to draw the attack leg red (item 15).
+    for (const unit of units) {
+      attackOrderedIds.add(unit.id);
+    }
     // Spawn the crosshair before the order leaves the client; `point` was captured on pointerup.
     startOrderCrosshair(point);
     void sendGameplayBatch("ORDER ATTACK", lines, lines, confirmation);
@@ -4186,7 +4232,7 @@ function doRightClick(
   // The clicked tile is the final destination; the pending points (if any) precede it.
   const points = [...pendingRoute, { x: tile.x, y: tile.y }];
   if (points.length > MAX_MOVE_POINTS) {
-    refuse(`路径点最多 ${MAX_MOVE_POINTS} 个：请先按 Esc 清除已有点`);
+    refuse(t("route.capCommit", { max: MAX_MOVE_POINTS }));
     return;
   }
   let lines: string[];
@@ -4201,11 +4247,11 @@ function doRightClick(
   const confirmation =
     units.length === 1 && first !== undefined
       ? points.length === 1
-        ? `已移动 ${describeEntity(first)}`
-        : `已让 ${describeEntity(first)} 沿 ${points.length} 个路径点移动`
+        ? t("confirm.moveOne", { entity: describeEntity(first) })
+        : t("confirm.moveRouteOne", { entity: describeEntity(first), count: points.length })
       : points.length === 1
-        ? `${units.length} 个单位移动到 ${tile.x},${tile.y}`
-        : `${units.length} 个单位沿 ${points.length} 个路径点移动`;
+        ? t("confirm.moveMany", { count: units.length, x: tile.x, y: tile.y })
+        : t("confirm.moveRouteMany", { count: units.length, count2: points.length });
   // A plain right click (with or without committed waypoints) is a move order: one crosshair at the
   // pointer, spawned before the line is sent, replacing any crosshair from an earlier order.
   startOrderCrosshair(point);
@@ -4235,7 +4281,7 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
     placementPath = null;
     updateGameplayPanel();
     updateHud(true);
-    refuse("放置时选中的工程师已失效，BUILD 没有发送");
+    refuse(t("placement.engineerLost"));
     return true;
   }
   // The ghost and the click share one verdict. An illegal site keeps the mode armed and names the
@@ -4243,7 +4289,7 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
   // by the same rule, which is what lets several engineers build together.
   const preview = buildPlacementPreview(world, path, tile, engineer, plannedSiteRects());
   if (preview.state !== "legal") {
-    refuse(`BUILD 未发送：${placementReasonText(preview.reason)}`);
+    refuse(t("placement.refused", { reason: placementReasonText(preview.reason) }));
     updateHud(true);
     return true;
   }
@@ -4264,14 +4310,13 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
     return true;
   }
   const lines = plan.lines;
-  if (preview.joinSiteId === null && !sequenceArmed) {
+  if (preview.joinSiteId === null) {
     // The site is ordered now but appears in the snapshot only on the next poll. Mark its footprint as
     // planned so the very next Shift-click is blocked by it (`blocked-planned`) instead of painted green.
     recordPlannedBuild(path, tile, false);
   }
-  if (!plan.keepArmed && !sequenceArmed) {
-    // A plain click keeps today's behaviour: one order, then the placement mode closes. While the Q16
-    // sequence recorder is armed the mode stays open, so several sites can be recorded in one go.
+  if (!plan.keepArmed) {
+    // A plain click keeps today's behaviour: one order, then the placement mode closes.
     placementPath = null;
   }
   updateGameplayPanel();
@@ -4279,11 +4324,21 @@ function doLeftClick(tile: TileCoord, shift: boolean): boolean {
   const confirmation =
     engineers.length === 1
       ? plan.keepArmed
-        ? `已排队 BUILD ${labelledContent(path)} @ ${tile.x},${tile.y}（放置模式保持，可继续 Shift 点击）`
-        : `已在 ${tile.x},${tile.y} 下达 BUILD ${labelledContent(path)}`
+        ? t("confirm.buildQueuedOne", { name: labelledContent(path), x: tile.x, y: tile.y })
+        : t("confirm.buildOne", { name: labelledContent(path), x: tile.x, y: tile.y })
       : plan.keepArmed
-        ? `${engineers.length} 个工兵在 ${tile.x},${tile.y} 各排队一个 ${labelledContent(path)}（可继续 Shift 点击）`
-        : `${engineers.length} 个工兵在 ${tile.x},${tile.y} 建造 ${labelledContent(path)}（第一个放置，其余加入）`;
+        ? t("confirm.buildQueuedMany", {
+            count: engineers.length,
+            x: tile.x,
+            y: tile.y,
+            name: labelledContent(path),
+          })
+        : t("confirm.buildMany", {
+            count: engineers.length,
+            x: tile.x,
+            y: tile.y,
+            name: labelledContent(path),
+          });
   void sendGameplayBatch("BUILD", lines, lines, confirmation);
   return true;
 }
@@ -4393,11 +4448,11 @@ function selectEngineers(): void {
   updateHud(true);
   updateGameplayPanel();
   if (myPlayerId === null) {
-    setStatus("先连接并 LOGIN，才能选择自己的工兵", "idle");
+    setStatus(t("refuse.selectEngineerSelect"), "idle");
   } else if (selectedIds.length === 0) {
-    setStatus("已载入窗口内没有自己的工兵", "idle");
+    setStatus(t("refuse.noEngineers"), "idle");
   } else {
-    setStatus(`已选 ${selectedIds.length} 个工兵（快照没有订单状态，不区分是否空闲）`, "ok");
+    setStatus(t("refuse.engineersSelected", { count: selectedIds.length }), "ok");
   }
 }
 
@@ -4443,8 +4498,11 @@ function doControlGroup(group: number, mode: ControlGroupMode): void {
     selectedGroup = ids.length === 0 ? null : group;
     const message =
       ids.length === 0
-        ? `${describeControlGroup(controlGroups, group)}（已清空）`
-        : `已把 ${ids.length} 个选中编入 ${describeControlGroup(controlGroups, group)}`;
+        ? t("group.assignedEmpty", { group: describeControlGroup(controlGroups, group) })
+        : t("group.assigned", {
+            count: ids.length,
+            group: describeControlGroup(controlGroups, group),
+          });
     setStatus(message, "ok");
     log("info", message);
   } else {
@@ -4453,8 +4511,11 @@ function doControlGroup(group: number, mode: ControlGroupMode): void {
     selectedGroup = null;
     const message =
       ids.length === 0
-        ? `当前没有选中，${describeControlGroup(controlGroups, group)} 不变`
-        : `已把 ${ids.length} 个选中加入 ${describeControlGroup(controlGroups, group)}`;
+        ? t("group.addedNone", { group: describeControlGroup(controlGroups, group) })
+        : t("group.added", {
+            count: ids.length,
+            group: describeControlGroup(controlGroups, group),
+          });
     setStatus(message, "ok");
     log("info", message);
   }
@@ -4702,7 +4763,7 @@ function updateTooltip(): void {
 
     const renders: Promise<void>[] = [
       renderLatexInto(name, content.name),
-      renderLatexInto(owner, `归属：${content.ownerTag}`),
+      renderLatexInto(owner, t("tooltip.owner", { tag: content.ownerTag })),
       ...content.lines.map((line, index) => {
         const row = rows[index];
         return row === undefined ? Promise.resolve() : renderLatexInto(row, line);
@@ -4748,25 +4809,9 @@ function jumpCameraToMinimap(event: PointerEvent): void {
   updateHud(true);
 }
 
-/**
- * Centres the camera on the nearest hostile anchor named by the top-chrome line.
- *
- * <p>This is a navigation shortcut, not a reveal: the snapshot published the anchor, and the click only
- * moves the camera to that known starting tile. The same `anchorCameraTarget` rule the check asserts is
- * used here, so a click on `敌方 2：锚点 (192,192)` centres the camera on tile 192,192 exactly.
- */
-enemyLine.addEventListener("click", () => {
-  const nearest = enemyLineEntries[0];
-  if (nearest === undefined) {
-    return;
-  }
-  const target = anchorCameraTarget(nearest.anchor, camera.tileSize);
-  camera.setCenter(target.x, target.y);
-  updateHud(true);
-});
-
-// The home line and the `基地` button are the two mouse paths to the same jump; `H` is the keyboard one.
-homeLine.addEventListener("click", jumpToHome);
+// The `基地` button is the mouse path to the home jump; `H` is the keyboard one. The former
+// top-chrome enemy-base / own-base lines are gone (item 5) — the minimap and the Home button answer
+// "where" without a per-tick top bar.
 homeButton.addEventListener("click", jumpToHome);
 
 // The `标记` button toggles the translucent list. Its rows jump, `清除全部` empties the list, and `关闭`
@@ -4893,6 +4938,10 @@ function applySnapshot(snapshot: ServerWorldView): void {
   if (snapshot.dimension !== undefined && snapshot.dimension !== viewDimension) {
     viewDimension = snapshot.dimension;
   }
+  // The server's `content` catalogue is the i18n registry's server namespace (item 22): its names are
+  // registered as key-values (`content.<path>`, `dim.<key>`) so display names resolve client
+  // translation first, server name as fallback. A snapshot without the catalogue registers nothing.
+  registerCatalogueNames(snapshot.content);
   refreshDimensionButtons(snapshot);
   const wasDemo = worldSource === "demo";
   const previous = currentFrame;
@@ -5121,6 +5170,7 @@ function animationFrame(now: number): void {
       nowMs: now,
       showPaths,
       pendingPath: pendingRoute,
+      attackOrderedIds,
       markers,
       pops: activePops(popRecords, now),
       projectiles: trackProjectiles(projectileSeen, world.projectiles, now),
@@ -5256,9 +5306,9 @@ let buildSignature = "";
  * Rebuilds the BUILD buttons from one catalogue; a same-signature rebuild is skipped.
  *
  * The catalogue is the snapshot's top-level `buildable` array as it arrives with the model, so a server
- * that ships the hell gate (or drops a building) changes the rail without a client update. The classic
- * five-entry list is only the startup/fallback catalogue for the demo world and a snapshot that
- * predates the field.
+ * that ships the hell gate (or drops a building) changes the rail without a client update. There is no
+ * fallback: an empty or absent catalogue paints an empty rail, which is exactly "no served BUILD
+ * catalogue, no BUILD buttons" (item 1).
  */
 function rebuildBuildButtons(paths: readonly string[]): void {
   const signature = paths.join(",");
@@ -5292,9 +5342,8 @@ function rebuildBuildButtons(paths: readonly string[]): void {
   }
 }
 
-// The demo world and the moment before the first snapshot have no `buildable` array yet; the classic
-// fallback catalogue stands in until a served catalogue replaces it.
-rebuildBuildButtons(FALLBACK_BUILD_PATHS);
+// No boot catalogue: the BUILD rail only fills from the served `buildable` array, so before the first
+// snapshot (and for a server without the field) no BUILD buttons exist at all (item 1).
 
 /** The generated upgrade buttons for every option beyond the first (`#upgrade-button`). */
 const variantUpgradeButtons: HTMLButtonElement[] = [];
@@ -5377,13 +5426,13 @@ gatewayButton.addEventListener("click", () => {
   const target = singleSelectedEntity()?.gateway;
   if (target !== undefined) {
     switchView(target.to, target.arrival);
-    setStatus(`视角已穿过传送门，到达 ${target.arrival.x},${target.arrival.y}`, "idle");
+    setStatus(t("gateway.crossed", { x: target.arrival.x, y: target.arrival.y }), "idle");
   }
 });
 unitUpgradeButton.addEventListener("click", () => {
   const selected = singleSelectedEntity();
   if (selected === undefined || !isMine(selected) || isBuildingEntity(selected)) {
-    refuse("先选中自己的单位，再升级");
+    refuse(t("refuse.upgradeUnit"));
     return;
   }
   // The unit rule, not the building one: `upgradeEntries` only reads building rows, so the click used
@@ -5391,23 +5440,26 @@ unitUpgradeButton.addEventListener("click", () => {
   // (`UPGRADEUNIT <unitId> [tierPath]`), so it is sent explicitly like a building variant.
   const offer = unitUpgradeEntry(selected, myPlayerId, myPlayerRow(), contentLabel);
   if (offer === null) {
-    refuse("选中的单位没有可用的升级");
+    refuse(t("refuse.upgradeNoneUnit"));
     return;
   }
   if (!offer.affordable) {
-    refuse(`资源不足：升级需要金 ${offer.gold}、木 ${offer.wood}`);
+    refuse(t("refuse.cannotAfford", { gold: offer.gold, wood: offer.wood }));
     return;
   }
   void sendGameplayCommand(
     "UPGRADEUNIT",
     upgradeUnit(offer.unitId, offer.target),
-    `已升级 e${offer.unitId} ${contentLabel(selected.kind)} → ${offer.targetName}`,
+    t("confirm.upgradedUnit", {
+      id: offer.unitId,
+      name: contentLabel(selected.kind),
+      target: offer.targetName,
+    }),
   );
 });
 continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);
-haulButton.addEventListener("click", doForceHaul);
 
 /** Reflects the 路径 preference on its chrome button; the settings checkbox is kept in sync too. */
 function updatePathsButton(): void {
@@ -5422,67 +5474,24 @@ togglePathsButton.addEventListener("click", () => {
   setShowPaths(!showPaths, true);
 });
 updatePathsButton();
-sequenceButton.addEventListener("click", () => {
-  if (!sequenceArmed) {
-    sequenceArmed = true;
-    updateSequenceButton();
-    setStatus("顺序：命令会先记录，按 Enter 合并提交，Esc 清空", "busy");
-    return;
-  }
-  executeSequence();
-});
-updateSequenceButton();
 followButton.addEventListener("click", () => {
   if (lockedEntityId !== null) {
     lockedEntityId = null;
     updateFollowButton();
-    setStatus("已取消跟随", "idle");
+    setStatus(t("chrome.followCancelled"), "idle");
     return;
   }
   const target = selectedEntities().find((entity) => !isBuildingEntityKind(entity.kind));
   if (target === undefined) {
-    refuse("先选中一个单位，再点跟随");
+    refuse(t("chrome.followNoTarget"));
     return;
   }
   lockedEntityId = target.id;
   updateFollowButton();
-  setStatus(`跟随 e${target.id}：视角锁定，再点一次取消`, "ok");
+  setStatus(t("chrome.followLocked", { id: target.id }), "ok");
 });
 updateFollowButton();
 
-// The recorder listens in the capture phase so Enter/Esc reach it before the canvas controller; an
-// active placement or the marker list keeps its own Escape handling (the guards below leave those to
-// the canvas, which handles them in its own listener).
-document.addEventListener(
-  "keydown",
-  (event) => {
-    if (!sequenceArmed) {
-      return;
-    }
-    if (!logOverlay.hidden || !settingsOverlay.hidden || !musicOverlay.hidden) {
-      // A dialog owns Enter/Escape while it is open; the recorder does not steal either key.
-      return;
-    }
-    const target = event.target;
-    if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement
-    ) {
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      executeSequence();
-      return;
-    }
-    if (event.key === "Escape" && placementPath === null && !attackMoveArmed && !markerPanelOpen) {
-      event.preventDefault();
-      clearSequence(true);
-    }
-  },
-  true,
-);
 selectEngineersButton.addEventListener("click", selectEngineers);
 
 // The canvas owns Escape for its own focus; this fallback keeps "close the marker list / cancel
@@ -5554,11 +5563,30 @@ window.addEventListener("resize", () => {
 startWorldPolling();
 updateHud(true);
 startGameAfterFonts();
+
+/**
+ * Item 23 (connect/disconnect jank): the KaTeX chunk used to be parsed synchronously by the first
+ * formula the page renders, and the first formulas typically arrive with the first server answers —
+ * exactly on a connect click. Preloading the chunk once the page is idle moves that parse off the
+ * click handler; the lazy loader in `render/latex.ts` then resolves from the module cache instantly.
+ */
+function preloadKatexWhenIdle(): void {
+  const preload = (): void => {
+    void import("katex");
+  };
+  const scheduler = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  };
+  if (typeof scheduler.requestIdleCallback === "function") {
+    scheduler.requestIdleCallback(preload, { timeout: 3000 });
+  } else {
+    window.setTimeout(preload, 1500);
+  }
+}
+preloadKatexWhenIdle();
 log(
   "info",
-  `游戏画面已启用：先显示 ${world.width}×${world.height} 的确定性占位地图，` +
-    "每 500ms 尝试用服务器 /world/snapshot 接管，并在最近两帧快照之间插值；" +
-    "世界无界，镜头靠近快照窗口边缘时按相机中心请求新窗口，插件没有提供图集时使用程序化绘制。",
+  t("log.boot", { width: world.width, height: world.height }),
 );
 
 window.addEventListener("beforeunload", () => {
@@ -5577,9 +5605,11 @@ updateSettingsView();
 if (settings.viewHidden) {
   setViewVisible(false);
 }
-log("info", `OC/1 浏览器客户端已就绪（页面 ${window.location.origin}）。`);
+log("info", t("log.ready", { origin: window.location.origin }));
 log(
   "info",
-  `设置：${settings.filters.command ? "显示" : "隐藏"}命令与回答提示、` +
-    `${settings.filters.error ? "显示" : "隐藏"}错误提示；消息筛选只影响提示，日志始终完整。`,
+  t("log.filters", {
+    command: settings.filters.command ? t("log.shown") : t("log.hidden"),
+    error: settings.filters.error ? t("log.shown") : t("log.hidden"),
+  }),
 );

@@ -140,11 +140,14 @@ public final class ScenarioContent {
                 .attack(12f, 4.5f).attackCooldown(20)
                 .unit(WORKER).name("Worker").role(UnitRole.WORKER).health(80).speed(2.8f).radius(0.32f)
                 .cost(IRON_INGOT, 30).buildTime(90).cargo(120).spriteSet("worker")
+                // The scenario's builder: the BUILD menu and the assist command key on the tag.
+                .tag("builder")
                 .unit(MEDIC).name("Medic").role(UnitRole.SUPPORT).health(90).speed(2.6f).radius(0.33f)
                 .cost(IRON_INGOT, 40).cost("cloth", 20).buildTime(110).spriteSet("medic").cargo(20)
 
                 // ------------------------------------------------------------------ buildings
                 .building(WAREHOUSE).name("Warehouse").size(3, 3).health(600).cost(PLANK, 60).buildTime(200)
+                .repairCostPerHealth(PLANK, 1)
                 .storage(24).warehouse().spriteSet("warehouse")
                 .building(ORE_SILO).name("Ore Silo").size(2, 2).health(400).cost(PLANK, 30).buildTime(150)
                 .storage(12).storageTag("ore").warehouse().spriteSet("ore_silo")

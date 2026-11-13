@@ -433,30 +433,34 @@ public interface UnitDirector {
     TransferResult transfer(Building source, Building target, ItemType item, Natural amount);
 
     /**
-     * Forces one engineer to carry the next missing inputs to one specific producer.
+     * The one "right-click a building" command: an assisting unit is given the job the building needs
+     * right now, decided on the server.
      *
-     * <p>This is the manual counterpart of the automatic engineer pool: instead of letting the policy
-     * choose a producer and a hauler, the caller names both. The engine looks for the first queued
-     * recipe of {@code target} that is still waiting for materials, reserves exactly its missing inputs
-     * through the owner's {@link io.github.sob1234509876.oc.rts.economy.WarehouseLogistics}, creates an
-     * ordinary delivery job and assigns {@code engineer} to it.
+     * <p>The caller names a unit with builder capability and cargo capacity and any own building; the
+     * engine picks the behaviour from the building's state, in this fixed precedence:
      *
-     * <p><strong>Force means force.</strong> An engineer with other orders is stopped first (the queue is
-     * cleared through the normal cancel path), so the haul starts immediately; the engineer then walks the
-     * usual haul route. A busy engineer is never silently skipped. Nothing is teleported: the goods leave
-     * the warehouse when the engineer picks them up and enter the producer's buffer on arrival, exactly
-     * like an automatic delivery.
+     * <ol>
+     *   <li><strong>Under construction</strong> - the unit joins the site (a free
+     *       {@linkplain #tryBuild(Unit, Building) build join});</li>
+     *   <li><strong>Damaged</strong> (finished, missing hit points, content prices a repair) - the unit
+     *       repairs it;</li>
+     *   <li><strong>Short of production inputs</strong> (finished, undamaged, a queued recipe is still
+     *       waiting for materials it does not hold) - the unit fetches the missing inputs from the
+     *       nearest own warehouse that can cover them and hauls them over, and the production job then
+     *       proceeds exactly as an automatic delivery would;</li>
+     *   <li>anything else is refused with a readable sentence.</li>
+     * </ol>
      *
-     * <p>Readable refusals, all free and without a reservation: an engineer that cannot be commanded or
-     * cannot haul, a producer that is gone/unfinished/owned by another player/in another dimension, a
-     * player without a hauling network, a producer with no waiting recipe that is short of anything, a
-     * recipe the warehouses cannot cover, and a job the hauler cannot take.
+     * <p>Readable refusals, all free and without a reservation: a unit that cannot be commanded, a unit
+     * without the builder tag or without a cargo hold, a building that is gone or belongs to another
+     * player or stands in another dimension, and a finished, undamaged building whose queue wants for
+     * nothing.
      *
-     * @param engineer the engineer that will carry the goods
-     * @param target   the finished own producer to supply
-     * @return the reserved bundle and job, or the readable refusal reason; never {@code null}
+     * @param unit     the assisting unit; a builder with cargo capacity
+     * @param building the own building to help
+     * @return what the unit was ordered to do, or the readable refusal reason; never {@code null}
      */
-    HaulResult tryHaul(Unit engineer, Building target);
+    AssistResult tryAssist(Unit unit, Building building);
 
     /**
      * Outcome of one upgrade request: either the replacement entity or a refusal reason.
@@ -700,46 +704,61 @@ public interface UnitDirector {
     }
 
     /**
-     * Outcome of one forced haul: the reserved goods and job, or a refusal reason.
+     * Outcome of one assist request: the job the unit was given, or a refusal reason.
      *
-     * <p>At most one of {@link #job()} and {@link #refusal()} is set. On success {@link #reserved()} is
-     * the bundle that was reserved for the producer and handed to the named engineer; it is in flight,
-     * not delivered yet.
+     * <p>On success {@link #action()} names what the unit now does - {@link #ACTION_BUILD},
+     * {@link #ACTION_REPAIR} or {@link #ACTION_HAUL} - and {@link #building()} is the building it was
+     * sent to. {@link #reserved()} carries the bundle put in flight for a haul (empty otherwise); it is
+     * in flight, not delivered yet. On refusal only {@link #refusal()} is set, and nothing changed: no
+     * order, no reservation.
      *
-     * @param reserved the bundle reserved for the producer; empty on a refusal
-     * @param job      the registered hauling job, or {@code null} on a refusal
-     * @param refusal  why nothing was dispatched, or {@code null} on success
+     * @param action   one of the {@code ACTION_*} constants, or {@code null} on a refusal
+     * @param building the building the unit was sent to, or {@code null} on a refusal
+     * @param reserved the bundle a haul put in flight; empty otherwise
+     * @param refusal  why nothing was ordered, or {@code null} on success
      */
-    record HaulResult(ItemBundle reserved, DeliveryJob job, String refusal) {
+    record AssistResult(String action, Building building, ItemBundle reserved, String refusal) {
 
-        public HaulResult {
+        public AssistResult {
             reserved = reserved == null ? ItemBundle.EMPTY : reserved;
-            if (job == null) {
-                if (!reserved.isEmpty()) {
-                    throw new IllegalArgumentException("a refused haul reserved nothing");
+            if (action == null) {
+                if (building != null || !reserved.isEmpty() || refusal == null) {
+                    throw new IllegalArgumentException("a refused assist names a refusal only");
                 }
-                if (refusal == null) {
-                    throw new IllegalArgumentException("a haul result needs a job or a refusal");
-                }
-            } else if (refusal != null) {
-                throw new IllegalArgumentException("a dispatched haul has no refusal");
+            } else if (refusal != null || building == null) {
+                throw new IllegalArgumentException("an issued assist names its action and building");
             }
         }
 
-        /** The engineer was given the job; the goods are in flight. */
-        public static HaulResult hauled(ItemBundle reserved, DeliveryJob job) {
-            return new HaulResult(Objects.requireNonNull(reserved, "reserved"),
-                    Objects.requireNonNull(job, "job"), null);
+        /** The unit joined the building's construction site. */
+        public static final String ACTION_BUILD = "build";
+
+        /** The unit started repairing the damaged building. */
+        public static final String ACTION_REPAIR = "repair";
+
+        /** The unit fetches the building's missing production inputs from the warehouses. */
+        public static final String ACTION_HAUL = "haul";
+
+        /** The unit was sent to build or repair the building. */
+        public static AssistResult assisted(String action, Building building) {
+            return new AssistResult(Objects.requireNonNull(action, "action"),
+                    Objects.requireNonNull(building, "building"), ItemBundle.EMPTY, null);
         }
 
-        /** Nothing was dispatched, for the given readable reason. */
-        public static HaulResult refused(String reason) {
-            return new HaulResult(ItemBundle.EMPTY, null, Objects.requireNonNull(reason, "reason"));
+        /** The unit was given a haul job; the goods are in flight. */
+        public static AssistResult hauled(Building building, ItemBundle reserved) {
+            return new AssistResult(ACTION_HAUL, Objects.requireNonNull(building, "building"),
+                    Objects.requireNonNull(reserved, "reserved"), null);
         }
 
-        /** Whether a hauling job now carries the goods. */
-        public boolean hauled() {
-            return job != null;
+        /** Nothing was ordered, for the given readable reason. */
+        public static AssistResult refused(String reason) {
+            return new AssistResult(null, null, ItemBundle.EMPTY, Objects.requireNonNull(reason, "reason"));
+        }
+
+        /** Whether the unit was given a job. */
+        public boolean assisted() {
+            return action != null;
         }
     }
 

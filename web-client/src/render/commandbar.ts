@@ -41,21 +41,6 @@ import {
 export const SELECTION_CHIP_LIMIT = 12;
 
 /**
- * The BUILD menu an older server (or the demo world) falls back to.
- *
- * The snapshot's top-level `buildable` array is the catalogue now; this list is only the legacy shape
- * the classic plugin shipped, kept so the demo world still offers the five sites the engineer can
- * place. A server that sends `buildable` wins over this fallback, whatever it contains.
- */
-export const FALLBACK_BUILD_PATHS: readonly string[] = [
-  "building.armory.t1",
-  "building.mine.t1",
-  "building.lumbercamp.t1",
-  "building.warehouse",
-  "building.turret.t1",
-];
-
-/**
  * The TRAIN menu a producer row without a `trains` field falls back to.
  *
  * The building row's `trains` array is the menu now; this list is the classic armory's recipes in the
@@ -230,8 +215,10 @@ export interface CommandBarOptions {
   /**
    * Buildable content paths, from the snapshot's top-level `buildable` array.
    *
-   * The page passes `world.buildable ?? undefined`-shaped input here; when it is omitted (an older
-   * server, the demo world, a short check fixture) the classic five-entry fallback is the catalogue.
+   * The served array is the BUILD catalogue's only source: when it is omitted (an older server, the
+   * demo world, a short check fixture) the model offers **no** BUILD entries at all — the page shows
+   * no generic fallback buttons, because a catalogue the server did not declare is not the client's
+   * to invent.
    */
   readonly buildingPaths?: readonly string[];
 }
@@ -285,7 +272,8 @@ export function commandBarModel(
   options: CommandBarOptions = {},
 ): CommandBarModel {
   const labelForPath = options.labelForPath ?? ((path: string): string => path);
-  const buildingPaths = options.buildingPaths ?? FALLBACK_BUILD_PATHS;
+  // No served catalogue, no BUILD entries: the fallback default build options are gone (item 1).
+  const buildingPaths = options.buildingPaths ?? [];
 
   const selectedCount = selection.length;
   const loggedIn = myPlayerId !== null && Number.isFinite(myPlayerId) && myPlayerId > 0;

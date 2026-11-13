@@ -185,19 +185,35 @@ public final class JoinBaseCheck {
         }
     }
 
-    /** A content without a builder tag is a sandbox: join succeeds, nothing is spawned and nothing throws. */
+    /**
+     * Two catalogue shapes join without error. A content whose builder-tagged unit exists (the sample
+     * scenario's worker carries the tag now) spawns a drop-off and that builder; a content without any
+     * builder tag is a sandbox: join succeeds, nothing is spawned and nothing throws.
+     */
     private static void sandboxContent(Check check) {
-        WorldHost host = new WorldHost(1L, new ScenarioWorldContent());
+        WorldHost sample = new WorldHost(1L, new ScenarioWorldContent());
         try {
-            Player joined = join(check, host, "Sandbox", WorldHost.FIRST_HUMAN_PLAYER_ID);
-            World world = host.engine().world();
-            check.equal(0, world.buildingsOf(joined).size(), "默认样例内容加入后没有建筑");
-            check.equal(0, world.unitsOf(joined).size(), "默认样例内容加入后没有单位");
-            check.equal(0, joined.logistics().warehouses().size(), "默认样例内容加入后没有投放点");
-            check.that(host.worldContent().startingResources().isEmpty(),
+            Player joined = join(check, sample, "Sandbox", WorldHost.FIRST_HUMAN_PLAYER_ID);
+            World world = sample.engine().world();
+            check.that(world.buildingsOf(joined).size() == 1
+                            && world.buildingsOf(joined).get(0).isWarehouse()
+                            && world.unitsOf(joined).size() == 1
+                            && world.unitsOf(joined).get(0).type().hasTag("builder"),
+                    "样例内容的工人带有 builder 标记，加入后出生一座仓库投放点和一名建造者");
+            check.that(sample.worldContent().startingResources().isEmpty(),
                     "默认样例内容的 startingResources() 是空的（保持 no-op）");
         } finally {
-            host.stop();
+            sample.stop();
+        }
+        WorldHost sandbox = new WorldHost(1L, new NoBuilderContent());
+        try {
+            Player joined = join(check, sandbox, "Sandbox2", WorldHost.FIRST_HUMAN_PLAYER_ID);
+            World world = sandbox.engine().world();
+            check.that(world.buildingsOf(joined).isEmpty() && world.unitsOf(joined).isEmpty()
+                            && joined.logistics().warehouses().isEmpty(),
+                    "没有 builder 标记的内容加入后不出生任何建筑和单位（沙盒目录仍然可用）");
+        } finally {
+            sandbox.stop();
         }
     }
 
@@ -257,6 +273,40 @@ public final class JoinBaseCheck {
      * The catalogue this check plays: the classic opening in miniature. It is local because the server
      * module must not depend on the classic plugin, which depends on the server.
      */
+    /** The sandbox variant of {@link BaseContent}: a warehouse, but no unit carries the builder tag. */
+    private static final class NoBuilderContent implements WorldContent {
+
+        @Override
+        public String id() {
+            return "oc-join-sandbox-check";
+        }
+
+        @Override
+        public String description() {
+            return "Join base check content: a warehouse and no builder, so joins spawn nothing";
+        }
+
+        @Override
+        public String namespace() {
+            return "joincheck";
+        }
+
+        @Override
+        public StartingResources startingResources() {
+            return StartingResources.EMPTY;
+        }
+
+        @Override
+        public void populate(ContentRegistry.Builder registry) {
+            Objects.requireNonNull(registry, "registry");
+            registry.terrain("grass").name("Grass").buildable().moveCost(1f)
+                    .sprite("terrain/grass").mapColor(0x5FA84F)
+                    .item(GOLD).name("Gold").maxStack(10_000).tag("currency")
+                    .building(WAREHOUSE).name("Warehouse").size(3, 3).health(500)
+                    .buildTime(120).storage(24).warehouse().spriteSet(WAREHOUSE);
+        }
+    }
+
     private static final class BaseContent implements WorldContent {
 
         @Override

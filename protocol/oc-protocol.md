@@ -9,15 +9,17 @@ English | [简体中文](oc-protocol_zh_CN.md)
 - Transport: the WebSocket path, one command per text frame, the `HELLO 1` version handshake, and the idle timeout / server heartbeat.
 - The command table, and the exact answer to every command.
 - `REQ`'s login precondition, the base64 convention, and the error vocabulary.
-- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `HAUL`
-  and `BATCH`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
+- Gameplay commands: `WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `REPAIR`, `RECLAIM`, `TRANSFER`, `ASSIST`,
+  `TRAVEL` and `BATCH`, the account-name identity rule, the login and ownership rules, and the world-step boundary.
 - The `queue` append forms of `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` and
   the `BATCH` merged order: one client-composed sequence applied in order, one answer.
 - Repair, continue-building and reclaim: the cost per health point, the repair work rate, the half refund, and
   the refusals.
 - Manual warehouse transfers: the `TRANSFER` grammar, the single-warehouse reservation, the free-hauler rule,
-  `all`, and the clamps. Forced hauls: `HAUL` clears the named engineer's orders and reserves the producer's
-  next missing inputs.
+  `all`, and the clamps. The contextual assist: `ASSIST` replaces the old forced haul and decides on the
+  server whether the unit builds, repairs or fetches missing inputs.
+- Dimension travel: the `TRAVEL` grammar - owned units walk to a gateway (a gateway building or a named
+  dimension) and cross into the linked dimension.
 - Unit paths in the snapshot and the client's waypoint interaction (`Shift`+right-click).
 - The second layer of `oc-debug`: byte layout, key, and the 60-second anti-replay window.
 - Plugin assets: ordinary HTTP content under `/plugin-assets`, not part of the command protocol.
@@ -96,7 +98,8 @@ After a successful handshake, one line per command, one line of answer per comma
 | `REPAIR ...` | `OK` or `ERR <reason>` | Sends an owned engineer to repair an owned, damaged, finished building; requires `LOGIN` and ownership |
 | `RECLAIM ...` | `OK <refund>` or `ERR <reason>` | Cancels an owned unfinished site and refunds half of its placement cost; requires `LOGIN` and ownership |
 | `TRANSFER ...` | `OK <moved> <item>` or `ERR <reason>` | Moves stock between two of the player's finished warehouses; requires `LOGIN` and ownership; see "Gameplay commands" |
-| `HAUL ...` | `OK <amount> <item>` or `ERR <reason>` | Forces one owned engineer to supply one owned producer; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `ASSIST ...` | `OK build` / `OK repair` / `OK haul <amount> <item>` or `ERR <reason>` | Sends one owned builder-with-cargo to an owned building; the server decides the job from the building's state; requires `LOGIN` and ownership; see "Gameplay commands" |
+| `TRAVEL ...` | `OK <count>` or `ERR <reason>` | Sends owned units through a gateway into a linked dimension; requires `LOGIN` and ownership; see "Gameplay commands" |
 | `BATCH ...` | `OK <count>` or `ERR <index>/<count> <reason>` | Applies a `;`-separated series of orders in order and answers once; requires `LOGIN`; see "Gameplay commands" |
 | `QUIT` | `OK bye` | The server sends this line first, then closes the connection |
 
@@ -118,7 +121,7 @@ all lowercase, and `ENGINE-INFO` is not folded into it. The failure answers are 
 On success the answer is `OK <base64-payload>`. The server only base64-decodes the request payload into **opaque bytes** for the handler,
 then base64-encodes the bytes the handler returns and sends them back; it does not parse the payload, does not record the payload content, and does not understand the `oc-debug` envelope.
 
-`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `UPGRADEUNIT`, `REPAIR`, `RECLAIM`, `TRANSFER`, `HAUL`, `BATCH`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
+`REQ` and every gameplay command (`WHOAMI`, `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `UPGRADEUNIT`, `REPAIR`, `RECLAIM`, `TRANSFER`, `ASSIST`, `TRAVEL`, `BATCH`) require a successful `LOGIN` on the same connection. `PING`, `COUNT`, `REGISTER`, `LOGIN`, and `QUIT` require no login.
 - The snapshot route accepts one more query parameter: `dim=<key>` draws that dimension instead of the
   default one, answering `400 unknown dimension: <key>` for a key the world does not declare. The window
   itself (`cx`/`cy`/`r`) is dimension-local, and the document names what it drew - see the snapshot
@@ -147,7 +150,8 @@ UPGRADEUNIT <unitId> [tierPath]             -> OK <newUnitId> | ERR ...   (needs
 REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (needs LOGIN, both entities must belong to the player)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (needs LOGIN, building must belong to the player)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (needs LOGIN, both buildings must belong to the player)
-HAUL <engineerId> <buildingId>             -> OK <amount> <item> | ERR ... (needs LOGIN, both entities must belong to the player)
+ASSIST <unitId> <buildingId>               -> OK build | OK repair | OK haul <amount> <item> | ERR ... (needs LOGIN, both entities must belong to the player)
+TRAVEL <unitId> [<unitId> ...] <gatewayBuildingId|dimension> -> OK <count> | ERR ... (needs LOGIN, every unit must belong to the player)
 BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (needs LOGIN, 1..16 sub-commands)
 ```
 
@@ -163,7 +167,8 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   replace semantics. Any other extra token is `ERR bad arguments`.
 - `BATCH` is the **merged order** (Q16): the client composes a series of commands and sends them as one
   line, separated by `;` (semicolon, optional spaces), and the server applies them in the given order. It
-  accepts `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `UPGRADEUNIT`, `REPAIR`, `RECLAIM`, `TRANSFER` and `HAUL`
+  accepts `ORDER`, `BUILD`, `TRAIN`, `UPGRADE`, `UPGRADEUNIT`, `REPAIR`, `RECLAIM`, `TRANSFER`, `ASSIST` and
+  `TRAVEL`
   sub-commands; anything else - including a nested `BATCH`, `WHOAMI` or `QUIT` - is `ERR bad arguments`
   before anything is applied. One to sixteen sub-commands; more than sixteen is `ERR bad arguments`, not a
   truncation. A
@@ -185,13 +190,29 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   resolves it to the source's current unreserved stock and the engine clamps it again. The amount is
   clamped to the source's unreserved stock and the target's current room, so a larger number is not an
   error - the answer names what really moves.
-- `HAUL <engineerId> <buildingId>` is the **forced haul**: the building must be an owned, finished producer
-  with a queued recipe that is still waiting for materials. The server reserves exactly that recipe's
-  missing inputs in the owner's warehouses, **clears the engineer's current orders** and assigns it the
-  ordinary delivery job, so the named engineer stops whatever it was doing and starts the haul at once.
-  The answer is `OK <amount> <item>` for the reserved bundle or `ERR <reason>`; a refusal reserves nothing
-  and changes no order. A building with no waiting recipe answers `ERR ... no queued recipe is waiting for
-  materials`.
+- `ASSIST <unitId> <buildingId>` is the **right-click assist**: one owned unit with the `builder` tag
+  *and* a cargo hold is sent to one owned building, and the **server decides the job from the building's
+  state**, in this order: an unfinished site is joined (the free continue-build join); a finished damaged
+  building is repaired; a finished, undamaged producer whose first queued recipe is still short of inputs
+  gets its missing stock fetched - the missing bundle is reserved in the **nearest own warehouse that can
+  cover it** (falling back to the ordinary network-wide reservation when no single warehouse fits), a
+  normal delivery job is registered and the assisting unit is assigned to it, **clearing its previous
+  orders**. Any other state refuses with a readable sentence such as
+  `ERR nothing to assist at ...: <building> is finished, undamaged and no queued recipe is waiting for
+  materials`. The answer is `OK build`, `OK repair`, or `OK haul <amount> <item>` for the reserved bundle;
+  a refusal reserves nothing and changes no order. (This command replaces the old forced `HAUL`, which was
+  its haul branch with the decision made by the client; the old verb is gone.)
+- `TRAVEL <unitId> [<unitId> ...] <gatewayBuildingId|dimension>` sends one to eight owned units through a
+  gateway. The last token is the destination: either a numeric building id - which must exist, be alive
+  and carry the `gateway` tag, and resolves to the first dimension its dimension has an open route to - or
+  a dimension key (for example `hell`). The destination must be **linked** (the world's gateway graph must
+  have a route), otherwise the command answers `ERR dimension not linked` without touching any unit; an
+  unknown dimension key answers `ERR unknown dimension` and a non-gateway building answers
+  `ERR building is not a gateway`. Every unit follows the ordinary existence/ownership rules and must have
+  a route from its own dimension. On success each unit is given a travel order that walks it to the first
+  gateway on its route and hands it across on arrival (the same mechanic a denizen invasion uses), and the
+  answer is `OK <count>` naming how many units were dispatched. The movement itself is asynchronous: the
+  units arrive over the following ticks.
 - The command word is case-insensitive like every other command word; the `ORDER` sub-word is
   case-insensitive too (`MOVE` and `move` mean the same thing). Content paths and arguments are not folded.
 
@@ -258,6 +279,10 @@ Each command is validated when the world applies it, and a rejection names the r
 | `TRANSFER` warehouses belong to different players, stand in different dimensions, or have no walkable route | `ERR ... different players / different dimensions / ... unreachable` |
 | `TRANSFER` source has no unreserved stock of the item, or the target cannot store it | `ERR no stock of <item> in ...` / `ERR the target warehouse cannot store <item> ...` |
 | `TRANSFER` has no free hauler at command time | `ERR no free engineer is available to haul <amount> <item>` |
+| `ASSIST` unit has no `builder` tag or no cargo hold, or the building needs nothing | `ERR <unit> is not a builder / cannot carry goods / nothing to assist at ...` |
+| `ASSIST` build join is out of the unit's reach, or the repair is unaffordable | The ordinary `BUILD` / `REPAIR` refusal sentences |
+| `TRAVEL` destination dimension is not declared | `ERR unknown dimension` |
+| `TRAVEL` names a building that is not a gateway, or the destination has no open route | `ERR building is not a gateway` / `ERR dimension not linked` |
 
 ### Cost, production and the world step
 
@@ -557,7 +582,7 @@ The window is a square of `2 * r` tiles, so the default is 80 x 80 and the maxim
                     {"kind": "unit.melee.t1", "ticks": 120, "total": 120}]},
     {"id": 10, "kind": "workshop", "x": 13.0, "y": -7.5, "player": 1, "health": 1.00,
      "w": 4, "h": 3, "progress": 0.42, "queue": 0,
-     "reclaim": {"gold": 0, "wood": 0}},
+     "reclaim": {"gold": 0, "wood": 0}, "invested": {"plank": 80, "brick": 40}},
     {"id": 12, "kind": "building.armory.t1", "x": 18.5, "y": 4.5, "player": 3, "health": 0.50,
      "w": 3, "h": 3, "progress": 1.00, "queue": 0,
      "repair": {"gold": 300, "wood": 0},
@@ -593,7 +618,14 @@ The window is a square of `2 * r` tiles, so the default is 80 x 80 and the maxim
 - `role` appears on every unit row (`combat`, `worker` or `support`), so the client's marquee priority can tell a soldier from an engineer that also carries a small attack. A unit whose content type carries the `builder` tag also carries `"builder": true`: the **capability flag** a BUILD menu keys on, so an upgraded engineer tier (a content path different from the base `unit.engineer`) still counts as a builder without the client matching on type names. `attackDamage` and `attackRange` appear on any unit or building whose content declares a weapon; a building without one (a warehouse, a mine) and an older server omit them. Both numbers come from the same engine data the combat layer fires with, so the selection panel and the actual shot cannot disagree; the client prints `攻击 18 · 射程 6`.
 - `trains` appears on a **finished** producer building: the content-driven TRAIN menu, one entry per recipe the building's own level allows, `{"path": "<unit content path>", "name": "<display name>", "gold": <integer>, "level": <integer>}`. `path` is the `TRAIN <buildingId> <unitPath>` token, `name` is the trained unit's display name, `gold` is the recipe's input cost in the currency item (`gold`), and `level` is the building level the recipe demands - the client disables the entry while the selected building is below it. An unfinished site or a building that cannot produce omits the array; a producer that trains nothing may send an empty array.
 - `projectiles` is the channel of shots fired since the last snapshot: `{"id": <integer>, "x": <number>, "y": <number>, "tx": <number>, "ty": <number>}` per arrow - the launch point and the target point of one in-flight shot. The damage was already applied inside the tick; the arrow is presentation. The list is capped at 128 shots and entries older than four ticks are dropped, so a quiet world sends an empty array. A client that does not know it ignores it.
-- `buildable` is the **top-level BUILD catalogue**: the array of content paths a builder may place directly with `BUILD <engineerId> <path> <x> <y>`, in the server's declared button order. Upgrade-only tiers (the classic turret t2/t3/t4, the purgatory factory) are **not** in the array, because the command refuses a direct placement of them; the buildable hell gate is, because it is the only passage to hell. A client renders one BUILD entry per path; an older server omits the field and a client falls back to its own catalogue.
+- `buildable` is the **top-level BUILD catalogue**: the array of content paths a builder may place directly with `BUILD <engineerId> <path> <x> <y>`, in the server's declared button order. Upgrade-only tiers (the classic turret t2/t3/t4, the mine and lumber camp t2/t3, the armory t2 and the purgatory factory) are **not** in the array, because the command refuses a direct placement of them; the buildable hell gate is, because it is the only passage to hell. A client renders one BUILD entry per path; an older server omits the field and a client falls back to its own catalogue.
+- `content` is the **raw content catalogue** the client needs to compute HUD values itself (the server-provided key-value pairs of the i18n scheme): one object per served dimension, item, building type, unit type and recipe, keyed by content path. A client that does not know the field ignores it, and an older server omits it. The shape:
+  - `"dimensions": {"<key>": {"name": "<display name>"}}` - every dimension the world declares, in the same roster as `dimensions`.
+  - `"items": {"<path>": {"name": "<display name>"}}`.
+  - `"buildings": {"<path>": {"name", "size": [w, h], "health", "cost": {<item>: <amount>}, "buildTime", "level", "storage", "warehouse": true, "buildable": false, "income", "woodIncome", "damage", "range", "upgrades": [{"to": "<path>", "gold", "wood"}]}}`. Fields carry no information by default and are omitted when empty: an empty `cost` object, a building with no storage, a non-warehouse, a directly buildable type, a building with no income tags, a non-weapon and a top-of-ladder type all stay unwritten. `cost` may contain any registered item; `income` / `woodIncome` are the `income_<n>` / `wood_income_<n>` tag rates the `players` rows sum; `upgrades` lists every `UPGRADE` variant with the price the command charges.
+  - `"units": {"<path>": {"name", "role", "health", "speed", "cost", "buildTime", "damage", "range", "attackCooldown", "armour", "cargo", "builder": true, "upgradeTo", "upgradeCost"}}` - again omitting what the type does not have.
+  - `"recipes": {"<path>": {"producers": ["<producer tag>"], "inputs": {<item>: <amount>}, "output": "<unit path>", "items": {<item>: <amount>}, "duration", "level"}}` - unit recipes carry `output`, item recipes carry `items`; `level` is the required building level and `producers` the producer tags a recipe is selected by. Together with a producer row's `queueItems` kinds and `contents` a client computes any producer's input deficit itself.
+  The document is built once per host (the catalogue is immutable) and then reused byte for byte in every snapshot.
 - `orderQueue` appears on a unit row that has at least one order: an array of ready-to-show labels in **execution order**, current order first, for example `["建造 兵工厂 @ (12,5)", "修理 #42", "搬运 → 仓库"]`. It is derived by the engine's `OrderLabels` from the queue itself, so the client never re-derives a task from movement. The array is capped at **8 entries including a truncation marker**: a longer queue sends the first 7 labels and then `… 还有 N 项`. The engine queue keeps every order; only this presentation view is bounded. A building, an idle unit and an older server omit the field.
 - `pop` appears on a unit row for at most **one second** after the engine emitted a haul fact: `{"kind": "pickup" | "dropoff", "tick": <simulation tick>}`. `kind` says whether goods entered or left the unit's cargo hold, and `tick` is the engine event's tick, which the client uses to animate one event once even when two polls both carry it. The field is omitted once the event is older than `WorldHost.POP_TTL_TICKS` (20 ticks = 1 s) and by an older server; a client that does not know it ignores it.
 - `queueItems` appears on a building that has a production queue and is absent on a unit or a building that never had one; `queue` is its length. It lists the unfinished jobs in queue order as `{"kind": ..., "ticks": ..., "total": ...}`: `total` is the recipe duration (`Recipe.durationTicks()`), and `ticks` is the engine's remaining ticks for the job that is currently `PRODUCING` (`ProductionJob.remainingTicks()`). A job that has not started yet - waiting for materials, being delivered, standing behind the current job - reports `ticks === total`; a job in `WAITING_OUTPUT` is still unfinished but no longer producing, so it reports the same. `kind` is the content path of the produced unit (`unit.melee.t1`) or, for an item-only recipe, the recipe's own path. The client resolves `kind` through its manifest for the display name; a legacy client can ignore the array and keep the `生产中 ×N` marker from `queue`.
@@ -603,6 +635,7 @@ The window is a square of `2 * r` tiles, so the default is 80 x 80 and the maxim
 - `upgrade` appears only on a **finished** building whose content type names at least one *applicable* successor, and it means the building can be upgraded with `UPGRADE <id> <variantPath>`. Its shape is `{"options": [{"to": "<target content path>", "gold": <integer>, "wood": <integer>}, ...]}` - one entry per variant. An entry is advertised only when the command would actually accept it: the target exists in the served catalogue, has the **same footprint**, and is **allowed in the dimension the building stands in**. An overworld armory therefore advertises only the taller armory, while the same armory standing in hell advertises both of its variants - the client never paints an 升级 entry the command would refuse as dimension-restricted. Unfinished sites, top-tier buildings, types with no successor and a dangling successor reference omit the whole object. `gold` / `wood` are what the command will charge for that variant (the source type's option cost). Affordability is deliberately **not** encoded; the client compares the cost with its own `players` row and renders the entry disabled rather than hiding it when the stock is short. An older client ignores the field.
 - `repair` appears only on a **finished** building that is damaged and whose content type declares a repair price. Its shape is `{"gold": <integer>, "wood": <integer>}` and the amounts are what a complete repair of the **currently missing** hit points would cost: the content's per-health price multiplied by the missing hit points (`Building.repairCost()`). A full-health building, an unfinished site and a type whose `repairCostPerHealth()` is empty omit it, so the client never offers a repair the command would refuse. Affordability is not encoded; the client compares the amounts with its own `players` row. An older client ignores the field.
 - `reclaim` appears only on an **unfinished** site. Its shape is `{"gold": <integer>, "wood": <integer>}` and the amounts are what `RECLAIM <id>` would deposit: half (rounded down) of the bundle recorded when the site was placed (`CommandService.reclaimRefund`). The object is present even when both amounts are `0`, because the action still removes the site. A finished building omits it. An older client ignores the field.
+- `invested` appears on the same **unfinished** site rows, right after `reclaim`: the raw paid-so-far bundle as a compact `{"gold": <integer>, "wood": <integer>}` object (an item path per key, exactly like `contents`). Together with the building type's catalogue cost (see the `content` object below) a client can compute the construction progress from raw numbers instead of trusting the rounded `progress` fraction. A finished building omits it. An older client ignores the field.
 - `path` / `target` appear only on a **moving unit** that already has a route to follow. `path` is an array of `[x, y]` absolute world tile pairs - the **remaining** polyline, with consumed waypoints already dropped - capped at **64 points**; `target` is the active move order's goal tile as an `[x, y]` pair. Both fields are omitted for an idle or stopped unit, for a unit still waiting for its first route, and by an older server. The coordinates are tile indices in the same absolute space as the entity's `x` / `y`, may be negative, and are not clipped to the snapshot window. When a route is longer than the cap, `path` holds its first 64 points while `target` still names the real goal; the client draws the line and marks the target dot. The fields are presentational and additive; they are not movement state and an older client ignores them.
 - These fields are additive: an older server may omit them, and a client must keep working without them (no size HUD, no progress bar, no production marker, no per-item queue list, no demand icon, no engineer task, no order queue, no combat line, no builder flag, no haul pop, no stock line, no capacity line, no inbound count, no upgrade entry, no repair/reclaim entry, no route overlay, no TRAIN menu, no projectile channel, no BUILD catalogue). The browser client reads them into `footprint`, `progress`, `queue`, `queueTicks`, `queueItems`, `producingNow`, `demand`, `task`, `orderQueue`, `role`, `builder`, `attackDamage`, `attackRange`, `pop`, `contents`, `storage`, `inbound`, `trains`, `upgrade`, `repairCost`, `reclaim`, `path`, `pathTarget`, `projectiles`, `buildable` and `gateway` in `src/render/view.ts`; a malformed optional field is ignored, not fatal.
 - `players` is sorted by id and has one row per player that exists in the world (the sample scene, an AI and every human account), with the player id, its display name, the two starting resources and the two income rates, all as non-negative integers. Each row may also carry `anchor`: an optional `[x, y]` pair of **absolute integer tiles**, the tile the faction started from. Player 1 reports the spawn anchor the sample scene was laid out around, a joining account reports its deterministic base-slot anchor (not the final warehouse origin), and a classic bot reports the deterministic anchor its opening base search started from. The value comes from `Player.anchor()` and is omitted when nobody published one; it is a **known starting position**, not a live unit position and not a fog-of-war reveal, so a client may use it for a direction/distance readout and a minimap edge arrow without revealing terrain or entities. The flat keys `gold` and `wood` are the item paths the classic catalogue registers; the snapshot does not repeat their display names (金币 / 木材) and any other item kind stays out of the document for now. The amounts are what that player's warehouses make available - the engine's drop-off rule, the same source the build/train cost checks read - so a player with no warehouse reports `0` for both. `goldPerMinute` / `woodPerMinute` are the sum over that player's alive, constructed buildings of the content's `income_<n>` / `wood_income_<n>` tags, the same convention `ClassicEconomy` pays: an unfinished site, a destroyed building and a type without the matching tag contribute nothing, so a content that publishes no tags reports `0` for both. Per building the first matching tag wins, exactly like the payout hook. These fields are additive too: an older server may omit them and a client must keep working without them. The browser client matches the row whose `id` equals the `WHOAMI` answer and shows its name, gold, wood and rates in the HUD; before that row exists it shows dashes. It reads every hostile row's `anchor` into the top-chrome enemy line and the minimap edge arrow and ignores a malformed pair.

@@ -69,12 +69,18 @@ public record SteeringSettings(
     public static final float DEFAULT_FORMATION_COHESION_WEIGHT = 0.4f;
     /** Fraction of full speed a fully congested unit keeps. */
     public static final float DEFAULT_CONGESTION_SPEED_FLOOR = 0.35f;
-    /** Consecutive ticks of negligible movement after which a unit is stuck. */
-    public static final int DEFAULT_STUCK_TICKS_BEFORE_REPATH = 90;
+    /**
+     * Consecutive ticks of negligible movement after which a unit is stuck.
+     *
+     * <p>Lowered from the historical 90: a unit wedged against a building wall used to push for a second
+     * and a half before asking for a new route, which read as "walks a while then stops". Forty-five
+     * ticks still filters out crowd jitter while the re-plan arrives within about two seconds.
+     */
+    public static final int DEFAULT_STUCK_TICKS_BEFORE_REPATH = 45;
     /** Movement below this many tiles per tick counts as no progress. */
     public static final float DEFAULT_STUCK_DISPLACEMENT_PER_TICK = 0.02f;
     /** Ticks a stuck unit waits before it may re-plan its route. */
-    public static final int DEFAULT_STUCK_REPATH_COOLDOWN = 60;
+    public static final int DEFAULT_STUCK_REPATH_COOLDOWN = 30;
 
     /**
      * Validates the settings; a value that would make the steering unusable is rejected here instead of

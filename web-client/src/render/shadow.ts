@@ -54,3 +54,67 @@ export function approachShadowAlpha(current: number, target: number, step = SHAD
   }
   return Math.max(target, current - step);
 }
+
+/** One chunk's on-screen footprint, in absolute world tiles, clamped to the visible range. */
+export interface ChunkSpan {
+  readonly chunkX: number;
+  readonly chunkY: number;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/** The minimum visible tile range the span helper accepts (the camera's `visibleTileRange`). */
+export interface TileRangeLike {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/**
+ * One chunk rectangle per chunk overlapping the visible tile range, in chunk order.
+ *
+ * This is the per-frame shadow pass's new shape (playtester item 13): instead of walking every
+ * visible tile and asking "which chunk is this?" per tile, the renderer walks the handful of chunks
+ * the range touches and fills **one rectangle per chunk** — the shade of a chunk is uniform, so the
+ * per-tile loop collapsed into `O(visible chunks)` fill rects. The spans are clamped to the range, so
+ * a chunk hanging off the visible edge only paints its visible part.
+ */
+export function chunkSpansInRange(
+  range: TileRangeLike,
+  chunkSize = CHUNK_SIZE_TILES,
+): ChunkSpan[] {
+  const size = chunkSize > 0 ? Math.floor(chunkSize) : CHUNK_SIZE_TILES;
+  const spans: ChunkSpan[] = [];
+  const firstChunkX = Math.floor(range.minX / size);
+  const lastChunkX = Math.floor(range.maxX / size);
+  const firstChunkY = Math.floor(range.minY / size);
+  const lastChunkY = Math.floor(range.maxY / size);
+  for (let chunkY = firstChunkY; chunkY <= lastChunkY; chunkY += 1) {
+    for (let chunkX = firstChunkX; chunkX <= lastChunkX; chunkX += 1) {
+      const minX = Math.max(range.minX, chunkX * size);
+      const maxX = Math.min(range.maxX, (chunkX + 1) * size - 1);
+      const minY = Math.max(range.minY, chunkY * size);
+      const maxY = Math.min(range.maxY, (chunkY + 1) * size - 1);
+      if (minX > maxX || minY > maxY) {
+        continue;
+      }
+      spans.push({ chunkX, chunkY, minX, minY, maxX, maxY });
+    }
+  }
+  return spans;
+}
+
+/** The shade one chunk sits under this frame: `0` over a loaded chunk, the shadow alpha otherwise. */
+export function chunkShadowTargetAlpha(
+  loadedChunks: ReadonlySet<string> | undefined,
+  chunkX: number,
+  chunkY: number,
+): number {
+  if (loadedChunks === undefined) {
+    return 0;
+  }
+  return loadedChunks.has(chunkKey(chunkX, chunkY)) ? 0 : SHADOW_ALPHA;
+}

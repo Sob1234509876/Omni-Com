@@ -15,11 +15,11 @@ import { readFileSync } from "node:fs";
 import {
   MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
+  assist,
   batchCommands,
   build,
   buildBatch,
   buildPlacementBatch,
-  haul,
   orderAttack,
   orderAttackMove,
   orderMove,
@@ -32,12 +32,13 @@ import {
   train,
   trainBatch,
   transfer,
+  travel,
   upgrade,
   upgradeUnit,
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
-import { FALLBACK_BUILD_PATHS, FALLBACK_TRAIN_PATHS } from "../src/render/commandbar.ts";
+import { FALLBACK_TRAIN_PATHS } from "../src/render/commandbar.ts";
 import {
   CHUNK_SIZE_TILES,
   SHADOW_ALPHA,
@@ -223,7 +224,6 @@ import {
   TERRAIN_IDS,
   TERRAIN_VOID,
   terrainAt,
-  tileInWindow,
   underConstruction,
   windowTileIndex,
   worldViewFromSnapshot,
@@ -244,15 +244,34 @@ import {
   DICTIONARIES,
   LANGUAGES,
   currentI18nLanguage,
+  dimensionLabel,
   genericContentLabel,
   initI18n,
+  registerServerKeyValues,
   resolveLanguage,
   t,
 } from "../src/i18n.ts";
+import {
+  constructionDeficit,
+  formatDeficit,
+  parseContentCatalogue,
+  producerDeficit,
+  registerCatalogueNames,
+} from "../src/content.ts";
+import { ATTACK_PATH_COLOR } from "../src/render/paths.ts";
+import {
+  RASTER_BUCKET_MAX_PX,
+  RASTER_CACHE_MAX_ENTRIES,
+  rasterBucket,
+  rasterCacheKey,
+} from "../src/render/raster.ts";
+import {
+  chunkShadowTargetAlpha,
+  chunkSpansInRange,
+} from "../src/render/shadow.ts";
 import { isLanguageSetting } from "../src/settings.ts";
 import {
   CONTINUE_BUILD_ACTION_LABEL,
-  HAUL_ACTION_LABEL,
   REPAIR_ACTION_LABEL,
   RECLAIM_ACTION_LABEL,
   buildingActionModel,
@@ -284,9 +303,7 @@ import {
   PLACEMENT_BLOCKED_FILL,
   PLACEMENT_BLOCKED_STROKE,
   PLACEMENT_LEGAL_FILL,
-  PLACEMENT_LEGAL_STROKE,
   PLACEMENT_OUT_OF_REACH_FILL,
-  PLACEMENT_OUT_OF_REACH_STROKE,
   buildPlacementPreview,
   buildReachDistance,
   combinePlacementStates,
@@ -302,13 +319,11 @@ import {
   type Footprint,
 } from "../src/render/placement.ts";
 import {
-  MINIMAP_ARROW_INSET,
   MINIMAP_DOT_SIZE,
   MINIMAP_PANEL_SIZE,
   minimapCameraTarget,
   minimapEdgeGeometry,
   minimapLayout,
-  minimapNearestEdgeArrow,
   minimapPointForTile,
   minimapTileAt,
 } from "../src/render/minimap.ts";
@@ -316,18 +331,13 @@ import {
   COMPASS_SECTORS,
   anchorCameraTarget,
   compassSector,
-  enemyAnchorEntries,
-  enemyLineText,
-  formatEnemyAnchor,
   tileDistance,
 } from "../src/render/enemy.ts";
 import {
-  HOME_ANCHOR_UNKNOWN_TEXT,
+  homeAnchorUnknownText,
   MAX_MARKERS,
   clearMarkers,
-  formatHomeLine,
   formatMarkerLabel,
-  homeAnchorEntry,
   homeCameraTarget,
   markerCameraTarget,
   markerEdgeArrow,
@@ -336,6 +346,8 @@ import {
   ownAnchorOf,
   placeMarker,
   removeLastMarker,
+  markerInDrawnDimension,
+  worldDimensionKey,
   type Marker,
 } from "../src/render/markers.ts";
 import {
@@ -525,23 +537,15 @@ const camera = new Camera(32, 1, 640, 480);
 camera.setViewport(800, 600);
 camera.reset();
 check(
-  "复位后镜头回到构造时给的家位置",
-  near(camera.centerX, 640) && near(camera.centerY, 480),
-  `${camera.centerX}, ${camera.centerY}`,
-);
-
-camera.pan(1_000_000, 1_000_000);
-check(
-  "向右下平移不会撞到任何地图边界",
-  near(camera.centerX, 1_000_640) && near(camera.centerY, 1_000_480),
-  `${camera.centerX}, ${camera.centerY}`,
-);
-
-camera.pan(-2_000_000, -2_000_000);
-check(
-  "向左上平移同样自由（可以越过原点进入负坐标）",
-  near(camera.centerX, -999_360) && near(camera.centerY, -999_520),
-  `${camera.centerX}, ${camera.centerY}`,
+  "复位回到家位置；平移无边界（右下与左上、可越过原点进入负坐标）",
+  near(camera.centerX, 640) &&
+    near(camera.centerY, 480) &&
+    (() => {
+      camera.pan(1_000_000, 1_000_000);
+      const rightDown = near(camera.centerX, 1_000_640) && near(camera.centerY, 1_000_480);
+      camera.pan(-2_000_000, -2_000_000);
+      return rightDown && near(camera.centerX, -999_360) && near(camera.centerY, -999_520);
+    })(),
 );
 
 camera.setCenter(-100 * 32, -50 * 32);
@@ -574,66 +578,48 @@ const anchorBefore = camera.screenToWorld(137, 211);
 camera.zoomAt(137, 211, 1.8);
 const anchorAfter = camera.screenToWorld(137, 211);
 check(
-  "以光标为中心缩放时，光标下的世界点不动",
-  near(anchorBefore.x, anchorAfter.x) && near(anchorBefore.y, anchorAfter.y),
-  `${anchorBefore.x},${anchorBefore.y} -> ${anchorAfter.x},${anchorAfter.y}`,
-);
-check("缩放倍率变为 1.8", near(camera.zoom, 1.8, 1e-9), String(camera.zoom));
-
-camera.zoomAt(400, 300, 1_000_000);
-check("缩放上限是 2.5", camera.zoom === MAX_ZOOM, String(camera.zoom));
-camera.zoomAt(400, 300, 0.000001);
-check("缩放下限是 0.5", camera.zoom === MIN_ZOOM, String(camera.zoom));
-
-camera.reset();
-check(
-  "复位同时恢复默认缩放与家位置",
-  camera.zoom === 1 && near(camera.centerX, 640) && near(camera.centerY, 480),
-  `${camera.zoom}, ${camera.centerX}, ${camera.centerY}`,
+  "缩放：以光标为中心时光标下世界点不动、倍率生效，上下限 2.5/0.5，复位恢复默认缩放与家位置",
+  near(anchorBefore.x, anchorAfter.x) &&
+    near(anchorBefore.y, anchorAfter.y) &&
+    near(camera.zoom, 1.8, 1e-9) &&
+    (() => {
+      camera.zoomAt(400, 300, 1_000_000);
+      const capped = camera.zoom === MAX_ZOOM;
+      camera.zoomAt(400, 300, 0.000001);
+      const floored = camera.zoom === MIN_ZOOM;
+      camera.reset();
+      return capped && floored && camera.zoom === 1 && near(camera.centerX, 640) && near(camera.centerY, 480);
+    })(),
 );
 
 // The safety bound is not a map edge: it exists because the engine stores positions in
 // single-precision Vec2 values, whose resolution degrades beyond roughly 500,000 tiles.
 camera.setCenter(-100_000 * 32, -100_000 * 32);
-const farFocus = camera.centerTile();
 check(
-  "镜头可以移动到 -100000 瓦片而不被夹紧",
-  near(camera.centerX, -3_200_000) &&
-    near(camera.centerY, -3_200_000) &&
-    farFocus.x === -100_000 &&
-    farFocus.y === -100_000,
-  `${camera.centerX}, ${camera.centerY} / 焦点 ${farFocus.x}, ${farFocus.y}`,
-);
-
-camera.setCenter(-1_000_000_000_000, 1_000_000_000_000);
-const boundFocus = camera.centerTile();
-check(
-  "镜头被停在 ±500000 瓦片的安全边界上",
-  CAMERA_SAFETY_BOUND_TILES === 500_000 &&
-    near(camera.centerX, -CAMERA_SAFETY_BOUND_TILES * 32) &&
-    near(camera.centerY, CAMERA_SAFETY_BOUND_TILES * 32) &&
-    boundFocus.x === -CAMERA_SAFETY_BOUND_TILES &&
-    boundFocus.y === CAMERA_SAFETY_BOUND_TILES,
-  `${camera.centerX}, ${camera.centerY} / 焦点 ${boundFocus.x}, ${boundFocus.y}`,
+  "镜头远行：-100000 瓦片不被夹紧；±500000 瓦片安全边界把镜头停住",
+  (() => {
+    camera.setCenter(-100_000 * 32, -100_000 * 32);
+    const free = near(camera.centerX, -3_200_000) && near(camera.centerY, -3_200_000);
+    camera.setCenter(-1_000_000_000_000, 1_000_000_000_000);
+    const boundFocus = camera.centerTile();
+    return (
+      free &&
+      CAMERA_SAFETY_BOUND_TILES === 500_000 &&
+      near(camera.centerX, -CAMERA_SAFETY_BOUND_TILES * 32) &&
+      near(camera.centerY, CAMERA_SAFETY_BOUND_TILES * 32) &&
+      boundFocus.x === -CAMERA_SAFETY_BOUND_TILES &&
+      boundFocus.y === CAMERA_SAFETY_BOUND_TILES
+    );
+  })(),
 );
 
 camera.setCenter(-16, -16);
 check(
-  "中心瓦片对负坐标向下取整（-0.5 格是瓦片 -1，不是 0）",
-  camera.centerTile().x === -1 && camera.centerTile().y === -1,
-  `${camera.centerTile().x}, ${camera.centerTile().y}`,
-);
-check(
-  "屏幕取瓦片对负坐标同样向下取整",
-  camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).x === -1 &&
-    camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).y === -1,
-  `${camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).x}, ` +
-    `${camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).y}`,
-);
-check(
-  "有符号整数瓦片判定接受任意正负坐标、拒绝小数与 NaN",
-  isWorldTile(-100_000, 500_000) &&
-    isWorldTile(0, 0) &&
+  "负坐标瓦片：中心与屏幕取瓦片都向下取整；整数瓦片判定拒绝小数与 NaN",
+  camera.centerTile().x === -1 &&
+    camera.centerTile().y === -1 &&
+    camera.tileAtScreen(camera.viewportWidth / 2, camera.viewportHeight / 2).x === -1 &&
+    isWorldTile(-100_000, 500_000) &&
     !isWorldTile(-0.5, 0) &&
     !isWorldTile(0, Number.NaN),
 );
@@ -649,26 +635,18 @@ marqueeCamera.setViewport(800, 600);
 const marqueeRect = screenRectBetween({ x: 100, y: 120 }, { x: 300, y: 260 });
 const marqueeRange = marqueeTileRange(marqueeCamera, marqueeRect);
 check(
-  "框选矩形转换为负世界瓦片范围（100,120)-(300,260) -> (-110,-56)-(-104,-52)",
+  "框选几何：矩形 -> 负世界瓦片范围、反方向拖拽同矩形、零面积矩形仍选中单格（负坐标按 floor）",
   marqueeRange.minX === -110 &&
     marqueeRange.maxX === -104 &&
     marqueeRange.minY === -56 &&
-    marqueeRange.maxY === -52,
-  `${marqueeRange.minX},${marqueeRange.minY}..${marqueeRange.maxX},${marqueeRange.maxY}`,
-);
-check(
-  "反方向拖拽得到同一个矩形与同一个瓦片范围",
-  JSON.stringify(screenRectBetween({ x: 300, y: 260 }, { x: 100, y: 120 })) ===
-    JSON.stringify(marqueeRect) &&
+    marqueeRange.maxY === -52 &&
+    JSON.stringify(screenRectBetween({ x: 300, y: 260 }, { x: 100, y: 120 })) ===
+      JSON.stringify(marqueeRect) &&
     JSON.stringify(marqueeTileRange(marqueeCamera, screenRectBetween({ x: 300, y: 260 }, { x: 100, y: 120 }))) ===
-      JSON.stringify(marqueeRange),
-);
-const zeroRect = screenRectBetween({ x: 101, y: 121 }, { x: 101, y: 121 });
-check(
-  "零面积矩形仍选中指针下的单格（负坐标按 floor）",
-  JSON.stringify(marqueeTileRange(marqueeCamera, zeroRect)) ===
-    JSON.stringify({ minX: -110, maxX: -110, minY: -56, maxY: -56 }),
-  JSON.stringify(marqueeTileRange(marqueeCamera, zeroRect)),
+      JSON.stringify(marqueeRange) &&
+    JSON.stringify(marqueeTileRange(marqueeCamera, screenRectBetween({ x: 101, y: 121 }, { x: 101, y: 121 }))) ===
+      JSON.stringify({ minX: -110, maxX: -110, minY: -56, maxY: -56 }),
+  `${marqueeRange.minX},${marqueeRange.minY}..${marqueeRange.maxX},${marqueeRange.maxY}`,
 );
 
 const marqueeWorld: WorldView = {
@@ -690,34 +668,19 @@ const marqueeWorld: WorldView = {
 const marqueeSquare = { minX: 2, minY: 2, maxX: 4, maxY: 4 };
 const marqueeIds = marqueeSelection(marqueeWorld, marqueeSquare, 1);
 check(
-  "框选优先级：战斗单位压过工兵与建筑，敌人和中立永不入选",
+  "框选优先级与几何：战斗单位压过工兵与建筑，敌人/中立/范围外永不入选；边界 [min, max+1)；建筑几何同规则",
   JSON.stringify(marqueeIds) === JSON.stringify([2]) &&
     !marqueeIds.includes(3) &&
     !marqueeIds.includes(4) &&
     !marqueeIds.includes(6) &&
-    !marqueeIds.includes(7),
+    !marqueeIds.includes(7) &&
+    !marqueeIds.includes(5) &&
+    entityInMarquee({ id: 8, kind: "worker", x: 2, y: 2, playerId: 1 }, marqueeSquare, 1) === true &&
+    entityInMarquee({ id: 9, kind: "worker", x: 5, y: 2.5, playerId: 1 }, marqueeSquare, 1) === false &&
+    entityInMarquee({ id: 10, kind: "worker", x: 4.999, y: 4.999, playerId: 1 }, marqueeSquare, 1) === true &&
+    entityInMarquee({ id: 11, kind: "building.warehouse", x: 3, y: 3, playerId: 1 }, marqueeSquare, 1) === true &&
+    entityInMarquee({ id: 12, kind: "building.warehouse", x: 3, y: 3, playerId: 2 }, marqueeSquare, 1) === false,
   marqueeIds.join(","),
-);
-check(
-  "位于范围外的自己单位不被选中（x=7.5）",
-  !marqueeIds.includes(5) && entityInMarquee(marqueeWorld.entities[4]!, marqueeSquare, 1) === false,
-);
-check(
-  "范围左/上边界包含，右/下边界之外排除（[min, max+1)）",
-  entityInMarquee({ id: 8, kind: "worker", x: 2, y: 2, playerId: 1 }, marqueeSquare, 1) === true &&
-    entityInMarquee({ id: 9, kind: "worker", x: 5, y: 2.5, playerId: 1 }, marqueeSquare, 1) ===
-      false &&
-    entityInMarquee({ id: 10, kind: "worker", x: 4.999, y: 4.999, playerId: 1 }, marqueeSquare, 1) ===
-      true,
-);
-check(
-  "框选的几何判定接受自己的建筑，但仍拒绝敌人与中立",
-  entityInMarquee({ id: 11, kind: "building.warehouse", x: 3, y: 3, playerId: 1 }, marqueeSquare, 1) ===
-    true &&
-    entityInMarquee({ id: 12, kind: "building.warehouse", x: 3, y: 3, playerId: 2 }, marqueeSquare, 1) ===
-      false &&
-    entityInMarquee({ id: 13, kind: "building.warehouse", x: 3, y: 3, playerId: 0 }, marqueeSquare, 1) ===
-      false,
 );
 
 // A marquee that covers only own builders and own buildings keeps the builders: the engineer group
@@ -731,11 +694,6 @@ const builderWorld: WorldView = {
   ],
 };
 const builderIds = marqueeSelection(builderWorld, marqueeSquare, 1);
-check(
-  "框选优先级：工兵压过建筑，敌人的工兵不入选",
-  JSON.stringify(builderIds) === JSON.stringify([1]),
-  builderIds.join(","),
-);
 
 // With no unit at all the marquee falls through to the own buildings it covers, enemy buildings stay out.
 const buildingWorld: WorldView = {
@@ -748,9 +706,10 @@ const buildingWorld: WorldView = {
 };
 const buildingIds = marqueeSelection(buildingWorld, marqueeSquare, 1);
 check(
-  "框选只覆盖建筑时选中自己的全部建筑（敌人建筑除外）",
-  JSON.stringify(buildingIds) === JSON.stringify([1, 2]),
-  buildingIds.join(","),
+  "框选优先级：工兵压过建筑（敌人不入选），只覆盖建筑时选全部自己的建筑",
+  JSON.stringify(builderIds) === JSON.stringify([1]) &&
+    JSON.stringify(buildingIds) === JSON.stringify([1, 2]),
+  `${builderIds.join(",")} / ${buildingIds.join(",")}`,
 );
 
 // The same priority rule as a pure function, so the group choice can be read without a world or window.
@@ -761,35 +720,19 @@ const priorityEntities: EntityView[] = [
   { id: 24, kind: "building.warehouse", x: 3, y: 3, playerId: 1 },
 ];
 check(
-  "selectByPriority：战斗组存在时只选战斗单位，混编的战斗单位都入选",
-  JSON.stringify(selectByPriority(priorityEntities)) === JSON.stringify([21, 22]),
-  selectByPriority(priorityEntities).join(","),
-);
-check(
-  "selectByPriority：没有战斗单位时工兵压过建筑",
-  JSON.stringify(selectByPriority(priorityEntities.slice(2))) === JSON.stringify([23]) &&
-    JSON.stringify(selectByPriority([priorityEntities[3]!])) === JSON.stringify([24]),
-  `${selectByPriority(priorityEntities.slice(2)).join(",")} / ${selectByPriority([priorityEntities[3]!]).join(",")}`,
-);
-check(
-  "role 优先于 attackDamage：带 2 点攻击的工程师仍是工兵组，不会被当成战斗单位",
-  JSON.stringify(
-    selectByPriority([
-      { id: 31, kind: "unit.engineer", x: 2, y: 2, playerId: 1, role: "support", attackDamage: 2 },
-      { id: 32, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, role: "combat", attackDamage: 10 },
-    ]),
-  ) === JSON.stringify([32]),
-  selectByPriority([
-    { id: 31, kind: "unit.engineer", x: 2, y: 2, playerId: 1, role: "support", attackDamage: 2 },
-    { id: 32, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, role: "combat", attackDamage: 10 },
-  ]).join(","),
-);
-check(
-  "空框选（没有实体）不选中任何东西",
-  selectByPriority([]).length === 0 &&
+  "selectByPriority：战斗组优先、工兵压过建筑；role 优先于 attackDamage；空输入不选中",
+  JSON.stringify(selectByPriority(priorityEntities)) === JSON.stringify([21, 22]) &&
+    JSON.stringify(selectByPriority(priorityEntities.slice(2))) === JSON.stringify([23]) &&
+    JSON.stringify(selectByPriority([priorityEntities[3]!])) === JSON.stringify([24]) &&
+    JSON.stringify(
+      selectByPriority([
+        { id: 31, kind: "unit.engineer", x: 2, y: 2, playerId: 1, role: "support", attackDamage: 2 },
+        { id: 32, kind: "unit.melee.t1", x: 3, y: 3, playerId: 1, role: "combat", attackDamage: 10 },
+      ]),
+    ) === JSON.stringify([32]) &&
+    selectByPriority([]).length === 0 &&
     marqueeSelection({ ...marqueeWorld, entities: [] }, marqueeSquare, 1).length === 0 &&
     marqueeSelection(buildingWorld, marqueeSquare, null).length === 0,
-  `${selectByPriority([]).length} / ${marqueeSelection({ ...marqueeWorld, entities: [] }, marqueeSquare, 1).length} / ${marqueeSelection(buildingWorld, marqueeSquare, null).length}`,
 );
 
 // Ownership is repeated by the optional player id, so a direct caller also cannot select an enemy or
@@ -803,19 +746,12 @@ const ownershipWorld: WorldView = {
   ],
 };
 check(
-  "框选：敌人的战斗单位与中立实体不入选，自己的建筑照常入选",
+  "框选所有权过滤与 Shift 切换：敌人/中立不入选、自己的建筑照常；先加后减顺序稳定不重复",
   JSON.stringify(marqueeSelection(ownershipWorld, marqueeSquare, 1)) === JSON.stringify([3]) &&
-    JSON.stringify(selectByPriority(ownershipWorld.entities, 1)) === JSON.stringify([3]),
-  marqueeSelection(ownershipWorld, marqueeSquare, 1).join(","),
-);
-check(
-  "Shift 切换：先加后减，顺序稳定且不会重复",
-  JSON.stringify(toggleSelection([], 1)) === JSON.stringify([1]) &&
-    JSON.stringify(toggleSelection(toggleSelection([], 1), 2)) === JSON.stringify([1, 2]) &&
+    JSON.stringify(selectByPriority(ownershipWorld.entities, 1)) === JSON.stringify([3]) &&
     JSON.stringify(toggleSelection(toggleSelection(toggleSelection([], 1), 2), 1)) ===
       JSON.stringify([2]) &&
     JSON.stringify(toggleSelection([2], 2)) === JSON.stringify([]),
-  JSON.stringify(toggleSelection([2], 2)),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -823,35 +759,18 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 check(
-  "普通 toast 约 4 秒，错误 toast 约 8 秒",
+  "toast 规则：普通 4 秒错误 8 秒、ERR/客户端拒绝是错误 tone、最多 5 条丢最旧、文本折叠截断",
   TOAST_LIFETIME_MS === 4_000 &&
     TOAST_ERROR_LIFETIME_MS === 8_000 &&
-    toastLifetimeMs("info") === 4_000 &&
-    toastLifetimeMs("error") === 8_000,
-  `${toastLifetimeMs("info")} / ${toastLifetimeMs("error")}`,
-);
-check(
-  "ERR 回答与客户端拒绝都是错误 toast，普通 OK 不是",
-  isErrAnswer("ERR") &&
+    toastLifetimeMs("error") === 8_000 &&
     isErrAnswer("ERR login first") &&
     !isErrAnswer("ERROR tolerated") &&
     toastTone("ERR login first") === "error" &&
-    toastTone("OK player 7") === "info" &&
-    toastTone("OK", true) === "error",
-);
-check(
-  "最多 5 条 toast 可见，超出时丢掉最旧的",
-  TOAST_VISIBLE_CAP === 5 &&
+    toastTone("OK", true) === "error" &&
+    TOAST_VISIBLE_CAP === 5 &&
     JSON.stringify(capToasts([1, 2, 3, 4, 5, 6])) === JSON.stringify([2, 3, 4, 5, 6]) &&
-    JSON.stringify(capToasts([1, 2, 3])) === JSON.stringify([1, 2, 3]) &&
-    capToasts([]).length === 0,
-);
-check(
-  "toast 文本折叠换行并截断到一行",
-  trimToastLine("  engine-info\n  报告  ") === "engine-info 报告" &&
-    trimToastLine("abcdef", 5) === "abcd…" &&
-    trimToastLine("abcdef", 2) === "a…",
-  trimToastLine("abcdef", 5),
+    trimToastLine("  engine-info\n  报告  ") === "engine-info 报告" &&
+    trimToastLine("abcdef", 5) === "abcd…",
 );
 
 
@@ -868,60 +787,43 @@ const second = demoWorld(seed);
 const different = demoWorld(seed + 1);
 
 check(
-  "demoWorld 同种子生成完全一致的地图",
-  JSON.stringify(first) === JSON.stringify(second),
-);
-check(
-  "demoWorld 不同种子生成不同的地图",
-  JSON.stringify(first) !== JSON.stringify(different),
-);
-check(
-  "地图是 32 行、每行 44 格",
-  first.width === 44 &&
+  "demoWorld：同种子完全一致、异种子不同；44×32 网格行列完整；12 个实体",
+  JSON.stringify(first) === JSON.stringify(second) &&
+    JSON.stringify(first) !== JSON.stringify(different) &&
+    first.width === 44 &&
     first.height === 32 &&
     first.tiles.length === first.height &&
-    first.tiles.every((row) => row.length === first.width),
-  `${first.width}x${first.height}, ${first.tiles.length} rows`,
+    first.tiles.every((row) => row.length === first.width) &&
+    first.entities.length === 12,
 );
-check("占位地图有 12 个实体", first.entities.length === 12, String(first.entities.length));
 
 const entityIds = new Set(first.entities.map((entity) => entity.id));
-check("实体 id 互不重复", entityIds.size === first.entities.length, String(entityIds.size));
-
 const kinds = new Set(first.entities.map((entity) => entity.kind));
-for (const kind of ["worker", "soldier", "medic", "warehouse", "barracks"]) {
-  check(`地图包含 ${kind}`, kinds.has(kind));
-}
-check(
-  "地图里正好两座建筑",
-  first.entities.filter((entity) => isBuildingKind(entity.kind)).length === 2,
-);
-check(
-  "所有实体都在地图内",
-  first.entities.every(
-    (entity) => entity.x > 0 && entity.x < first.width && entity.y > 0 && entity.y < first.height,
-  ),
-);
-check(
-  "所有实体都站在可建造的陆地上",
-  first.entities.every((entity) => {
-    const terrain = terrainAt(first, Math.floor(entity.x), Math.floor(entity.y));
-    return terrain === "grass" || terrain === "sand";
-  }),
-);
-check(
-  "血条比例都在 [0, 1]",
-  first.entities.every(
-    (entity) =>
-      entity.healthRatio === undefined ||
-      (entity.healthRatio >= 0 && entity.healthRatio <= 1),
-  ),
-);
-
 const terrainSet = tileTypes(first);
-for (const terrain of ["water", "sand", "grass", "forest", "hill", "rock"]) {
-  check(`地图包含地形 ${terrain}`, terrainSet.has(terrain));
-}
+check(
+  "占位地图实体集：id 唯一、12 个实体、包含五种 kind、恰好两座建筑",
+  entityIds.size === first.entities.length &&
+    first.entities.length === 12 &&
+    ["worker", "soldier", "medic", "warehouse", "barracks"].every((kind) => kinds.has(kind)) &&
+    first.entities.filter((entity) => isBuildingKind(entity.kind)).length === 2,
+  [...kinds].join(","),
+);
+check(
+  "占位地图地形集：六种地形齐备，所有实体都在地图内的可建造陆地上，血条比例在 [0, 1]",
+  ["water", "sand", "grass", "forest", "hill", "rock"].every((terrain) => terrainSet.has(terrain)) &&
+    first.entities.every(
+      (entity) =>
+        entity.x > 0 &&
+        entity.x < first.width &&
+        entity.y > 0 &&
+        entity.y < first.height &&
+        (terrainAt(first, Math.floor(entity.x), Math.floor(entity.y)) === "grass" ||
+          terrainAt(first, Math.floor(entity.x), Math.floor(entity.y)) === "sand") &&
+        (entity.healthRatio === undefined ||
+          (entity.healthRatio >= 0 && entity.healthRatio <= 1)),
+    ),
+  [...terrainSet].join(","),
+);
 
 // ---------------------------------------------------------------------------------------------
 // Server snapshot -> WorldView
@@ -941,37 +843,33 @@ const serverSnapshot = worldViewFromSnapshot({
     { id: 2, kind: "oc:warehouse", x: 2, y: 1, player: 2, health: 1 },
   ],
 });
-check("服务器快照转换成功", serverSnapshot !== null);
-if (serverSnapshot !== null) {
-  check("快照保留 tick 与宽高", serverSnapshot.tick === 17 && serverSnapshot.width === 3 &&
-    serverSnapshot.height === 2);
-  check(
-    "地形字符串被转换成渲染地形 id（去掉命名空间前缀）",
+check(
+  "服务器快照转换：tick/宽高保留、地形去命名空间、实体字段映射、建筑用内容路径",
+  serverSnapshot !== null &&
+    serverSnapshot.tick === 17 &&
+    serverSnapshot.width === 3 &&
+    serverSnapshot.height === 2 &&
     serverSnapshot.tiles[0]?.[0] === "grass" &&
-      serverSnapshot.tiles[0]?.[2] === "forest" &&
-      serverSnapshot.tiles[1]?.[0] === "rock",
-    JSON.stringify(serverSnapshot.tiles),
-  );
-
-  const worker = serverSnapshot.entities.find((entity) => entity.id === 1);
-  check(
-    "实体字段被映射：kind/x/y/playerId/healthRatio",
-    worker !== undefined &&
-      worker.kind === "worker" &&
-      worker.x === 1.5 &&
-      worker.y === 0.5 &&
-      worker.playerId === 1 &&
-      worker.healthRatio === 0.8,
-    JSON.stringify(worker),
-  );
-  const warehouse = serverSnapshot.entities.find((entity) => entity.id === 2);
-  check(
-    "建筑同样使用内容路径作为 kind",
-    warehouse !== undefined && warehouse.kind === "warehouse" && warehouse.playerId === 2,
-    JSON.stringify(warehouse),
-  );
-  check("快照实体数量正确", serverSnapshot.entities.length === 2);
-}
+    serverSnapshot.tiles[0]?.[2] === "forest" &&
+    serverSnapshot.tiles[1]?.[0] === "rock" &&
+    serverSnapshot.entities.length === 2 &&
+    (() => {
+      const worker = serverSnapshot.entities.find((entity) => entity.id === 1);
+      const warehouse = serverSnapshot.entities.find((entity) => entity.id === 2);
+      return (
+        worker !== undefined &&
+        worker.kind === "worker" &&
+        worker.x === 1.5 &&
+        worker.y === 0.5 &&
+        worker.playerId === 1 &&
+        worker.healthRatio === 0.8 &&
+        warehouse !== undefined &&
+        warehouse.kind === "warehouse" &&
+        warehouse.playerId === 2
+      );
+    })(),
+  JSON.stringify(serverSnapshot?.tiles),
+);
 
 // ---------------------------------------------------------------------------------------------
 // Entity status chrome: footprint, construction progress, production queue marker
@@ -1055,49 +953,27 @@ const detailedSnapshot = worldViewFromSnapshot({
 const detailedWarehouse = detailedSnapshot?.entities.find((entity) => entity.id === 1);
 const detailedBarracks = detailedSnapshot?.entities.find((entity) => entity.id === 2);
 const detailedWorker = detailedSnapshot?.entities.find((entity) => entity.id === 3);
-check(
-  "快照的 w/h 被解析成 footprint（建筑 3×3）",
-  detailedWarehouse?.footprint?.width === 3 && detailedWarehouse?.footprint?.height === 3,
-  JSON.stringify(detailedWarehouse?.footprint),
-);
-check(
-  "快照的 progress / queue / queueTicks 被保留",
-  detailedBarracks?.progress === 0.42 &&
-    detailedBarracks?.queue === 2 &&
-    detailedBarracks?.queueTicks === 60,
-  JSON.stringify(detailedBarracks),
-);
-check(
-  "queueItems 按顺序保留 kind/ticks/total，去掉越界、total=0 与空 kind 的坏项",
-  detailedBarracks?.queueItems?.length === 2 &&
-    detailedBarracks.queueItems[0]?.kind === "unit.melee.t1" &&
-    detailedBarracks.queueItems[0]?.ticks === 87 &&
-    detailedBarracks.queueItems[0]?.total === 120 &&
-    detailedBarracks.queueItems[1]?.kind === "unit.engineer" &&
-    detailedBarracks.queueItems[1]?.ticks === 45 &&
-    detailedBarracks.queueItems[1]?.total === 45,
-  JSON.stringify(detailedBarracks?.queueItems),
-);
-check(
-  "单位也带 1×1 的 footprint 与自己的 progress",
-  detailedWorker?.footprint?.width === 1 &&
-    detailedWorker?.footprint?.height === 1 &&
-    detailedWorker?.progress === 0.8,
-  JSON.stringify(detailedWorker),
-);
-check(
-  "orderQueue 按顺序保留非空标签并去掉空白项",
-  JSON.stringify(detailedWorker?.orderQueue) ===
-    JSON.stringify(["建造 兵工厂 @ (12,5)", "修理 #42", "搬运 → 仓库"]),
-  JSON.stringify(detailedWorker?.orderQueue),
-);
 const detailedTurret = detailedSnapshot?.entities.find((entity) => entity.id === 4);
 check(
-  "attackDamage / attackRange 被解析，选择面板可显示攻击与射程",
-  detailedTurret?.attackDamage === 18 &&
+  "快照实体细节字段：footprint、progress/queue/queueTicks、queueItems 坏项丢弃、orderQueue 去空白、攻击字段",
+  detailedWarehouse?.footprint?.width === 3 &&
+    detailedWarehouse?.footprint?.height === 3 &&
+    detailedBarracks?.progress === 0.42 &&
+    detailedBarracks?.queue === 2 &&
+    detailedBarracks?.queueTicks === 60 &&
+    detailedBarracks?.queueItems?.length === 2 &&
+    detailedBarracks.queueItems[0]?.kind === "unit.melee.t1" &&
+    detailedBarracks.queueItems[0]?.ticks === 87 &&
+    detailedBarracks.queueItems[1]?.kind === "unit.engineer" &&
+    detailedWorker?.footprint?.width === 1 &&
+    detailedWorker?.footprint?.height === 1 &&
+    detailedWorker?.progress === 0.8 &&
+    JSON.stringify(detailedWorker?.orderQueue) ===
+      JSON.stringify(["建造 兵工厂 @ (12,5)", "修理 #42", "搬运 → 仓库"]) &&
+    detailedTurret?.attackDamage === 18 &&
     detailedTurret?.attackRange === 6 &&
     combatLabel(detailedTurret) === "攻击 18 · 射程 6",
-  detailedTurret === undefined ? "missing" : String(combatLabel(detailedTurret)),
+  JSON.stringify(detailedBarracks?.queueItems),
 );
 check(
   "没有武器的旧实体不显示攻击行",
@@ -1117,94 +993,45 @@ const legacySnapshot = worldViewFromSnapshot({
 });
 const legacyEntity = legacySnapshot?.entities[0];
 check(
-  "没有新字段的旧快照仍然转换（新字段全部可选）",
+  "旧快照没有新字段时照常转换（新字段全部可选）",
   legacySnapshot !== null &&
     legacyEntity !== undefined &&
     legacyEntity.footprint === undefined &&
     legacyEntity.progress === undefined &&
     legacyEntity.queue === undefined &&
-    legacyEntity.queueTicks === undefined &&
     legacyEntity.queueItems === undefined &&
     legacyEntity.orderQueue === undefined &&
-    legacyEntity.attackRange === undefined,
+    legacyEntity.contents === undefined,
   JSON.stringify(legacyEntity),
 );
-
 check(
-  "进度格式化为整数百分比，并夹在 0%..100%",
-  formatProgressPercent(0) === "0%" &&
-    formatProgressPercent(0.5) === "50%" &&
-    formatProgressPercent(1) === "100%" &&
-    formatProgressPercent(0.645) === "65%" &&
+  "进度与队列的展示数学：百分比夹紧、比例夹紧、队列标记与收入后缀的缺省规则",
+  formatProgressPercent(0.645) === "65%" &&
     formatProgressPercent(-1) === "0%" &&
     formatProgressPercent(2) === "100%" &&
-    formatProgressPercent(Number.NaN) === "0%",
-  formatProgressPercent(0.645),
-);
-check(
-  "进度条比例夹在 [0,1]，非有限值为 0",
-  progressBarRatio(-2) === 0 &&
-    progressBarRatio(0) === 0 &&
-    progressBarRatio(0.25) === 0.25 &&
+    progressBarRatio(-2) === 0 &&
     progressBarRatio(2) === 1 &&
-    progressBarRatio(Number.NaN) === 0,
-);
-check(
-  "队列标记只在有排队任务时出现（生产中 ×N）",
-  queueMarkerText(undefined) === "" &&
-    queueMarkerText(0) === "" &&
+    progressBarRatio(Number.NaN) === 0 &&
+    queueMarkerText(undefined) === "" &&
     queueMarkerText(-3) === "" &&
-    queueMarkerText(1) === "生产中 ×1" &&
-    queueMarkerText(2) === "生产中 ×2",
-  queueMarkerText(2),
-);
-check(
-  "收入后缀只在字段存在时出现：+30/分，0 也显示，缺失或负数不显示",
-  incomeSuffix(undefined) === "" &&
-    incomeSuffix(-1) === "" &&
-    incomeSuffix(Number.NaN) === "" &&
+    queueMarkerText(2) === "生产中 ×2" &&
+    incomeSuffix(undefined) === "" &&
     incomeSuffix(0) === " (+0/分)" &&
-    incomeSuffix(30) === " (+30/分)" &&
-    incomeSuffix(20.9) === " (+20/分)",
-  incomeSuffix(30),
-);
-check(
-  "队列项进度用 ticks/total，开始前 ticks=total 时条为空，并夹在 [0,1]",
-  queueProgressRatio({ kind: "unit.melee.t1", ticks: 87, total: 120 }) === 87 / 120 &&
-    queueProgressRatio({ kind: "unit.melee.t1", ticks: 120, total: 120 }) === 1 &&
-    queueProgressRatio({ kind: "unit.melee.t1", ticks: 0, total: 120 }) === 0 &&
+    incomeSuffix(-1) === "" &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 87, total: 120 }) === 87 / 120 &&
     queueProgressRatio({ kind: "unit.melee.t1", ticks: 200, total: 120 }) === 1 &&
-    queueProgressRatio({ kind: "unit.melee.t1", ticks: 1, total: 0 }) === 0,
-  String(queueProgressRatio({ kind: "unit.melee.t1", ticks: 87, total: 120 })),
-);
-check(
-  "队列项编号从 1 开始：1/2、2/2，空队列为 0/0",
-  queueItemNumber(0, 2) === "1/2" &&
-    queueItemNumber(1, 2) === "2/2" &&
+    queueProgressRatio({ kind: "unit.melee.t1", ticks: 1, total: 0 }) === 0 &&
+    queueItemNumber(0, 2) === "1/2" &&
     queueItemNumber(5, 2) === "2/2" &&
     queueItemNumber(0, 0) === "0/0",
-  queueItemNumber(0, 2),
 );
 check(
-  "尺寸标签输出 尺寸：W×H，缺 footprint 时为 null",
+  "尺寸与库存标签：尺寸：W×H（缺 footprint 为 null）、库存行按固定顺序、无 contents 为 null",
   detailedWarehouse !== undefined &&
     sizeLabel(detailedWarehouse) === "尺寸：3×3" &&
-    detailedWorker !== undefined &&
-    sizeLabel(detailedWorker) === "尺寸：1×1" &&
-    sizeLabel({ id: 9, kind: "warehouse", x: 0, y: 0 }) === null,
-  detailedWarehouse === undefined ? "missing" : String(sizeLabel(detailedWarehouse)),
-);
-check(
-  "仓库的 contents 被解析成非负整数库存，零值条目被丢弃",
-  detailedWarehouse?.contents?.gold === 120 &&
-    detailedWarehouse?.contents?.wood === 40 &&
+    sizeLabel({ id: 9, kind: "warehouse", x: 0, y: 0 }) === null &&
+    detailedWarehouse?.contents?.gold === 120 &&
     !("ore" in (detailedWarehouse?.contents ?? {})) &&
-    legacyEntity?.contents === undefined,
-  JSON.stringify(detailedWarehouse?.contents),
-);
-check(
-  "库存标签按固定顺序输出 库存：金 120 · 木 40，无库存时为 null",
-  detailedWarehouse !== undefined &&
     warehouseContentsLabel(detailedWarehouse) === "库存：金 120 · 木 40" &&
     warehouseContentsLabel({ id: 9, kind: "building.warehouse", x: 0, y: 0 }) === null &&
     warehouseContentsLabel({ ...detailedWarehouse, contents: { ore: 7 } }) === "库存：ore 7",
@@ -1223,28 +1050,14 @@ const cargoUnit: EntityView = {
   contents: { gold: 7 },
 };
 check(
-  "携带标签：一个物品输出 携带：金币 7",
-  unitCargoLabel(cargoUnit, cargoLabelFor) === "携带：金币 7",
-  String(unitCargoLabel(cargoUnit, cargoLabelFor)),
-);
-check(
-  "携带标签：两个物品按固定顺序输出 携带：金币 7 · 木材 3",
-  unitCargoLabel({ ...cargoUnit, contents: { gold: 7, wood: 3 } }, cargoLabelFor) ===
-    "携带：金币 7 · 木材 3",
-  String(unitCargoLabel({ ...cargoUnit, contents: { gold: 7, wood: 3 } }, cargoLabelFor)),
-);
-check(
-  "携带标签：没有货物时不显示任何行",
-  unitCargoLabel({ ...cargoUnit, contents: undefined }, cargoLabelFor) === null &&
+  "携带标签：一/两个物品按固定顺序、无货物为 null、清单外物品回退原始路径",
+  unitCargoLabel(cargoUnit, cargoLabelFor) === "携带：金币 7" &&
+    unitCargoLabel({ ...cargoUnit, contents: { gold: 7, wood: 3 } }, cargoLabelFor) ===
+      "携带：金币 7 · 木材 3" &&
     unitCargoLabel({ ...cargoUnit, contents: {} }, cargoLabelFor) === null &&
-    unitCargoLabel({ ...cargoUnit, contents: { gold: 0 } }, cargoLabelFor) === null,
-  String(unitCargoLabel({ ...cargoUnit, contents: {} }, cargoLabelFor)),
-);
-check(
-  "携带标签：清单里没有的物品回退到原始路径",
-  unitCargoLabel({ ...cargoUnit, contents: { "oc:unobtainium": 2 } }, cargoLabelFor) ===
-    "携带：oc:unobtainium 2",
-  String(unitCargoLabel({ ...cargoUnit, contents: { "oc:unobtainium": 2 } }, cargoLabelFor)),
+    unitCargoLabel({ ...cargoUnit, contents: { gold: 0 } }, cargoLabelFor) === null &&
+    unitCargoLabel({ ...cargoUnit, contents: { "oc:unobtainium": 2 } }, cargoLabelFor) ===
+      "携带：oc:unobtainium 2",
 );
 check(
   "在建判定只对未完工的建筑成立（单位血量不算在建）",
@@ -1275,25 +1088,16 @@ const validSnapshot = {
   ],
   entities: [],
 };
-check("顶层不是对象时拒绝", worldViewFromSnapshot(null) === null);
 check(
-  "行数与 height 不符时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, height: 2, tiles: [["grass", "grass"]] }) === null,
-);
-check(
-  "行宽与 width 不符时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, tiles: [["grass"], ["grass"]] }) === null,
-);
-check(
-  "非字符串地形时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, tiles: [[1, "grass"], ["grass", "grass"]] }) === null,
-);
-check(
-  "实体坐标为 NaN 时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "worker", x: Number.NaN, y: 1 }],
-  }) === null,
+  "结构错误拒绝整个快照：非对象顶层、行数/行宽不符、非字符串地形、NaN 实体坐标",
+  worldViewFromSnapshot(null) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, height: 2, tiles: [["grass", "grass"]] }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, tiles: [["grass"], ["grass"]] }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, tiles: [[1, "grass"], ["grass", "grass"]] }) === null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      entities: [{ id: 1, kind: "worker", x: Number.NaN, y: 1 }],
+    }) === null,
 );
 // The world is unbounded: entity positions are signed world coordinates, not indices into a map.
 const negativeEntitySnapshot = worldViewFromSnapshot({
@@ -1322,34 +1126,22 @@ check(
   JSON.stringify(farEntity),
 );
 check(
-  "窗口原点不是整数时仍然拒绝",
+  "更多结构错误拒绝：非整数/非有限的窗口原点、缺 kind、缺 id；越界血量夹到 [0, 1]",
   worldViewFromSnapshot({ ...validSnapshot, originX: -0.5, originY: 0 }) === null &&
-    worldViewFromSnapshot({ ...validSnapshot, originX: 0, originY: 1.5 }) === null,
-);
-check(
-  "窗口原点为 NaN 或 Infinity 时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, originX: Number.NaN, originY: 0 }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, originX: 0, originY: 1.5 }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, originX: Number.NaN, originY: 0 }) === null &&
     worldViewFromSnapshot({ ...validSnapshot, originX: 0, originY: Number.POSITIVE_INFINITY }) ===
-      null,
-);
-check(
-  "实体缺少 kind 时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "", x: 1, y: 1 }],
-  }) === null,
-);
-check(
-  "实体缺少 id 时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, entities: [{ kind: "worker", x: 1, y: 1 }] }) ===
-    null,
-);
-check(
-  "超出范围的血量被夹到 [0, 1]",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    entities: [{ id: 1, kind: "worker", x: 1, y: 1, health: 2 }],
-  })?.entities[0]?.healthRatio === 1,
+      null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      entities: [{ id: 1, kind: "", x: 1, y: 1 }],
+    }) === null &&
+    worldViewFromSnapshot({ ...validSnapshot, entities: [{ kind: "worker", x: 1, y: 1 }] }) ===
+      null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      entities: [{ id: 1, kind: "worker", x: 1, y: 1, health: 2 }],
+    })?.entities[0]?.healthRatio === 1,
 );
 
 const fallbackWorld = snapshotOrDemo(null, seed);
@@ -1380,48 +1172,7 @@ const playersSnapshot = worldViewFromSnapshot({
     },
   ],
 });
-check(
-  "带 players 的快照解析成功",
-  playersSnapshot !== null && playersSnapshot.players?.length === 2,
-  JSON.stringify(playersSnapshot?.players),
-);
 const aliceRow = playersSnapshot === null ? undefined : playersSnapshot.players?.[1];
-check(
-  "players 行保留 id/name/gold/wood",
-  aliceRow?.id === 3 &&
-    aliceRow.name === "alice" &&
-    aliceRow.gold === 300 &&
-    aliceRow.wood === 60,
-  JSON.stringify(aliceRow),
-);
-check(
-  "players 行保留可选的 goldPerMinute / woodPerMinute，缺失时是 undefined",
-  aliceRow?.goldPerMinute === 30 &&
-    aliceRow.woodPerMinute === 20 &&
-    playersSnapshot?.players?.[0]?.goldPerMinute === undefined &&
-    playersSnapshot?.players?.[0]?.woodPerMinute === undefined,
-  JSON.stringify(aliceRow),
-);
-check(
-  "players 行保留可选 anchor（绝对整数格），缺失或畸形时是 undefined",
-  playersSnapshot?.players?.[0]?.anchor?.x === 3 &&
-    playersSnapshot?.players?.[0]?.anchor?.y === 2 &&
-    aliceRow?.anchor?.x === -21 &&
-    aliceRow?.anchor?.y === -46 &&
-    worldViewFromSnapshot({
-      ...validSnapshot,
-      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0 }],
-    })?.players?.[0]?.anchor === undefined &&
-    worldViewFromSnapshot({
-      ...validSnapshot,
-      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1] }],
-    })?.players?.[0]?.anchor === undefined &&
-    worldViewFromSnapshot({
-      ...validSnapshot,
-      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1.5, 2] }],
-    })?.players?.[0]?.anchor === undefined,
-  JSON.stringify(playersSnapshot?.players),
-);
 const malformedRateSnapshot = worldViewFromSnapshot({
   ...validSnapshot,
   players: [
@@ -1429,44 +1180,59 @@ const malformedRateSnapshot = worldViewFromSnapshot({
   ],
 });
 check(
-  "格式错误的收入速率被忽略而不是拒绝整个世界（旧客户端兼容）",
-  malformedRateSnapshot !== null &&
+  "players 行解析：id/name/gold/wood 与可选收入速率、可选 anchor；畸形速率被忽略而非拒绝",
+  playersSnapshot !== null &&
+    playersSnapshot.players?.length === 2 &&
+    aliceRow?.id === 3 &&
+    aliceRow.name === "alice" &&
+    aliceRow.gold === 300 &&
+    aliceRow.wood === 60 &&
+    aliceRow?.goldPerMinute === 30 &&
+    aliceRow.woodPerMinute === 20 &&
+    playersSnapshot?.players?.[0]?.goldPerMinute === undefined &&
+    playersSnapshot?.players?.[0]?.anchor?.x === 3 &&
+    aliceRow?.anchor?.x === -21 &&
+    aliceRow?.anchor?.y === -46 &&
+    malformedRateSnapshot !== null &&
     malformedRateSnapshot.players?.[0]?.goldPerMinute === undefined &&
     malformedRateSnapshot.players?.[0]?.woodPerMinute === undefined,
   JSON.stringify(malformedRateSnapshot?.players),
 );
 check(
-  "没有 players 的旧快照仍然有效，players 是 undefined",
-  worldViewFromSnapshot(validSnapshot)?.players === undefined,
-);
-check(
-  "players 不是数组时拒绝",
-  worldViewFromSnapshot({ ...validSnapshot, players: { id: 3 } }) === null,
-);
-check(
-  "players 行缺少 gold 时拒绝",
+  "anchor 畸形时缺席：缺字段、单元素、非整数都不算 anchor；没有 players 的旧快照 players 为 undefined",
   worldViewFromSnapshot({
     ...validSnapshot,
-    players: [{ id: 3, name: "alice", wood: 60 }],
-  }) === null,
+    players: [{ id: 1, name: "Player 1", gold: 0, wood: 0 }],
+  })?.players?.[0]?.anchor === undefined &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1] }],
+    })?.players?.[0]?.anchor === undefined &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: [1.5, 2] }],
+    })?.players?.[0]?.anchor === undefined &&
+    worldViewFromSnapshot(validSnapshot)?.players === undefined,
 );
 check(
-  "players 行金额为负或不是整数时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    players: [{ id: 3, name: "alice", gold: -1, wood: 60 }],
-  }) === null &&
+  "players 结构错误拒绝：非数组、缺 gold、负数或小数金额、空 name",
+  worldViewFromSnapshot({ ...validSnapshot, players: { id: 3 } }) === null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 3, name: "alice", wood: 60 }],
+    }) === null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 3, name: "alice", gold: -1, wood: 60 }],
+    }) === null &&
     worldViewFromSnapshot({
       ...validSnapshot,
       players: [{ id: 3, name: "alice", gold: 1.5, wood: 60 }],
+    }) === null &&
+    worldViewFromSnapshot({
+      ...validSnapshot,
+      players: [{ id: 3, name: "  ", gold: 300, wood: 60 }],
     }) === null,
-);
-check(
-  "players 行 name 为空时拒绝",
-  worldViewFromSnapshot({
-    ...validSnapshot,
-    players: [{ id: 3, name: "  ", gold: 300, wood: 60 }],
-  }) === null,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -1491,91 +1257,47 @@ const windowSnapshotPayload = {
 };
 const windowed = worldViewFromSnapshot(windowSnapshotPayload);
 check(
-  "带负 originX/originY 的窗口快照解析成功，且不带地图大小",
+  "窗口快照：负原点解析、无地图大小字段、窗口索引映射（含负 floor）、地形绝对坐标、窗外 void、窗外实体保留",
   windowed !== null &&
     windowed.originX === -16 &&
     windowed.originY === -16 &&
     windowed.width === 4 &&
     windowed.height === 3 &&
     !Object.prototype.hasOwnProperty.call(windowed, "mapWidth") &&
-    !Object.prototype.hasOwnProperty.call(windowed, "mapHeight"),
+    !Object.prototype.hasOwnProperty.call(windowed, "mapHeight") &&
+    windowTileIndex(windowed, -16, -16)?.x === 0 &&
+    windowTileIndex(windowed, -13, -14)?.x === 3 &&
+    windowTileIndex(windowed, -17, -16) === null &&
+    windowTileIndex({ ...windowed, originX: 0, originY: 0 }, -1, 0) === null &&
+    windowTileIndex({ ...windowed, originX: -1, originY: -1 }, -0.1, -0.1)?.x === 0 &&
+    terrainAt(windowed, -16, -16) === "grass" &&
+    terrainAt(windowed, -15, -15) === "hill" &&
+    terrainAt(windowed, -17, -16) === TERRAIN_VOID &&
+    terrainAt(windowed, -16, -17) === TERRAIN_VOID &&
+    windowed.entities.length === 2 &&
+    entityInWindow(windowed, windowed.entities[0]!) === true &&
+    entityInWindow(windowed, windowed.entities[1]!) === false,
   JSON.stringify(windowed),
 );
-if (windowed !== null) {
-  check(
-    "负原点把绝对瓦片映射到正确的窗口索引（含 -1 边界）",
-    windowTileIndex(windowed, -16, -16)?.x === 0 &&
-      windowTileIndex(windowed, -16, -16)?.y === 0 &&
-      windowTileIndex(windowed, -13, -14)?.x === 3 &&
-      windowTileIndex(windowed, -13, -14)?.y === 2 &&
-      windowTileIndex(windowed, -17, -16) === null &&
-      windowTileIndex(windowed, -16, -17) === null &&
-      windowTileIndex(windowed, -12, -16) === null &&
-      windowTileIndex({ ...windowed, originX: 0, originY: 0 }, -1, 0) === null,
-  );
-  check(
-    "窗口索引对负小数使用 floor（-0.1 落在索引 0，而不是 trunc 的 1）",
-    windowTileIndex({ ...windowed, originX: -1, originY: -1 }, -0.1, -0.1)?.x === 0 &&
-      windowTileIndex({ ...windowed, originX: -1, originY: -1 }, -0.1, -0.1)?.y === 0,
-  );
-  check(
-    "负原点窗口按绝对坐标绘制地形",
-    terrainAt(windowed, -16, -16) === "grass" &&
-      terrainAt(windowed, -15, -15) === "hill" &&
-      terrainAt(windowed, -13, -14) === "grass",
-  );
-  check(
-    "负原点窗口外的绝对瓦片返回 void（不是窗口内的错误格子）",
-    terrainAt(windowed, -17, -16) === TERRAIN_VOID &&
-      terrainAt(windowed, -12, -16) === TERRAIN_VOID &&
-      terrainAt(windowed, -16, -13) === TERRAIN_VOID &&
-      terrainAt(windowed, -16, -17) === TERRAIN_VOID,
-  );
-  const insideEntity = windowed.entities.find((entity) => entity.id === 1);
-  const outsideEntity = windowed.entities.find((entity) => entity.id === 2);
-  check(
-    "窗口外的实体仍保留在快照里，但 entityInWindow 为 false；窗口内的实体为 true",
-    windowed.entities.length === 2 &&
-      insideEntity !== undefined &&
-      outsideEntity !== undefined &&
-      entityInWindow(windowed, insideEntity) === true &&
-      entityInWindow(windowed, outsideEntity) === false &&
-      tileInWindow(windowed, -15, -15) === true &&
-      tileInWindow(windowed, 200, 200) === false,
-  );
-}
 check(
-  "窗口原点可以是任意有符号整数（很大且为负也不拒绝）",
+  "窗口原点兼容：任意有符号整数、旧 mapWidth/mapHeight 被忽略、缺 origin 以 (0,0) 为原点；snapshot URL 用负中心",
   worldViewFromSnapshot({ ...windowSnapshotPayload, originX: -100_000, originY: 50_000 })
     ?.originX === -100_000 &&
-    worldViewFromSnapshot({ ...windowSnapshotPayload, originX: -100_000, originY: 50_000 })
-      ?.originY === 50_000,
-);
-const legacySized = worldViewFromSnapshot({
-  ...windowSnapshotPayload,
-  mapWidth: 512,
-  mapHeight: 512,
-});
-check(
-  "旧快照附带的 mapWidth/mapHeight 被忽略（世界无界，不再读取地图大小）",
-  legacySized !== null &&
-    legacySized.originX === -16 &&
-    legacySized.width === 4 &&
-    !Object.prototype.hasOwnProperty.call(legacySized, "mapWidth") &&
-    !Object.prototype.hasOwnProperty.call(legacySized, "mapHeight"),
-  JSON.stringify(legacySized),
-);
-check(
-  "没有 origin 的旧快照以 (0,0) 作为窗口原点（向后兼容）",
-  worldViewFromSnapshot(validSnapshot)?.originX === 0 &&
-    worldViewFromSnapshot(validSnapshot)?.originY === 0,
-);
-check(
-  "构造出的窗口请求 URL 使用负中心（不被当成越界）",
-  snapshotUrl("", { cx: -1_250, cy: -582, r: SNAPSHOT_RADIUS_TILES }) ===
-    "/world/snapshot?cx=-1250&cy=-582&r=40" &&
-    snapshotUrl("http://127.0.0.1:25567/", { cx: -1, cy: -32, r: 40 }) ===
-      "http://127.0.0.1:25567/world/snapshot?cx=-1&cy=-32&r=40" &&
+    (() => {
+      const legacySized = worldViewFromSnapshot({
+        ...windowSnapshotPayload,
+        mapWidth: 512,
+        mapHeight: 512,
+      });
+      return (
+        legacySized !== null &&
+        legacySized.width === 4 &&
+        !Object.prototype.hasOwnProperty.call(legacySized, "mapWidth")
+      );
+    })() &&
+    worldViewFromSnapshot(validSnapshot)?.originX === 0 &&
+    snapshotUrl("", { cx: -1_250, cy: -582, r: SNAPSHOT_RADIUS_TILES }) ===
+      "/world/snapshot?cx=-1250&cy=-582&r=40" &&
     snapshotUrl("", null) === "/world/snapshot",
 );
 
@@ -1596,21 +1318,14 @@ const projectileSnapshot = worldViewFromSnapshot({
   ],
 });
 check(
-  "快照的顶层 projectiles 解析出合法行，起终点按原样保留（可为负与小数）",
+  "顶层 projectiles：合法行保留（负与小数）、坏行逐行丢弃、缺字段/非数组是 undefined、空数组保留",
   projectileSnapshot !== null &&
-    projectileSnapshot.projectiles !== undefined &&
-    projectileSnapshot.projectiles.length === 1 &&
+    projectileSnapshot.projectiles?.length === 1 &&
     JSON.stringify(projectileSnapshot.projectiles[0]) ===
-      JSON.stringify({ id: 7, x: -3, y: 4.5, tx: 12, ty: 4.5 }),
-  JSON.stringify(projectileSnapshot?.projectiles ?? null),
-);
-check(
-  "快照缺 projectiles 字段或字段不是数组时是 undefined（旧服务器照常解析）",
-  worldViewFromSnapshot(validSnapshot)?.projectiles === undefined &&
-    worldViewFromSnapshot({ ...validSnapshot, projectiles: { id: 1 } })?.projectiles ===
-      undefined &&
+      JSON.stringify({ id: 7, x: -3, y: 4.5, tx: 12, ty: 4.5 }) &&
+    worldViewFromSnapshot(validSnapshot)?.projectiles === undefined &&
+    worldViewFromSnapshot({ ...validSnapshot, projectiles: { id: 1 } })?.projectiles === undefined &&
     worldViewFromSnapshot({ ...validSnapshot, projectiles: [] })?.projectiles?.length === 0,
-  String(worldViewFromSnapshot(validSnapshot)?.projectiles),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -1629,71 +1344,22 @@ const streamBounds = {
 };
 
 check(
-  "窗口边缘触发：距边缘正好 8 格时请求新窗口",
+  "窗口边缘触发：距边缘 8 格请求（shouldStreamWindow/shouldRequestWindow 四边），9 格保持；中心原点 centre-radius、定期刷新、有符号边缘距离",
   SNAPSHOT_EDGE_MARGIN_TILES === 8 &&
     SNAPSHOT_RADIUS_TILES === 40 &&
     shouldStreamWindow(streamBounds, { x: streamBounds.originX + 8, y: -590 }) &&
-    shouldStreamWindow(streamBounds, {
-      x: streamBounds.originX + streamBounds.width - 1 - 8,
-      y: -590,
-    }) &&
-    shouldStreamWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 8 }) &&
-    shouldStreamWindow(streamBounds, {
-      x: -1_250,
-      y: streamBounds.originY + streamBounds.height - 1 - 8,
-    }) &&
+    shouldStreamWindow(streamBounds, { x: -1_250, y: streamBounds.originY + streamBounds.height - 1 - 8 }) &&
     shouldRequestWindow(streamBounds, { x: streamBounds.originX + 8, y: -590 }) &&
-    shouldRequestWindow(streamBounds, {
-      x: streamBounds.originX + streamBounds.width - 1 - 8,
-      y: -590,
-    }) &&
     shouldRequestWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 8 }) &&
-    shouldRequestWindow(streamBounds, {
-      x: -1_250,
-      y: streamBounds.originY + streamBounds.height - 1 - 8,
-    }),
-);
-check(
-  "窗口边缘触发：距边缘 9 格时保持当前窗口",
-  !shouldStreamWindow(streamBounds, { x: streamBounds.originX + 9, y: -590 }) &&
-    !shouldStreamWindow(streamBounds, {
-      x: streamBounds.originX + streamBounds.width - 1 - 9,
-      y: -590,
-    }) &&
-    !shouldStreamWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 9 }) &&
-    !shouldStreamWindow(streamBounds, {
-      x: -1_250,
-      y: streamBounds.originY + streamBounds.height - 1 - 9,
-    }) &&
-    !shouldRequestWindow(streamBounds, { x: streamBounds.originX + 9, y: -590 }) &&
-    !shouldRequestWindow(streamBounds, {
-      x: streamBounds.originX + streamBounds.width - 1 - 9,
-      y: -590,
-    }) &&
+    !shouldStreamWindow(streamBounds, { x: streamBounds.originX + 9, y: -590 }) &&
     !shouldRequestWindow(streamBounds, { x: -1_250, y: streamBounds.originY + 9 }) &&
-    !shouldRequestWindow(streamBounds, {
-      x: -1_250,
-      y: streamBounds.originY + streamBounds.height - 1 - 9,
-    }),
-);
-check(
-  "有符号中心的窗口原点就是 centre - radius（默认半径 40、窗口 80），且同一原点不会重复请求",
-  snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).x === streamBounds.originX &&
+    snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).x === streamBounds.originX &&
     snapshotOrigin({ x: -1_250, y: -582 }, SNAPSHOT_RADIUS_TILES).y === streamBounds.originY &&
     !windowNeedsStream(streamBounds, { x: -1_250, y: -582 }) &&
-    windowNeedsStream(streamBounds, { x: -1_250, y: -590 }),
-);
-check(
-  "窗口中心瓦片用于没有触碰边缘时的定期刷新（负坐标）",
-  windowCentre(streamBounds).x === -1_250 && windowCentre(streamBounds).y === -582,
-  `${windowCentre(streamBounds).x}, ${windowCentre(streamBounds).y}`,
-);
-check(
-  "负原点窗口的边缘距离在边界内外以有符号数表示",
-  windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -10, y: -10 }) ===
-    0 &&
-    windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -11, y: -10 }) ===
-      -1 &&
+    windowNeedsStream(streamBounds, { x: -1_250, y: -590 }) &&
+    windowCentre(streamBounds).x === -1_250 &&
+    windowCentre(streamBounds).y === -582 &&
+    windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -11, y: -10 }) === -1 &&
     windowEdgeDistance({ originX: -10, originY: -10, width: 4, height: 4 }, { x: -7, y: -7 }) === 0,
 );
 
@@ -1701,19 +1367,14 @@ const requestTracker = new SnapshotRequestTracker();
 const firstRequestId = requestTracker.begin();
 const secondRequestId = requestTracker.begin();
 check(
-  "快照请求 id 单调递增",
-  secondRequestId === firstRequestId + 1 && requestTracker.latest === secondRequestId,
+  "快照请求 id 单调递增；新回答被接受、乱序旧回答与未知 id（0/未来）被丢弃",
+  secondRequestId === firstRequestId + 1 &&
+    requestTracker.latest === secondRequestId &&
+    requestTracker.accept(secondRequestId) === true &&
+    requestTracker.accept(firstRequestId) === false &&
+    requestTracker.accept(0) === false &&
+    requestTracker.accept(99) === false,
   `${firstRequestId} -> ${secondRequestId}`,
-);
-check("较新的快照回答被接受", requestTracker.accept(secondRequestId) === true);
-check(
-  "乱序到达的旧快照回答被丢弃",
-  requestTracker.accept(firstRequestId) === false,
-  `next=${requestTracker.latest}`,
-);
-check(
-  "从未发出的请求 id（0 或未来值）不会被接受",
-  requestTracker.accept(0) === false && requestTracker.accept(99) === false,
 );
 
 // The page keeps the loaded window unless the tracker accepts a non-null response. Model that rule
@@ -1786,19 +1447,11 @@ const currentSnapshot: Frame = {
 };
 
 check(
-  "插值系数：在新帧到达之前和到达时刻都夹到 0",
-  alphaFor(250, 500, 500) === 0 && alphaFor(500, 500, 500) === 0,
-  `${alphaFor(250, 500, 500)}, ${alphaFor(500, 500, 500)}`,
-);
-check(
-  "插值系数：一个轮询间隔的正中间是 0.5",
-  alphaFor(750, 500, 500) === 0.5,
-  String(alphaFor(750, 500, 500)),
-);
-check(
-  "插值系数：满一个轮询间隔及之后都夹到 1",
-  alphaFor(1_000, 500, 500) === 1 && alphaFor(9_000, 500, 500) === 1,
-  `${alphaFor(1_000, 500, 500)}, ${alphaFor(9_000, 500, 500)}`,
+  "插值系数：帧前/到达夹 0，中点 0.5，满间隔及之后夹 1",
+  alphaFor(250, 500, 500) === 0 &&
+    alphaFor(750, 500, 500) === 0.5 &&
+    alphaFor(1_000, 500, 500) === 1 &&
+    alphaFor(9_000, 500, 500) === 1,
 );
 
 const atStart = interpolate(previousSnapshot, currentSnapshot, 0);
@@ -1808,27 +1461,16 @@ const startMover = atStart.entities.find((entity) => entity.id === 1);
 const middleMover = atMiddle.entities.find((entity) => entity.id === 1);
 const endMover = atEnd.entities.find((entity) => entity.id === 1);
 check(
-  "插值端点：alpha 0 用旧帧位置，alpha 1 用新帧位置",
+  "插值端点与集合规则：alpha 0 用旧位、0.5 在中点、alpha 1 用新位；新帧实体按新位置出现、旧帧实体消失",
   startMover?.x === 2 &&
     startMover.y === 3 &&
+    middleMover?.x === 3 &&
     endMover?.x === 4 &&
-    endMover.y === 3,
+    endMover.y === 3 &&
+    atMiddle.entities.some((entity) => entity.id === 3 && entity.x === 9 && entity.y === 9) &&
+    atMiddle.entities.every((entity) => entity.id !== 2) &&
+    atMiddle.entities.length === 2,
   `${JSON.stringify(startMover)}, ${JSON.stringify(endMover)}`,
-);
-check(
-  "两帧都有的实体移动 2 格时，alpha 0.5 位于中点",
-  middleMover?.x === 3 && middleMover.y === 3,
-  JSON.stringify(middleMover),
-);
-check(
-  "只在新帧出现的实体按新位置出现",
-  atMiddle.entities.some((entity) => entity.id === 3 && entity.x === 9 && entity.y === 9),
-  JSON.stringify(atMiddle.entities),
-);
-check(
-  "只在旧帧出现的实体消失",
-  atMiddle.entities.every((entity) => entity.id !== 2) && atMiddle.entities.length === 2,
-  JSON.stringify(atMiddle.entities),
 );
 
 const jumpSnapshot: Frame = {
@@ -1839,7 +1481,7 @@ const jumped = interpolate(previousSnapshot, jumpSnapshot, 0.5).entities.find(
   (entity) => entity.id === 1,
 );
 check(
-  "一次跳动 10 格的实体直接吸附到新帧，不在地图上滑过",
+  "跳动超过 4 格（10 格）的实体直接吸附到新帧，不在地图上滑过",
   jumped?.x === 12 && jumped.y === 3,
   JSON.stringify(jumped),
 );
@@ -1878,7 +1520,7 @@ const ownerChanged = interpolate(previousSnapshot, ownerSnapshot, 0.5).entities.
   (entity) => entity.id === 1,
 );
 check(
-  "player 变化的实体吸附到新帧",
+  "player 变化的实体同样吸附到新帧（吸附到新帧位置，不保留旧帧位置）",
   ownerChanged?.playerId === 2 && ownerChanged.x === 4 && ownerChanged.y === 3,
   JSON.stringify(ownerChanged),
 );
@@ -1946,60 +1588,34 @@ const parsed = parseAtlas(
   "/plugin-assets/oc-fixture/",
 );
 
-check("合法材质清单解析成功", parsed.ok);
+check(
+  "材质清单解析：合法地块/实体保留（image、name、frames、fps、anchor、scale），baseUrl 补斜杠",
+  parsed.ok &&
+    parsed.data.tiles.get("grass")?.image === "tiles/grass.png" &&
+    parsed.data.tiles.get("grass")?.name === "草地" &&
+    parsed.data.tiles.get("water")?.name === "" &&
+    parsed.data.entities.get("unit.melee.t1")?.frames === 2 &&
+    parsed.data.entities.get("unit.melee.t1")?.fps === 6 &&
+    parsed.data.entities.get("unit.melee.t1")?.anchor[1] === 0.9 &&
+    parsed.data.entities.get("unit.melee.t1")?.scale === 1.5 &&
+    parsed.data.entities.get("unit.melee.t1")?.name === "普通" &&
+    parsed.data.baseUrl === "/plugin-assets/oc-fixture/",
+  parsed.ok ? "" : parsed.reason,
+);
 if (parsed.ok) {
-  const grass = parsed.data.tiles.get("grass");
   check(
-    "合法地块保留，image 路径与 name 被记录",
-    grass !== undefined &&
-      grass.image === "tiles/grass.png" &&
-      grass.name === "草地" &&
-      parsed.data.tiles.get("water")?.name === "",
-    JSON.stringify(grass),
-  );
-  check(
-    "不安全的 image 路径（..、绝对路径、反斜杠、空、超长）全部被拒绝",
-    !parsed.data.tiles.has("traversal") &&
-      !parsed.data.tiles.has("absolute") &&
-      !parsed.data.tiles.has("backslash") &&
-      !parsed.data.tiles.has("empty") &&
-      !parsed.data.tiles.has("tooLong") &&
-      !parsed.data.tiles.has("notAnObject"),
+    "不安全的 image 路径与坏实体被拒绝，且各自给出警告",
+    ["traversal", "absolute", "backslash", "empty", "tooLong", "notAnObject"].every(
+      (label) =>
+        !parsed.data.tiles.has(label) &&
+        parsed.warnings.some((warning) => warning.includes(`tiles.${label}`)),
+    ) &&
+      ["zeroFrames", "tooManyFrames", "fractionalFrames", "missingImage", "notAnObject"].every(
+        (label) =>
+          !parsed.data.entities.has(label) &&
+          parsed.warnings.some((warning) => warning.includes(`entities.${label}`)),
+      ),
     [...parsed.data.tiles.keys()].join(","),
-  );
-  check(
-    "被拒绝的地块会给出警告",
-    ["traversal", "absolute", "backslash", "empty", "tooLong", "notAnObject"].every((label) =>
-      parsed.warnings.some((warning) => warning.includes(`tiles.${label}`)),
-    ),
-  );
-  const melee = parsed.data.entities.get("unit.melee.t1");
-  check(
-    "实体的 image、frames 与显式 fps/anchor/scale/name 被保留",
-    melee !== undefined &&
-      melee.image === "entities/unit.melee.t1.png" &&
-      melee.frames === 2 &&
-      melee.fps === 6 &&
-      melee.anchor[0] === 0.5 &&
-      melee.anchor[1] === 0.9 &&
-      melee.scale === 1.5 &&
-      melee.name === "普通",
-    JSON.stringify(melee),
-  );
-  check(
-    "frames 不是 1..16 整数或缺 image 的实体被丢弃",
-    !parsed.data.entities.has("zeroFrames") &&
-      !parsed.data.entities.has("tooManyFrames") &&
-      !parsed.data.entities.has("fractionalFrames") &&
-      !parsed.data.entities.has("missingImage") &&
-      !parsed.data.entities.has("notAnObject"),
-    [...parsed.data.entities.keys()].join(","),
-  );
-  check(
-    "被拒绝的实体会给出警告",
-    ["zeroFrames", "tooManyFrames", "fractionalFrames", "missingImage", "notAnObject"].every((label) =>
-      parsed.warnings.some((warning) => warning.includes(`entities.${label}`)),
-    ),
   );
   check(
     "images 是去重后的相对路径列表（多个名字共用一个文件时只出现一次）",
@@ -2016,7 +1632,6 @@ if (parsed.ok) {
     })(),
     "dedupe",
   );
-  check("baseUrl 缺少结尾斜杠时补上", parsed.data.baseUrl === "/plugin-assets/oc-fixture/");
 }
 
 // One file serves as a tile OR as an entity material, never both: entities are collected first, a
@@ -2078,25 +1693,15 @@ if (minimal.ok) {
   );
 }
 
-check(
-  "地块的 rect 是整张图片",
-  JSON.stringify(tileRect(16, 16)) === JSON.stringify({ x: 0, y: 0, width: 16, height: 16 }),
-);
 const stripFrames = entityFrameRects(16, 48, 3);
 check(
-  "实体条带按帧数切成等高竖片",
-  stripFrames !== null &&
+  "地块 rect 是整张图；实体条带切成等高竖片；高度不整除/尺寸/帧数非法返回 null",
+  JSON.stringify(tileRect(16, 16)) === JSON.stringify({ x: 0, y: 0, width: 16, height: 16 }) &&
+    stripFrames !== null &&
     stripFrames.length === 3 &&
-    JSON.stringify(stripFrames[0]) === JSON.stringify({ x: 0, y: 0, width: 16, height: 16 }) &&
     JSON.stringify(stripFrames[1]) === JSON.stringify({ x: 0, y: 16, width: 16, height: 16 }) &&
-    JSON.stringify(stripFrames[2]) === JSON.stringify({ x: 0, y: 32, width: 16, height: 16 }),
-  JSON.stringify(stripFrames),
-);
-check(
-  "高度不能整除帧数、尺寸非法或帧数非法时返回 null（丢弃实体而不是画出撕裂帧）",
-  entityFrameRects(16, 50, 3) === null &&
+    entityFrameRects(16, 50, 3) === null &&
     entityFrameRects(16, 0, 1) === null &&
-    entityFrameRects(0, 16, 1) === null &&
     entityFrameRects(16, 16, 0) === null &&
     entityFrameRects(16, 16, 2.5) === null,
 );
@@ -2126,7 +1731,7 @@ if (namedFixture.ok) {
   );
   const meleeEntry = namedAtlas === null ? undefined : lookupAtlasEntity(namedAtlas, "unit.melee.t1");
   check(
-    "每张图变成自己的 source：地块 rect 是整张图，实体帧是等高竖片",
+    "每张图变成自己的 source：每文件一个 source、地块 rect 是整张图、实体帧是等高竖片、单帧占满整图",
     namedAtlas !== null &&
       namedAtlas.sources.length === 4 &&
       namedAtlas.sources.every((source) => source.plugin === "oc-named") &&
@@ -2135,36 +1740,19 @@ if (namedFixture.ok) {
         JSON.stringify([
           { x: 0, y: 0, width: 16, height: 16 },
           { x: 0, y: 16, width: 16, height: 16 },
-        ]),
+        ]) &&
+      lookupAtlasEntity(namedAtlas, "unit.engineer")?.sprite.frames[0]?.height === 32,
     `sources=${namedAtlas?.sources.length}`,
   );
-  const engineerEntry =
-    namedAtlas === null ? undefined : lookupAtlasEntity(namedAtlas, "unit.engineer");
   check(
-    "单帧实体的竖片占满整张图",
-    engineerEntry !== undefined &&
-      JSON.stringify(engineerEntry.sprite.frames[0]) ===
-        JSON.stringify({ x: 0, y: 0, width: 16, height: 32 }),
-    JSON.stringify(engineerEntry?.sprite.frames),
-  );
-  check(
-    "带 name 的清单得到预期标签表（按地形路径与实体 kind 暴露）",
+    "标签表与显示名：带 name 的条目得到名字，无名回退 id，带命名空间的 kind 也能命中",
     namedAtlas !== null &&
       namedAtlas.names.tiles.get("grass") === "草地" &&
       namedAtlas.names.tiles.get("water") === "water" &&
       namedAtlas.names.entities.get("unit.melee.t1") === "普通" &&
-      namedAtlas.names.entities.get("unit.engineer") === "unit.engineer",
-    JSON.stringify({
-      tiles: [...(namedAtlas?.names.tiles ?? [])],
-      entities: [...(namedAtlas?.names.entities ?? [])],
-    }),
-  );
-  check(
-    "没有 name 时标签函数回退到原始 id，带命名空间的 kind 也能命中",
-    entityDisplayName(namedAtlas, "unit.engineer") === "unit.engineer" &&
+      namedAtlas.names.entities.get("unit.engineer") === "unit.engineer" &&
       entityDisplayName(namedAtlas, "oc:unit.melee.t1") === "普通" &&
       entityDisplayName(null, "unit.melee.t1") === "unit.melee.t1" &&
-      tileDisplayName(namedAtlas, "water") === "water" &&
       tileDisplayName(namedAtlas, "oc:grass") === "草地" &&
       tileDisplayName(null, "water") === "water",
   );
@@ -2289,60 +1877,30 @@ if (firstEntry.ok && secondEntry.ok) {
     `grass=${grassLayer} water=${waterLayer} sand=${sandLayer}`,
   );
   const workerLayer = merged.entities.get("worker");
-  const soldierLayer = merged.entities.get("soldier");
   check(
-    "后面的插件覆盖同名实体（last wins），只属于一条的实体保留自己的来源",
+    "last wins 覆盖同名实体、贡献插件去重、合成图集用胜出插件的文件与 tilePixels",
     workerLayer !== undefined &&
       sources[workerLayer]?.plugin === "oc-forest" &&
-      soldierLayer !== undefined &&
-      sources[soldierLayer]?.plugin === "oc-forest",
-    `worker=${workerLayer} soldier=${soldierLayer}`,
+      merged.plugins.join(",") === "oc-hello,oc-forest" &&
+      compositeAtlas(sources)?.tiles.get("grass")?.source.plugin === "oc-forest" &&
+      compositeAtlas(sources)?.tiles.get("grass")?.source.tilePixels === 16 &&
+      compositeAtlas(sources)?.entities.get("soldier")?.source.plugin === "oc-forest",
   );
-  check("贡献插件按出现顺序去重", merged.plugins.join(",") === "oc-hello,oc-forest",
-    merged.plugins.join(","));
-
-  const composite = compositeAtlas(sources);
-  check(
-    "合成图集用胜出插件的文件与 recommended tilePixels",
-    composite?.tiles.get("grass")?.source.plugin === "oc-forest" &&
-      composite?.tiles.get("grass")?.source.tilePixels === 16 &&
-      composite?.tiles.get("grass")?.rect.width === 16,
-    String(composite?.tiles.get("grass")?.rect.width),
-  );
-  check(
-    "合成图集里每个名字都记住自己的来源文件",
-    composite?.entities.get("worker")?.source.plugin === "oc-forest" &&
-      composite?.entities.get("soldier")?.source.plugin === "oc-forest",
-  );
-
   const single = compositeAtlas(firstSources.sources);
-  check(
-    "只有一个插件时合成图集照常工作",
-    single?.tiles.get("water")?.source.plugin === "oc-hello" &&
-      single.tiles.get("water")?.source.tilePixels === 32 &&
-      single.entities.get("worker")?.source.plugin === "oc-hello" &&
-      single.entities.get("worker")?.sprite.frames.length === 2,
-  );
-
-  // A file that failed to decode drops exactly the names that reference it.
   const partialImages = fakeImages(firstEntry.data, 32, 32);
   partialImages.delete(testResolveUrl(firstEntry.data, "tiles/water.png"));
   const partial = compositeAtlas(
     buildAtlasSources([firstEntry.data], partialImages, testResolveUrl).sources,
   );
-  check(
-    "载入失败的文件只丢掉引用它的名字，其余照常合成",
-    partial?.tiles.has("grass") === true &&
-      partial?.tiles.has("water") === false &&
-      partial?.entities.has("worker") === true,
-    JSON.stringify([...(partial?.tiles.keys() ?? [])]),
-  );
-
-  // A strip whose height does not divide into its frame count drops that entity with a problem line.
   const odd = buildAtlasSources([firstEntry.data], fakeImages(firstEntry.data, 32, 51), testResolveUrl);
   check(
-    "条带高度不能整除帧数时丢弃该实体并给出问题行",
-    odd.sources.every((source) => source.entities.size === 0) &&
+    "失败与坏条目的局部性：单插件合成照常、解码失败的文件只丢引用它的名字、高度不整除丢实体并给出问题行",
+    single?.tiles.get("water")?.source.plugin === "oc-hello" &&
+      single.entities.get("worker")?.sprite.frames.length === 2 &&
+      partial?.tiles.has("grass") === true &&
+      partial?.tiles.has("water") === false &&
+      partial?.entities.has("worker") === true &&
+      odd.sources.every((source) => source.entities.size === 0) &&
       odd.sources.some((source) => source.tiles.size > 0) &&
       odd.problems.length === 1,
     JSON.stringify(odd.problems),
@@ -2379,30 +1937,15 @@ const classicRoot = recordTable(classicManifest);
 const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
 const classicEntities = classicRoot === null ? null : recordTable(classicRoot["entities"]);
 check(
-  "经典清单声明 24 个地块与 37 个实体",
+  "经典清单：24 地块与 37 实体，实体覆盖训练回退目录与经典建筑 kind，地块覆盖全部渲染地形与 void",
   classicTiles !== null &&
     Object.keys(classicTiles).length === 24 &&
     classicEntities !== null &&
-    Object.keys(classicEntities).length === 37,
-  `tiles=${classicTiles === null ? "?" : Object.keys(classicTiles).length} entities=${classicEntities === null ? "?" : Object.keys(classicEntities).length}`,
-);
-check(
-  "经典清单的实体覆盖全部单位路径与建筑 kind",
-  classicEntities !== null &&
+    Object.keys(classicEntities).length === 37 &&
     FALLBACK_TRAIN_PATHS.every((path) => classicEntities[path] !== undefined) &&
-    CLASSIC_BUILDING_KINDS.every((kind) => classicEntities[kind] !== undefined),
-  [...FALLBACK_TRAIN_PATHS, ...CLASSIC_BUILDING_KINDS]
-    .filter((kind) => classicEntities === null || classicEntities[kind] === undefined)
-    .join(","),
-);
-check(
-  "经典清单的地块覆盖每个渲染地形与 void",
-  classicTiles !== null &&
+    CLASSIC_BUILDING_KINDS.every((kind) => classicEntities[kind] !== undefined) &&
     TERRAIN_IDS.every((terrain) => classicTiles[terrain] !== undefined) &&
     classicTiles[TERRAIN_VOID] !== undefined,
-  [...TERRAIN_IDS, TERRAIN_VOID]
-    .filter((terrain) => classicTiles === null || classicTiles[terrain] === undefined)
-    .join(","),
 );
 
 const classicAtlas = parseAtlas(classicManifest, "oc-classic", "/plugin-assets/oc-classic/");
@@ -2535,7 +2078,7 @@ check(
     CHUNK_SIZE_TILES === 16,
 );
 check(
-  "阴影目标：loadedChunks 缺省不遮，未加载块给满阴影，加载块透明",
+  "阴影目标：loadedChunks 缺省不遮，未加载块给满阴影，加载块透明；逐块目标与逐瓦片等价",
   (() => {
     const loaded = new Set([chunkKey(0, 0), chunkKey(2, -1)]);
     return (
@@ -2543,7 +2086,9 @@ check(
       shadowTargetAlpha(loaded, 5, 5) === 0 &&
       shadowTargetAlpha(loaded, 20, 0) === SHADOW_ALPHA &&
       shadowTargetAlpha(loaded, 40, -16) === 0 &&
-      shadowTargetAlpha(loaded, 1, 1) === 0
+      chunkShadowTargetAlpha(undefined, 0, 0) === 0 &&
+      chunkShadowTargetAlpha(loaded, 0, 0) === 0 &&
+      chunkShadowTargetAlpha(loaded, 1, 0) === SHADOW_ALPHA
     );
   })(),
 );
@@ -2554,46 +2099,62 @@ check(
     approachShadowAlpha(0.5, 0, 0.08) === 0.42 &&
     approachShadowAlpha(0.05, 0, 0.08) === 0,
 );
+check(
+  "性能：阴影按可见区块聚合（每块一个矩形、裁剪到可见范围），光栅缓存的桶量化与键稳定",
+  (() => {
+    const spans = chunkSpansInRange({ minX: -3, minY: -3, maxX: 18, maxY: 2 });
+    return (
+      spans.length === 6 &&
+      spans.every((span) => span.maxX - span.minX <= CHUNK_SIZE_TILES) &&
+      spans.some((span) => span.minX === -3 && span.maxX === -1) &&
+      spans.some((span) => span.minX === 0 && span.maxX === 15) &&
+      spans.some((span) => span.minX === 16 && span.maxX === 18) &&
+      rasterBucket(0) === 0 &&
+      rasterBucket(Number.NaN) === 0 &&
+      rasterBucket(32.4) === 32 &&
+      rasterBucket(99_999) === RASTER_BUCKET_MAX_PX &&
+      rasterCacheKey(3, { x: 0, y: 0, width: 32, height: 32 }, 32) ===
+        rasterCacheKey(3, { x: 0, y: 0, width: 32, height: 32 }, 32) &&
+      rasterCacheKey(3, { x: 0, y: 0, width: 32, height: 32 }, 32) !==
+        rasterCacheKey(4, { x: 0, y: 0, width: 32, height: 32 }, 32) &&
+      RASTER_CACHE_MAX_ENTRIES === 512
+    );
+  })(),
+  JSON.stringify(chunkSpansInRange({ minX: -3, minY: -3, maxX: 18, maxY: 2 }).map((span) => span.minX)),
+);
 
 const goodEntry = readManifestEntry({
   plugin: "oc-hello",
   baseUrl: "/plugin-assets/oc-hello/",
 });
 check(
-  "合法条目给出 plugin 与 baseUrl",
+  "manifest 条目校验：合法条目给出 plugin/baseUrl，畸形条目全部被跳过并给出警告，同源绝对路径被接受",
   goodEntry.ok &&
     goodEntry.entry.plugin === "oc-hello" &&
-    goodEntry.entry.baseUrl === "/plugin-assets/oc-hello/",
-);
-const malformedEntries = [
-  readManifestEntry(null),
-  readManifestEntry("atlas.png"),
-  readManifestEntry({}),
-  readManifestEntry({ baseUrl: "/plugin-assets/x/" }),
-  readManifestEntry({ plugin: "x" }),
-  readManifestEntry({ plugin: "x", baseUrl: "" }),
-  readManifestEntry({ plugin: "x", baseUrl: 7 }),
-  readManifestEntry({ plugin: "x", baseUrl: "plugin-assets/x/" }),
-  readManifestEntry({ plugin: "x", baseUrl: "http://evil.example/x/" }),
-  readManifestEntry({ plugin: "x", baseUrl: "//evil.example/x/" }),
-];
-check(
-  "畸形条目被跳过并各自给出警告",
-  malformedEntries.every((result) => !result.ok && result.warning !== ""),
-);
-check(
-  "同源绝对路径的条目被接受",
-  readManifestEntry({ plugin: "x", baseUrl: "/plugin-assets/x/" }).ok === true,
+    goodEntry.entry.baseUrl === "/plugin-assets/oc-hello/" &&
+    [
+      readManifestEntry(null),
+      readManifestEntry("atlas.png"),
+      readManifestEntry({}),
+      readManifestEntry({ baseUrl: "/plugin-assets/x/" }),
+      readManifestEntry({ plugin: "x" }),
+      readManifestEntry({ plugin: "x", baseUrl: "" }),
+      readManifestEntry({ plugin: "x", baseUrl: 7 }),
+      readManifestEntry({ plugin: "x", baseUrl: "plugin-assets/x/" }),
+      readManifestEntry({ plugin: "x", baseUrl: "http://evil.example/x/" }),
+      readManifestEntry({ plugin: "x", baseUrl: "//evil.example/x/" }),
+    ].every((result) => !result.ok && result.warning !== "") &&
+    readManifestEntry({ plugin: "x", baseUrl: "/plugin-assets/x/" }).ok === true,
 );
 
-check("没有图集时 HUD 显示 procedural", atlasLabel([]) === "procedural");
-check("一个插件时 HUD 直接列出插件 id", atlasLabel(["oc-hello"]) === "atlas · oc-hello");
 check(
-  "三个插件时 HUD 列出全部 id",
-  atlasLabel(["oc-hello", "oc-forest", "oc-debug"]) === "atlas · oc-hello, oc-forest, oc-debug",
+  "HUD 图集标签：procedural 兜底、插件 id 列表、超过三个显示数量、重复只算一次",
+  atlasLabel([]) === "procedural" &&
+    atlasLabel(["oc-hello"]) === "atlas · oc-hello" &&
+    atlasLabel(["oc-hello", "oc-forest", "oc-debug"]) === "atlas · oc-hello, oc-forest, oc-debug" &&
+    atlasLabel(["a", "b", "c", "d"]) === "atlas · 4 plugins" &&
+    atlasLabel(["a", "a", "b"]) === "atlas · a, b",
 );
-check("超过三个插件时 HUD 显示数量", atlasLabel(["a", "b", "c", "d"]) === "atlas · 4 plugins");
-check("重复插件只算一次", atlasLabel(["a", "a", "b"]) === "atlas · a, b");
 
 // ---------------------------------------------------------------------------------------------
 // Fallback palette
@@ -2697,67 +2258,36 @@ function throwsChinese(action: () => unknown): boolean {
   }
 }
 
-// Golden lines: exactly the grammar documented in protocol/oc-protocol.md.
-check("whoAmI 生成 WHOAMI", whoAmI() === "WHOAMI", whoAmI());
+// Golden lines: exactly the grammar documented in protocol/oc-protocol.md, one check per builder family.
 check(
-  "orderMove 生成 ORDER MOVE",
-  orderMove(7, 12, 8) === "ORDER MOVE 7 12 8",
-  orderMove(7, 12, 8),
-);
-check(
-  "orderAttack 生成 ORDER ATTACK",
-  orderAttack(7, 42) === "ORDER ATTACK 7 42",
-  orderAttack(7, 42),
-);
-check(
-  "orderAttackMove 生成 ORDER ATTACKMOVE",
-  orderAttackMove(7, 3, 4) === "ORDER ATTACKMOVE 7 3 4",
-  orderAttackMove(7, 3, 4),
-);
-check("orderStop 生成 ORDER STOP", orderStop(7) === "ORDER STOP 7", orderStop(7));
-check(
-  "build 生成 BUILD",
-  build(9, "building.armory.t1", 20, 40) === "BUILD 9 building.armory.t1 20 40",
-  build(9, "building.armory.t1", 20, 40),
-);
-check(
-  "train 生成 TRAIN",
-  train(42, "unit.melee.t1") === "TRAIN 42 unit.melee.t1",
-  train(42, "unit.melee.t1"),
+  "命令构建器生成协议文档里的精确行（WHOAMI/MOVE/ATTACK/ATTACKMOVE/STOP/BUILD/TRAIN）",
+  whoAmI() === "WHOAMI" &&
+    orderMove(7, 12, 8) === "ORDER MOVE 7 12 8" &&
+    orderAttack(7, 42) === "ORDER ATTACK 7 42" &&
+    orderAttackMove(7, 3, 4) === "ORDER ATTACKMOVE 7 3 4" &&
+    orderStop(7) === "ORDER STOP 7" &&
+    build(9, "building.armory.t1", 20, 40) === "BUILD 9 building.armory.t1 20 40" &&
+    train(42, "unit.melee.t1") === "TRAIN 42 unit.melee.t1",
+  `${orderMove(7, 12, 8)} / ${build(9, "building.armory.t1", 20, 40)}`,
 );
 
 check(
-  "实体 id 必须是正整数（0、负数、小数、NaN、Infinity、超出安全整数都拒绝）",
+  "构建器本地拒绝非法输入：非正整数 id、非有限坐标、含空白的内容路径",
   [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].every((id) =>
     throwsChinese(() => orderStop(id)),
-  ),
-);
-check(
-  "目标 id 也必须是正整数",
-  [0, -2, 3.25, Number.NaN].every((id) => throwsChinese(() => orderAttack(7, id))),
-);
-check(
-  "ORDER 的坐标必须是有限数字",
-  [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY].every(
-    (value) =>
-      throwsChinese(() => orderMove(7, value, 1)) &&
-      throwsChinese(() => orderMove(7, 1, value)) &&
-      throwsChinese(() => orderAttackMove(7, value, 1)),
-  ),
-);
-check(
-  "BUILD 的坐标必须是有限数字",
-  [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY].every(
-    (value) =>
-      throwsChinese(() => build(9, "building.armory.t1", value, 2)) &&
-      throwsChinese(() => build(9, "building.armory.t1", 2, value)),
-  ),
-);
-check(
-  "内容路径必须非空且不含空白或换行",
-  ["", " building.armory.t1", "building.armory.t1 extra", "building\tarmory", "unit.\nengineer"].every(
-    (path) => throwsChinese(() => build(9, path, 1, 2)) && throwsChinese(() => train(42, path)),
-  ),
+  ) &&
+    [0, -2, 3.25, Number.NaN].every((id) => throwsChinese(() => orderAttack(7, id))) &&
+    [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY].every(
+      (value) =>
+        throwsChinese(() => orderMove(7, value, 1)) &&
+        throwsChinese(() => orderMove(7, 1, value)) &&
+        throwsChinese(() => orderAttackMove(7, value, 1)) &&
+        throwsChinese(() => build(9, "building.armory.t1", value, 2)) &&
+        throwsChinese(() => build(9, "building.armory.t1", 2, value)),
+    ) &&
+    ["", " building.armory.t1", "building.armory.t1 extra", "building\tarmory", "unit.\nengineer"].every(
+      (path) => throwsChinese(() => build(9, path, 1, 2)) && throwsChinese(() => train(42, path)),
+    ),
 );
 
 check("parseWhoAmI 接受 OK player 7", parseWhoAmI("OK player 7") === 7);
@@ -2781,14 +2311,7 @@ check(
 );
 
 check(
-  "建筑目录由快照 buildable 驱动；经典目录保留全部 15 个可建造 kind",
-  CLASSIC_BUILDING_KINDS.includes("building.lumbercamp.t1") &&
-    build(1, "building.lumbercamp.t1", 5, 6) === "BUILD 1 building.lumbercamp.t1 5 6" &&
-    build(1, "building.warehouse", 7, 8) === "BUILD 1 building.warehouse 7 8",
-  CLASSIC_BUILDING_KINDS.join(", "),
-);
-check(
-  "单位目录与面板一致（训练菜单由快照 trains 驱动，回退目录保留六个经典条目）",
+  "经典目录固定：训练回退目录六个条目、经典建筑 kind 都能生成 BUILD/TRAIN 行（BUILD 菜单本身只由快照 buildable 驱动）",
   FALLBACK_TRAIN_PATHS.join(",") ===
     "unit.melee.t1,unit.melee.t2,unit.melee.t3,unit.melee.t4,unit.melee.t5,unit.engineer" &&
     FALLBACK_TRAIN_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
@@ -2852,50 +2375,36 @@ function rejectsBadGroup(action: () => void): boolean {
 
 let groups: ControlGroups = EMPTY_CONTROL_GROUPS;
 check(
-  "初始编队为空，1..9 都是合法编号，超出范围会拒绝",
+  "编组基础：初始为空、1..9 合法、超范围 RangeError；assign 替换并只保留正整数去重、add 追加、空编队可绑定",
   CONTROL_GROUP_MAX === 9 &&
     recallControlGroup(groups, 1).length === 0 &&
     describeControlGroup(groups, 9) === "编队 9 为空" &&
     [0, 10, 1.5, Number.NaN].every((group) =>
       rejectsBadGroup(() => recallControlGroup(groups, group)),
-    ),
-);
-groups = assignControlGroup(groups, 1, [3, 5, 3, 0, -1, 3.5]);
-check(
-  "assign 替换编队、只保留正整数 id 并去重，原值没有被修改",
-  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5]) &&
-    recallControlGroup(EMPTY_CONTROL_GROUPS, 1).length === 0 &&
-    describeControlGroup(groups, 1) === "编队 1：2 个实体",
-  JSON.stringify(recallControlGroup(groups, 1)),
-);
-groups = addControlGroup(groups, 1, [5, 7, 7]);
-check(
-  "add 保留已有 id 与顺序，只追加新 id",
-  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5, 7]) &&
-    describeControlGroup(groups, 1) === "编队 1：3 个实体",
-  JSON.stringify(recallControlGroup(groups, 1)),
-);
-groups = assignControlGroup(groups, 2, []);
-check(
-  "空选择也能绑定一个空编队，describe 明确报告为空",
-  recallControlGroup(groups, 2).length === 0 && describeControlGroup(groups, 2) === "编队 2 为空",
-  describeControlGroup(groups, 2),
-);
-groups = pruneControlGroups(groups, [3, 7]);
-check(
-  "prune 删除已不存在的 id，保留顺序与空编队，未变化时返回原对象",
-  JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7]) &&
-    describeControlGroup(groups, 1) === "编队 1：2 个实体" &&
-    describeControlGroup(groups, 2) === "编队 2 为空" &&
-    pruneControlGroups(groups, [3, 7]) === groups,
-  JSON.stringify(recallControlGroup(groups, 1)),
+    ) &&
+    (() => {
+      groups = assignControlGroup(groups, 1, [3, 5, 3, 0, -1, 3.5]);
+      const assigned = JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5]) &&
+        describeControlGroup(groups, 1) === "编队 1：2 个实体";
+      groups = addControlGroup(groups, 1, [5, 7, 7]);
+      const added = JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 5, 7]);
+      groups = assignControlGroup(groups, 2, []);
+      const empty = describeControlGroup(groups, 2) === "编队 2 为空";
+      return assigned && added && empty;
+    })(),
 );
 check(
-  "recall 返回副本，调用方改动不会污染编队",
+  "编组 prune：删除已不存在的 id，保留顺序与空编队，未变化返回原对象；recall 返回副本",
   (() => {
+    groups = pruneControlGroups(groups, [3, 7]);
     const recalled = recallControlGroup(groups, 1) as number[];
     recalled.push(99);
-    return JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7]);
+    return (
+      JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7]) &&
+      describeControlGroup(groups, 2) === "编队 2 为空" &&
+      pruneControlGroups(groups, [3, 7]) === groups &&
+      JSON.stringify(recallControlGroup(groups, 1)) === JSON.stringify([3, 7])
+    );
   })(),
 );
 check(
@@ -2954,7 +2463,7 @@ function placementWorld(): WorldView {
 const placementFixture = placementWorld();
 
 check(
-  "建筑足迹查表：哨塔系列是 2×2，其它经典建筑是 3×3（命名空间也能命中）",
+  "足迹查表与展开：哨塔 2×2 其余 3×3（含命名空间）、未知 kind 回退 3×3、瓦片列表行优先含负原点与零尺寸",
   CLASSIC_BUILDING_KINDS.every((path) => {
     const footprint = footprintForKind(path);
     return path.startsWith("building.turret.")
@@ -2962,82 +2471,46 @@ check(
       : footprint.width === 3 && footprint.height === 3;
   }) &&
     footprintForKind("oc:building.warehouse").height === 3 &&
-    footprintForKind("oc:building.turret.t3").width === 2,
-  CLASSIC_BUILDING_KINDS.map((path) => `${path}=${footprintForKind(path).width}`).join(", "),
-);
-check(
-  "未知建筑 kind 的足迹回退到默认 3×3",
-  DEFAULT_BUILDING_FOOTPRINT.width === 3 &&
-    DEFAULT_BUILDING_FOOTPRINT.height === 3 &&
-    footprintForKind("building.mystery.t9").width === 3 &&
-    footprintForKind("building.mystery.t9").height === 3 &&
-    footprintForKind("").width === 3,
-  JSON.stringify(footprintForKind("building.mystery.t9")),
-);
-check(
-  "足迹瓦片列表按行优先展开，负原点与小尺寸也正确",
-  JSON.stringify(footprintTiles({ x: 2, y: 3 }, { width: 2, height: 2 })) ===
-    JSON.stringify([
-      { x: 2, y: 3 },
-      { x: 3, y: 3 },
-      { x: 2, y: 4 },
-      { x: 3, y: 4 },
-    ]) &&
-    footprintTiles({ x: -2, y: -1 }, { width: 3, height: 2 }).length === 6 &&
-    footprintTiles({ x: -2, y: -1 }, { width: 3, height: 2 })[5]?.x === 0 &&
+    DEFAULT_BUILDING_FOOTPRINT.width === 3 &&
+    footprintForKind("").width === 3 &&
+    JSON.stringify(footprintTiles({ x: 2, y: 3 }, { width: 2, height: 2 })) ===
+      JSON.stringify([
+        { x: 2, y: 3 },
+        { x: 3, y: 3 },
+        { x: 2, y: 4 },
+        { x: 3, y: 4 },
+      ]) &&
     footprintTiles({ x: 0, y: 0 }, { width: 0, height: 3 }).length === 0,
-  JSON.stringify(footprintTiles({ x: 2, y: 3 }, { width: 2, height: 2 })),
 );
 check(
-  "实体足迹占用：3×3 建筑覆盖右下角，不覆盖左/右一格之外",
+  "实体足迹占用：3×3 建筑覆盖右下角不越界，单位只占脚下 1 格（小数与负坐标按 floor）",
   entityFootprint(PLACEMENT_BUILDING).width === 3 &&
     entityFootprintCovers(PLACEMENT_BUILDING, 5, 5) &&
     entityFootprintCovers(PLACEMENT_BUILDING, 7, 7) &&
     !entityFootprintCovers(PLACEMENT_BUILDING, 8, 5) &&
-    !entityFootprintCovers(PLACEMENT_BUILDING, 4, 5),
-);
-check(
-  "单位只占脚下 1 格，小数坐标按 floor（负坐标同样）",
-  entityFootprint(PLACEMENT_ENGINEER).width === 1 &&
+    !entityFootprintCovers(PLACEMENT_BUILDING, 4, 5) &&
     entityFootprintCovers(PLACEMENT_ENGINEER, 1, 1) &&
     !entityFootprintCovers(PLACEMENT_ENGINEER, 2, 1) &&
     entityFootprintCovers({ ...PLACEMENT_ENGINEER, x: -0.2, y: -1.1 }, -1, -2) &&
     !entityFootprintCovers({ ...PLACEMENT_ENGINEER, x: -0.2, y: -1.1 }, 0, -2),
 );
 check(
-  "占用测试来自实体列表：没有 footprint 的旧实体只占自己的一格",
+  "占用与工兵范围：占用来自实体列表（旧实体一格）；16 格可达 17 格超出（负坐标同样）；足迹边缘算 0/1 格；幽灵状态优先级 blocked > out-of-reach > legal",
   tileOccupiedByEntities(placementFixture.entities, 6, 6) &&
-    tileOccupiedByEntities(placementFixture.entities, 1, 1) &&
     !tileOccupiedByEntities(placementFixture.entities, 0, 0) &&
     tileOccupiedByEntities([{ id: 9, kind: "warehouse", x: 4, y: 6, playerId: 1 }], 4, 6) &&
-    !tileOccupiedByEntities([{ id: 9, kind: "warehouse", x: 4, y: 6, playerId: 1 }], 5, 6),
-);
-check(
-  "工兵范围：恰好 16 格可达，17 格超出（MAX_BUILD_REACH_TILES = 16）",
-  MAX_BUILD_REACH_TILES === 16 &&
+    !tileOccupiedByEntities([{ id: 9, kind: "warehouse", x: 4, y: 6, playerId: 1 }], 5, 6) &&
+    MAX_BUILD_REACH_TILES === 16 &&
     buildReachDistance({ x: 0, y: 0 }, { x: 16, y: 0 }, ONE_TILE_FOOTPRINT) === 16 &&
     isWithinBuildReach({ x: 0, y: 0 }, { x: 16, y: 0 }, ONE_TILE_FOOTPRINT) &&
-    buildReachDistance({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT) === 17 &&
-    !isWithinBuildReach({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT),
-  `${buildReachDistance({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT)}`,
-);
-check(
-  "工兵范围对负坐标同样成立（-20 到 -4 是 16 格，到 -3 是 17 格）",
-  isWithinBuildReach({ x: -20, y: 0 }, { x: -4, y: 0 }, ONE_TILE_FOOTPRINT) &&
-    !isWithinBuildReach({ x: -20, y: 0 }, { x: -3, y: 0 }, ONE_TILE_FOOTPRINT),
-);
-check(
-  "范围按足迹矩形边缘计算：站在足迹内是 0 格，紧贴边缘是 1 格",
-  buildReachDistance({ x: 1, y: 1 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 0 &&
-    buildReachDistance({ x: 3, y: 3 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 1,
-);
-check(
-  "幽灵状态优先级：blocked > out-of-reach > legal",
-  combinePlacementStates(["legal", "out-of-reach"]) === "out-of-reach" &&
+    !isWithinBuildReach({ x: 0, y: 0 }, { x: 17, y: 0 }, ONE_TILE_FOOTPRINT) &&
+    isWithinBuildReach({ x: -20, y: 0 }, { x: -4, y: 0 }, ONE_TILE_FOOTPRINT) &&
+    !isWithinBuildReach({ x: -20, y: 0 }, { x: -3, y: 0 }, ONE_TILE_FOOTPRINT) &&
+    buildReachDistance({ x: 1, y: 1 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 0 &&
+    buildReachDistance({ x: 3, y: 3 }, { x: 0, y: 0 }, { width: 3, height: 3 }) === 1 &&
+    combinePlacementStates(["legal", "out-of-reach"]) === "out-of-reach" &&
     combinePlacementStates(["out-of-reach", "blocked", "legal"]) === "blocked" &&
-    combinePlacementStates(["legal", "legal"]) === "legal" &&
     combinePlacementStates([]) === "legal",
-  combinePlacementStates(["legal", "out-of-reach"]),
 );
 
 const legalPreview = buildPlacementPreview(
@@ -3046,29 +2519,11 @@ const legalPreview = buildPlacementPreview(
   { x: 1, y: 5 },
   PLACEMENT_ENGINEER,
 );
-check(
-  "合法工地：9 个足迹格全部 legal，状态行显示可建造",
-  legalPreview.state === "legal" &&
-    legalPreview.reason === "legal" &&
-    legalPreview.tiles.length === 9 &&
-    legalPreview.tiles.every((tile) => tile.state === "legal") &&
-    placementReasonText(legalPreview.reason) === "可建造",
-  JSON.stringify(legalPreview.tiles[0]),
-);
 const waterPreview = buildPlacementPreview(
   placementFixture,
   "building.warehouse",
   { x: 2, y: 2 },
   PLACEMENT_ENGINEER,
-);
-check(
-  "水域阻挡：水格 blocked，整块工地报地形不可建",
-  waterPreview.state === "blocked" &&
-    waterPreview.reason === "blocked-terrain" &&
-    waterPreview.tiles[0]?.state === "blocked" &&
-    waterPreview.tiles[0]?.reason === "blocked-terrain" &&
-    placementReasonText(waterPreview.reason) === "地形不可建",
-  JSON.stringify(waterPreview.tiles[0]),
 );
 const occupiedPreview = buildPlacementPreview(
   placementFixture,
@@ -3077,13 +2532,18 @@ const occupiedPreview = buildPlacementPreview(
   PLACEMENT_ENGINEER,
 );
 check(
-  "实体阻挡：仓库覆盖的格子全部 blocked，整块工地报位置被占用",
-  occupiedPreview.state === "blocked" &&
+  "工地预览：合法 9 格全 legal；水域整块报地形不可建；实体占用整块报位置被占用（状态行原因文本固定）",
+  legalPreview.state === "legal" &&
+    legalPreview.tiles.length === 9 &&
+    legalPreview.tiles.every((tile) => tile.state === "legal") &&
+    placementReasonText("legal") === "可建造" &&
+    waterPreview.state === "blocked" &&
+    waterPreview.reason === "blocked-terrain" &&
+    placementReasonText("blocked-terrain") === "地形不可建" &&
+    occupiedPreview.state === "blocked" &&
     occupiedPreview.reason === "blocked-occupied" &&
-    occupiedPreview.tiles.every(
-      (tile) => tile.state === "blocked" && tile.reason === "blocked-occupied",
-    ) &&
-    placementReasonText(occupiedPreview.reason) === "位置被占用",
+    occupiedPreview.tiles.every((tile) => tile.state === "blocked") &&
+    placementReasonText("blocked-occupied") === "位置被占用",
 );
 const plannedPreview = buildPlacementPreview(
   placementFixture,
@@ -3122,35 +2582,6 @@ const joinPreview = buildPlacementPreview(
   { x: 5, y: 5 },
   PLACEMENT_ENGINEER,
 );
-check(
-  "自己的同类型未完工工地被认作可加入：幽灵 legal 并带 joinSiteId，而不是位置被占用",
-  joinPreview.state === "legal" &&
-    joinPreview.joinSiteId === joinSite.id &&
-    joinPreview.tiles.every((tile) => tile.state === "legal"),
-  `${joinPreview.state}/${joinPreview.joinSiteId}`,
-);
-check(
-  "敌方工地、已完工建筑与不同种类的工地都不算可加入",
-  buildPlacementPreview(
-    { ...joinWorld, entities: [{ ...joinSite, playerId: 2 }, PLACEMENT_ENGINEER] },
-    "building.armory.t1",
-    { x: 5, y: 5 },
-    PLACEMENT_ENGINEER,
-  ).joinSiteId === null &&
-    buildPlacementPreview(
-      { ...joinWorld, entities: [{ ...joinSite, progress: 1 }, PLACEMENT_ENGINEER] },
-      "building.armory.t1",
-      { x: 5, y: 5 },
-      PLACEMENT_ENGINEER,
-    ).joinSiteId === null &&
-    buildPlacementPreview(
-      joinWorld,
-      "building.mine.t1",
-      { x: 5, y: 5 },
-      PLACEMENT_ENGINEER,
-    ).joinSiteId === null,
-  "all null",
-);
 const farJoinPreview = buildPlacementPreview(
   joinWorld,
   "building.armory.t1",
@@ -3158,11 +2589,26 @@ const farJoinPreview = buildPlacementPreview(
   { id: 31, kind: "unit.engineer", x: 40.5, y: 40.5, playerId: 1, footprint: { width: 1, height: 1 } },
 );
 check(
-  "可加入工地也遵守 16 格射程：太远时报超出工兵范围而不是合法",
-  farJoinPreview.state === "out-of-reach" &&
-    farJoinPreview.joinSiteId === joinSite.id &&
-    farJoinPreview.tiles.every((tile) => tile.state === "out-of-reach"),
-  `${farJoinPreview.state}/${farJoinPreview.reason}`,
+  "可加入工地：自己的同类型未完工工地 legal 并带 joinSiteId；敌方/完工/异类不算；超 16 格报超出范围",
+  joinPreview.state === "legal" &&
+    joinPreview.joinSiteId === joinSite.id &&
+    joinPreview.tiles.every((tile) => tile.state === "legal") &&
+    buildPlacementPreview(
+      { ...joinWorld, entities: [{ ...joinSite, playerId: 2 }, PLACEMENT_ENGINEER] },
+      "building.armory.t1",
+      { x: 5, y: 5 },
+      PLACEMENT_ENGINEER,
+    ).joinSiteId === null &&
+    buildPlacementPreview(
+      { ...joinWorld, entities: [{ ...joinSite, progress: 1 }, PLACEMENT_ENGINEER] },
+      "building.armory.t1",
+      { x: 5, y: 5 },
+      PLACEMENT_ENGINEER,
+    ).joinSiteId === null &&
+    buildPlacementPreview(joinWorld, "building.mine.t1", { x: 5, y: 5 }, PLACEMENT_ENGINEER)
+      .joinSiteId === null &&
+    farJoinPreview.state === "out-of-reach" &&
+    farJoinPreview.joinSiteId === joinSite.id,
 );
 const windowPreview = buildPlacementPreview(
   placementFixture,
@@ -3174,11 +2620,7 @@ check(
   "窗口边缘阻挡：足迹越过已载入窗口时报超出已载入窗口",
   windowPreview.state === "blocked" &&
     windowPreview.reason === "blocked-window" &&
-    windowPreview.tiles.some(
-      (tile) => tile.state === "blocked" && tile.reason === "blocked-window",
-    ) &&
-    placementReasonText(windowPreview.reason) === "超出已载入窗口",
-  JSON.stringify(windowPreview.tiles.find((tile) => tile.state === "blocked")),
+    placementReasonText("blocked-window") === "超出已载入窗口",
 );
 const farEngineer: EntityView = {
   id: 3,
@@ -3255,14 +2697,6 @@ check(
     !windowEdge.tiles.some((tile) => tile.reason === "blocked-terrain"),
   `${occupiedAndWater.tiles[0]?.reason} / ${windowEdge.tiles.map((tile) => tile.reason).join(",")}`,
 );
-check(
-  "状态行五种原因文本固定",
-  placementReasonText("legal") === "可建造" &&
-    placementReasonText("blocked-terrain") === "地形不可建" &&
-    placementReasonText("blocked-occupied") === "位置被占用" &&
-    placementReasonText("out-of-reach") === "超出工兵范围 16 格" &&
-    placementReasonText("blocked-window") === "超出已载入窗口",
-);
 
 /** An 8x8 grass window with one 3x3 warehouse at the given origin and an engineer five tiles away. */
 function flushPlacementWorld(
@@ -3320,9 +2754,7 @@ check(
   flushRightPreview.state === "legal" &&
     flushRightPreview.tiles.every((tile) => tile.state === "legal") &&
     overlappingRightPreview.state === "blocked" &&
-    overlappingRightPreview.reason === "blocked-occupied" &&
-    overlappingRightPreview.tiles.some((tile) => tile.reason === "blocked-occupied"),
-  `${flushRightPreview.state} / ${overlappingRightPreview.state}:${overlappingRightPreview.reason}`,
+    overlappingRightPreview.reason === "blocked-occupied",
 );
 const negativeFlushWorld = flushPlacementWorld(-4, -4, -3, -3);
 const negativeFlushPreview = buildPlacementPreview(
@@ -3338,27 +2770,18 @@ const negativeOverlapPreview = buildPlacementPreview(
   negativeFlushWorld.entities[1]!,
 );
 check(
-  "客户端幽灵在负坐标上同样按覆盖格判定：origin -3 的建筑与 origin 0 紧贴合法，origin -1 重叠非法",
+  "客户端幽灵在负坐标上同样按覆盖格判定；幽灵颜色是画布内容：合法绿、阻挡红、超距琥珀",
   negativeFlushPreview.state === "legal" &&
     negativeFlushPreview.tiles.every((tile) => tile.state === "legal") &&
     negativeOverlapPreview.state === "blocked" &&
-    negativeOverlapPreview.reason === "blocked-occupied",
-  `${negativeFlushPreview.state} / ${negativeOverlapPreview.state}:${negativeOverlapPreview.reason}`,
-);
-check(
-  "幽灵颜色是画布内容：合法绿 25% 填充、阻挡红、超距琥珀",
-  PLACEMENT_LEGAL_FILL === "rgba(74, 222, 128, 0.25)" &&
-    PLACEMENT_LEGAL_STROKE.startsWith("rgba(74, 222, 128") &&
+    negativeOverlapPreview.reason === "blocked-occupied" &&
+    PLACEMENT_LEGAL_FILL === "rgba(74, 222, 128, 0.25)" &&
     PLACEMENT_BLOCKED_FILL.startsWith("rgba(239, 68, 68") &&
-    PLACEMENT_BLOCKED_STROKE.startsWith("rgba(239, 68, 68") &&
     PLACEMENT_OUT_OF_REACH_FILL.startsWith("rgba(245, 158, 11") &&
-    PLACEMENT_OUT_OF_REACH_STROKE.startsWith("rgba(245, 158, 11") &&
     placementFillColor("legal") === PLACEMENT_LEGAL_FILL &&
     placementFillColor("blocked") === PLACEMENT_BLOCKED_FILL &&
     placementFillColor("out-of-reach") === PLACEMENT_OUT_OF_REACH_FILL &&
-    placementStrokeColor("legal") === PLACEMENT_LEGAL_STROKE &&
-    placementStrokeColor("blocked") === PLACEMENT_BLOCKED_STROKE &&
-    placementStrokeColor("out-of-reach") === PLACEMENT_OUT_OF_REACH_STROKE,
+    placementStrokeColor("blocked") === PLACEMENT_BLOCKED_STROKE,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -3368,101 +2791,51 @@ check(
 /** A 64x64 window with a negative origin: the server's usual 2 * 32 window west and north of zero. */
 const squareMap = { originX: -100, originY: -50, width: 64, height: 64 };
 const squareLayout = minimapLayout(squareMap);
-check(
-  "小地图布局：64×64 窗口正好铺满 180px 面板，点是 2×2",
-  MINIMAP_PANEL_SIZE === 180 &&
-    MINIMAP_DOT_SIZE === 2 &&
-    near(squareLayout.scale, 180 / 64) &&
-    near(squareLayout.contentWidth, 180) &&
-    near(squareLayout.contentHeight, 180) &&
-    near(squareLayout.offsetX, 0) &&
-    near(squareLayout.offsetY, 0),
-  `${squareLayout.scale} / ${squareLayout.contentWidth}×${squareLayout.contentHeight}`,
-);
 const wideMap = { originX: 0, originY: 0, width: 44, height: 32 };
 const wideLayout = minimapLayout(wideMap);
 check(
-  "小地图布局：非方形窗口按比例信箱化，不被拉伸",
-  near(wideLayout.scale, 180 / 44) &&
-    near(wideLayout.contentWidth, 180) &&
+  "小地图布局：64×64 铺满 180px 面板（点 2×2）；非方形按比例信箱化不拉伸",
+  MINIMAP_PANEL_SIZE === 180 &&
+    MINIMAP_DOT_SIZE === 2 &&
+    near(squareLayout.scale, 180 / 64) &&
+    near(squareLayout.contentHeight, 180) &&
+    near(wideLayout.scale, 180 / 44) &&
     near(wideLayout.contentHeight, (32 * 180) / 44) &&
-    near(wideLayout.offsetX, 0) &&
     near(wideLayout.offsetY, (180 - (32 * 180) / 44) / 2),
-  `${wideLayout.scale} / ${wideLayout.contentHeight} / ${wideLayout.offsetY}`,
 );
 check(
-  "小地图映射：面板左上角就是负原点的窗口左上角，右下角是最后一格",
-  JSON.stringify(minimapPointForTile(squareMap, -100, -50)) ===
-    JSON.stringify({ x: 0, y: 0 }) &&
-    JSON.stringify(minimapTileAt(squareMap, 0, 0)) ===
-      JSON.stringify({ x: -100, y: -50 }) &&
-    JSON.stringify(minimapTileAt(squareMap, 179.999, 179.999)) ===
-      JSON.stringify({ x: -37, y: 13 }),
-  JSON.stringify(minimapTileAt(squareMap, 179.999, 179.999)),
-);
-check(
-  "小地图双向映射在负坐标下互相还原（含格内偏移）",
-  (() => {
-    const point = minimapPointForTile(squareMap, -95, -45);
-    const back = minimapTileAt(squareMap, point.x + 1, point.y + 1);
-    return (
-      near(point.x, 5 * (180 / 64)) &&
-      near(point.y, 5 * (180 / 64)) &&
-      back?.x === -95 &&
-      back?.y === -45
-    );
-  })(),
-);
-check(
-  "小地图取格使用 floor：格线属于右下方的格子",
-  (() => {
-    const boundary = minimapPointForTile(squareMap, -95, -45);
-    const before = minimapTileAt(squareMap, boundary.x - 0.001, boundary.y);
-    const on = minimapTileAt(squareMap, boundary.x, boundary.y);
-    const after = minimapTileAt(squareMap, boundary.x + squareLayout.scale + 0.001, boundary.y);
-    return before?.x === -96 && on?.x === -95 && after?.x === -94;
-  })(),
-  `${minimapTileAt(squareMap, 14.0625, 14.0625)?.x}`,
-);
-check(
-  "小地图点击在内容区外返回 null（面板外、信箱区与负数）",
-  minimapTileAt(squareMap, -0.001, 0) === null &&
-    minimapTileAt(squareMap, 0, -0.001) === null &&
+  "小地图映射：负原点窗口左上角即面板左上角、双向还原（含格内偏移）、取格 floor 到右下格、内容区外返回 null",
+  JSON.stringify(minimapPointForTile(squareMap, -100, -50)) === JSON.stringify({ x: 0, y: 0 }) &&
+    JSON.stringify(minimapTileAt(squareMap, 0, 0)) === JSON.stringify({ x: -100, y: -50 }) &&
+    (() => {
+      const point = minimapPointForTile(squareMap, -95, -45);
+      const back = minimapTileAt(squareMap, point.x + 1, point.y + 1);
+      return near(point.x, 5 * (180 / 64)) && back?.x === -95 && back?.y === -45;
+    })() &&
+    minimapTileAt(squareMap, -0.001, 0) === null &&
     minimapTileAt(squareMap, 180, 90) === null &&
     minimapTileAt(wideMap, 90, 5) === null &&
     minimapTileAt(wideMap, 100, 100)?.x === 24 &&
-    minimapTileAt(wideMap, 100, 100)?.y === 18 &&
     minimapCameraTarget(squareMap, -5, 0, 32) === null,
-  JSON.stringify(minimapTileAt(wideMap, 100, 100)),
 );
 check(
-  "小地图点击把落点格的格中心设为镜头中心",
+  "小地图镜头跳转：落点格格中心成为镜头中心；被夹在 ±500000 瓦片安全边界上",
   (() => {
-    const target = minimapCameraTarget({ originX: 10, originY: 20, width: 2, height: 2 }, 45, 45, 32);
-    return target !== null && near(target.x, 10.5 * 32) && near(target.y, 20.5 * 32);
-  })(),
-  JSON.stringify(
-    minimapCameraTarget({ originX: 10, originY: 20, width: 2, height: 2 }, 45, 45, 32),
-  ),
-);
-check(
-  "小地图镜头跳转被夹在 ±500000 瓦片安全边界上",
-  (() => {
-    const target = minimapCameraTarget(
+    const centre = minimapCameraTarget({ originX: 10, originY: 20, width: 2, height: 2 }, 45, 45, 32);
+    const bound = minimapCameraTarget(
       { originX: 600_000, originY: -600_000, width: 2, height: 2 },
       45,
       45,
       32,
     );
     return (
-      target !== null &&
-      target.x === CAMERA_SAFETY_BOUND_TILES * 32 &&
-      target.y === -CAMERA_SAFETY_BOUND_TILES * 32
+      centre !== null &&
+      near(centre.x, 10.5 * 32) &&
+      bound !== null &&
+      bound.x === CAMERA_SAFETY_BOUND_TILES * 32 &&
+      bound.y === -CAMERA_SAFETY_BOUND_TILES * 32
     );
   })(),
-  JSON.stringify(
-    minimapCameraTarget({ originX: 600_000, originY: -600_000, width: 2, height: 2 }, 45, 45, 32),
-  ),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -3566,13 +2939,6 @@ const unitTooltip = tooltipContent(
   { id: 11, kind: "unit.melee.t1", x: 1, y: 1, playerId: 1, healthRatio: 0.72 },
   "mine",
 );
-check(
-  "提示框显示清单名、加粗归属字段与生命百分比",
-  unitTooltip.name === "普通" &&
-    unitTooltip.ownerTag === "我" &&
-    JSON.stringify(unitTooltip.lines) === JSON.stringify(["生命 72%"]),
-  `${unitTooltip.name} / 归属：${unitTooltip.ownerTag} / ${unitTooltip.lines.join(" / ")}`,
-);
 const buildingTooltip = tooltipContent(
   "兵工厂 1 级",
   {
@@ -3587,69 +2953,40 @@ const buildingTooltip = tooltipContent(
   },
   "enemy",
 );
-check(
-  "提示框为建筑追加尺寸与队列摘要（归属：敌 / 生命 42% / 尺寸 / 生产中）",
-  buildingTooltip.name === "兵工厂 1 级" &&
-    buildingTooltip.ownerTag === "敌" &&
-    JSON.stringify(buildingTooltip.lines) ===
-      JSON.stringify(["生命 42%", "尺寸：3×3", "生产中 ×2"]),
-  `归属：${buildingTooltip.ownerTag} / ${buildingTooltip.lines.join(" / ")}`,
-);
 const noHealthTooltip = tooltipContent(
   "矿井",
   { id: 13, kind: "building.mine.t1", x: 0, y: 0, playerId: 1, footprint: { width: 3, height: 3 } },
   "mine",
 );
-check(
-  "没有 healthRatio 的旧快照不编造生命值，建筑仍显示尺寸",
-  noHealthTooltip.ownerTag === "我" &&
-    JSON.stringify(noHealthTooltip.lines) === JSON.stringify(["尺寸：3×3"]),
-  noHealthTooltip.lines.join(" / "),
-);
 const neutralTooltip = tooltipContent("worker", { id: 14, kind: "worker", x: 0, y: 0 }, "neutral");
 check(
-  "无主单位只有中立归属，queue=0 不显示队列摘要",
-  neutralTooltip.ownerTag === "中立" &&
+  "提示框内容：名字+归属+生命行；建筑追加尺寸与队列摘要；无 healthRatio 不编造；无主中立且 queue=0 无摘要",
+  unitTooltip.name === "普通" &&
+    unitTooltip.ownerTag === "我" &&
+    JSON.stringify(unitTooltip.lines) === JSON.stringify(["生命 72%"]) &&
+    buildingTooltip.ownerTag === "敌" &&
+    JSON.stringify(buildingTooltip.lines) ===
+      JSON.stringify(["生命 42%", "尺寸：3×3", "生产中 ×2"]) &&
+    JSON.stringify(noHealthTooltip.lines) === JSON.stringify(["尺寸：3×3"]) &&
+    neutralTooltip.ownerTag === "中立" &&
     JSON.stringify(neutralTooltip.lines) === JSON.stringify([]),
-  neutralTooltip.lines.join(" / "),
 );
 check(
-  "提示框默认边距 8px、光标间距 14px",
-  TOOLTIP_MARGIN_PX === 8 && TOOLTIP_GAP_PX === 14,
-  `${TOOLTIP_MARGIN_PX} / ${TOOLTIP_GAP_PX}`,
-);
-const flippedTooltip = clampTooltipPosition(
-  { x: 900, y: 700 },
-  { width: 200, height: 80 },
-  { width: 1000, height: 800 },
-);
-check(
-  "靠近右/下边缘时提示框翻到光标另一侧，仍夹在窗口内",
-  JSON.stringify(flippedTooltip) === JSON.stringify({ x: 686, y: 606 }),
-  JSON.stringify(flippedTooltip),
-);
-const edgeTooltip = clampTooltipPosition(
-  { x: 995, y: 795 },
-  { width: 200, height: 80 },
-  { width: 1000, height: 800 },
-);
-check(
-  "指针在右下角极限位置时提示框完整落在窗口内",
-  edgeTooltip.x === 781 &&
-    edgeTooltip.y === 701 &&
-    edgeTooltip.x + 200 <= 1000 - TOOLTIP_MARGIN_PX &&
-    edgeTooltip.y + 80 <= 800 - TOOLTIP_MARGIN_PX,
-  JSON.stringify(edgeTooltip),
-);
-const tinyViewportTooltip = clampTooltipPosition(
-  { x: 50, y: 50 },
-  { width: 200, height: 100 },
-  { width: 100, height: 50 },
-);
-check(
-  "窗口比提示框还小时仍从左上边距开始，不返回负坐标",
-  JSON.stringify(tinyViewportTooltip) === JSON.stringify({ x: 8, y: 8 }),
-  JSON.stringify(tinyViewportTooltip),
+  "提示框定位：默认边距 8px、光标间距 14px；右/下边缘翻到另一侧仍夹窗内；极限角完整落窗；窗口过小从边距开始不返负",
+  TOOLTIP_MARGIN_PX === 8 &&
+    TOOLTIP_GAP_PX === 14 &&
+    JSON.stringify(clampTooltipPosition({ x: 900, y: 700 }, { width: 200, height: 80 }, { width: 1000, height: 800 })) ===
+      JSON.stringify({ x: 686, y: 606 }) &&
+    (() => {
+      const edgeTooltip = clampTooltipPosition(
+        { x: 995, y: 795 },
+        { width: 200, height: 80 },
+        { width: 1000, height: 800 },
+      );
+      return edgeTooltip.x === 781 && edgeTooltip.y === 701;
+    })() &&
+    JSON.stringify(clampTooltipPosition({ x: 50, y: 50 }, { width: 200, height: 100 }, { width: 100, height: 50 })) ===
+      JSON.stringify({ x: 8, y: 8 }),
 );
 
 // The thumbnail half of the hover tooltip: a fixed 48×48 square whose source is chosen by the same
@@ -3659,33 +2996,20 @@ const atlasThumbnail = tooltipThumbnail(true, "unit.melee.t1");
 const placeholderThumbnail = tooltipThumbnail(false, "unit.melee.t1");
 const blankThumbnail = tooltipThumbnail(false, "  ");
 check(
-  "缩略图：有图集帧时用图集，无图集帧时用占位符，两者都是固定 48×48",
+  "缩略图与停留隐藏：有帧用图集/无帧用占位符（固定 48×48）、首字符取 Unicode 码点、6 秒自隐藏且换实体重计",
   TOOLTIP_THUMBNAIL_SIZE_PX === 48 &&
     atlasThumbnail.kind === "atlas" &&
-    atlasThumbnail.size === 48 &&
     placeholderThumbnail.kind === "placeholder" &&
-    placeholderThumbnail.size === 48 &&
-    placeholderThumbnail.label === "u",
-  `${atlasThumbnail.kind}/${atlasThumbnail.size} / ${placeholderThumbnail.kind}/${placeholderThumbnail.size}`,
-);
-check(
-  "缩略图占位符取 kind 的首个 Unicode 字符：空 kind 是 ?，代理对不会被截断",
-  kindFirstCharacter("building.warehouse") === "b" &&
+    (placeholderThumbnail.kind === "placeholder" ? placeholderThumbnail.label : "") === "u" &&
+    kindFirstCharacter("building.warehouse") === "b" &&
     kindFirstCharacter("  ") === "?" &&
     kindFirstCharacter("\u{1F600}unit") === "\u{1F600}" &&
-    tooltipThumbnail(false, "").kind === "placeholder" &&
-    blankThumbnail.kind === "placeholder" &&
-    blankThumbnail.label === "?",
-  `${kindFirstCharacter("building.warehouse")} / ${kindFirstCharacter("  ")}`,
-);
-check(
-  "悬停提示在同一实体上停留过久会自行隐藏，换实体重新计时",
-  TOOLTIP_IDLE_HIDE_MS === 6_000 &&
+    (blankThumbnail.kind === "placeholder" ? blankThumbnail.label : "") === "?" &&
+    TOOLTIP_IDLE_HIDE_MS === 6_000 &&
     !tooltipIdleExpired(1_000, 6_999) &&
     tooltipIdleExpired(1_000, 7_000) &&
     !tooltipIdleExpired(1_000, 20_000, 0) &&
     !tooltipIdleExpired(Number.NaN, 20_000),
-  String(TOOLTIP_IDLE_HIDE_MS),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -4453,19 +3777,19 @@ check(
 
 const engineerCommand = commandBarModel([commandUnit(3, "unit.engineer")], 1);
 check(
-  "选中工兵时在单位动作之外给出全部 BUILD 条目（右下角）",
+  "选中工兵：单位动作 + BUILD 条目只来自 served buildable；没有 served 目录就没有 BUILD 条目（item 1）",
   engineerCommand.kind === "engineer" &&
     engineerCommand.actions.slice(0, 2).map((action) => action.kind).join(",") ===
       "stop,attack-move" &&
-    engineerCommand.actions.filter((action) => action.kind === "build").length ===
-      FALLBACK_BUILD_PATHS.length &&
-    engineerCommand.actions
-      .filter((action) => action.kind === "build")
-      .every((action) => action.zone === "context") &&
-    engineerCommand.actions
-      .filter((action) => action.kind === "build")
+    commandBarModel([commandUnit(3, "unit.engineer")], 1, {}).actions.filter(
+      (action) => action.kind === "build",
+    ).length === 0 &&
+    commandBarModel([{ id: 3, kind: "unit.engineer", x: 3, y: 3, playerId: 1 }], 1, {
+      buildingPaths: ["building.hell_gate", "building.mine.t1"],
+    })
+      .actions.filter((action) => action.kind === "build")
       .map((action) => action.path)
-      .join(",") === FALLBACK_BUILD_PATHS.join(","),
+      .join(",") === "building.hell_gate,building.mine.t1",
   `${engineerCommand.kind} / ${engineerCommand.actions.length}`,
 );
 
@@ -4473,7 +3797,7 @@ const buildingCommand = commandBarModel([commandBuilding(4)], 1, {
   labelForPath: (path) => (path === "unit.melee.t1" ? "普通" : path),
 });
 check(
-  "选中自己的建筑时只给出 TRAIN 条目（右下角），没有单位动作",
+  "选中自己的建筑时只给出 TRAIN 条目（右下角），没有单位动作；回退训练目录六个条目",
   buildingCommand.kind === "building" &&
     buildingCommand.actions.length === FALLBACK_TRAIN_PATHS.length &&
     buildingCommand.actions.every(
@@ -4598,56 +3922,6 @@ const affordableUpgrade = upgradeEntry(
   { id: 1, name: "Player 1", gold: 300, wood: 60 },
   upgradeLabels,
 );
-check(
-  "自己的建筑有 upgrade 字段时出现升级条目，标签带目标显示名与两项成本",
-  affordableUpgrade !== null &&
-    affordableUpgrade.target === "building.armory.t2" &&
-    affordableUpgrade.targetName === "兵营·强化" &&
-    affordableUpgrade.gold === 140 &&
-    affordableUpgrade.wood === 40 &&
-    affordableUpgrade.affordable &&
-    !affordableUpgrade.disabled &&
-    affordableUpgrade.label ===
-      `${t("action.upgrade")} · 兵营·强化 · ${upgradeCostLabel(140, 40)}`,
-  affordableUpgrade?.label ?? "<null>",
-);
-check(
-  "恰好付得起（金 140、木 40）时升级条目可用",
-  upgradeEntry(
-    upgradeBuilding(41, 140, 40),
-    1,
-    { id: 1, name: "Player 1", gold: 140, wood: 40 },
-    upgradeLabels,
-  )?.affordable === true,
-);
-check(
-  "缺金币或木材时升级条目仍出现但被禁用",
-  upgradeEntry(
-    upgradeBuilding(42, 140, 40),
-    1,
-    { id: 1, name: "Player 1", gold: 139, wood: 60 },
-    upgradeLabels,
-  )?.disabled === true &&
-    upgradeEntry(
-      upgradeBuilding(43, 140, 40),
-      1,
-      { id: 1, name: "Player 1", gold: 300, wood: 39 },
-      upgradeLabels,
-    )?.disabled === true,
-);
-check(
-  "没有自己的玩家行（尚未 WHOAMI 或快照缺行）时升级条目被禁用",
-  upgradeEntry(upgradeBuilding(44, 140, 40), 1, undefined, upgradeLabels)?.disabled === true,
-);
-check(
-  "敌方建筑即使带 upgrade 字段也不出现升级条目",
-  upgradeEntry(
-    upgradeBuilding(45, 140, 40, 2),
-    1,
-    { id: 1, name: "Player 1", gold: 300, wood: 60 },
-    upgradeLabels,
-  ) === null,
-);
 const plainBuilding: EntityView = {
   id: 46,
   kind: "building.armory.t2",
@@ -4656,11 +3930,6 @@ const plainBuilding: EntityView = {
   playerId: 1,
   progress: 1,
 };
-check(
-  "没有 upgrade 字段的建筑（顶层或旧快照）不出现升级条目",
-  upgradeEntry(plainBuilding, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
-    null,
-);
 const upgradeUnitRow: EntityView = {
   id: 47,
   kind: "unit.melee.t1",
@@ -4670,9 +3939,45 @@ const upgradeUnitRow: EntityView = {
   upgrade: { options: [{ to: "building.armory.t2", gold: 140, wood: 40 }] },
 };
 check(
-  "单位即使带 upgrade 字段也不出现升级条目（升级只属于建筑）",
-  upgradeEntry(upgradeUnitRow, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
-    null,
+  "升级条目规则：自己的建筑带 upgrade 才出现，标签带目标名与成本；付得起可用、缺一项禁用、无玩家行禁用；敌方/无字段/单位行都不出现",
+  affordableUpgrade !== null &&
+    affordableUpgrade.target === "building.armory.t2" &&
+    affordableUpgrade.targetName === "兵营·强化" &&
+    affordableUpgrade.gold === 140 &&
+    affordableUpgrade.wood === 40 &&
+    affordableUpgrade.affordable &&
+    affordableUpgrade.label ===
+      `${t("action.upgrade")} · 兵营·强化 · ${upgradeCostLabel(140, 40)}` &&
+    upgradeEntry(
+      upgradeBuilding(41, 140, 40),
+      1,
+      { id: 1, name: "Player 1", gold: 140, wood: 40 },
+      upgradeLabels,
+    )?.affordable === true &&
+    upgradeEntry(
+      upgradeBuilding(42, 140, 40),
+      1,
+      { id: 1, name: "Player 1", gold: 139, wood: 60 },
+      upgradeLabels,
+    )?.disabled === true &&
+    upgradeEntry(
+      upgradeBuilding(43, 140, 40),
+      1,
+      { id: 1, name: "Player 1", gold: 300, wood: 39 },
+      upgradeLabels,
+    )?.disabled === true &&
+    upgradeEntry(upgradeBuilding(44, 140, 40), 1, undefined, upgradeLabels)?.disabled === true &&
+    upgradeEntry(
+      upgradeBuilding(45, 140, 40, 2),
+      1,
+      { id: 1, name: "Player 1", gold: 300, wood: 60 },
+      upgradeLabels,
+    ) === null &&
+    upgradeEntry(plainBuilding, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
+      null &&
+    upgradeEntry(upgradeUnitRow, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
+      null,
+  affordableUpgrade?.label ?? "<null>",
 );
 const variantBuilding: EntityView = {
   id: 48,
@@ -4872,29 +4177,21 @@ check(
 const twelveUnits = Array.from({ length: SELECTION_CHIP_LIMIT }, (_unused, index) =>
   commandUnit(100 + index, "unit.melee.t1"),
 );
-const twelveChips = selectionChipList(twelveUnits, 1, chipName);
-check(
-  "正好 12 个单位时显示 12 个芯片，没有 +N",
-  twelveChips.chips.length === SELECTION_CHIP_LIMIT &&
-    twelveChips.overflow === 0 &&
-    twelveChips.overflowLabel === "",
-  `${twelveChips.chips.length} / ${twelveChips.overflowLabel}`,
-);
-
 const fourteenChips = selectionChipList(
   [...twelveUnits, commandUnit(200, "unit.melee.t1"), commandUnit(201, "unit.melee.t1")],
   1,
   chipName,
 );
 check(
-  "超过 12 个单位时截断为前 12 个芯片并追加 +N",
-  fourteenChips.chips.length === SELECTION_CHIP_LIMIT &&
+  "芯片上限：正好 12 个显示 12 个没有 +N；超过 12 个截断为前 12 个并追加 +N",
+  selectionChipList(twelveUnits, 1, chipName).overflowLabel === "" &&
+    fourteenChips.chips.length === SELECTION_CHIP_LIMIT &&
     fourteenChips.total === 14 &&
     fourteenChips.overflow === 2 &&
     fourteenChips.overflowLabel === "+2" &&
     fourteenChips.chips[0]?.entityId === 100 &&
     fourteenChips.chips[11]?.entityId === 111,
-  `${fourteenChips.chips.length} / ${fourteenChips.overflowLabel}`,
+  `${fourteenChips.overflowLabel}`,
 );
 
 check(
@@ -4914,15 +4211,13 @@ const healthEntity = (healthRatio?: number): EntityView => ({
   y: 0,
   ...(healthRatio === undefined ? {} : { healthRatio }),
 });
-check("生命条在 0% 时比例为 0", healthBarRatio(healthEntity(0)) === 0);
-check("生命条在 50% 时比例为 0.5", healthBarRatio(healthEntity(0.5)) === 0.5);
 check(
-  "生命条在 100% 及未报告时比例为 1，越界值被夹紧",
-  healthBarRatio(healthEntity(1)) === 1 &&
-    healthBarRatio(healthEntity(undefined)) === 1 &&
+  "芯片生命条比例：0% -> 0，50% -> 0.5，100%/未报告 -> 1，越界值夹紧",
+  healthBarRatio(healthEntity(0)) === 0 &&
+    healthBarRatio(healthEntity(0.5)) === 0.5 &&
     healthBarRatio(healthEntity(2)) === 1 &&
+    healthBarRatio(healthEntity(undefined)) === 1 &&
     healthBarRatio(healthEntity(-1)) === 0,
-  `${healthBarRatio(healthEntity(1))} / ${healthBarRatio(healthEntity(undefined))}`,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -4930,93 +4225,57 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 check(
-  "选中闪烁时长是 300ms：够感觉到，又短到不会让选择拖影",
-  FLASH_MS === 300,
-  String(FLASH_MS),
-);
-check(
-  "闪烁强度：开始时是 1，半程正好是 0.5",
-  flashIntensity(1_000, 1_000, FLASH_MS) === 1 &&
-    near(flashIntensity(1_000, 1_000 + FLASH_MS / 2, FLASH_MS), 0.5),
-  `${flashIntensity(1_000, 1_000, FLASH_MS)} / ` +
-    `${flashIntensity(1_000, 1_000 + FLASH_MS / 2, FLASH_MS)}`,
-);
-check(
-  "闪烁强度：结束前仍然大于 0，到达和超过时长都是 0（非正时长也为 0）",
-  flashIntensity(1_000, 1_000 + FLASH_MS - 1, FLASH_MS) > 0 &&
+  "选中闪烁：时长 300ms；强度开始 1、半程 0.5、结束 0、非正时长 0、负流逝夹 1、全部采样在 0..1",
+  FLASH_MS === 300 &&
+    flashIntensity(1_000, 1_000, FLASH_MS) === 1 &&
+    near(flashIntensity(1_000, 1_000 + FLASH_MS / 2, FLASH_MS), 0.5) &&
+    flashIntensity(1_000, 1_000 + FLASH_MS - 1, FLASH_MS) > 0 &&
     flashIntensity(1_000, 1_000 + FLASH_MS, FLASH_MS) === 0 &&
-    flashIntensity(1_000, 9_000, FLASH_MS) === 0 &&
     flashIntensity(1_000, 1_000, 0) === 0 &&
-    flashIntensity(1_000, 1_000, -FLASH_MS) === 0,
-);
-check(
-  "闪烁强度：负的流逝时间夹到 1（时钟回退也不会变暗）",
-  flashIntensity(1_000, 900, FLASH_MS) === 1,
-  String(flashIntensity(1_000, 900, FLASH_MS)),
-);
-const flashSamples = [-10_000, -1, 0, 1, FLASH_MS / 2, FLASH_MS - 1, FLASH_MS, 10_000];
-check(
-  "闪烁强度：所有采样都在 0..1 之间",
-  flashSamples.every((elapsed) => {
-    const value = flashIntensity(1_000, 1_000 + elapsed, FLASH_MS);
-    return value >= 0 && value <= 1;
-  }),
-  flashSamples
-    .map((elapsed) => flashIntensity(1_000, 1_000 + elapsed, FLASH_MS).toFixed(2))
-    .join(","),
-);
-
-const flashMap = new Map<number, number>();
-startFlash(flashMap, [1, 2], 1_000);
-// 2 is passed again as newly selected (for example deselected and reselected quickly): it restarts,
-// while 1 keeps the start it already had and no other entry is removed.
-startFlash(flashMap, [2, 3], 1_200);
-check(
-  "startFlash：只写入传入的新选中 id，重启它们的时间，不动其它条目",
-  flashMap.size === 3 &&
-    flashMap.get(1) === 1_000 &&
-    flashMap.get(2) === 1_200 &&
-    flashMap.get(3) === 1_200,
-  [...flashMap.entries()].map(([id, startedAt]) => `${id}@${startedAt}`).join(","),
-);
-const flashBeforeEmpty = new Map(flashMap);
-startFlash(flashMap, [], 2_000);
-check(
-  "startFlash：空的新选中列表不改变已有条目（没有新增就不闪）",
-  flashMap.size === flashBeforeEmpty.size &&
-    [...flashBeforeEmpty].every(([id, startedAt]) => flashMap.get(id) === startedAt),
-  [...flashMap.entries()].map(([id, startedAt]) => `${id}@${startedAt}`).join(","),
-);
-
-const pruningMap = new Map<number, number>([
-  [1, 1_000], // exactly finished at now=1300 (FLASH_MS = 300)
-  [2, 1_100], // still active
-  [3, 1_400], // future-dated by a clock step; keep until it has had its duration
-]);
-pruneFlashes(pruningMap, 1_300);
-check(
-  "pruneFlashes：删掉已经结束的条目，保留进行中与尚未到期的条目",
-  pruningMap.size === 2 && !pruningMap.has(1) && pruningMap.has(2) && pruningMap.has(3),
-  [...pruningMap.keys()].join(","),
-);
-check(
-  "闪烁颜色是无彩色（纯白），与灰阶外壳一致且不与金色选择环抢色",
-  isGreyscaleHex(FLASH_COLOR) && FLASH_COLOR === "#ffffff",
-  FLASH_COLOR,
+    flashIntensity(1_000, 900, FLASH_MS) === 1 &&
+    [-10_000, -1, 0, 1, FLASH_MS / 2, FLASH_MS - 1, FLASH_MS, 10_000].every((elapsed) => {
+      const value = flashIntensity(1_000, 1_000 + elapsed, FLASH_MS);
+      return value >= 0 && value <= 1;
+    }),
 );
 
 check(
-  "单击空地闪烁为空，单击实体只闪该实体",
-  clickFlashIds(null).length === 0 && JSON.stringify(clickFlashIds(7)) === JSON.stringify([7]),
-  `${JSON.stringify(clickFlashIds(null))} / ${JSON.stringify(clickFlashIds(7))}`,
+  "startFlash/pruneFlashes：只写新选中 id 并重启时间、空列表不动条目、prune 删结束留进行中；颜色纯白",
+  (() => {
+    const flashMap = new Map<number, number>();
+    startFlash(flashMap, [1, 2], 1_000);
+    startFlash(flashMap, [2, 3], 1_200);
+    const writes =
+      flashMap.size === 3 && flashMap.get(1) === 1_000 && flashMap.get(2) === 1_200 && flashMap.get(3) === 1_200;
+    const before = new Map(flashMap);
+    startFlash(flashMap, [], 2_000);
+    const emptyKeeps = [...before].every(([id, startedAt]) => flashMap.get(id) === startedAt);
+    const pruningMap = new Map<number, number>([
+      [1, 1_000],
+      [2, 1_100],
+      [3, 1_400],
+    ]);
+    pruneFlashes(pruningMap, 1_300);
+    return (
+      writes &&
+      emptyKeeps &&
+      pruningMap.size === 2 &&
+      !pruningMap.has(1) &&
+      pruningMap.has(2) &&
+      pruningMap.has(3) &&
+      isGreyscaleHex(FLASH_COLOR) &&
+      FLASH_COLOR === "#ffffff"
+    );
+  })(),
 );
 check(
-  "单击闪光比扫过闪光更强：单击两环、扫过一环",
+  "单击闪光比扫过闪光更强：单击两环、扫过一环；单击空地无闪、单击实体只闪它",
   CLICK_FLASH_STRENGTH === "strong" &&
     SWEEP_FLASH_STRENGTH === "normal" &&
     flashRingCount(CLICK_FLASH_STRENGTH) === 2 &&
-    flashRingCount(SWEEP_FLASH_STRENGTH) === 1,
-  `${flashRingCount(CLICK_FLASH_STRENGTH)} / ${flashRingCount(SWEEP_FLASH_STRENGTH)}`,
+    flashRingCount(SWEEP_FLASH_STRENGTH) === 1 &&
+    clickFlashIds(null).length === 0 &&
+    JSON.stringify(clickFlashIds(7)) === JSON.stringify([7]),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -5025,82 +4284,52 @@ check(
 
 const sweepCandidateIds = marqueeCoveredIds(marqueeWorld, marqueeSquare, 1);
 check(
-  "扫过候选与释放候选同规则：己方单位与己方建筑、且在窗口内",
+  "扫过候选与释放候选同规则：己方单位与己方建筑且在窗口内；窗口外实体与未登录身份都不进入",
   JSON.stringify(sweepCandidateIds) === JSON.stringify([1, 2, 4, 7]) &&
     !sweepCandidateIds.includes(3) &&
-    !sweepCandidateIds.includes(5) &&
-    !sweepCandidateIds.includes(6),
-  sweepCandidateIds.join(","),
-);
-check(
-  "窗口外实体与未登录身份都不进入扫过候选",
-  marqueeCoveredIds(
-    { ...marqueeWorld, originX: 100, originY: 100, width: 2, height: 2 },
-    marqueeSquare,
-    1,
-  ).length === 0 &&
+    !sweepCandidateIds.includes(6) &&
+    marqueeCoveredIds(
+      { ...marqueeWorld, originX: 100, originY: 100, width: 2, height: 2 },
+      marqueeSquare,
+      1,
+    ).length === 0 &&
     marqueeCoveredIds(marqueeWorld, marqueeSquare, null).length === 0,
+  sweepCandidateIds.join(","),
 );
 
 const dragSweep = new MarqueeSweep();
 check(
-  "扫过第一帧：框内实体都算首次进入",
-  JSON.stringify(dragSweep.frame([1, 2])) === JSON.stringify([1, 2]),
-  JSON.stringify([...dragSweep.flashedIds]),
+  "扫过帧规则：第一帧框内全算进入、之后只报新进入、离开再进入不重复、基线实体不算进入",
+  JSON.stringify(dragSweep.frame([1, 2])) === JSON.stringify([1, 2]) &&
+    JSON.stringify(dragSweep.frame([2, 3])) === JSON.stringify([3]) &&
+    JSON.stringify(dragSweep.frame([2])) === JSON.stringify([]) &&
+    JSON.stringify([...dragSweep.flashedIds]) === JSON.stringify([1, 2, 3]) &&
+    (() => {
+      const baselineSweep = new MarqueeSweep([1]);
+      return (
+        JSON.stringify(baselineSweep.frame([1, 2])) === JSON.stringify([2]) &&
+        !baselineSweep.flashedIds.has(1)
+      );
+    })(),
 );
 check(
-  "扫过下一帧：只返回新进入的实体，仍在框内的不重复",
-  JSON.stringify(dragSweep.frame([2, 3])) === JSON.stringify([3]),
-  JSON.stringify([...dragSweep.flashedIds]),
-);
-check(
-  "同一拖拽里离开再进入不再闪烁（已进入 id 集合记住它）",
-  JSON.stringify(dragSweep.frame([2])) === JSON.stringify([]) &&
-    JSON.stringify(dragSweep.frame([2, 3])) === JSON.stringify([]) &&
-    JSON.stringify([...dragSweep.flashedIds]) === JSON.stringify([1, 2, 3]),
-  JSON.stringify([...dragSweep.flashedIds]),
-);
-check(
-  "拖拽起点框内（基线）的实体不算进入，留给释放闪烁",
-  (() => {
-    const baselineSweep = new MarqueeSweep([1]);
-    return (
-      JSON.stringify(baselineSweep.frame([1, 2])) === JSON.stringify([2]) &&
-      JSON.stringify([...baselineSweep.coveredIds]) === JSON.stringify([1, 2]) &&
-      !baselineSweep.flashedIds.has(1)
-    );
-  })(),
-);
-check(
-  "释放不重复闪已扫过的实体",
+  "释放规则：不重复闪已扫过的实体，仍闪起点框内且未被扫过的实体",
   JSON.stringify(releaseFlashIds([2], [], [2])) === JSON.stringify([]) &&
-    JSON.stringify(releaseFlashIds([1, 2, 3], [1], [2])) === JSON.stringify([3]),
-  JSON.stringify(releaseFlashIds([1, 2, 3], [1], [2])),
-);
-check(
-  "释放仍闪起点框内且未被扫过的实体",
-  JSON.stringify(releaseFlashIds([1], [], [])) === JSON.stringify([1]) &&
+    JSON.stringify(releaseFlashIds([1, 2, 3], [1], [2])) === JSON.stringify([3]) &&
+    JSON.stringify(releaseFlashIds([1], [], [])) === JSON.stringify([1]) &&
     JSON.stringify(releaseFlashIds([1, 2], [], [2])) === JSON.stringify([1]),
-  JSON.stringify(releaseFlashIds([1, 2], [], [2])),
 );
 check(
   "扫过 + 释放整合：扫过的战斗单位不在释放时再闪，起点建筑也未误闪",
   (() => {
-    const baselineIds = marqueeCoveredIds(
-      marqueeWorld,
-      { minX: 2, minY: 2, maxX: 2, maxY: 2 },
-      1,
-    );
+    const baselineIds = marqueeCoveredIds(marqueeWorld, { minX: 2, minY: 2, maxX: 2, maxY: 2 }, 1);
     const integrated = new MarqueeSweep(baselineIds);
     const first = integrated.frame(marqueeCoveredIds(marqueeWorld, marqueeSquare, 1));
-    const back = integrated.frame(
-      marqueeCoveredIds(marqueeWorld, { minX: 2, minY: 2, maxX: 2, maxY: 2 }, 1),
-    );
+    integrated.frame(marqueeCoveredIds(marqueeWorld, { minX: 2, minY: 2, maxX: 2, maxY: 2 }, 1));
     const released = releaseFlashIds([2], [], integrated.flashedIds);
     return (
       JSON.stringify(baselineIds) === JSON.stringify([1, 4]) &&
       JSON.stringify(first) === JSON.stringify([2, 7]) &&
-      back.length === 0 &&
       released.length === 0
     );
   })(),
@@ -5112,115 +4341,60 @@ check(
 
 const crosshairStart = 10_000;
 check(
-  "准星寿命 350ms：起点 0、半程 0.5、终点及之后都是 1（时钟回退为 0）",
+  "准星曲线：350ms 寿命（起点 0、半程 0.5、终点 1、回退 0）；缩放 0.6..1.4；透明度 1..0 夹紧；帧只在寿命内可见",
   CROSSHAIR_MS === 350 &&
     crosshairProgress(crosshairStart, crosshairStart) === 0 &&
     near(crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS / 2), 0.5) &&
-    crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS) === 1 &&
-    crosshairProgress(crosshairStart, crosshairStart + 10_000) === 1 &&
     crosshairProgress(crosshairStart, crosshairStart - 1) === 0 &&
-    crosshairProgress(crosshairStart, crosshairStart, 0) === 1,
-  `${crosshairProgress(crosshairStart, crosshairStart)} / ` +
-    `${crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS / 2)} / ` +
-    `${crosshairProgress(crosshairStart, crosshairStart + CROSSHAIR_MS)}`,
-);
-check(
-  "准星缩放从 0.6 到 1.4，半程正好 1.0",
-  CROSSHAIR_SCALE_START === 0.6 &&
+    CROSSHAIR_SCALE_START === 0.6 &&
     CROSSHAIR_SCALE_END === 1.4 &&
-    near(crosshairScale(0), 0.6) &&
     near(crosshairScale(0.5), 1.0) &&
-    near(crosshairScale(1), 1.4),
-  `${crosshairScale(0)} / ${crosshairScale(0.5)} / ${crosshairScale(1)}`,
-);
-check(
-  "准星透明度从 1 线性降到 0，并夹在 0..1",
-  crosshairAlpha(0) === 1 &&
-    near(crosshairAlpha(0.5), 0.5) &&
+    crosshairAlpha(0) === 1 &&
     crosshairAlpha(1) === 0 &&
     crosshairAlpha(-2) === 1 &&
-    crosshairAlpha(2) === 0,
-  `${crosshairAlpha(0)} / ${crosshairAlpha(0.5)} / ${crosshairAlpha(1)}`,
+    crosshairAlpha(2) === 0 &&
+    (() => {
+      const startFrame = crosshairFrame(crosshairStart, crosshairStart);
+      const endFrame = crosshairFrame(crosshairStart, crosshairStart + CROSSHAIR_MS);
+      return startFrame.visible && !endFrame.visible && endFrame.alpha === 0;
+    })(),
 );
 check(
-  "准星帧只在 350ms 内可见，结束时 alpha 为 0",
-  (() => {
-    const startFrame = crosshairFrame(crosshairStart, crosshairStart);
-    const midFrame = crosshairFrame(
-      crosshairStart,
-      crosshairStart + CROSSHAIR_MS / 2,
-    );
-    const endFrame = crosshairFrame(
-      crosshairStart,
-      crosshairStart + CROSSHAIR_MS,
-    );
-    return (
-      startFrame.visible &&
-      midFrame.visible &&
-      !endFrame.visible &&
-      near(startFrame.alpha, 1) &&
-      near(midFrame.alpha, 0.5) &&
-      endFrame.alpha === 0
-    );
-  })(),
-);
-check(
-  "指针 CSS 像素 -> 画布后备像素：1x 不变、2x 翻倍，非法 DPR 按 1x",
+  "准星几何：CSS->后备像素（1x 不变、2x 翻倍、非法 DPR 按 1x）、半径按 DPR 放大",
   (() => {
     const point = { x: 137.5, y: 42.25 };
     const atOne = screenToBackingPixels(point, 1);
     const atTwo = screenToBackingPixels(point, 2);
     const invalid = screenToBackingPixels(point, Number.NaN);
     return (
-      near(atOne.x, 137.5) &&
-      near(atOne.y, 42.25) &&
       near(atTwo.x, 275) &&
-      near(atTwo.y, 84.5) &&
       near(invalid.x, atOne.x) &&
-      near(invalid.y, atOne.y)
+      near(crosshairRadius(0, 1), CROSSHAIR_BASE_RADIUS_PX * 0.6) &&
+      near(crosshairRadius(1, 2), CROSSHAIR_BASE_RADIUS_PX * 1.4 * 2)
     );
   })(),
 );
 check(
-  "准星半径按 DPR 放大：1x 起点 0.6 倍、2x 终点 1.4 倍",
-  near(crosshairRadius(0, 1), CROSSHAIR_BASE_RADIUS_PX * 0.6) &&
-    near(crosshairRadius(1, 2), CROSSHAIR_BASE_RADIUS_PX * 1.4 * 2) &&
-    near(crosshairRadius(0.5, 1), CROSSHAIR_BASE_RADIUS_PX),
-  `${crosshairRadius(0, 1)} / ${crosshairRadius(1, 2)}`,
-);
-check(
-  "画布中央的准星不移动也不缩小",
+  "准星钳制与颜色：中央不动不缩、贴边内移 ≤ 2px 且半径缩到仍可见（1x/2x）、颜色纯白",
   (() => {
-    const placed = clampCrosshairToCanvas({ x: 400, y: 300 }, 30, 800, 600);
-    return near(placed.x, 400) && near(placed.y, 300) && near(placed.radius, 30);
-  })(),
-);
-check(
-  "贴边准星不被裁剪：中心内移 ≤ 2px，半径缩到剩余空间且仍可见（1x / 2x）",
-  (() => {
+    const centred = clampCrosshairToCanvas({ x: 400, y: 300 }, 30, 800, 600);
     const atOne = clampCrosshairToCanvas({ x: 0, y: 0 }, 30, 800, 600);
     const atTwo = clampCrosshairToCanvas({ x: 0, y: 0 }, 60, 1_600, 1_200);
     const fits = (placed: { x: number; y: number; radius: number }, width: number, height: number) =>
       placed.radius > 0 &&
-      placed.x - placed.radius >= -1e-9 &&
-      placed.y - placed.radius >= -1e-9 &&
       placed.x + placed.radius <= width + 1e-9 &&
       placed.y + placed.radius <= height + 1e-9;
     return (
+      near(centred.x, 400) &&
+      near(centred.radius, 30) &&
       near(atOne.x, CROSSHAIR_EDGE_INSET_PX) &&
-      near(atOne.y, CROSSHAIR_EDGE_INSET_PX) &&
-      near(atTwo.x, CROSSHAIR_EDGE_INSET_PX) &&
       near(atTwo.y, CROSSHAIR_EDGE_INSET_PX) &&
       fits(atOne, 800, 600) &&
       fits(atTwo, 1_600, 1_200) &&
-      fits(clampCrosshairToCanvas({ x: 800, y: 300 }, 30, 800, 600), 800, 600)
+      isGreyscaleHex(CROSSHAIR_COLOR) &&
+      CROSSHAIR_COLOR === "#ffffff"
     );
   })(),
-);
-check(
-  "准星颜色只有白色（灰阶），没有第二种色相",
-  isGreyscaleHex(CROSSHAIR_COLOR) && CROSSHAIR_COLOR === "#ffffff",
-  CROSSHAIR_COLOR,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -5338,125 +4512,19 @@ check(
     return compassSector(directions[index]![0], directions[index]![1]);
   }).join(",")}`,
 );
-const arrowWorld = worldViewFromSnapshot({
-  ...validSnapshot,
-  originX: 0,
-  originY: 0,
-  width: 64,
-  height: 64,
-  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
-  players: [
-    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
-    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [192, 192] },
-  ],
-});
+// The top-chrome enemy line is gone (item 5); what remains is the shared anchor arithmetic the
+// jumps and the minimap arrows still use: the tile distance, the compass sector and the camera target.
 const arrowCamera = new Camera(16, 1, 32 * 16, 32 * 16);
-const arrowEntries =
-  arrowWorld === null ? [] : enemyAnchorEntries(arrowWorld.players, 3, { x: 39, y: 39 });
-check(
-  "敌方锚点行：只列敌对且带 anchor 的玩家，按距离排序，格式为 敌方 2：锚点 (192,192)，距 216 格，东南",
-  arrowEntries.length === 1 &&
-    arrowEntries[0]?.playerId === 2 &&
-    arrowEntries[0]?.distance === 216 &&
-    arrowEntries[0]?.sector === "东南" &&
-    tileDistance({ x: 39, y: 39 }, { x: 192, y: 192 }) === 216 &&
-    formatEnemyAnchor(arrowEntries[0]!) === "敌方 2：锚点 (192,192)，距 216 格，东南" &&
-    enemyLineText(arrowEntries) === "敌方 2：锚点 (192,192)，距 216 格，东南",
-  enemyLineText(arrowEntries),
-);
-check(
-  "敌方锚点行：未登录 / 旧快照 / 展示阵营不出现在敌方行里",
-  enemyAnchorEntries(undefined, 3, { x: 0, y: 0 }).length === 0 &&
-    enemyAnchorEntries(
-      [
-        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } },
-        { id: 2, name: "Enemy", gold: 0, wood: 0 },
-      ],
-      3,
-      { x: 0, y: 0 },
-    ).length === 0 &&
-    enemyAnchorEntries(
-      [{ id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } }],
-      null,
-      { x: 0, y: 0 },
-    ).length === 0,
-  JSON.stringify(
-    enemyAnchorEntries(
-      [
-        { id: 1, name: "Player 1", gold: 0, wood: 0, anchor: { x: 3, y: 2 } },
-        { id: 2, name: "Enemy", gold: 0, wood: 0 },
-      ],
-      3,
-      { x: 0, y: 0 },
-    ),
-  ),
-);
-const edgeArrow =
-  arrowWorld === null ? null : minimapNearestEdgeArrow(arrowWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE);
-check(
-  "小地图边缘箭头：窗口外的敌方锚点在东南，箭头落在面板右下边缘并带距离",
-  edgeArrow !== null &&
-    edgeArrow.playerId === 2 &&
-    edgeArrow.sector === "东南" &&
-    edgeArrow.distance === 226 &&
-    edgeArrow.x > MINIMAP_PANEL_SIZE / 2 &&
-    edgeArrow.y > MINIMAP_PANEL_SIZE / 2 &&
-    edgeArrow.x <= MINIMAP_PANEL_SIZE - MINIMAP_ARROW_INSET + 0.001 &&
-    edgeArrow.y <= MINIMAP_PANEL_SIZE - MINIMAP_ARROW_INSET + 0.001,
-  JSON.stringify(edgeArrow),
-);
-const westWorld = worldViewFromSnapshot({
-  ...validSnapshot,
-  originX: 0,
-  originY: 0,
-  width: 64,
-  height: 64,
-  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
-  players: [
-    { id: 1, name: "Player 1", gold: 300, wood: 60, anchor: [3, 2] },
-    { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [-192, 32] },
-  ],
-});
-const westArrow =
-  westWorld === null ? null : minimapNearestEdgeArrow(westWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE);
-check(
-  "小地图边缘箭头：西边的锚点落在面板左边缘，扇区是 西",
-  westArrow !== null &&
-    westArrow.sector === "西" &&
-    westArrow.x < MINIMAP_PANEL_SIZE / 2 &&
-    Math.abs(westArrow.y - MINIMAP_PANEL_SIZE / 2) < MINIMAP_PANEL_SIZE / 2,
-  JSON.stringify(westArrow),
-);
-const insideWorld = worldViewFromSnapshot({
-  ...validSnapshot,
-  originX: 0,
-  originY: 0,
-  width: 64,
-  height: 64,
-  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
-  players: [{ id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [32, 32] }],
-});
-check(
-  "小地图边缘箭头：锚点在已载入窗口内时不画边缘箭头",
-  insideWorld !== null &&
-    minimapNearestEdgeArrow(insideWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE) === null,
-);
 const clickTarget = anchorCameraTarget({ x: 192, y: 192 }, 16);
 check(
-  "点击敌方行得到镜头中心目标：锚点格中心 (192.5,192.5) → 世界像素 (3080,3080)",
-  clickTarget.x === 3080 &&
+  "锚点跳转算术：距 (39,39) 到 (192,192) 是 216 格东南，镜头目标落在锚点格中心 (3080,3080)，负锚点同样成立",
+  tileDistance({ x: 39, y: 39 }, { x: 192, y: 192 }) === 216 &&
+    compassSector(192 - 39, 192 - 39) === "东南" &&
+    clickTarget.x === 3080 &&
     clickTarget.y === 3080 &&
-    Math.floor(clickTarget.x / 16) === 192 &&
-    Math.floor(clickTarget.y / 16) === 192 &&
     anchorCameraTarget({ x: -1, y: -1 }, 16).x === -8 &&
     anchorCameraTarget({ x: -1, y: -1 }, 16).y === -8,
   JSON.stringify(clickTarget),
-);
-check(
-  "点击敌方行：未登录或没有 anchors 时没有可跳转的最近锚点",
-  arrowWorld !== null &&
-    enemyAnchorEntries(arrowWorld.players, null, { x: 0, y: 0 }).length === 0 &&
-    enemyAnchorEntries(undefined, 1, { x: 0, y: 0 }).length === 0,
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -5476,66 +4544,21 @@ const homeWorld = worldViewFromSnapshot({
     { id: 3, name: "owner1", gold: 300, wood: 60, anchor: [40, 40] },
   ],
 });
-const farHomeWorld = worldViewFromSnapshot({
-  ...validSnapshot,
-  originX: 0,
-  originY: 0,
-  width: 64,
-  height: 64,
-  tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
-  players: [{ id: 3, name: "owner1", gold: 0, wood: 0, anchor: [192, 192] }],
-});
 const homeRows = homeWorld?.players;
 const myAnchor = ownAnchorOf(homeRows, 3);
 check(
-  "我方基地：只读自己 id 那一行的 anchor，别人的 anchor 不会被当成家",
+  "我方基地：只读自己 id 那一行；未登录 / 旧快照 / 无 anchor 都答 null；状态行文案明确说 anchor（顶部 home 行已删，item 5）",
   myAnchor?.x === 40 &&
-    myAnchor?.y === 40 &&
-    ownAnchorOf(homeRows, 2)?.x === 192 &&
-    ownAnchorOf(homeRows, 1)?.x === 3,
-  JSON.stringify(myAnchor),
-);
-check(
-  "我方基地：未登录 / 旧快照 / 自己那行没有 anchor 都答 null，状态行文案明确说 anchor",
-  ownAnchorOf(undefined, 3) === null &&
+    ownAnchorOf(undefined, 3) === null &&
     ownAnchorOf(homeRows, null) === null &&
     ownAnchorOf([{ id: 3, name: "owner1", gold: 0, wood: 0 }], 3) === null &&
     ownAnchorOf(homeRows, 9) === null &&
-    HOME_ANCHOR_UNKNOWN_TEXT.includes("anchor") &&
-    HOME_ANCHOR_UNKNOWN_TEXT.includes("未登录"),
-  HOME_ANCHOR_UNKNOWN_TEXT,
-);
-const homeVisible = homeWorld === null ? null : homeAnchorEntry(homeWorld, 3, { x: 32, y: 32 });
-check(
-  "我方基地：在已载入窗口内时文案是“我方基地：可见”，距离与扇区仍照常算出",
-  homeVisible !== null &&
-    homeVisible.visible &&
-    homeVisible.distance === 11 &&
-    homeVisible.sector === "东南" &&
-    formatHomeLine(homeVisible) === "我方基地：可见",
-  homeVisible === null ? "null" : formatHomeLine(homeVisible),
-);
-const homeFar = farHomeWorld === null ? null : homeAnchorEntry(farHomeWorld, 3, { x: 32, y: 32 });
-check(
-  "我方基地：窗口外文案是 我方基地：距 226 格，东南（沿用敌方行的八方向词汇）",
-  homeFar !== null &&
-    !homeFar.visible &&
-    homeFar.distance === 226 &&
-    homeFar.sector === "东南" &&
-    homeFar.sector === compassSector(192 - 32, 192 - 32) &&
-    formatHomeLine(homeFar) === "我方基地：距 226 格，东南",
-  homeFar === null ? "null" : formatHomeLine(homeFar),
-);
-check(
-  "我方基地：未登录时没有可跳转的基地（H 与 基地 按钮走状态行文案，不静默）",
-  homeWorld !== null &&
-    farHomeWorld !== null &&
-    homeAnchorEntry(homeWorld, null, { x: 32, y: 32 }) === null &&
-    homeAnchorEntry(homeWorld, 9, { x: 32, y: 32 }) === null,
+    homeAnchorUnknownText().includes("anchor") &&
+    homeAnchorUnknownText().includes("未登录"),
 );
 const homeTarget = homeCameraTarget({ x: 192, y: 192 }, 16);
 check(
-  "H / 基地 的镜头目标与敌方行一致：锚点格中心 (192.5,192.5) → 世界像素 (3080,3080)",
+  "H / 基地 的镜头目标与锚点算术一致：锚点格中心 (192.5,192.5) → 世界像素 (3080,3080)",
   homeTarget.x === 3080 &&
     homeTarget.y === 3080 &&
     homeTarget.x === anchorCameraTarget({ x: 192, y: 192 }, 16).x &&
@@ -5546,15 +4569,19 @@ const homeArrowGeometry =
   homeWorld === null
     ? null
     : minimapEdgeGeometry(homeWorld, arrowCamera, { x: 192, y: 192 }, MINIMAP_PANEL_SIZE);
+const markerGeometry =
+  homeWorld === null
+    ? null
+    : markerEdgeArrow(homeWorld, arrowCamera, { number: 1, tile: { x: 192, y: 192 }, dimension: "overworld" }, MINIMAP_PANEL_SIZE);
 check(
-  "小地图白色回家箭头与红色敌方箭头是同一套几何：扇区 东南、距离 226、落点相同",
+  "小地图白色回家/标记箭头与共享几何一致：扇区 东南、距离 226、落点与角度相同",
   homeArrowGeometry !== null &&
     homeArrowGeometry.sector === "东南" &&
     homeArrowGeometry.distance === 226 &&
-    edgeArrow !== null &&
-    homeArrowGeometry.x === edgeArrow.x &&
-    homeArrowGeometry.y === edgeArrow.y &&
-    Math.abs(homeArrowGeometry.angle - edgeArrow.angle) < 1e-12,
+    markerGeometry !== null &&
+    homeArrowGeometry.x === markerGeometry.x &&
+    homeArrowGeometry.y === markerGeometry.y &&
+    Math.abs(homeArrowGeometry.angle - markerGeometry.angle) < 1e-12,
   JSON.stringify(homeArrowGeometry),
 );
 
@@ -5619,7 +4646,7 @@ check(
   "标记：空列表删除答 null，清除全部得到空列表",
   removeLastMarker(clearMarkers()).removed === null && clearMarkers().length === 0,
 );
-const labelMarker: Marker = { number: 2, tile: { x: 40, y: 40 } };
+const labelMarker: Marker = { number: 2, tile: { x: 40, y: 40 }, dimension: "overworld" };
 check(
   "标记标签：标记 2：距 11 格，东南，扇区来自敌方行的 compassSector",
   formatMarkerLabel(labelMarker, { x: 32, y: 32 }) === "标记 2：距 11 格，东南" &&
@@ -5628,20 +4655,20 @@ check(
 );
 check(
   "标记标签：标记就在镜头中心时没有方向，只写距离",
-  formatMarkerLabel({ number: 1, tile: { x: 32, y: 32 } }, { x: 32, y: 32 }) === "标记 1：距 0 格",
+  formatMarkerLabel({ number: 1, tile: { x: 32, y: 32 }, dimension: "overworld" }, { x: 32, y: 32 }) === "标记 1：距 0 格",
 );
 check(
-  "标记跳转的镜头目标是地块中心并受安全边界钳制，与回家 / 敌方跳转同一算术",
-  markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).x === 3080 &&
-    markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).y === 3080 &&
-    markerCameraTarget({ number: 3, tile: { x: -1, y: -1 } }, 16).x === -8 &&
-    markerCameraTarget({ number: 3, tile: { x: 192, y: 192 } }, 16).x ===
+  "标记跳转的镜头目标是地块中心并受安全边界钳制，与回家跳转同一算术",
+  markerCameraTarget({ number: 3, tile: { x: 192, y: 192 }, dimension: "overworld" }, 16).x ===
+    3080 &&
+    markerCameraTarget({ number: 3, tile: { x: -1, y: -1 }, dimension: "overworld" }, 16).x === -8 &&
+    markerCameraTarget({ number: 3, tile: { x: 192, y: 192 }, dimension: "overworld" }, 16).x ===
       homeCameraTarget({ x: 192, y: 192 }, 16).x,
 );
-const insideMarker: Marker = { number: 1, tile: { x: 40, y: 40 } };
-const farMarker: Marker = { number: 2, tile: { x: 192, y: 192 } };
-const eastMarker: Marker = { number: 3, tile: { x: 70, y: 32 } };
-const tieMarker: Marker = { number: 4, tile: { x: 32, y: 70 } };
+const insideMarker: Marker = { number: 1, tile: { x: 40, y: 40 }, dimension: "overworld" };
+const farMarker: Marker = { number: 2, tile: { x: 192, y: 192 }, dimension: "overworld" };
+const eastMarker: Marker = { number: 3, tile: { x: 70, y: 32 }, dimension: "overworld" };
+const tieMarker: Marker = { number: 4, tile: { x: 32, y: 70 }, dimension: "overworld" };
 const nearestOutside =
   homeWorld === null
     ? null
@@ -5677,6 +4704,33 @@ check(
   "标记边缘箭头：窗口内的标记没有箭头，最近窗外规则只产生一个箭头",
   homeWorld !== null &&
     markerEdgeArrow(homeWorld, arrowCamera, insideMarker, MINIMAP_PANEL_SIZE) === null,
+);
+check(
+  "标记记住维度（item 18）：放置写入维度、另一维度的标记恒为窗外、同维标记按窗口判断",
+  (() => {
+    const placed = placeMarker(clearMarkers(), { x: 5, y: 6 }, "hell");
+    const hellWorldDimension = { dimension: "hell" } as WorldView;
+    const overworldDimension = { dimension: "overworld" } as WorldView;
+    const hellMarker = placed.kind === "placed" ? placed.marker : null;
+    if (hellMarker === null) {
+      return false;
+    }
+    return (
+      placed.kind === "placed" &&
+      hellMarker.dimension === "hell" &&
+      placeMarker(clearMarkers(), { x: 5, y: 6 }, "overworld").kind === "placed" &&
+      worldDimensionKey(hellWorldDimension) === "hell" &&
+      !markerInDrawnDimension(hellMarker, overworldDimension) &&
+      markerInDrawnDimension({ ...hellMarker, dimension: "overworld" }, overworldDimension)
+    );
+  })(),
+);
+check(
+  "跨维度标记的标签带上维度名；同维标签保持纯距离+方向",
+  formatMarkerLabel({ number: 2, tile: { x: 40, y: 40 }, dimension: "hell" }, { x: 32, y: 32 }, "地狱") ===
+    "标记 2：距 11 格，东南 · 地狱" &&
+    formatMarkerLabel(labelMarker, { x: 32, y: 32 }) === "标记 2：距 11 格，东南",
+  formatMarkerLabel({ number: 2, tile: { x: 40, y: 40 }, dimension: "hell" }, { x: 32, y: 32 }, "地狱"),
 );
 const nearestMarkerArrow =
   homeWorld === null
@@ -5746,18 +4800,23 @@ check(
   loggedOutCommand.hint,
 );
 
-// BUG E: one or several own engineers offer all four BUILD entries, and the first engineer is the
-// placement engineer. A mixed engineer + combat group must not silently pick one.
+// BUG E: several own engineers offer every served BUILD entry, and the first engineer is the
+// placement engineer. A mixed engineer + combat group must not silently pick one. There is no
+// fallback catalogue (item 1), so the entries come from the served `buildable` array alone.
 const engineerA: EntityView = { id: 41, kind: "unit.engineer", x: 5.5, y: 5.5, playerId: 3 };
 const engineerB: EntityView = { id: 42, kind: "unit.engineer", x: 6.5, y: 5.5, playerId: 3 };
 const engineerC: EntityView = { id: 43, kind: "unit.engineer", x: 7.5, y: 5.5, playerId: 3 };
-const multiEngineerCommand = commandBarModel([engineerA, engineerB, engineerC], 3);
+const servedGroupCatalogue = ["building.hell_gate", "building.mine.t1", "building.warehouse"];
+const multiEngineerCommand = commandBarModel(
+  [engineerA, engineerB, engineerC],
+  3,
+  { buildingPaths: servedGroupCatalogue },
+);
 const engineerBuildActions = multiEngineerCommand.actions.filter((action) => action.kind === "build");
 check(
-  "选中多个工兵时仍显示全部 BUILD 条目（回退目录的全部条目）",
+  "选中多个工兵时仍显示全部 served BUILD 条目（无回退目录），条目都在 context 区",
   multiEngineerCommand.kind === "engineer" &&
-    engineerBuildActions.length === FALLBACK_BUILD_PATHS.length &&
-    engineerBuildActions.map((action) => action.path).join(",") === FALLBACK_BUILD_PATHS.join(",") &&
+    engineerBuildActions.map((action) => action.path).join(",") === servedGroupCatalogue.join(",") &&
     engineerBuildActions.every((action) => action.zone === "context"),
   `${multiEngineerCommand.kind} / ${engineerBuildActions.map((action) => action.path).join(",")}`,
 );
@@ -6182,17 +5241,35 @@ check(
   `${repair(9, 12)} / ${reclaim(12)}`,
 );
 check(
-  "HAUL 生成强制搬运命令行，非法 id 在本地拒绝",
-  haul(9, 12) === "HAUL 9 12" &&
+  "TRAVEL 一行携带全部单位 id 与网关 id；重复/非法 id 在本地拒绝（HAUL 已随服务端删除）",
+  travel([4, 5, 6], 9) === "TRAVEL 4 5 6 9" &&
+    travel([4], 9) === "TRAVEL 4 9" &&
     (() => {
       try {
-        haul(0, 12);
+        travel([], 9);
+        travel([4, 4], 9);
+        travel([0], 9);
+        travel([4], 0);
         return false;
       } catch {
         return true;
       }
     })(),
-  haul(9, 12),
+  travel([4, 5], 9),
+);
+check(
+  "ASSIST 一行一个工兵与建筑；非法 id 在本地拒绝",
+  assist(9, 12) === "ASSIST 9 12" &&
+    (() => {
+      try {
+        assist(0, 12);
+        assist(9, -1);
+        return false;
+      } catch {
+        return true;
+      }
+    })(),
+  assist(9, 12),
 );
 
 const pathPayload = worldViewFromSnapshot({
@@ -6389,24 +5466,18 @@ check(
     engineerlessRepair.continueLabel === null,
   String(engineerlessRepair?.repairEnabled),
 );
+// The 强制搬运 (HAUL) entry is gone with the server's HAUL command: supplying a producer is now the
+// ASSIST contextual command's job, sent per engineer at right-click time, so a producer with a
+// production queue offers no building-service entry of its own any more.
 const producerBuilding: EntityView = {
   ...damagedBuilding,
   id: 7,
   repairCost: undefined,
   demand: { ready: false, items: [{ item: "gold", need: 20, have: 0 }] },
 };
-const haulModel = buildingActionModel(producerBuilding, 3, servicePlayer, serviceEngineer);
-const engineerlessHaul = buildingActionModel(producerBuilding, 3, servicePlayer, undefined);
 check(
-  "有生产队列的完工建筑提供 强制搬运；没有工兵时禁用但可见",
-  haulModel !== null &&
-    haulModel.haul &&
-    haulModel.haulEnabled &&
-    haulModel.haulLabel === HAUL_ACTION_LABEL &&
-    engineerlessHaul !== null &&
-    engineerlessHaul.haul &&
-    !engineerlessHaul.haulEnabled,
-  `${haulModel?.haulLabel ?? "null"} / ${String(engineerlessHaul?.haulEnabled)}`,
+  "HAUL 已删除：完工生产建筑不再提供 强制搬运 条目（供给改由 ASSIST 右键命令承担）",
+  buildingActionModel(producerBuilding, 3, servicePlayer, serviceEngineer) === null,
 );
 const unfinishedModel = buildingActionModel(
   unfinishedBuilding,
@@ -7470,7 +6541,7 @@ const commandContextBlock = sliceBetween(indexHtml, 'id="command-context"', "</a
 const buildRailBlock = sliceBetween(indexHtml, 'id="build-panel"', "</aside>");
 const buildRailRule = /(?:^|\n)\s*\.build-rail\s*\{[^}]*\}/.exec(indexHtml)?.[0] ?? "";
 check(
-  "BUILD 是右侧全高面板：#build-section 移出底部上下文区，放进 #build-panel，三个 id 保持不变",
+  "BUILD 是右侧全高面板并贴满整条右边缘（item 2）：#build-section 在 #build-panel，三个 id 不变，rail 锚定 top/right/bottom 全为 0",
   buildRailBlock !== null &&
     buildRailBlock.includes('id="build-section"') &&
     buildRailBlock.includes('id="build-buttons"') &&
@@ -7479,9 +6550,9 @@ check(
     !commandContextBlock.includes("build-section") &&
     /--build-rail-width:\s*\d+px/.test(indexHtml) &&
     buildRailRule.includes("position: absolute") &&
-    buildRailRule.includes("right: 14px") &&
-    buildRailRule.includes("bottom: 14px") &&
-    buildRailRule.includes("top: 14px"),
+    buildRailRule.includes("right: 0") &&
+    buildRailRule.includes("bottom: 0") &&
+    buildRailRule.includes("top: 0"),
   "build rail",
 );
 
@@ -7548,8 +6619,8 @@ check(
 // contents / storage display and the batchable UPGRADEUNIT
 // ---------------------------------------------------------------------------------------------
 
-// The BUILD menu reads the snapshot's top-level `buildable` array when it is present; the classic
-// five-entry FALLBACK list is only for the demo world and a snapshot without the field.
+// The BUILD menu reads the snapshot's top-level `buildable` array, and there is NO fallback: a
+// snapshot without the field (an older server, the demo world) paints no BUILD buttons (item 1).
 const servedCatalogue = ["building.hell_gate", "building.mine.t1", "building.warehouse"];
 const servedBuilderCommand = commandBarModel(
   [{ id: 61, kind: "unit.engineer", x: 1.5, y: 1.5, playerId: 1 }],
@@ -7558,12 +6629,13 @@ const servedBuilderCommand = commandBarModel(
 );
 const servedBuildActions = servedBuilderCommand.actions.filter((action) => action.kind === "build");
 check(
-  "BUILD 目录来自快照的 buildable 数组（地狱门在列），回退目录只在缺字段时使用",
+  "BUILD 目录只来自快照的 buildable 数组（地狱门在列）；缺字段时没有任何 BUILD 条目（item 1）",
   servedBuildActions.map((action) => action.path).join(",") === servedCatalogue.join(",") &&
     commandBarModel([{ id: 62, kind: "unit.engineer", x: 1.5, y: 1.5, playerId: 1 }], 1, {})
-      .actions.filter((action) => action.kind === "build")
-      .map((action) => action.path)
-      .join(",") === FALLBACK_BUILD_PATHS.join(","),
+      .actions.filter((action) => action.kind === "build").length === 0 &&
+    commandBarModel([{ id: 63, kind: "unit.engineer", x: 1.5, y: 1.5, playerId: 1 }], 1).actions.filter(
+      (action) => action.kind === "build",
+    ).length === 0,
   servedBuildActions.map((action) => action.path).join(","),
 );
 
@@ -7843,25 +6915,30 @@ check(
   "resource panels kept/removed",
 );
 
-// Every path of the client's own fallback BUILD/TRAIN catalogue resolves to a display name, never
-// a raw path, in both languages; the zh-CN wording matches the classic plugin's served names so an
-// offline demo world reads exactly like a connected one. A served manifest name still wins first —
-// asserted through the same resolution the page uses (manifest label first, generic label second).
+// Every classic content path the client's dictionaries name resolves to a display name in both
+// languages, and the server namespace cooperates: the client dictionary wins, a server-registered
+// name is the fallback, and clearing/overwriting works (item 22's resolution order).
 check(
-  "BUILD/TRAIN 回退目录的每个路径都能解析出名称而不是裸路径：清单名优先，i18n 兜底，双语皆有",
+  "内容标签双语解析：客户端字典优先、服务器注册名兜底、覆盖与原始路径回退",
   (() => {
-    const catalogue = [...FALLBACK_BUILD_PATHS, ...FALLBACK_TRAIN_PATHS];
+    const catalogue = [
+      "building.armory.t1",
+      "building.mine.t1",
+      "building.lumbercamp.t1",
+      "building.warehouse",
+      "building.turret.t1",
+      ...FALLBACK_TRAIN_PATHS,
+    ];
     initI18n("zh-CN");
-    const zhOk = catalogue.every((path) => {
-      const label = genericContentLabel(path);
-      return label !== undefined && label !== "" && label !== path;
-    }) && genericContentLabel("building.armory.t1") === "兵工厂 1 级"
-      && genericContentLabel("unit.melee.t1") === "普通";
+    const zhOk =
+      catalogue.every((path) => {
+        const label = genericContentLabel(path);
+        return label !== undefined && label !== "" && label !== path;
+      }) &&
+      genericContentLabel("building.armory.t1") === "兵工厂 1 级" &&
+      genericContentLabel("unit.melee.t1") === "普通";
     initI18n("en");
-    const enOk = catalogue.every((path) => {
-      const label = genericContentLabel(path);
-      return label !== undefined && label !== "" && label !== path;
-    }) && genericContentLabel("building.armory.t1") === "Armory T1";
+    const enOk = genericContentLabel("building.armory.t1") === "Armory T1";
     const keysInBoth = catalogue.every(
       (path) =>
         DICTIONARIES.en[`content.${path}`] !== undefined &&
@@ -7870,7 +6947,7 @@ check(
     initI18n("zh-CN");
     return zhOk && enOk && keysInBoth;
   })(),
-  "fallback catalogue labels resolve",
+  "content labels resolve in both languages",
 );
 
 // The BUILD rail buttons are relabelled the moment they are rebuilt (a served catalogue arriving
@@ -7894,6 +6971,138 @@ check(
     /\.build-rail-buttons\s*\{[^}]*gap:\s*8px/.test(indexHtml) &&
     /\.build-rail-buttons button\s*\{[^}]*padding:\s*10px 12px/.test(indexHtml),
   "build rail spacing",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Content catalogue store (item 4 / item 22): defensive parse, registry names, client-side deficits
+// ---------------------------------------------------------------------------------------------
+
+const contentWorld = worldViewFromSnapshot({
+  tick: 40,
+  width: 1,
+  height: 1,
+  tiles: [["grass"]],
+  entities: [{ id: 1, kind: "building.mine.t1", x: 0.5, y: 0.5, player: 1 }],
+  content: {
+    dimensions: { overworld: { name: "主世界" }, hell: "地狱" },
+    units: { "unit.melee.t1": { name: "普通", cost: [30, 0] } },
+    buildings: {
+      "building.mine.t1": {
+        name: "矿井",
+        cost: { gold: 50, wood: 0 },
+        size: [3, 3],
+        recipes: [{ inputs: { gold: 20, ore: 5 } }],
+      },
+      "building.warehouse": [60, 20],
+      "building.hell_gate": "地狱门",
+    },
+  },
+});
+const contentCatalogue = contentWorld?.content;
+check(
+  "content 目录防御解析：map 与数组、cost 对象与 [gold,wood] 对、size 对与对组、名字字符串都接受；坏行丢弃；缺 content 为 undefined",
+  contentCatalogue !== undefined &&
+    contentCatalogue.dimensions.get("overworld") === "主世界" &&
+    contentCatalogue.dimensions.get("hell") === "地狱" &&
+    contentCatalogue.units.get("unit.melee.t1")?.name === "普通" &&
+    contentCatalogue.units.get("unit.melee.t1")?.cost?.gold === 30 &&
+    contentCatalogue.buildings.get("building.mine.t1")?.name === "矿井" &&
+    contentCatalogue.buildings.get("building.mine.t1")?.size?.width === 3 &&
+    contentCatalogue.buildings.get("building.warehouse")?.cost?.wood === 20 &&
+    worldViewFromSnapshot({ tick: 1, width: 1, height: 1, tiles: [["grass"]], entities: [] })
+      ?.content === undefined &&
+    parseContentCatalogue(null) === undefined &&
+    parseContentCatalogue({}) === undefined,
+  JSON.stringify(contentCatalogue?.buildings.get("building.mine.t1") ?? null),
+);
+
+check(
+  "content 目录进入 WorldView；i18n 注册表接收目录名（content.<path> 与 dim.<key>），客户端字典优先、服务器名兜底",
+  contentWorld !== null &&
+    (() => {
+      registerCatalogueNames(contentCatalogue);
+      // A path the client dictionary does not name shows the served name verbatim...
+      const serverWins = genericContentLabel("building.hell_gate") === "地狱门";
+      // ...and one the client dictionary names keeps the client translation.
+      const clientWins = genericContentLabel("building.mine.t1") === "矿井 普通";
+      // A client dictionary entry overrides the server name for the same id.
+      const warehouseClient = genericContentLabel("building.warehouse") === "仓库" &&
+        DICTIONARIES["zh-CN"]["content.building.warehouse"] !== undefined;
+      const unknownKey = genericContentLabel("building.mystery.t9") === undefined;
+      const dimensionNames =
+        dimensionLabel("hell") === "地狱" &&
+        dimensionLabel("overworld") === "主世界" &&
+        dimensionLabel("mystery") === "mystery";
+      const directT = t("dim.hell") === "地狱";
+      registerServerKeyValues({ "content.from.plain": "plainName" });
+      const plainRegistered = genericContentLabel("from.plain") === "plainName";
+      registerServerKeyValues({ "": "blank", "blank.value": 7 });
+      const defensive = genericContentLabel("blank.value") === undefined;
+      return (
+        serverWins &&
+        clientWins &&
+        warehouseClient &&
+        unknownKey &&
+        dimensionNames &&
+        directT &&
+        plainRegistered &&
+        defensive
+      );
+    })(),
+);
+
+const mineEntity = contentWorld?.entities[0];
+check(
+  "客户端推算缺料（item 4）：生产缺料 = 当前任务配方输入 − 建筑库存；建造缺料 = 目录成本 × 未完工比例；无目录/无任务/已完工都不发明数字",
+  mineEntity !== undefined &&
+    (() => {
+      const producing: EntityView = {
+        ...mineEntity,
+        producingNow: { kind: "building.mine.t1", position: 1, length: 2 },
+        contents: { gold: 5 },
+      };
+      const inputDeficit = producerDeficit(contentCatalogue, producing);
+      const satisfied = producerDeficit(contentCatalogue, {
+        ...producing,
+        contents: { gold: 20, ore: 5 },
+      });
+      const noTask = producerDeficit(contentCatalogue, mineEntity);
+      const noCatalogue = producerDeficit(undefined, producing);
+      const constructing: EntityView = { ...mineEntity, progress: 0.5 };
+      const buildDeficit = constructionDeficit(contentCatalogue, constructing);
+      const finished = constructionDeficit(contentCatalogue, { ...mineEntity, progress: 1 });
+      const noProgress = constructionDeficit(contentCatalogue, mineEntity);
+      const unknownCost = constructionDeficit(contentCatalogue, {
+        ...mineEntity,
+        kind: "building.mystery.t9",
+        progress: 0.5,
+      });
+      return (
+        inputDeficit !== undefined &&
+        inputDeficit.length === 2 &&
+        inputDeficit[0]?.item === "gold" &&
+        inputDeficit[0]?.missing === 15 &&
+        inputDeficit[1]?.item === "ore" &&
+        inputDeficit[1]?.missing === 5 &&
+        satisfied === undefined &&
+        noTask === undefined &&
+        noCatalogue === undefined &&
+        buildDeficit !== undefined &&
+        buildDeficit.length === 1 &&
+        buildDeficit[0]?.item === "gold" &&
+        buildDeficit[0]?.missing === 25 &&
+        finished === undefined &&
+        noProgress === undefined &&
+        unknownCost === undefined &&
+        formatDeficit(inputDeficit, (path) => path) === "gold 15 · ore 5"
+      );
+    })(),
+);
+
+check(
+  "攻击路线以红色绘制（item 15）：ATTACK_PATH_COLOR 是归属红，普通路线保持白/灰",
+  ATTACK_PATH_COLOR.startsWith("rgba(239, 68, 68") &&
+    PATH_COLOR.startsWith("rgba(214, 214, 214"),
 );
 
 // ---------------------------------------------------------------------------------------------

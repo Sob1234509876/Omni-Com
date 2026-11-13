@@ -26,6 +26,16 @@ public final class TransferOrder implements Order {
     /** How close to a gateway a unit has to stand before it steps through, in tiles. */
     public static final float GATEWAY_RADIUS = 1.5f;
 
+    /**
+     * Arrival radius used while aiming at a gateway tile. It is deliberately half the crossing radius:
+     * the movement system marks a unit arrived once it is within the goal radius <em>plus the unit's own
+     * body radius</em>, so aiming with the full crossing radius would let a unit stop up to
+     * {@code GATEWAY_RADIUS + radius} tiles from the pad - outside the crossing test - and then stand
+     * there forever with an "arrived" goal and an unfulfilled order. Aiming closer than the crossing
+     * radius makes the arrival test strictly inside it, so a unit that reaches its goal always crosses.
+     */
+    private static final float AIM_RADIUS = GATEWAY_RADIUS * 0.5f;
+
     /** How long a unit may spend trying before the order gives up: two minutes at twenty ticks a second. */
     public static final int TIMEOUT_TICKS = 20 * 120;
 
@@ -96,7 +106,7 @@ public final class TransferOrder implements Order {
                     Vec2 goal = hop.at().center();
                     Vec2 current = motion.goalOrNull();
                     if (current == null || !current.equals(goal)) {
-                        motion.setGoal(goal, GATEWAY_RADIUS);
+                        motion.setGoal(goal, AIM_RADIUS);
                     }
                 });
     }

@@ -38,6 +38,13 @@ export interface PathSegment {
 /** Colour of the committed and pending route lines; light grey, achromatic chrome on canvas. */
 export const PATH_COLOR = "rgba(214, 214, 214, 0.9)";
 
+/**
+ * Colour of the committed route line of a unit whose current order is an attack (playtester item 15):
+ * the ownership red instead of the white/grey route line, so an attack-move leg reads as hostile at a
+ * glance. Pending waypoints stay grey — only a committed attack order recolours its own line and dot.
+ */
+export const ATTACK_PATH_COLOR = "rgba(239, 68, 68, 0.9)";
+
 /** Dash pattern of the route line, in CSS pixels. */
 export const PATH_DASH: readonly number[] = [5, 4];
 

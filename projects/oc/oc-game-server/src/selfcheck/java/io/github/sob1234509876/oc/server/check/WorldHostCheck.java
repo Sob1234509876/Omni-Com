@@ -118,24 +118,22 @@ public final class WorldHostCheck {
         long startMillis = (System.nanoTime() - startedAt) / 1_000_000L;
         try {
             check.note("世界启动耗时: " + startMillis + " ms（含出生锚点搜索、样例场景与开局资源）");
-            check.that(startMillis < 3_000L, "世界在 3 秒内启动（实测 " + startMillis + " ms）");
-            check.equal(4096, WorldHost.DEFAULT_CHUNK_BUDGET, "默认区块预算是 4096");
-            check.equal(WorldHost.DEFAULT_CHUNK_BUDGET, host.chunkBudget(),
-                    "宿主报告默认区块预算");
-            check.that(host.engine().map() instanceof InfiniteTerrainMap,
-                    "托管的引擎世界就是无界 InfiniteTerrainMap");
-            check.equal(host.chunkBudget(),
-                    ((InfiniteTerrainMap) host.engine().map()).maxLoadedChunks(),
-                    "引擎地图拿到了宿主配置的区块预算");
+            check.that(startMillis < 3_000L && WorldHost.DEFAULT_CHUNK_BUDGET == 4096
+                            && host.chunkBudget() == WorldHost.DEFAULT_CHUNK_BUDGET
+                            && host.engine().map() instanceof InfiniteTerrainMap
+                            && ((InfiniteTerrainMap) host.engine().map()).maxLoadedChunks()
+                                    == WorldHost.DEFAULT_CHUNK_BUDGET,
+                    "世界在 3 秒内启动（实测 " + startMillis + " ms），默认区块预算是 4096，宿主与无界引擎地图 "
+                            + "都报告宿主配置的区块预算");
         } finally {
             host.stop();
         }
 
         WorldHost small = new WorldHost(1L, new PlayersContent(true), List.of(), 64);
         try {
-            check.equal(64, small.chunkBudget(), "自定义区块预算 64 被宿主接受");
-            check.equal(64, ((InfiniteTerrainMap) small.engine().map()).maxLoadedChunks(),
-                    "自定义区块预算真的传给了引擎地图");
+            check.that(small.chunkBudget() == 64
+                            && ((InfiniteTerrainMap) small.engine().map()).maxLoadedChunks() == 64,
+                    "自定义区块预算 64 被宿主接受并真的传给了引擎地图");
         } finally {
             small.stop();
         }
@@ -151,25 +149,21 @@ public final class WorldHostCheck {
     private static void hostAndSnapshot(Check check) {
         WorldHost host = new WorldHost(WorldHost.DEFAULT_SEED);
         try {
-            check.equal(0L, host.tick(), "未启动时 tick() 为 0");
-            check.that(!host.running(), "未启动时 running() 为 false");
-            check.equal(16, host.tilePixels(), "报出的 tilePixels 是 16");
-            check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
+            check.that(host.tick() == 0L && !host.running() && host.tilePixels() == 16
+                            && host.ticksPerSecond() == 20,
+                    "未启动时 tick() 为 0 且 running() 为 false，报出的 tilePixels 是 16、速率是 20 ticks/s");
 
             String initial = host.snapshotJson();
             validateSnapshot(check, initial, "tick 0 快照");
             Map<String, Object> initialDocument = MiniJson.parseObject(initial);
-            check.that(!initialDocument.containsKey("mapWidth")
-                            && !initialDocument.containsKey("mapHeight")
-                            && !initialDocument.containsKey("mapSize"),
-                    "快照不含地图宽高字段（世界无界）");
-            check.equal((long) (host.spawnAnchor().x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longField(initialDocument, "originX"), "无参数快照以出生锚点为中心（originX）");
-            check.equal((long) (host.spawnAnchor().y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longField(initialDocument, "originY"), "无参数快照以出生锚点为中心（originY）");
-            check.that(initial.contains("\"entities\":[{\"id\":1"), "快照从实体 1 开始，说明样例场景存在");
-            check.that(initial.contains("\"kind\":\"worker\""), "快照里有 worker 内容路径");
-            check.that(initial.contains("\"kind\":\"warehouse\""), "快照里有 warehouse 内容路径");
+            check.that(longField(initialDocument, "originX")
+                            == (long) (host.spawnAnchor().x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS)
+                            && longField(initialDocument, "originY")
+                                    == (long) (host.spawnAnchor().y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS)
+                            && initial.contains("\"entities\":[{\"id\":1")
+                            && initial.contains("\"kind\":\"worker\"")
+                            && initial.contains("\"kind\":\"warehouse\""),
+                    "无参数快照以出生锚点为中心，从实体 1 开始（样例场景存在），并带 worker 与 warehouse 内容路径");
 
             host.start();
             check.that(host.running(), "start() 后 running() 为 true");
@@ -181,10 +175,10 @@ public final class WorldHostCheck {
 
             long stoppedAt = host.tick();
             sleep(120L);
-            check.equal(stoppedAt, host.tick(), "stop() 之后 tick 不再变化");
             String afterStop = host.snapshotJson();
             validateSnapshot(check, afterStop, "停止后的快照");
-            check.that(afterStop.contains("\"tick\":" + stoppedAt), "快照 tick 与 host.tick() 一致");
+            check.that(stoppedAt == host.tick() && afterStop.contains("\"tick\":" + stoppedAt),
+                    "stop() 之后 tick 不再变化，快照 tick 与 host.tick() 一致");
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             check.that(false, "世界主机检查被中断");
@@ -208,31 +202,28 @@ public final class WorldHostCheck {
 
             GridPos anchor = first.spawnAnchor();
             check.that(Math.max(Math.abs(anchor.x()), Math.abs(anchor.y()))
-                            <= WorldHost.SEARCH_RADIUS_TILES,
-                    "出生锚点在 (0,0) 的 " + WorldHost.SEARCH_RADIUS_TILES + " 格搜索半径内: " + anchor);
-            check.that(first.engine().world().map().isBuildable(anchor),
-                    "出生锚点是可建造地块: " + anchor);
-            check.equal(anchor, second.spawnAnchor(), "同一种子、同一内容给出相同的出生锚点");
-            check.that(second.engine().world().map().isBuildable(second.spawnAnchor()),
-                    "第二个宿主的出生锚点同样是可建造地块");
+                            <= WorldHost.SEARCH_RADIUS_TILES
+                            && first.engine().world().map().isBuildable(anchor)
+                            && second.spawnAnchor().equals(anchor)
+                            && second.engine().world().map().isBuildable(second.spawnAnchor()),
+                    "出生锚点在 (0,0) 的 " + WorldHost.SEARCH_RADIUS_TILES + " 格搜索半径内，是可建造地块，"
+                            + "且同一种子、同一内容给出相同的可建造出生锚点: " + anchor);
 
             String wide = first.snapshotJson(anchor.x(), anchor.y(), WorldHost.MAX_SNAPSHOT_RADIUS);
             Set<String> paths = tilePaths(wide);
-            check.that(paths.size() >= 4,
-                    "出生锚点附近 128x128 的样例里至少有四种地形路径: " + paths);
-            check.equal(WorldHost.MAX_SNAPSHOT_RADIUS * 2, tileRows(wide).size(),
-                    "128x128 的样例有 128 行地形");
+            check.that(paths.size() >= 4 && tileRows(wide).size() == WorldHost.MAX_SNAPSHOT_RADIUS * 2,
+                    "出生锚点附近 128x128 的样例有 128 行地形，且至少有四种地形路径: " + paths);
 
             boolean everySceneBuilding = true;
             for (Building building : first.engine().world().buildings()) {
                 everySceneBuilding &= first.engine().world().map().isBuildable(building.origin());
             }
-            check.that(everySceneBuilding, "样例场景的每座建筑都落在可建造地形上");
             boolean everySceneUnit = true;
             for (Unit unit : first.engine().world().units()) {
                 everySceneUnit &= first.engine().world().map().isBuildable(unit.position().tile());
             }
-            check.that(everySceneUnit, "样例场景的每个单位都落在可建造地形上");
+            check.that(everySceneBuilding && everySceneUnit,
+                    "样例场景的每座建筑与每个单位都落在可建造地形上");
 
             // Who owns the sample scene: player 1, by engine entity id and by the snapshot's `player`
             // field. This pins the server truth behind the owner's "the display units are enemy units"
@@ -243,11 +234,6 @@ public final class WorldHostCheck {
                     sceneOwners.put(entity.id().value(), (long) entity.owner().id().value());
                 }
             }
-            check.that(!sceneOwners.isEmpty(), "样例场景至少有一个实体用于归属断言");
-            check.that(sceneOwners.values().stream().allMatch(owner -> owner == 1L),
-                    "样例场景的每个实体 id 在引擎里都属于玩家 1: " + sceneOwners);
-            check.that(!sceneOwners.containsValue(2L), "样例场景里没有玩家 2（经典机器人）的实体");
-
             Map<String, Object> sceneDocument = MiniJson.parseObject(wide);
             Map<Long, Long> wireOwners = new LinkedHashMap<>();
             for (Object raw : (List<?>) sceneDocument.get("entities")) {
@@ -256,13 +242,16 @@ public final class WorldHostCheck {
                     wireOwners.put(id.longValue(), player.longValue());
                 }
             }
-            check.equal(sceneOwners, wireOwners,
-                    "快照按实体 id 报告的 player 字段与引擎归属一致（样例场景全是玩家 1）");
-            check.equal(1L, longField(playerRow(sceneDocument, 1), "id"),
-                    "样例场景的玩家行 id 是 1");
-            check.equal(List.of((double) anchor.x(), (double) anchor.y()),
-                    anchorField(playerRow(sceneDocument, 1)),
-                    "玩家 1 的玩家行 anchor 就是世界的出生锚点 " + anchor);
+            check.that(!sceneOwners.isEmpty()
+                            && sceneOwners.values().stream().allMatch(owner -> owner == 1L)
+                            && !sceneOwners.containsValue(2L)
+                            && sceneOwners.equals(wireOwners),
+                    "样例场景至少有一个实体，每个实体 id 在引擎里都属于玩家 1（没有经典机器人玩家 2 的实体），"
+                            + "且快照按实体 id 报告的 player 字段与引擎归属一致: " + sceneOwners);
+            check.that(longField(playerRow(sceneDocument, 1), "id") == 1L
+                            && anchorField(playerRow(sceneDocument, 1))
+                                    .equals(List.of((double) anchor.x(), (double) anchor.y())),
+                    "玩家 1 的玩家行 id 是 1，其 anchor 就是世界的出生锚点 " + anchor);
         } finally {
             first.stop();
             second.stop();
@@ -275,12 +264,11 @@ public final class WorldHostCheck {
                     "有仓库的内容下玩家可以加入噪声世界");
             List<Building> bases = joined.engine().world()
                     .buildingsOf(joined.findPlayer(WorldHost.FIRST_HUMAN_PLAYER_ID).orElseThrow());
-            check.that(!bases.isEmpty(), "加入的玩家有开局仓库");
             boolean baseBuildable = !bases.isEmpty();
             for (Building base : bases) {
                 baseBuildable &= joined.engine().world().map().isBuildable(base.origin());
             }
-            check.that(baseBuildable, "加入的玩家的开局仓库落在可建造地形上");
+            check.that(baseBuildable, "加入的玩家有开局仓库，且开局仓库落在可建造地形上");
         } finally {
             joined.stop();
         }
@@ -298,78 +286,64 @@ public final class WorldHostCheck {
         try {
             GridPos anchor = host.spawnAnchor();
             Map<String, Object> defaults = MiniJson.parseObject(host.snapshotJson());
-            check.equal((long) (anchor.x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longField(defaults, "originX"), "无参数快照以出生锚点为中心（originX）");
-            check.equal((long) (anchor.y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS),
-                    longField(defaults, "originY"), "无参数快照以出生锚点为中心（originY）");
-            check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L, longField(defaults, "width"),
-                    "无参数快照的宽度是默认半径的两倍");
-            check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L, longField(defaults, "height"),
-                    "无参数快照的高度是默认半径的两倍");
-            check.equal(WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2, tileRows(host.snapshotJson()).size(),
-                    "无参数快照的 tiles 行数等于默认窗口高度");
-            check.equal((WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2) * (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2),
-                    tileCount(host.snapshotJson()), "无参数快照的 tiles 条目数等于窗口面积");
+            check.that(longField(defaults, "originX") == (long) (anchor.x() - WorldHost.DEFAULT_SNAPSHOT_RADIUS)
+                            && longField(defaults, "originY")
+                                    == (long) (anchor.y() - WorldHost.DEFAULT_SNAPSHOT_RADIUS)
+                            && longField(defaults, "width") == WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L
+                            && longField(defaults, "height") == WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2L
+                            && tileRows(host.snapshotJson()).size() == WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2
+                            && tileCount(host.snapshotJson()) == (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2)
+                                    * (WorldHost.DEFAULT_SNAPSHOT_RADIUS * 2),
+                    "无参数快照以出生锚点为中心，窗口是默认半径的两倍，tiles 行数等于窗口高度、条目数等于窗口面积");
 
             // A request at the origin proves the origin may go negative: there is no corner to clip against.
             Map<String, Object> origin = MiniJson.parseObject(host.snapshotJson(0, 0, 16));
-            check.equal(-16L, longField(origin, "originX"), "原点请求的 originX 是 -16，不再被夹到 0");
-            check.equal(-16L, longField(origin, "originY"), "原点请求的 originY 是 -16，不再被夹到 0");
-            check.equal(32L, longField(origin, "width"), "原点请求得到 32 宽的完整窗口");
-            check.equal(32 * 32, tileCount(host.snapshotJson(0, 0, 16)),
-                    "原点请求的 tiles 仍是 1024 个条目，没有越界");
+            check.that(longField(origin, "originX") == -16L && longField(origin, "originY") == -16L
+                            && longField(origin, "width") == 32L
+                            && tileCount(host.snapshotJson(0, 0, 16)) == 32 * 32,
+                    "原点请求的 originX/originY 是 -16，不再被夹到 0，得到 32 宽的完整窗口且 tiles 仍是 1024 个条目");
 
             Map<String, Object> small = MiniJson.parseObject(host.snapshotJson(128, 128, 16));
-            check.equal(128L - 16L, longField(small, "originX"), "r=16 时 originX 是 112");
-            check.equal(128L - 16L, longField(small, "originY"), "r=16 时 originY 是 112");
-            check.equal(32L, longField(small, "width"), "r=16 时窗口宽是 32");
-            check.equal(32L, longField(small, "height"), "r=16 时窗口高是 32");
             List<List<String>> smallRows = tilesOf(host.snapshotJson(128, 128, 16));
-            check.equal(32, smallRows.size(), "r=16 时 tiles 有 32 行");
-            boolean everyRow = true;
             int entries = 0;
+            boolean everyRow = true;
             for (List<String> row : smallRows) {
                 everyRow &= row.size() == 32;
                 entries += row.size();
             }
-            check.that(everyRow, "r=16 时每行恰好有 32 个地形条目");
-            check.equal(32 * 32, entries, "r=16 时 tiles 恰好有 1024 个条目");
+            check.that(longField(small, "originX") == 112L && longField(small, "originY") == 112L
+                            && longField(small, "width") == 32L && longField(small, "height") == 32L
+                            && smallRows.size() == 32 && everyRow && entries == 32 * 32,
+                    "r=16 时 originX/originY 是 112、窗口是 32x32，tiles 有 32 行、每行恰好 32 个条目（1024 个）");
 
-            check.equal(WorldHost.MIN_SNAPSHOT_RADIUS * 2L,
-                    longField(MiniJson.parseObject(host.snapshotJson(128, 128, 1)), "width"),
-                    "过小的半径被夹到 16（窗口 32）");
-            check.equal(WorldHost.MAX_SNAPSHOT_RADIUS * 2L,
-                    longField(MiniJson.parseObject(host.snapshotJson(128, 128, 1_000)), "width"),
-                    "过大的半径被夹到 64（窗口 128）");
+            check.that(longField(MiniJson.parseObject(host.snapshotJson(128, 128, 1)), "width")
+                            == WorldHost.MIN_SNAPSHOT_RADIUS * 2L
+                            && longField(MiniJson.parseObject(host.snapshotJson(128, 128, 1_000)), "width")
+                                    == WorldHost.MAX_SNAPSHOT_RADIUS * 2L,
+                    "过小的半径被夹到 16（窗口 32），过大的半径被夹到 64（窗口 128）");
 
             // A far centre is not moved: only the radius is clamped.
             int farX = 100_000;
             int farY = -50_000;
             Map<String, Object> far = MiniJson.parseObject(host.snapshotJson(farX, farY, 16));
-            check.equal((long) (farX - 16), longField(far, "originX"),
-                    "远景窗口的 originX 是请求中心减半径（99984）");
-            check.equal((long) (farY - 16), longField(far, "originY"),
-                    "远景窗口的 originY 是请求中心减半径（-50016），可以为负");
-            check.equal(32L, longField(far, "width"), "远景窗口仍是 32 宽");
-            check.equal(32L, longField(far, "height"), "远景窗口仍是 32 高");
-            check.equal(32 * 32, tileCount(host.snapshotJson(farX, farY, 16)),
-                    "远景窗口的 tiles 恰好有 1024 个条目");
             List<List<String>> farRows = tilesOf(host.snapshotJson(farX, farY, 16));
-            check.equal(host.engine().world().map().terrainAt(farX - 16, farY - 16).key().path(),
-                    farRows.get(0).get(0), "远景窗口左上角地块与生成器同一坐标一致");
-            check.equal(host.engine().world().map().terrainAt(farX + 15, farY + 15).key().path(),
-                    farRows.get(31).get(31), "远景窗口右下角地块与生成器同一坐标一致");
-            check.that(!tilePaths(host.snapshotJson(farX, farY, 16)).isEmpty(),
-                    "远景窗口确实包含地形: " + tilePaths(host.snapshotJson(farX, farY, 16)));
+            check.that(longField(far, "originX") == (long) (farX - 16)
+                            && longField(far, "originY") == (long) (farY - 16)
+                            && longField(far, "width") == 32L && longField(far, "height") == 32L
+                            && tileCount(host.snapshotJson(farX, farY, 16)) == 32 * 32
+                            && farRows.get(0).get(0)
+                                    .equals(host.engine().world().map().terrainAt(farX - 16, farY - 16).key().path())
+                            && farRows.get(31).get(31)
+                                    .equals(host.engine().world().map().terrainAt(farX + 15, farY + 15).key().path()),
+                    "远景窗口的 origin 是请求中心减半径（99984/-50016，可以为负），仍是 32x32 且 tiles 恰好有 "
+                            + "1024 个条目，左上角与右下角地块都和生成器同一坐标一致");
 
             Map<String, Object> negativeFar = MiniJson.parseObject(
                     host.snapshotJson(-100_000, 50_000, 16));
-            check.equal(-100_016L, longField(negativeFar, "originX"),
-                    "负方向远景窗口的 originX 是 -100016");
-            check.equal(49_984L, longField(negativeFar, "originY"),
-                    "负方向远景窗口的 originY 是 49984");
-            check.equal(32 * 32, tileCount(host.snapshotJson(-100_000, 50_000, 16)),
-                    "负方向远景窗口的 tiles 恰好有 1024 个条目");
+            check.that(longField(negativeFar, "originX") == -100_016L
+                            && longField(negativeFar, "originY") == 49_984L
+                            && tileCount(host.snapshotJson(-100_000, 50_000, 16)) == 32 * 32,
+                    "负方向远景窗口的 originX/originY 是 -100016/49984，tiles 恰好有 1024 个条目");
 
             // Entities are the whole living list in absolute world coordinates, with no map bound.
             List<?> entities = (List<?>) MiniJson.parseObject(host.snapshotJson()).get("entities");
@@ -424,37 +398,29 @@ public final class WorldHostCheck {
             if (!(rawPlayers instanceof List<?> players)) {
                 return;
             }
-            check.equal(3, players.size(), "样例玩家与两个真人各占一行");
-            check.equal(List.of(1L, 3L, 4L), playerIds(players), "players 按 id 从小到大排列");
+            check.that(players.size() == 3 && playerIds(players).equals(List.of(1L, 3L, 4L)),
+                    "样例玩家与两个真人各占一行，players 按 id 从小到大排列");
 
             Map<?, ?> alice = playerRow(players, WorldHost.FIRST_HUMAN_PLAYER_ID);
-            check.that(alice != null, "players 里有 alice 的行");
-            if (alice != null) {
-                check.equal("alice", alice.get("name"), "alice 的行带账号名");
-                check.equal(300L, longField(alice, "gold"), "alice 的金币是经典开局的 300");
-                check.equal(60L, longField(alice, "wood"), "alice 的木材是经典开局的 60");
-                GridPos aliceAnchor = host.baseAnchor(WorldHost.FIRST_HUMAN_PLAYER_ID);
-                check.equal(List.of((double) aliceAnchor.x(), (double) aliceAnchor.y()),
-                        anchorField(alice),
-                        "真人 alice 的玩家行 anchor 是她的基地槽位出生锚点 " + aliceAnchor);
-            }
             Map<?, ?> bob = playerRow(players, WorldHost.FIRST_HUMAN_PLAYER_ID + 1);
-            check.equal(300L, bob == null ? -1L : longField(bob, "gold"),
-                    "bob 也有自己的 300 金币（存档按玩家各自读取）");
+            GridPos aliceAnchor = host.baseAnchor(WorldHost.FIRST_HUMAN_PLAYER_ID);
             GridPos bobAnchor = host.baseAnchor(WorldHost.FIRST_HUMAN_PLAYER_ID + 1);
-            check.equal(List.of((double) bobAnchor.x(), (double) bobAnchor.y()),
-                    anchorField(bob),
-                    "真人 bob 的玩家行 anchor 是另一个基地槽位锚点 " + bobAnchor);
+            check.that(alice != null && "alice".equals(alice.get("name"))
+                            && longField(alice, "gold") == 300L && longField(alice, "wood") == 60L
+                            && anchorField(alice).equals(List.of((double) aliceAnchor.x(), (double) aliceAnchor.y())),
+                    "players 里有 alice 的行，带账号名与经典开局的 300 金币、60 木材，其 anchor 是她的基地槽位"
+                            + "出生锚点 " + aliceAnchor);
+            check.that(bob != null && longField(bob, "gold") == 300L
+                            && anchorField(bob).equals(List.of((double) bobAnchor.x(), (double) bobAnchor.y())),
+                    "bob 也有自己的 300 金币（存档按玩家各自读取），其 anchor 是另一个基地槽位锚点 " + bobAnchor);
 
             Map<?, ?> scene = playerRow(players, 1);
-            check.that(scene != null && longField(scene, "gold") == 300L
-                            && longField(scene, "wood") == 60L,
-                    "样例玩家 1 也在同一份开局资源里（300 金币、60 木材）");
-            check.equal(List.of((double) host.spawnAnchor().x(), (double) host.spawnAnchor().y()),
-                    anchorField(scene),
-                    "样例玩家 1 的 anchor 是世界的出生锚点 " + host.spawnAnchor());
-            check.that(anchorField(alice) != null && anchorField(bob) != null,
-                    "快照里的真人与样例玩家行都带 anchor");
+            check.that(scene != null && longField(scene, "gold") == 300L && longField(scene, "wood") == 60L
+                            && anchorField(scene).equals(List.of((double) host.spawnAnchor().x(),
+                                    (double) host.spawnAnchor().y()))
+                            && anchorField(alice) != null && anchorField(bob) != null,
+                    "样例玩家 1 也在同一份开局资源里（300 金币、60 木材），其 anchor 是世界的出生锚点 "
+                            + host.spawnAnchor() + "，快照里的真人与样例玩家行都带 anchor");
         } finally {
             host.stop();
         }
@@ -465,9 +431,8 @@ public final class WorldHostCheck {
             check.equal("OK " + WorldHost.FIRST_HUMAN_PLAYER_ID, join(sandbox, "carol"),
                     "无仓库内容下 carol 仍能加入");
             Map<?, ?> carol = playerRow(MiniJson.parseObject(sandbox.snapshotJson()), 3);
-            check.that(carol != null, "没有仓库的玩家也有 players 行");
             check.that(carol != null && longField(carol, "gold") == 0L && longField(carol, "wood") == 0L,
-                    "没有仓库的玩家报告 0 金币、0 木材");
+                    "没有仓库的玩家也有 players 行，并报告 0 金币、0 木材");
         } finally {
             sandbox.stop();
         }
@@ -494,10 +459,9 @@ public final class WorldHostCheck {
             world.spawnBuilding(host.content().building(EconomyContent.MINE_T1), host.player(),
                     host.spawnAnchor().plus(4, 8));
             Map<?, ?> oneMine = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
-            check.equal(30L, longField(oneMine, "goldPerMinute"),
-                    "一座一级矿场报告 goldPerMinute 30");
-            check.equal(0L, longField(oneMine, "woodPerMinute"),
-                    "只有金矿时 woodPerMinute 是 0");
+            check.that(longField(oneMine, "goldPerMinute") == 30L
+                            && longField(oneMine, "woodPerMinute") == 0L,
+                    "一座一级矿场报告 goldPerMinute 30，且只有金矿时 woodPerMinute 是 0");
 
             destroyAllBuildings(world);
             for (int index = 0; index < 3; index++) {
@@ -512,17 +476,15 @@ public final class WorldHostCheck {
             world.spawnBuilding(host.content().building(EconomyContent.TOWER), host.player(),
                     host.spawnAnchor().plus(4, 8));
             Map<?, ?> towerOnly = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
-            check.equal(0L, longField(towerOnly, "goldPerMinute"),
-                    "没有收入标签的塔报告 goldPerMinute 0");
-            check.equal(0L, longField(towerOnly, "woodPerMinute"),
-                    "没有收入标签的塔报告 woodPerMinute 0");
+            check.that(longField(towerOnly, "goldPerMinute") == 0L
+                            && longField(towerOnly, "woodPerMinute") == 0L,
+                    "没有收入标签的塔报告 goldPerMinute 与 woodPerMinute 都是 0");
 
             destroyAllBuildings(world);
             Building site = world.placeBuilding(host.content().building(EconomyContent.MINE_T1),
                     host.player(), host.spawnAnchor().plus(4, 8));
             Map<?, ?> unfinished = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
-            check.equal(0L, longField(unfinished, "goldPerMinute"),
-                    "在建矿场不计入 goldPerMinute");
+            check.equal(0L, longField(unfinished, "goldPerMinute"), "在建矿场不计入 goldPerMinute");
             site.completeConstruction();
             Map<?, ?> finished = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
             check.equal(30L, longField(finished, "goldPerMinute"),
@@ -536,10 +498,9 @@ public final class WorldHostCheck {
             world.spawnBuilding(host.content().building(EconomyContent.LUMBERCAMP), host.player(),
                     host.spawnAnchor().plus(4, 8));
             Map<?, ?> lumber = playerRow(MiniJson.parseObject(host.snapshotJson()), 1);
-            check.equal(0L, longField(lumber, "goldPerMinute"),
-                    "只有伐木场时 goldPerMinute 是 0");
-            check.equal(20L, longField(lumber, "woodPerMinute"),
-                    "一座一级伐木场报告 woodPerMinute 20");
+            check.that(longField(lumber, "goldPerMinute") == 0L
+                            && longField(lumber, "woodPerMinute") == 20L,
+                    "只有伐木场时 goldPerMinute 是 0，一座一级伐木场报告 woodPerMinute 20");
         } finally {
             host.stop();
         }
@@ -572,16 +533,14 @@ public final class WorldHostCheck {
             check.that(warehouse != null, "样例场景里有仓库建筑");
             if (warehouse != null) {
                 Map<?, ?> row = entityRow(document, warehouse.id().value());
-                check.that(row != null, "完工仓库在 entities 里有自己的行");
-                check.equal((long) warehouse.type().sizeX(), longField(row, "w"),
-                        "完工仓库报告的 w 是内容定义的真实宽度（3）");
-                check.equal((long) warehouse.type().sizeY(), longField(row, "h"),
-                        "完工仓库报告的 h 是内容定义的真实高度（3）");
-                check.that(row != null && Math.abs(doubleField(row, "progress") - 1.0) < 1e-9,
-                        "完工仓库的 progress 恰好是 1.00");
-                check.equal(0L, longField(row, "queue"), "没有生产队列的仓库报告 queue 0");
-                check.that(row != null && !row.containsKey("queueItems"),
-                        "没有生产队列的建筑省略 queueItems 数组");
+                check.that(row != null
+                                && longField(row, "w") == (long) warehouse.type().sizeX()
+                                && longField(row, "h") == (long) warehouse.type().sizeY()
+                                && Math.abs(doubleField(row, "progress") - 1.0) < 1e-9
+                                && longField(row, "queue") == 0L
+                                && !row.containsKey("queueItems"),
+                        "完工仓库在 entities 里有自己的行，报告内容定义的真实尺寸（3x3）与恰好 1.00 的 progress，"
+                                + "没有生产队列的仓库报告 queue 0 且省略 queueItems 数组");
             }
 
             List<Unit> units = new ArrayList<>(host.engine().world().units());
@@ -589,13 +548,11 @@ public final class WorldHostCheck {
             if (!units.isEmpty()) {
                 Unit unit = units.get(0);
                 Map<?, ?> row = entityRow(document, unit.id().value());
-                check.equal(1L, longField(row, "w"), "单位报告 w=1");
-                check.equal(1L, longField(row, "h"), "单位报告 h=1");
-                check.that(row != null
-                                && Math.abs(doubleField(row, "progress") - unit.health().fraction()) <= 0.005,
-                        "单位的 progress 就是自己的血量比例（引擎没有单位级建造进度）");
-                check.that(row != null && !row.containsKey("queueItems"),
-                        "单位行没有 queueItems 数组");
+                check.that(row != null && longField(row, "w") == 1L && longField(row, "h") == 1L
+                                && Math.abs(doubleField(row, "progress") - unit.health().fraction()) <= 0.005
+                                && !row.containsKey("queueItems"),
+                        "单位报告 w=h=1，其 progress 就是自己的血量比例（引擎没有单位级建造进度），"
+                                + "且单位行没有 queueItems 数组");
             }
 
             Building site = buildingOf(host, ScenarioContent.ORE_SILO);
@@ -607,27 +564,24 @@ public final class WorldHostCheck {
                 validateSnapshot(check, host.snapshotJson(), "在建工地快照");
                 Map<?, ?> row = entityRow(construction, site.id().value());
                 double progress = doubleField(row, "progress");
-                check.that(progress > 0.0 && progress < 1.0,
-                        "在建工地的 progress 严格在 0 与 1 之间（" + progress + "）");
-                check.equal((long) site.type().sizeX(), longField(row, "w"),
-                        "在建工地同样报告内容定义的真实宽度（2）");
+                check.that(progress > 0.0 && progress < 1.0
+                                && longField(row, "w") == (long) site.type().sizeX(),
+                        "在建工地的 progress 严格在 0 与 1 之间（" + progress + "），并同样报告内容定义的真实宽度（2）");
             }
 
             Building factory = buildingOf(host, ScenarioContent.BARRACKS);
-            check.that(factory != null, "样例场景里有军营，可以接收生产任务");
-            if (factory != null) {
-                List<Recipe> recipes = host.content().recipesFor(factory.type());
-                check.that(!recipes.isEmpty(), "军营有可生产的配方");
-                if (!recipes.isEmpty()) {
-                    host.engine().world().production().enqueue(factory, recipes.get(0), 2);
-                    Map<String, Object> queued = MiniJson.parseObject(host.snapshotJson());
-                    Map<?, ?> row = entityRow(queued, factory.id().value());
-                    check.that(longField(row, "queue") > 0,
-                            "有生产队列的建筑报告 queue > 0（" + longField(row, "queue") + "）");
-                    check.equal(longField(row, "queue"), (long) queueItems(row).size(),
-                            "queueItems 的长度等于 queue");
-                    validateSnapshot(check, host.snapshotJson(), "带生产队列的快照");
-                }
+            check.that(factory != null && !host.content().recipesFor(factory.type()).isEmpty(),
+                    "样例场景里有军营，可以接收生产任务且有可生产的配方");
+            if (factory != null && !host.content().recipesFor(factory.type()).isEmpty()) {
+                host.engine().world().production().enqueue(factory,
+                        host.content().recipesFor(factory.type()).get(0), 2);
+                Map<String, Object> queued = MiniJson.parseObject(host.snapshotJson());
+                Map<?, ?> row = entityRow(queued, factory.id().value());
+                check.that(longField(row, "queue") > 0
+                                && longField(row, "queue") == (long) queueItems(row).size(),
+                        "有生产队列的建筑报告 queue > 0（" + longField(row, "queue")
+                                + "），且 queueItems 的长度等于 queue");
+                validateSnapshot(check, host.snapshotJson(), "带生产队列的快照");
             }
         } finally {
             host.stop();
@@ -660,17 +614,13 @@ public final class WorldHostCheck {
             Map<String, Object> carrying = MiniJson.parseObject(host.snapshotJson());
             validateSnapshot(check, host.snapshotJson(), "带携带单位的快照");
 
-            Map<?, ?> unitRow = entityRow(carrying, engineer.id().value());
-            Map<?, ?> unitContents = contentsOf(unitRow);
-            check.that(unitContents != null, "有货物的单位行带 contents");
-            check.equal(7L, longField(unitContents, gold.key().path()),
-                    "单位 contents 里是 7 个 " + gold.key().path());
-
-            Map<?, ?> warehouseRow = entityRow(carrying, warehouse.id().value());
-            Map<?, ?> stock = contentsOf(warehouseRow);
-            check.that(stock != null, "仓库行仍然带 contents");
-            check.equal(300L, longField(stock, PlayersContent.GOLD), "仓库 contents 里是 300 金币");
-            check.equal(60L, longField(stock, PlayersContent.WOOD), "仓库 contents 里是 60 木材");
+            Map<?, ?> unitContents = contentsOf(entityRow(carrying, engineer.id().value()));
+            Map<?, ?> stock = contentsOf(entityRow(carrying, warehouse.id().value()));
+            check.that(unitContents != null && longField(unitContents, gold.key().path()) == 7L
+                            && stock != null && longField(stock, PlayersContent.GOLD) == 300L
+                            && longField(stock, PlayersContent.WOOD) == 60L,
+                    "有货物的单位行带 contents（7 个 " + gold.key().path() + "），仓库行仍然带 contents（300 金币、"
+                            + "60 木材）");
 
             engineer.cargo().extractAll();
             Map<?, ?> emptyRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
@@ -724,41 +674,35 @@ public final class WorldHostCheck {
             String outputKind = recipe.unitOutput().orElseThrow().key().path();
             host.engine().world().production().enqueue(smithy, recipe, 2);
             Map<?, ?> waiting = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
-            check.equal(2L, longField(waiting, "queue"), "入队两个任务后 queue 是 2");
-            check.that(waiting != null && !waiting.containsKey("queueTicks"),
-                    "任务尚未开工时省略 queueTicks，而不是发明一个剩余时间");
-
             List<?> waitingItems = queueItems(waiting);
-            check.equal(2L, (long) waitingItems.size(), "queueItems 长度等于 queue（2）");
-            check.equal(outputKind, itemKind(waitingItems, 0),
-                    "queueItems 的 kind 是配方产出的单位路径（unit.recruit）");
-            check.equal((long) recipe.durationTicks(), itemTicks(waitingItems, 0),
-                    "尚未开工的任务在 queueItems 里 ticks 与 total 都是配方时长（60）");
-            check.equal((long) recipe.durationTicks(), itemTotal(waitingItems, 0),
-                    "尚未开工的任务在 queueItems 里 total 是配方时长（60）");
-            check.equal((long) recipe.durationTicks(), itemTicks(waitingItems, 1),
-                    "排在后面的任务同样报告 ticks = total = 60");
+            check.that(waiting != null && longField(waiting, "queue") == 2L
+                            && !waiting.containsKey("queueTicks")
+                            && waitingItems.size() == 2
+                            && itemKind(waitingItems, 0).equals(outputKind)
+                            && itemTicks(waitingItems, 0) == (long) recipe.durationTicks()
+                            && itemTotal(waitingItems, 0) == (long) recipe.durationTicks()
+                            && itemTicks(waitingItems, 1) == (long) recipe.durationTicks(),
+                    "入队两个任务后 queue 是 2，任务尚未开工时省略 queueTicks（而不是发明一个剩余时间），"
+                            + "queueItems 长度等于 queue，kind 是配方产出的单位路径（unit.recruit），且未开工的任务 "
+                            + "ticks 与 total 都是配方时长（60）");
 
             host.step();
             Map<?, ?> running = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
-            check.equal((long) recipe.durationTicks(), longField(running, "queueTicks"),
-                    "开工后 queueTicks 是配方的真实剩余 tick（60）");
             List<?> runningItems = queueItems(running);
-            check.equal(2L, (long) runningItems.size(), "开工后 queueItems 仍有 2 项");
-            check.equal(60L, itemTicks(runningItems, 0),
-                    "生产中的第一项 ticks 是引擎剩余 tick（60）");
-            check.equal(60L, itemTicks(runningItems, 1),
-                    "未开始生产的第一项之后的第二项 ticks 仍是 total（60）");
+            check.that(longField(running, "queueTicks") == (long) recipe.durationTicks()
+                            && runningItems.size() == 2
+                            && itemTicks(runningItems, 0) == (long) recipe.durationTicks()
+                            && itemTicks(runningItems, 1) == (long) recipe.durationTicks(),
+                    "开工后 queueTicks 是配方的真实剩余 tick（60），queueItems 仍有 2 项，生产中的第一项 ticks "
+                            + "是引擎剩余 tick（60），其后的第二项 ticks 仍是 total（60）");
 
             for (int index = 0; index < 5; index++) {
                 host.step();
             }
             Map<?, ?> advanced = entityRow(MiniJson.parseObject(host.snapshotJson()), smithy.id().value());
             List<?> advancedItems = queueItems(advanced);
-            check.equal(55L, itemTicks(advancedItems, 0),
-                    "生产 5 tick 后 queueItems 第一项 ticks 是 55");
-            check.equal(60L, itemTicks(advancedItems, 1),
-                    "第二项仍未开工，ticks 保持 total 60");
+            check.that(itemTicks(advancedItems, 0) == 55L && itemTicks(advancedItems, 1) == 60L,
+                    "生产 5 tick 后 queueItems 第一项 ticks 是 55，第二项仍未开工、ticks 保持 total 60");
             validateSnapshot(check, host.snapshotJson(), "生产中的快照");
         } finally {
             host.stop();
@@ -795,23 +739,26 @@ public final class WorldHostCheck {
             host.engine().world().production().enqueue(barracks, recipe, 2);
             Map<?, ?> waiting = entityRow(MiniJson.parseObject(host.snapshotJson()), barracks.id().value());
             Map<?, ?> producing = objectField(waiting, "producingNow");
-            check.that(producing != null, "有排队任务的建筑行带 producingNow");
-            check.equal(recipe.unitOutput().orElseThrow().key().path(), stringField(producing, "kind"),
-                    "producingNow.kind 是配方产出的单位路径");
-            check.equal(1L, longField(producing, "position"), "producingNow.position 从 1 开始");
-            check.equal(2L, longField(producing, "length"), "producingNow.length 是未完成任务数");
+            check.that(producing != null
+                            && stringField(producing, "kind")
+                                    .equals(recipe.unitOutput().orElseThrow().key().path())
+                            && longField(producing, "position") == 1L
+                            && longField(producing, "length") == 2L,
+                    "有排队任务的建筑行带 producingNow：kind 是配方产出的单位路径，position 从 1 开始，"
+                            + "length 是未完成任务数");
 
             Map<?, ?> demand = objectField(waiting, "demand");
-            check.that(demand != null && Boolean.FALSE.equals(demand.get("ready")),
-                    "建筑缓冲区为空时 demand.ready 是 false");
             List<?> items = listField(demand, "items");
-            check.equal(1L, (long) items.size(), "demand.items 只列出配方输入");
             Map<?, ?> first = items.isEmpty() || !(items.get(0) instanceof Map<?, ?> map) ? null : map;
-            check.equal(TaskContent.GOLD, stringField(first, "item"), "demand.items[0].item 是配方输入路径");
-            check.equal(10L, longField(first, "need"), "need 是配方的输入数量");
-            check.equal(0L, longField(first, "have"), "have 是建筑自己持有的数量");
-            check.that(first != null && !first.containsKey("stock"),
-                    "demand.items 不再带仓库可调拨量（Q10：只看兵工厂自己的缓存）");
+            check.that(demand != null && Boolean.FALSE.equals(demand.get("ready"))
+                            && items.size() == 1
+                            && TaskContent.GOLD.equals(stringField(first, "item"))
+                            && longField(first, "need") == 10L
+                            && longField(first, "have") == 0L
+                            && !first.containsKey("stock"),
+                    "建筑缓冲区为空时 demand.ready 是 false，demand.items 只列出配方输入（item 是配方输入路径、"
+                            + "need 是配方的输入数量 10、have 是建筑自己持有的数量 0），且不再带仓库可调拨量 "
+                            + "（Q10：只看兵工厂自己的缓存）");
 
             ItemBundle inputs = recipe.inputs();
             for (ItemBundle.Amount component : inputs.components()) {
@@ -820,12 +767,11 @@ public final class WorldHostCheck {
             Map<?, ?> suppliedRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
                     barracks.id().value());
             Map<?, ?> supplied = objectField(suppliedRow, "demand");
-            check.that(supplied != null && Boolean.TRUE.equals(supplied.get("ready")),
-                    "输入进入建筑缓冲区后 demand.ready 变成 true");
-            List<?> suppliedItems = listField(supplied, "items");
-            Map<?, ?> suppliedFirst = suppliedItems.isEmpty()
-                    || !(suppliedItems.get(0) instanceof Map<?, ?> map) ? null : map;
-            check.equal(10L, longField(suppliedFirst, "have"), "have 报告真实持有量");
+            Map<?, ?> suppliedFirst = listField(supplied, "items").isEmpty()
+                    || !(listField(supplied, "items").get(0) instanceof Map<?, ?> map) ? null : map;
+            check.that(supplied != null && Boolean.TRUE.equals(supplied.get("ready"))
+                            && longField(suppliedFirst, "have") == 10L,
+                    "输入进入建筑缓冲区后 demand.ready 变成 true，have 报告真实持有量");
 
             Map<?, ?> warehouseRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
                     warehouse.id().value());
@@ -863,42 +809,45 @@ public final class WorldHostCheck {
             OrderContext context = new OrderContext(world, engineer,
                     new Tick(world.tickNumber(), WorldHost.TICKS_PER_SECOND));
             engineer.orders().clear(context);
-            check.equal("空闲", taskOf(host, engineer), "没有订单的工程师报告 空闲");
+            String idleTask = taskOf(host, engineer);
 
             Building site = world.spawnBuilding(host.content().building(TaskContent.BARRACKS),
                     host.player(), host.spawnAnchor().plus(10, 10));
             site.restartConstruction();
             engineer.orders().replace(context, new BuildOrder(site));
             engineer.orders().tick(context);
-            check.equal("建造中 → " + site.displayName(), taskOf(host, engineer),
-                    "建造订单报告 建造中 → <建筑>");
+            String buildTask = taskOf(host, engineer);
 
             warehouse.health().damage(100);
             engineer.orders().replace(context, new RepairOrder(warehouse));
             engineer.orders().tick(context);
-            check.equal("修理中 → " + warehouse.displayName(), taskOf(host, engineer),
-                    "修理订单报告 修理中 → <建筑>");
+            String repairTask = taskOf(host, engineer);
 
             WarehouseLogistics logistics = WarehouseLogistics.of(host.player());
+            String haulTask = null;
             check.that(logistics != null, "样例玩家有仓库物流网络");
             if (logistics != null) {
                 var job = logistics.requestDeliveryJob(barracks, ItemBundle.of(
                         host.content().item(TaskContent.GOLD), 10));
-                check.that(job.isPresent(), "仓库能开出一次真实搬运任务");
                 if (job.isPresent()) {
                     engineer.orders().replace(context, new HaulOrder(job.get()));
                     engineer.orders().tick(context);
-                    check.equal("搬运中 → " + barracks.displayName(), taskOf(host, engineer),
-                            "搬运订单报告 搬运中 → <建筑>");
+                    haulTask = taskOf(host, engineer);
                 }
             }
+            check.that("空闲".equals(idleTask)
+                            && buildTask != null && buildTask.equals("建造中 → " + site.displayName())
+                            && repairTask != null && repairTask.equals("修理中 → " + warehouse.displayName())
+                            && haulTask != null && haulTask.equals("搬运中 → " + barracks.displayName()),
+                    "任务行来自订单头：没有订单报告 空闲，建造/修理/搬运订单各报告 建造中/修理中/搬运中 → <建筑>，"
+                            + "且仓库能开出一次真实搬运任务");
 
             engineer.orders().clear(context);
-            check.equal("空闲", taskOf(host, engineer), "订单清空后工程师回到 空闲");
             Map<?, ?> soldierRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
                     soldier.id().value());
-            check.that(soldierRow != null && !soldierRow.containsKey("task"),
-                    "非工程师单位行省略 task");
+            check.that(taskOf(host, engineer).equals("空闲")
+                            && soldierRow != null && !soldierRow.containsKey("task"),
+                    "订单清空后工程师回到 空闲，非工程师单位行省略 task");
             validateSnapshot(check, host.snapshotJson(), "带任务行的快照");
         } finally {
             host.stop();
@@ -929,9 +878,9 @@ public final class WorldHostCheck {
                     eventTick));
             Map<?, ?> row = entityRow(MiniJson.parseObject(host.snapshotJson()), engineer.id().value());
             Map<?, ?> pop = objectField(row, "pop");
-            check.that(pop != null, "引擎事件后单位行带 pop");
-            check.equal("pickup", stringField(pop, "kind"), "pop.kind 是 pickup");
-            check.equal(eventTick, longField(pop, "tick"), "pop.tick 是事件的模拟 tick");
+            check.that(pop != null && "pickup".equals(stringField(pop, "kind"))
+                            && longField(pop, "tick") == eventTick,
+                    "引擎事件后单位行带 pop，其 kind 是 pickup、tick 是事件的模拟 tick");
 
             host.step();
             Map<?, ?> fresh = entityRow(MiniJson.parseObject(host.snapshotJson()), engineer.id().value());
@@ -1094,11 +1043,10 @@ public final class WorldHostCheck {
             List<List<String>> firstTiles = tilesOf(first.snapshotJson());
             List<List<String>> secondTiles = tilesOf(second.snapshotJson());
             List<List<String>> differentTiles = tilesOf(different.snapshotJson());
-            check.that(firstTiles.equals(secondTiles), "同一种子两次产生相同的地形矩阵");
-            check.that(first.snapshotJson().equals(second.snapshotJson()),
-                    "同一种子两次产生完全相同的快照");
-            check.that(!firstTiles.equals(differentTiles), "不同种子产生不同的地形矩阵");
-            check.that(!first.snapshotJson().equals(different.snapshotJson()), "不同种子的快照不同");
+            check.that(firstTiles.equals(secondTiles) && first.snapshotJson().equals(second.snapshotJson())
+                            && !firstTiles.equals(differentTiles)
+                            && !first.snapshotJson().equals(different.snapshotJson()),
+                    "同一种子两次产生完全相同的地形矩阵与快照，不同种子的地形矩阵与快照都不同");
         } finally {
             first.stop();
             second.stop();
@@ -1123,52 +1071,53 @@ public final class WorldHostCheck {
             check.note("世界快照检查的服务器绑定在 127.0.0.1:" + port + "（静态根 " + root + "）");
 
             Response snapshot = request(port, "GET", "/world/snapshot");
-            check.equal(200, snapshot.status(), "GET /world/snapshot 返回 200");
-            check.equal("application/json; charset=utf-8", snapshot.header("content-type"),
-                    "快照的 Content-Type 是 JSON");
-            check.equal("no-store", snapshot.header("cache-control"), "快照使用 Cache-Control: no-store");
             String body = snapshot.text();
-            check.that(body.startsWith("{") && body.endsWith("}"), "快照正文以 { 开头、以 } 结尾");
-            check.that(snapshot.header("content-length") != null, "快照带 Content-Length");
+            check.that(snapshot.status() == 200
+                            && "application/json; charset=utf-8".equals(snapshot.header("content-type"))
+                            && "no-store".equals(snapshot.header("cache-control"))
+                            && body.startsWith("{") && body.endsWith("}")
+                            && snapshot.header("content-length") != null,
+                    "GET /world/snapshot 返回 200，Content-Type 是 JSON、Cache-Control: no-store，正文以 { 开头、"
+                            + "以 } 结尾并带 Content-Length");
             validateSnapshot(check, body, "HTTP 快照");
 
             Response windowed = request(port, "GET", "/world/snapshot?cx=128&cy=128&r=16");
-            check.equal(200, windowed.status(), "带参数 GET /world/snapshot?cx=128&cy=128&r=16 返回 200");
             Map<String, Object> windowDocument = MiniJson.parseObject(windowed.text());
-            check.equal(32L, longField(windowDocument, "width"), "带参数快照的窗口宽是 32");
-            check.equal(112L, longField(windowDocument, "originX"), "带参数快照的 originX 是 112");
-            check.equal(1024, tileCount(windowed.text()), "带参数快照的 tiles 恰好有 1024 个条目");
+            check.that(windowed.status() == 200 && longField(windowDocument, "width") == 32L
+                            && longField(windowDocument, "originX") == 112L
+                            && tileCount(windowed.text()) == 1024,
+                    "带参数 GET /world/snapshot?cx=128&cy=128&r=16 返回 200，窗口宽是 32、originX 是 112，tiles "
+                            + "恰好有 1024 个条目");
 
             Response far = request(port, "GET", "/world/snapshot?cx=100000&cy=-50000&r=16");
-            check.equal(200, far.status(), "远景 GET /world/snapshot?cx=100000&cy=-50000&r=16 返回 200");
             Map<String, Object> farDocument = MiniJson.parseObject(far.text());
-            check.equal(99_984L, longField(farDocument, "originX"), "HTTP 远景窗口的 originX 是 99984");
-            check.equal(-50_016L, longField(farDocument, "originY"), "HTTP 远景窗口的 originY 是 -50016");
-            check.equal(32L, longField(farDocument, "width"), "HTTP 远景窗口的宽是 32");
-            check.equal(1024, tileCount(far.text()), "HTTP 远景窗口的 tiles 恰好有 1024 个条目");
-            check.equal(tilesOf(host.snapshotJson(100_000, -50_000, 16)), tilesOf(far.text()),
-                    "HTTP 远景窗口的地形与直接快照同一坐标完全一致");
-            check.that(!tilePaths(far.text()).isEmpty(), "HTTP 远景窗口确实包含地形: " + tilePaths(far.text()));
+            check.that(far.status() == 200 && longField(farDocument, "originX") == 99_984L
+                            && longField(farDocument, "originY") == -50_016L
+                            && longField(farDocument, "width") == 32L
+                            && tileCount(far.text()) == 1024
+                            && tilesOf(host.snapshotJson(100_000, -50_000, 16)).equals(tilesOf(far.text()))
+                            && !tilePaths(far.text()).isEmpty(),
+                    "远景 GET /world/snapshot?cx=100000&cy=-50000&r=16 返回 200，originX/originY 是 99984/-50016、"
+                            + "宽是 32、tiles 恰好有 1024 个条目，其地形与直接快照同一坐标完全一致并确实包含地形: "
+                            + tilePaths(far.text()));
 
             Response clamped = request(port, "GET", "/world/snapshot?cx=0&cy=0&r=999");
-            check.equal(200, clamped.status(), "超范围半径的 HTTP 请求仍返回 200");
             Map<String, Object> clampedDocument = MiniJson.parseObject(clamped.text());
-            check.equal(128L, longField(clampedDocument, "width"), "HTTP 请求的超大半径被夹到 64（窗口 128）");
-            check.equal(-64L, longField(clampedDocument, "originX"),
-                    "HTTP 原点请求的 originX 是 -64，只夹半径、不夹地图");
-            check.equal(-64L, longField(clampedDocument, "originY"),
-                    "HTTP 原点请求的 originY 是 -64，只夹半径、不夹地图");
-            check.equal(128 * 128, tileCount(clamped.text()), "夹紧后的 HTTP 窗口恰好有 16384 个条目");
+            check.that(clamped.status() == 200 && longField(clampedDocument, "width") == 128L
+                            && longField(clampedDocument, "originX") == -64L
+                            && longField(clampedDocument, "originY") == -64L
+                            && tileCount(clamped.text()) == 128 * 128,
+                    "超范围半径的 HTTP 请求仍返回 200，超大半径被夹到 64（窗口 128），原点请求的 origin 是 -64 "
+                            + "（只夹半径、不夹地图），夹紧后的窗口恰好有 16384 个条目");
 
             host.stop();
             Response unavailable = request(port, "GET", "/world/snapshot");
-            check.equal(503, unavailable.status(), "世界停止后 GET /world/snapshot 返回 503");
-            check.that(unavailable.text().contains("world is not running"),
-                    "503 的正文说明世界没有运行: " + unavailable.text());
+            check.that(unavailable.status() == 503 && unavailable.text().contains("world is not running"),
+                    "世界停止后 GET /world/snapshot 返回 503，正文说明世界没有运行: " + unavailable.text());
 
             Response post = request(port, "POST", "/world/snapshot");
-            check.equal(405, post.status(), "POST /world/snapshot 返回 405");
-            check.equal("GET, HEAD", post.header("allow"), "405 说明只允许 GET 与 HEAD");
+            check.that(post.status() == 405 && "GET, HEAD".equals(post.header("allow")),
+                    "POST /world/snapshot 返回 405，说明只允许 GET 与 HEAD");
         } finally {
             host.stop();
             server.stop();
@@ -1250,9 +1199,8 @@ public final class WorldHostCheck {
     // ---------------------------------------------------------------------------------------------
 
     private static void validateSnapshot(Check check, String json, String label) {
-        check.that(balanced(json), label + "：花括号与方括号配对，字符串闭合");
-        check.that(!json.contains("NaN") && !json.contains("Infinity"),
-                label + "：没有 NaN 或 Infinity");
+        check.that(balanced(json) && !json.contains("NaN") && !json.contains("Infinity"),
+                label + "：花括号与方括号配对、字符串闭合，且没有 NaN 或 Infinity");
         Map<String, Object> document;
         try {
             document = MiniJson.parseObject(json);
@@ -1260,25 +1208,20 @@ public final class WorldHostCheck {
             check.that(false, label + "：可由手写解析器读取（" + failure.getMessage() + "）");
             return;
         }
-        check.that(true, label + "：可由手写解析器读取");
-
-        for (String key : List.of("tick", "originX", "originY", "width", "height", "tilePixels", "tiles",
-                "entities", "players")) {
-            check.that(document.containsKey(key), label + "：包含字段 " + key);
-        }
+        check.that(List.of("tick", "originX", "originY", "width", "height", "tilePixels", "tiles",
+                        "entities", "players").stream().allMatch(document::containsKey)
+                        && !document.containsKey("mapWidth") && !document.containsKey("mapHeight")
+                        && !document.containsKey("mapSize"),
+                label + "：包含全部顶层字段且没有地图宽高字段（世界无界，originX/originY 可以是负数或很大）");
         long tick = number(document, "tick");
         int originX = (int) number(document, "originX");
         int originY = (int) number(document, "originY");
         int width = (int) number(document, "width");
         int height = (int) number(document, "height");
-        check.that(tick >= 0, label + "：tick 不是负数");
-        check.that(width > 0 && height > 0, label + "：宽高是正数");
-        check.that(!document.containsKey("mapWidth") && !document.containsKey("mapHeight")
-                        && !document.containsKey("mapSize"),
-                label + "：没有地图宽高字段（世界无界，originX/originY 可以是负数或很大）");
-        check.that((long) originX == number(document, "originX")
+        check.that(tick >= 0 && width > 0 && height > 0
+                        && (long) originX == number(document, "originX")
                         && (long) originY == number(document, "originY"),
-                label + "：originX/originY 是 int 范围内的绝对 tile 坐标");
+                label + "：tick 不是负数、宽高是正数，originX/originY 是 int 范围内的绝对 tile 坐标");
 
         Object tilesValue = document.get("tiles");
         int tileCount = 0;
@@ -1299,8 +1242,8 @@ public final class WorldHostCheck {
                 }
             }
         }
-        check.that(tilesShaped, label + "：tiles 是 height 行、每行 width 个字符串");
-        check.equal(width * height, tileCount, label + "：tiles 恰好有 w*h 个条目");
+        check.that(tilesShaped && tileCount == width * height,
+                label + "：tiles 是 height 行、每行 width 个字符串，恰好有 w*h 个条目");
 
         Object entitiesValue = document.get("entities");
         boolean entitiesShaped = entitiesValue instanceof List<?>;
@@ -1367,9 +1310,8 @@ public final class WorldHostCheck {
                 }
             }
         }
-        check.that(entitiesShaped, label + "：entities 是数组");
-        check.that(entityCount > 0, label + "：样例场景至少有一个实体");
-        check.that(everyEntityValid, label + "：每个实体都有 id/kind/x/y，坐标是有限的绝对世界坐标");
+        check.that(entitiesShaped && entityCount > 0 && everyEntityValid,
+                label + "：entities 是非空数组，每个实体都有 id/kind/x/y，坐标是有限的绝对世界坐标");
         check.that(queueItemsValid,
                 label + "：queueItems 每项都有 kind/ticks/total，长度等于 queue 且 0 <= ticks <= total");
 
@@ -1414,9 +1356,8 @@ public final class WorldHostCheck {
                 previousPlayerId = idValue;
             }
         }
-        check.that(playersShaped,
-                label + "：players 每行都有 id/name/gold/wood/goldPerMinute/woodPerMinute 且数值非负");
-        check.that(playersOrdered, label + "：players 按 id 升序排列");
+        check.that(playersShaped && playersOrdered,
+                label + "：players 每行都有 id/name/gold/wood/goldPerMinute/woodPerMinute 且数值非负，按 id 升序排列");
     }
 
     private static long number(Map<String, Object> document, String key) {

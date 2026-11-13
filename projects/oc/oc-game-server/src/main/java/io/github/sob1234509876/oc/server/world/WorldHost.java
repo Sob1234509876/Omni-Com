@@ -1827,6 +1827,243 @@ public final class WorldHost {
     }
 
     /**
+     * The cached JSON of the served content catalogue; built on first use under the state lock.
+     *
+     * <p>The registry is immutable for the life of the host, so the document never changes and every
+     * snapshot after the first reuses the same bytes.
+     */
+    private String contentCatalogueJson;
+
+    /**
+     * Serialises the served catalogue as the snapshot's raw {@code content} object: the display names,
+     * costs, footprints and times a client needs to compute HUD values itself, plus every recipe's
+     * inputs and outputs.
+     *
+     * <p>The shape is compact and stable:
+     * <pre>{@code
+     * {"dimensions":{"overworld":{"name":"Earth"},"hell":{"name":"地狱"}},
+     *  "items":{"gold":{"name":"金币"},"wood":{"name":"木材"}},
+     *  "buildings":{"building.armory.t1":{"name":"兵营·普通","size":[3,3],"health":600,
+     *      "cost":{"gold":100,"wood":20},"buildTime":150,"level":1,"storage":6,
+     *      "buildable":true,"income":0,"woodIncome":0,
+     *      "upgrades":[{"to":"building.armory.t2","gold":140,"wood":40},
+     *                  {"to":"building.purgatory","gold":260,"wood":40}]}},
+     *  "units":{"unit.melee.t1":{"name":"普通","role":"combat","health":100,"speed":2.2,
+     *      "cost":{"gold":20},"buildTime":60,"damage":10,"range":0.9,"armour":1}},
+     *  "recipes":{"recipe.train.melee.t1":{"producers":["armory"],"inputs":{"gold":20},
+     *      "output":"unit.melee.t1","amount":1,"duration":60,"level":1}}}
+     * }</pre>
+     *
+     * <p>Fields are omitted when they carry no information: an empty cost object, a producer with no
+     * storage, a warehouse flag of false, a cargo hold of zero and the item-output amount of a unit
+     * recipe all stay unwritten. Costs name item paths and can hold any registered item, not only gold
+     * and wood; income is the {@code income_<n>} / {@code wood_income_<n>} tag rate the snapshot's
+     * player rows sum, published per building type so a client can compute it too. An upgrade entry's
+     * {@code gold} / {@code wood} are the two resources the wire carries; other item kinds stay out as
+     * everywhere else on the wire. Recipes are keyed by their content path and name their producer
+     * <em>tags</em> - the catalogue selects recipes by tag plus level, not by a concrete building.
+     */
+    private String contentCatalogueJson() {
+        if (contentCatalogueJson == null) {
+            contentCatalogueJson = buildContentCatalogueJson();
+        }
+        return contentCatalogueJson;
+    }
+
+    /** Builds the catalogue document; see {@link #contentCatalogueJson()} for the shape. */
+    private String buildContentCatalogueJson() {
+        StringBuilder json = new StringBuilder(4096 + content.buildings().size() * 192
+                + content.units().size() * 128 + content.recipes().size() * 96);
+        json.append("{\"dimensions\":{");
+        boolean first = true;
+        for (Dimension dimension : dimensions()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendJsonString(json, dimension.id().key());
+            json.append(":{\"name\":");
+            appendJsonString(json, dimension.profile().displayName());
+            json.append('}');
+        }
+        json.append("},\"items\":{");
+        first = true;
+        for (ItemType item : content.items()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendJsonString(json, item.key().path());
+            json.append(":{\"name\":");
+            appendJsonString(json, item.displayName());
+            json.append('}');
+        }
+        json.append("},\"buildings\":{");
+        first = true;
+        for (BuildingType type : content.buildings()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendBuildingType(json, type);
+        }
+        json.append("},\"units\":{");
+        first = true;
+        for (UnitType type : content.units()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendUnitType(json, type);
+        }
+        json.append("},\"recipes\":{");
+        first = true;
+        for (Recipe recipe : content.recipes()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendRecipe(json, recipe);
+        }
+        json.append("}}");
+        return json.toString();
+    }
+
+    /** One building type's catalogue entry; see {@link #contentCatalogueJson()}. */
+    private void appendBuildingType(StringBuilder json, BuildingType type) {
+        appendJsonString(json, type.key().path());
+        json.append(":{\"name\":");
+        appendJsonString(json, type.displayName());
+        json.append(",\"size\":[").append(type.sizeX()).append(',').append(type.sizeY()).append(']')
+                .append(",\"health\":").append(type.maxHealth().toLongSaturated());
+        appendCost(json, type.cost());
+        json.append(",\"buildTime\":").append(type.buildTimeTicks())
+                .append(",\"level\":").append(type.level());
+        if (type.isStorage()) {
+            json.append(",\"storage\":").append(type.storageSlots().toLongSaturated());
+        }
+        if (type.isWarehouse()) {
+            json.append(",\"warehouse\":true");
+        }
+        if (!type.isBuildable()) {
+            json.append(",\"buildable\":false");
+        }
+        long income = taggedRate(type, INCOME_TAG_PREFIX);
+        long woodIncome = taggedRate(type, WOOD_INCOME_TAG_PREFIX);
+        if (income > 0L) {
+            json.append(",\"income\":").append(income);
+        }
+        if (woodIncome > 0L) {
+            json.append(",\"woodIncome\":").append(woodIncome);
+        }
+        if (type.canAttack()) {
+            json.append(",\"damage\":").append(type.attackDamage().toLongSaturated())
+                    .append(",\"range\":").append(oneDecimal(type.attackRange()));
+        }
+        if (!type.upgradeOptions().isEmpty()) {
+            json.append(",\"upgrades\":[");
+            for (int index = 0; index < type.upgradeOptions().size(); index++) {
+                BuildingType.UpgradeOption option = type.upgradeOptions().get(index);
+                if (index > 0) {
+                    json.append(',');
+                }
+                json.append("{\"to\":");
+                appendJsonString(json, option.target().path());
+                appendCost(json, option.cost());
+                json.append('}');
+            }
+            json.append(']');
+        }
+        json.append('}');
+    }
+
+    /** One unit type's catalogue entry; see {@link #contentCatalogueJson()}. */
+    private void appendUnitType(StringBuilder json, UnitType type) {
+        appendJsonString(json, type.key().path());
+        json.append(":{\"name\":");
+        appendJsonString(json, type.displayName());
+        json.append(",\"role\":");
+        appendJsonString(json, type.role().id());
+        json.append(",\"health\":").append(type.maxHealth().toLongSaturated())
+                .append(",\"speed\":").append(oneDecimal(type.speed()));
+        appendCost(json, type.cost());
+        json.append(",\"buildTime\":").append(type.buildTimeTicks());
+        if (type.canAttack()) {
+            json.append(",\"damage\":").append(type.attackDamage().toLongSaturated())
+                    .append(",\"range\":").append(oneDecimal(type.attackRange()))
+                    .append(",\"attackCooldown\":").append(type.attackCooldownTicks());
+        }
+        if (type.armour() != 0) {
+            json.append(",\"armour\":").append(type.armour());
+        }
+        if (type.canHaul()) {
+            json.append(",\"cargo\":").append(type.cargoCapacity().toLongSaturated());
+        }
+        if (type.hasTag(BUILDER_TAG)) {
+            json.append(",\"builder\":true");
+        }
+        if (type.upgradeTo().isPresent()) {
+            json.append(",\"upgradeTo\":");
+            appendJsonString(json, type.upgradeTo().orElseThrow().path());
+            appendCost(json, type.upgradeCost());
+        }
+        json.append('}');
+    }
+
+    /** One recipe's catalogue entry; see {@link #contentCatalogueJson()}. */
+    private void appendRecipe(StringBuilder json, Recipe recipe) {
+        appendJsonString(json, recipe.key().path());
+        json.append(":{\"producers\":[");
+        boolean firstTag = true;
+        for (String tag : recipe.producerTags()) {
+            if (!firstTag) {
+                json.append(',');
+            }
+            firstTag = false;
+            appendJsonString(json, tag);
+        }
+        json.append("],\"inputs\":");
+        appendBundle(json, recipe.inputs());
+        if (recipe.isUnitRecipe()) {
+            json.append(",\"output\":");
+            appendJsonString(json, recipe.unitOutput().orElseThrow().key().path());
+        } else {
+            json.append(",\"items\":");
+            appendBundle(json, recipe.itemOutputs());
+        }
+        json.append(",\"duration\":").append(recipe.durationTicks())
+                .append(",\"level\":").append(recipe.requiredBuildingLevel())
+                .append('}');
+    }
+
+    /** Writes a cost object {@code ,"cost":{"gold":100}}; omitted entirely when the bundle is empty. */
+    private static void appendCost(StringBuilder json, ItemBundle bundle) {
+        if (bundle.isEmpty()) {
+            return;
+        }
+        json.append(",\"cost\":");
+        appendBundle(json, bundle);
+    }
+
+    /** Writes a compact {@code {"gold":20,"wood":5}} object of non-zero amounts. */
+    private static void appendBundle(StringBuilder json, ItemBundle bundle) {
+        json.append('{');
+        boolean first = true;
+        for (ItemBundle.Amount component : bundle.components()) {
+            if (component.amount().isZero()) {
+                continue;
+            }
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendJsonString(json, component.item().key().path());
+            json.append(':').append(component.amount().toLongSaturated());
+        }
+        json.append('}');
+    }
+
+    /**
      * Resolves a dimension key from the HTTP query, for example {@code hell}. Empty for a missing or
      * malformed key and for a key this world does not declare, which the route reports as a client error.
      */
@@ -1911,9 +2148,10 @@ public final class WorldHost {
      */
     private String buildSnapshotJson(DimensionId dimension, int originX, int originY, int size) {
         World world = engine.world();
-        List<Entity> entities = new ArrayList<>(world.entities());
-        entities.removeIf(entity -> !entity.isAlive()
-                || entity.dimensionIfAny().filter(drawn -> !drawn.equals(dimension)).isPresent());
+        // The drawn dimension's own list is exactly the entity set this document reports, so iterating
+        // it skips the copy of every other dimension's entities that the global view would allocate.
+        List<Entity> entities = new ArrayList<>(world.dimension(dimension).entities());
+        entities.removeIf(entity -> !entity.isAlive());
         entities.sort(Comparator.comparing(Entity::id));
 
         // The engine always installs a production system on the host's builder, so reading it once per
@@ -2050,7 +2288,11 @@ public final class WorldHost {
             firstBuildable = false;
             appendJsonString(json, type.key().path());
         }
-        json.append("],\"players\":[");
+        json.append("],\"content\":");
+        // The catalogue is immutable for the life of the host, so the document is built once and then
+        // reused byte for byte; only the first snapshot of a server pays for it.
+        json.append(contentCatalogueJson());
+        json.append(",\"players\":[");
         List<Player> players = new ArrayList<>(engine.world().players());
         players.sort(Comparator.comparingInt((Player worldPlayer) -> worldPlayer.id().value()));
         boolean firstPlayer = true;
@@ -2062,8 +2304,11 @@ public final class WorldHost {
             ItemBundle available = worldPlayer.hasLogistics()
                     ? worldPlayer.logistics().available()
                     : ItemBundle.EMPTY;
-            long goldPerMinute = incomePerMinute(worldPlayer, INCOME_TAG_PREFIX);
-            long woodPerMinute = incomePerMinute(worldPlayer, WOOD_INCOME_TAG_PREFIX);
+            // One pass over the buildings per player serves both rates; the two scans used to double the
+            // per-snapshot building walk for no behavioural difference.
+            long[] income = incomeRates(worldPlayer);
+            long goldPerMinute = income[0];
+            long woodPerMinute = income[1];
             json.append("{\"id\":").append(worldPlayer.id().value())
                     .append(",\"name\":");
             appendJsonString(json, worldPlayer.name());
@@ -2484,6 +2729,10 @@ public final class WorldHost {
         json.append(",\"reclaim\":{\"gold\":").append(amountOf(refund, goldItem))
                 .append(",\"wood\":").append(amountOf(refund, woodItem))
                 .append('}');
+        // The raw paid-so-far bundle: with the type's catalogue cost the client computes the same
+        // construction progress the server's `progress` fraction shows, from raw numbers.
+        json.append(",\"invested\":");
+        appendBundle(json, building.invested());
     }
 
     /**
@@ -2633,31 +2882,33 @@ public final class WorldHost {
     }
 
     /**
-     * One player's income rate for one resource, in units per minute.
+     * One player's two income rates - gold at index 0, wood at index 1 - in units per minute.
      *
-     * <p>The sum runs over the player's buildings that are alive and constructed - the same two
+     * <p>The single sum runs over the player's buildings that are alive and constructed - the same two
      * conditions the classic payout hook applies - and takes each type's first matching
-     * {@code prefix<number>} tag. The type is resolved through the served {@link ContentRegistry} rather
-     * than trusting a foreign type instance, so the number on the wire is the number the catalogue
-     * actually published. A type that is no longer in the registry, a non-matching tag and a malformed or
-     * negative number all contribute zero; the sum saturates instead of overflowing.
+     * {@code prefix<number>} tag for both prefixes at once. The type is resolved through the served
+     * {@link ContentRegistry} rather than trusting a foreign type instance, so the number on the wire is
+     * the number the catalogue actually published. A type that is no longer in the registry, a
+     * non-matching tag and a malformed or negative number all contribute zero; the sums saturate instead
+     * of overflowing.
      *
      * @param player the player whose buildings are summed
-     * @param prefix either {@link #INCOME_TAG_PREFIX} or {@link #WOOD_INCOME_TAG_PREFIX}
-     * @return a non-negative rate in units per minute, or {@code 0} when nothing publishes one
+     * @return two non-negative rates in units per minute, each {@code 0} when nothing publishes one
      */
-    private long incomePerMinute(Player player, String prefix) {
-        long total = 0L;
+    private long[] incomeRates(Player player) {
+        long gold = 0L;
+        long wood = 0L;
         for (Building building : engine.world().buildingsOf(player)) {
             if (!building.isAlive() || !building.isConstructed()) {
                 continue;
             }
             BuildingType type = content.buildingOrNull(building.type().key());
             if (type != null) {
-                total = saturatedAdd(total, taggedRate(type, prefix));
+                gold = saturatedAdd(gold, taggedRate(type, INCOME_TAG_PREFIX));
+                wood = saturatedAdd(wood, taggedRate(type, WOOD_INCOME_TAG_PREFIX));
             }
         }
-        return total;
+        return new long[] {gold, wood};
     }
 
     /** The first {@code prefix<number>} tag of a type as a non-negative rate, or {@code 0}. */

@@ -62,6 +62,18 @@ public final class Dimension {
     private final List<Building> buildings = new ArrayList<>();
     private final List<Entity> pendingRemoval = new ArrayList<>();
 
+    /**
+     * Tiles covered by a living, non-gateway building: the obstacle layer pathfinding and stepping read.
+     *
+     * <p>Maintained incrementally at registration and at destruction/detach time, so a query is one hash
+     * lookup instead of a scan over every building's footprint. Gateway-tagged buildings (gates and pads)
+     * stay walkable because a traveller has to stand on the pad to cross.
+     */
+    private final java.util.Set<Long> buildingTiles = new java.util.HashSet<>();
+
+    /** The building-aware terrain view handed to pathfinding and movement; created on first use. */
+    private TerrainMap pathTerrain;
+
     public Dimension(DimensionId id, DimensionProfile profile, TerrainMap map, Supplier<EntityId> idSource,
             java.util.function.LongSupplier tickSource, io.github.sob1234509876.oc.rts.event.EventBus events) {
         this.id = Objects.requireNonNull(id, "id");
@@ -89,6 +101,51 @@ public final class Dimension {
 
     public TerrainMap map() {
         return map;
+    }
+
+    /**
+     * The terrain of this dimension as pathfinding and stepping see it: like {@link #map()}, except that
+     * a tile covered by a living, non-gateway building is not passable. This is the single source of the
+     * "buildings are obstacles" rule - the path finder, the path service's goal adjustment and the
+     * movement system's step resolution all query this view, so a planned route can never lead through a
+     * warehouse and a walking unit slides along a wall instead of across it.
+     *
+     * <p>Placement legality is deliberately <em>not</em> answered through this view: {@code canPlace}
+     * keeps its own overlap rule against the living entities, which is what lets an in-place upgrade
+     * replace the building that the obstacle layer would otherwise refuse.
+     */
+    public TerrainMap pathTerrain() {
+        if (pathTerrain == null) {
+            pathTerrain = new io.github.sob1234509876.oc.rts.map.ObstacleTerrainMap(map,
+                    this::isBuildingTile);
+        }
+        return pathTerrain;
+    }
+
+    /** Whether a living, non-gateway building covers the tile; the obstacle layer's query. */
+    private boolean isBuildingTile(GridPos tile) {
+        return buildingTiles.contains(key(tile.x(), tile.y()));
+    }
+
+    private static long key(int x, int y) {
+        return ((long) x << 32) ^ (y & 0xFFFFFFFFL);
+    }
+
+    /** Adds a building's footprint to the obstacle layer unless it is a gateway. */
+    private void indexBuilding(Building building) {
+        if (building.type().hasTag(io.github.sob1234509876.oc.rts.content.BuildingType.GATEWAY_TAG)) {
+            return;
+        }
+        for (GridPos tile : building.occupiedTiles().tiles()) {
+            buildingTiles.add(key(tile.x(), tile.y()));
+        }
+    }
+
+    /** Removes a building's footprint from the obstacle layer; harmless when it was not indexed. */
+    private void unindexBuilding(Building building) {
+        for (GridPos tile : building.occupiedTiles().tiles()) {
+            buildingTiles.remove(key(tile.x(), tile.y()));
+        }
     }
 
     public SpatialIndex spatial() {
@@ -341,6 +398,7 @@ public final class Dimension {
             units.add(unit);
         } else if (entity instanceof Building building) {
             buildings.add(building);
+            indexBuilding(building);
         }
         spatial.insert(entity);
         // Subscribers such as the warehouse logistics index learn about new entities here, exactly as they
@@ -350,6 +408,9 @@ public final class Dimension {
 
     /** Marks an entity dead; the world removes it during the next flush. */
     public void markDestroyed(Entity entity) {
+        if (entity instanceof Building building) {
+            unindexBuilding(building);
+        }
         spatial.remove(entity);
         pendingRemoval.add(entity);
     }
@@ -372,6 +433,9 @@ public final class Dimension {
     public void detach(Entity entity) {
         if (!contains(entity)) {
             throw new IllegalArgumentException("entity " + entity.id() + " is not in dimension " + id);
+        }
+        if (entity instanceof Building building) {
+            unindexBuilding(building);
         }
         spatial.remove(entity);
         entitiesById.remove(entity.id());

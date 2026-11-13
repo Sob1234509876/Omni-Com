@@ -47,7 +47,7 @@ import io.github.sob1234509876.oc.server.classic.HellGates;
 import io.github.sob1234509876.oc.server.classic.ClassicEconomy;
 import io.github.sob1234509876.oc.server.classic.ClassicEngineerPool;
 import io.github.sob1234509876.oc.server.classic.ClassicPlugin;
-import io.github.sob1234509876.oc.server.classic.WildSpawns;
+import io.github.sob1234509876.oc.server.classic.EnemyOutposts;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
 import io.github.sob1234509876.oc.server.plugin.PluginDescriptor;
@@ -171,7 +171,7 @@ public final class ClassicCheck {
         worldHost(check, classic, registry, manifest);
         hellPassage(check, classic);
         contentDrivenSnapshot(check, classic, registry);
-        wildSpawns(check, classic, registry);
+        enemyOutposts(check, classic, registry);
         preStockedProduction(check, registry);
         enemyAi(check, classic, registry);
         deterministicWorld(check);
@@ -206,68 +206,62 @@ public final class ClassicCheck {
         check.equal(5, ClassicContent.meleeTiers().size(), "近战有 5 个等级");
         for (ClassicContent.MeleeTier tier : ClassicContent.meleeTiers()) {
             UnitType unit = registry.unit(tier.unitPath());
-            check.equal(tier.displayName(), unit.displayName(), "t" + tier.tier() + " 的显示名是 " + tier.displayName());
-            check.equal(tier.unitPath(), unit.key().path(), "t" + tier.tier() + " 的内容路径是 " + tier.unitPath());
-            check.that(unit.role() == UnitRole.COMBAT, "t" + tier.tier() + " 是战斗单位");
-            check.that(unit.hasTag("tier_" + tier.tier()), "t" + tier.tier() + " 带 tier_" + tier.tier() + " 标签");
-            check.that(unit.hasTag("armour_" + tier.armour()), "t" + tier.tier() + " 带 armour_" + tier.armour()
-                    + " 标签（引擎还没有护甲机制，护甲是内容数据）");
-            check.that(unit.canAttack(), "t" + tier.tier() + " 能攻击");
+            check.that(unit.displayName().equals(tier.displayName())
+                            && unit.key().path().equals(tier.unitPath())
+                            && unit.role() == UnitRole.COMBAT
+                            && unit.hasTag("tier_" + tier.tier())
+                            && unit.hasTag("armour_" + tier.armour())
+                            && unit.canAttack(),
+                    "t" + tier.tier() + " 的显示名是 " + tier.displayName() + "、内容路径是 " + tier.unitPath()
+                            + "，是带 tier 与 armour 标签的战斗单位且能攻击");
         }
 
         // --- the engineer
         UnitType engineer = registry.unit(ClassicContent.ENGINEER);
-        check.equal("工程师", engineer.displayName(), "工程师的显示名是 工程师");
-        check.that(engineer.role() == UnitRole.SUPPORT, "工程师是支援单位");
-        check.that(engineer.hasTag("builder"), "工程师带 builder 标签，施工阶段可以据此识别");
-        check.that(engineer.canHaul(), "工程师能搬运 (" + engineer.cargoCapacity() + " 单位)");
-        check.that(engineer.attackDamage().compareTo(cheapestMeleeDamage(registry)) < 0,
-                "工程师伤害低于最便宜的近战单位");
+        check.that(engineer.displayName().equals("工程师")
+                        && engineer.role() == UnitRole.SUPPORT
+                        && engineer.hasTag("builder")
+                        && engineer.canHaul()
+                        && engineer.attackDamage().compareTo(cheapestMeleeDamage(registry)) < 0,
+                "工程师的显示名是 工程师，是带 builder 标签的支援单位，能搬运且伤害低于最便宜的近战单位");
 
         // --- buildings
         check.equal(15, registry.buildings().size(),
                 "目录注册了 15 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 4 哨塔 + 仓库 + 炼狱工厂 + 地狱门）");
         BuildingType armoryT1 = registry.building(ClassicContent.ARMORY_T1);
         BuildingType armoryT2 = registry.building(ClassicContent.ARMORY_T2);
-        check.equal("兵营·普通", armoryT1.displayName(), "普通兵营的显示名");
-        check.equal("兵营·强化", armoryT2.displayName(), "强化兵营的显示名");
-        check.that(armoryT1.canProduce() && armoryT2.canProduce(), "两座兵营都能生产");
-        check.that(armoryT1.producerTags().contains(ClassicContent.ARMORY_TAG),
-                "普通兵营带 armory 生产标签（等级由 level 区分，不靠标签）");
-        check.equal(1, armoryT1.level(), "普通兵营等级 1");
-        check.equal(2, armoryT2.level(), "强化兵营等级 2");
-        check.equal(100L, asLong(armoryT1.cost().amount(registry.item(ClassicContent.GOLD))),
-                "普通兵营造价 100 金币（与文档表一致）");
-        check.equal(20L, asLong(armoryT1.cost().amount(registry.item(ClassicContent.WOOD))),
-                "普通兵营造价 20 木材（与文档表一致）");
-        check.equal(240L, asLong(armoryT2.cost().amount(registry.item(ClassicContent.GOLD))),
-                "强化兵营造价 240 金币（与文档表一致）");
-        check.equal(60L, asLong(armoryT2.cost().amount(registry.item(ClassicContent.WOOD))),
-                "强化兵营造价 60 木材（与文档表一致）");
+        check.that(armoryT1.displayName().equals("兵营·普通")
+                        && armoryT2.displayName().equals("兵营·强化")
+                        && armoryT1.canProduce() && armoryT2.canProduce()
+                        && armoryT1.producerTags().contains(ClassicContent.ARMORY_TAG)
+                        && armoryT1.level() == 1 && armoryT2.level() == 2
+                        && asLong(armoryT1.cost().amount(registry.item(ClassicContent.GOLD))) == 100L
+                        && asLong(armoryT1.cost().amount(registry.item(ClassicContent.WOOD))) == 20L
+                        && asLong(armoryT2.cost().amount(registry.item(ClassicContent.GOLD))) == 240L
+                        && asLong(armoryT2.cost().amount(registry.item(ClassicContent.WOOD))) == 60L,
+                "两座兵营的显示名是 兵营·普通 / 兵营·强化，都能生产且带 armory 生产标签（等级由 level 区分），"
+                        + "等级 1/2，造价 100/20 与 240/60（与文档表一致）");
         BuildingType warehouseType = registry.building(ClassicContent.WAREHOUSE);
-        check.equal(100L, asLong(warehouseType.cost().amount(registry.item(ClassicContent.GOLD))),
-                "仓库造价 100 金币（与文档表一致）");
-        check.equal(40L, asLong(warehouseType.cost().amount(registry.item(ClassicContent.WOOD))),
-                "仓库造价 40 木材（与文档表一致）");
-        check.equal(140L, asLong(warehouseType.cost().totalUnits()), "仓库总造价 140 单位");
+        check.that(asLong(warehouseType.cost().amount(registry.item(ClassicContent.GOLD))) == 100L
+                        && asLong(warehouseType.cost().amount(registry.item(ClassicContent.WOOD))) == 40L
+                        && asLong(warehouseType.cost().totalUnits()) == 140L
+                        && warehouseType.displayName().equals("仓库")
+                        && warehouseType.isWarehouse()
+                        && !warehouseType.storageSlots().isZero(),
+                "仓库造价 100 金币 + 40 木材（总 140 单位，与文档表一致），显示名是 仓库，参与物流网络且有存储槽");
         check.that(armoryT2.cost().totalUnits().compareTo(armoryT1.cost().totalUnits()) > 0,
                 "强化兵营比普通兵营更贵");
-        BuildingType warehouse = registry.building(ClassicContent.WAREHOUSE);
-        check.equal("仓库", warehouse.displayName(), "仓库的显示名");
-        check.that(warehouse.isWarehouse(), "仓库参与物流网络（引擎的投放点就是 warehouse 标志）");
-        check.that(!warehouse.storageSlots().isZero(), "仓库有存储槽");
 
         // --- recipes
         check.equal(20, registry.recipes().size(), "目录注册了 20 个配方（6 主世界 + 5 地狱兵 + 4 工程师梯 + 5 弓手）");
         for (ClassicContent.MeleeTier tier : ClassicContent.meleeTiers()) {
             Recipe recipe = registry.recipe(ClassicContent.recipePath(tier.tier()));
-            check.that(recipe.isUnitRecipe(), "t" + tier.tier() + " 的配方产出单位");
-            check.equal(tier.unitPath(), recipe.unitOutput().orElseThrow().key().path(),
-                    "t" + tier.tier() + " 的配方产出 " + tier.unitPath());
-            check.equal(tier.costGold(),
-                    asLong(recipe.inputs().amount(registry.item(ClassicContent.GOLD))),
-                    "t" + tier.tier() + " 的配方消耗 " + tier.costGold() + " 金币");
-            check.equal(tier.buildTimeTicks(), recipe.durationTicks(), "t" + tier.tier() + " 的配方耗时");
+            check.that(recipe.isUnitRecipe()
+                            && tier.unitPath().equals(recipe.unitOutput().orElseThrow().key().path())
+                            && tier.costGold() == asLong(recipe.inputs().amount(registry.item(ClassicContent.GOLD)))
+                            && tier.buildTimeTicks() == recipe.durationTicks(),
+                    "t" + tier.tier() + " 的配方产出单位 " + tier.unitPath() + "，消耗 " + tier.costGold()
+                            + " 金币且耗时与表一致");
         }
         Recipe engineerRecipe = registry.recipe(ClassicContent.TRAIN_ENGINEER);
         check.equal(ClassicContent.ENGINEER, engineerRecipe.unitOutput().orElseThrow().key().path(),
@@ -283,27 +277,18 @@ public final class ClassicCheck {
         for (int index = 1; index < tiers.size(); index++) {
             ClassicContent.MeleeTier low = tiers.get(index - 1);
             ClassicContent.MeleeTier high = tiers.get(index);
-            check.that(high.health() > low.health(), "生命严格递增: t" + low.tier() + " " + low.health()
-                    + " -> t" + high.tier() + " " + high.health());
-            check.that(high.damage() > low.damage(), "伤害严格递增: t" + low.tier() + " " + low.damage()
-                    + " -> t" + high.tier() + " " + high.damage());
-            check.that(high.armour() > low.armour(), "护甲严格递增: t" + low.tier() + " " + low.armour()
-                    + " -> t" + high.tier() + " " + high.armour());
-            check.that(high.costGold() > low.costGold(), "成本严格递增: t" + low.tier() + " " + low.costGold()
-                    + " -> t" + high.tier() + " " + high.costGold());
-            check.that(high.buildTimeTicks() > low.buildTimeTicks(), "生产时间严格递增: t" + low.tier() + " "
-                    + low.buildTimeTicks() + " -> t" + high.tier() + " " + high.buildTimeTicks());
+            check.that(high.health() > low.health() && high.damage() > low.damage()
+                            && high.armour() > low.armour() && high.costGold() > low.costGold()
+                            && high.buildTimeTicks() > low.buildTimeTicks(),
+                    "t" + low.tier() + " -> t" + high.tier() + " 的生命、伤害、护甲、成本与生产时间全部严格递增");
         }
         for (ClassicContent.MeleeTier tier : tiers) {
             UnitType unit = registry.unit(tier.unitPath());
-            check.equal(tier.health(), asLong(unit.maxHealth()),
-                    "注册的生命值与表一致 (t" + tier.tier() + ")");
-            check.equal(tier.damage(), asLong(unit.attackDamage()),
-                    "注册的伤害与表一致 (t" + tier.tier() + ")");
-            check.equal(tier.costGold(), asLong(unit.cost().amount(registry.item(ClassicContent.GOLD))),
-                    "注册的成本与表一致 (t" + tier.tier() + ")");
-            check.equal(tier.buildTimeTicks(), unit.buildTimeTicks(),
-                    "注册的生产时间与表一致 (t" + tier.tier() + ")");
+            check.that(tier.health() == asLong(unit.maxHealth())
+                            && tier.damage() == asLong(unit.attackDamage())
+                            && tier.costGold() == asLong(unit.cost().amount(registry.item(ClassicContent.GOLD)))
+                            && tier.buildTimeTicks() == unit.buildTimeTicks(),
+                    "注册的生命值、伤害、成本与生产时间都与表一致 (t" + tier.tier() + ")");
         }
     }
 
@@ -375,22 +360,19 @@ public final class ClassicCheck {
         check.equal("精英", mines.get(2).displayName(), "t3 矿场的显示名是 精英");
         for (ClassicContent.MineTier mine : mines) {
             BuildingType building = registry.building(mine.buildingPath());
-            check.equal(mine.displayName(), building.displayName(),
-                    "t" + mine.tier() + " 矿场的显示名与表一致");
-            check.equal(mine.level(), building.level(), "t" + mine.tier() + " 矿场的等级与表一致");
-            check.equal(mine.costGold(), asLong(building.cost().amount(registry.item(ClassicContent.GOLD))),
-                    "t" + mine.tier() + " 矿场的成本与表一致");
-            check.that(building.hasTag("income_" + mine.goldPerMinute()),
-                    "t" + mine.tier() + " 矿场带 income_" + mine.goldPerMinute()
+            check.that(building.displayName().equals(mine.displayName())
+                            && building.level() == mine.level()
+                            && mine.costGold() == asLong(building.cost().amount(registry.item(ClassicContent.GOLD)))
+                            && building.hasTag("income_" + mine.goldPerMinute()),
+                    "t" + mine.tier() + " 矿场的显示名、等级、成本与表一致，并带 income_" + mine.goldPerMinute()
                             + " 标签（引擎还没有被动收入，收益是内容数据）");
         }
         for (int index = 1; index < mines.size(); index++) {
             ClassicContent.MineTier low = mines.get(index - 1);
             ClassicContent.MineTier high = mines.get(index);
-            check.that(high.goldPerMinute() > low.goldPerMinute(), "收益严格递增: t" + low.tier() + " "
-                    + low.goldPerMinute() + "/min -> t" + high.tier() + " " + high.goldPerMinute() + "/min");
-            check.that(high.costGold() > low.costGold(), "矿场成本严格递增: t" + low.tier() + " " + low.costGold()
-                    + " -> t" + high.tier() + " " + high.costGold());
+            check.that(high.goldPerMinute() > low.goldPerMinute() && high.costGold() > low.costGold(),
+                    "收益与成本严格递增: t" + low.tier() + " " + low.goldPerMinute() + "/min -> t" + high.tier()
+                            + " " + high.goldPerMinute() + "/min");
         }
     }
 
@@ -408,36 +390,28 @@ public final class ClassicCheck {
         check.equal("精英", camps.get(2).displayName(), "t3 伐木场的显示名是 精英");
         for (ClassicContent.LumberCampTier camp : camps) {
             BuildingType building = registry.building(camp.buildingPath());
-            check.equal(camp.displayName(), building.displayName(),
-                    "t" + camp.tier() + " 伐木场的显示名与表一致");
-            check.equal(camp.level(), building.level(), "t" + camp.tier() + " 伐木场的等级与表一致");
-            check.equal(camp.costGold(), asLong(building.cost().amount(gold)),
-                    "t" + camp.tier() + " 伐木场的金币成本与表一致");
-            check.equal(0L, asLong(building.cost().amount(wood)),
-                    "t" + camp.tier() + " 伐木场只花金币，不花木材");
-            check.that(building.hasTag(ClassicContent.LUMBER_TAG),
-                    "t" + camp.tier() + " 伐木场带 lumbercamp 标签（AI 用它计数）");
-            check.that(building.hasTag(ClassicContent.WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute()),
-                    "t" + camp.tier() + " 伐木场带 wood_income_" + camp.woodPerMinute() + " 标签");
-            check.equal(camp.woodPerMinute(), ClassicEconomy.woodIncomePerMinute(building),
-                    "t" + camp.tier() + " 伐木场的木材收益率与表一致");
-            check.equal(0L, ClassicEconomy.incomePerMinute(building),
-                    "t" + camp.tier() + " 伐木场不会被当成金矿（金币收益为 0）");
+            check.that(building.displayName().equals(camp.displayName())
+                            && building.level() == camp.level()
+                            && camp.costGold() == asLong(building.cost().amount(gold))
+                            && asLong(building.cost().amount(wood)) == 0L
+                            && building.hasTag(ClassicContent.LUMBER_TAG)
+                            && building.hasTag(ClassicContent.WOOD_INCOME_TAG_PREFIX + camp.woodPerMinute())
+                            && camp.woodPerMinute() == ClassicEconomy.woodIncomePerMinute(building)
+                            && ClassicEconomy.incomePerMinute(building) == 0L,
+                    "t" + camp.tier() + " 伐木场的显示名、等级、金币成本（不花木材）与表一致，带 lumbercamp 与 "
+                            + "wood_income_" + camp.woodPerMinute() + " 标签，木材收益率与表一致且不会被当成金矿");
         }
         for (int index = 1; index < camps.size(); index++) {
             ClassicContent.LumberCampTier low = camps.get(index - 1);
             ClassicContent.LumberCampTier high = camps.get(index);
-            check.that(high.woodPerMinute() > low.woodPerMinute(), "木材收益严格递增: t" + low.tier() + " "
-                    + low.woodPerMinute() + "/min -> t" + high.tier() + " " + high.woodPerMinute() + "/min");
-            check.that(high.costGold() > low.costGold(), "伐木场成本严格递增: t" + low.tier() + " "
-                    + low.costGold() + " -> t" + high.tier() + " " + high.costGold());
+            check.that(high.woodPerMinute() > low.woodPerMinute() && high.costGold() > low.costGold(),
+                    "木材收益与成本严格递增: t" + low.tier() + " " + low.woodPerMinute() + "/min -> t" + high.tier()
+                            + " " + high.woodPerMinute() + "/min");
         }
-        check.equal(ClassicContent.LUMBERCAMP_T1, camps.get(0).buildingPath(),
-                "t1 伐木场的内容路径是 building.lumbercamp.t1");
-        check.equal(ClassicContent.LUMBERCAMP_T2, camps.get(1).buildingPath(),
-                "t2 伐木场的内容路径是 building.lumbercamp.t2");
-        check.equal(ClassicContent.LUMBERCAMP_T3, camps.get(2).buildingPath(),
-                "t3 伐木场的内容路径是 building.lumbercamp.t3");
+        check.that(camps.get(0).buildingPath().equals(ClassicContent.LUMBERCAMP_T1)
+                        && camps.get(1).buildingPath().equals(ClassicContent.LUMBERCAMP_T2)
+                        && camps.get(2).buildingPath().equals(ClassicContent.LUMBERCAMP_T3),
+                "三档伐木场的内容路径是 building.lumbercamp.t1/t2/t3");
     }
 
     // ------------------------------------------------------------------ 4a) the turret ladder
@@ -461,61 +435,53 @@ public final class ClassicCheck {
         BuildingType t3 = registry.building(ClassicContent.TURRET_T3);
         BuildingType t4 = registry.building(ClassicContent.TURRET_T4);
 
-        check.equal("哨塔·普通", t1.displayName(), "t1 的显示名");
-        check.equal("哨塔·强化", t2.displayName(), "t2 的显示名");
-        check.equal("哨塔·精英", t3.displayName(), "t3 的显示名");
-        check.equal("战王炮塔", t4.displayName(), "t4 的显示名");
-        check.that(t1.isBuildable() && !t2.isBuildable() && !t3.isBuildable() && !t4.isBuildable(),
-                "只有 t1 可以直接建造；t2/t3/t4 只能由升级得到");
+        check.that(t1.displayName().equals("哨塔·普通") && t2.displayName().equals("哨塔·强化")
+                        && t3.displayName().equals("哨塔·精英") && t4.displayName().equals("战王炮塔")
+                        && t1.isBuildable() && !t2.isBuildable() && !t3.isBuildable() && !t4.isBuildable(),
+                "四档哨塔的显示名是 哨塔·普通/强化/精英 与 战王炮塔，且只有 t1 可以直接建造（t2/t3/t4 只能由升级得到）");
         for (ClassicContent.TurretTier tier : tiers) {
             BuildingType type = registry.building(tier.buildingPath());
-            check.equal(tier.size(), type.sizeX(), "t" + tier.tier() + " 的宽度与表一致");
-            check.equal(tier.size(), type.sizeY(), "t" + tier.tier() + " 的高度与表一致");
-            check.equal(tier.health(), asLong(type.maxHealth()), "t" + tier.tier() + " 的生命与表一致");
-            check.equal(tier.armour(), type.armour(), "t" + tier.tier() + " 的护甲与表一致");
-            check.equal(tier.damage(), asLong(type.attackDamage()), "t" + tier.tier() + " 的伤害与表一致");
-            check.that(Math.abs(tier.range() - type.attackRange()) <= 1e-6f,
-                    "t" + tier.tier() + " 的射程与表一致");
-            check.equal(tier.attackCooldownTicks(), type.attackCooldownTicks(),
-                    "t" + tier.tier() + " 的射击间隔与表一致");
-            check.equal(tier.costGold(), asLong(type.cost().amount(gold)),
-                    "t" + tier.tier() + " 的金币造价与表一致");
-            check.equal(tier.costWood(), asLong(type.cost().amount(wood)),
-                    "t" + tier.tier() + " 的木材造价与表一致");
-            check.equal(tier.buildTimeTicks(), type.buildTimeTicks(), "t" + tier.tier() + " 的建造时间与表一致");
-            check.that(type.canAttack(), "t" + tier.tier() + " 通过内容 DSL 声明了攻击");
-            check.that(type.hasTag(ClassicContent.TURRET_TAG), "t" + tier.tier() + " 带 turret 标签");
-            check.that(type.canRepair(), "t" + tier.tier() + " 可维修");
-            check.that(!type.isWarehouse() && !type.canProduce(), "t" + tier.tier() + " 既不是仓库也不是生产建筑");
+            check.that(type.sizeX() == tier.size() && type.sizeY() == tier.size()
+                            && tier.health() == asLong(type.maxHealth())
+                            && type.armour() == tier.armour()
+                            && tier.damage() == asLong(type.attackDamage())
+                            && Math.abs(tier.range() - type.attackRange()) <= 1e-6f
+                            && type.attackCooldownTicks() == tier.attackCooldownTicks()
+                            && tier.costGold() == asLong(type.cost().amount(gold))
+                            && tier.costWood() == asLong(type.cost().amount(wood))
+                            && type.buildTimeTicks() == tier.buildTimeTicks()
+                            && type.canAttack() && type.hasTag(ClassicContent.TURRET_TAG)
+                            && type.canRepair() && !type.isWarehouse() && !type.canProduce(),
+                    "t" + tier.tier() + " 的占地、生命、护甲、伤害、射程、射击间隔、造价与建造时间都与表一致，"
+                            + "通过内容 DSL 声明了攻击，带 turret 标签、可维修，且既不是仓库也不是生产建筑");
         }
         for (int index = 1; index < tiers.size(); index++) {
             ClassicContent.TurretTier low = tiers.get(index - 1);
             ClassicContent.TurretTier high = tiers.get(index);
-            check.that(high.health() > low.health(), "哨塔生命严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.damage() > low.damage(), "哨塔伤害严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.range() > low.range(), "哨塔射程严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.armour() > low.armour(), "哨塔护甲严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.costGold() > low.costGold(), "哨塔金币造价严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.costWood() > low.costWood(), "哨塔木材造价严格递增 t" + low.tier() + " -> t" + high.tier());
-            check.that(high.buildTimeTicks() > low.buildTimeTicks(), "哨塔建造时间严格递增 t" + low.tier() + " -> t" + high.tier());
+            check.that(high.health() > low.health() && high.damage() > low.damage()
+                            && high.range() > low.range() && high.armour() > low.armour()
+                            && high.costGold() > low.costGold() && high.costWood() > low.costWood()
+                            && high.buildTimeTicks() > low.buildTimeTicks(),
+                    "哨塔 t" + low.tier() + " -> t" + high.tier() + " 的生命、伤害、射程、护甲、造价与建造时间全部"
+                            + "严格递增");
         }
 
-        check.equal(ClassicContent.TURRET_T2, t1.upgradeTo().orElseThrow().path(), "哨塔 t1 升级到 t2");
-        check.equal(140L, asLong(t1.upgradeCost().amount(gold)), "t1 -> t2 花费 140 金币");
-        check.equal(50L, asLong(t1.upgradeCost().amount(wood)), "t1 -> t2 花费 50 木材");
-        check.equal(ClassicContent.TURRET_T3, t2.upgradeTo().orElseThrow().path(), "哨塔 t2 升级到 t3");
-        check.equal(260L, asLong(t2.upgradeCost().amount(gold)), "t2 -> t3 花费 260 金币");
-        check.equal(90L, asLong(t2.upgradeCost().amount(wood)), "t2 -> t3 花费 90 木材");
-        check.equal(ClassicContent.TURRET_T4, t3.upgradeTo().orElseThrow().path(), "哨塔 t3 升级到战王炮塔 t4");
-        check.equal(380L, asLong(t3.upgradeCost().amount(gold)), "t3 -> t4 花费 380 金币");
-        check.equal(120L, asLong(t3.upgradeCost().amount(wood)), "t3 -> t4 花费 120 木材");
-        check.that(t4.upgradeTo().isEmpty() && t4.upgradeCost().isEmpty(), "t4 是阶梯顶端");
-        check.equal(330L, asLong(t1.cost().totalUnits().add(t1.upgradeCost().totalUnits())),
-                "t1 造价 + 升级 = t2 直接造价 330 单位");
-        check.equal(680L, asLong(t2.cost().totalUnits().add(t2.upgradeCost().totalUnits())),
-                "t2 造价 + 升级 = t3 直接造价 680 单位");
-        check.equal(1180L, asLong(t3.cost().totalUnits().add(t3.upgradeCost().totalUnits())),
-                "t3 造价 + 升级 = t4 直接造价 1180 单位");
+        check.that(t1.upgradeTo().orElseThrow().path().equals(ClassicContent.TURRET_T2)
+                        && asLong(t1.upgradeCost().amount(gold)) == 140L
+                        && asLong(t1.upgradeCost().amount(wood)) == 50L
+                        && t2.upgradeTo().orElseThrow().path().equals(ClassicContent.TURRET_T3)
+                        && asLong(t2.upgradeCost().amount(gold)) == 260L
+                        && asLong(t2.upgradeCost().amount(wood)) == 90L
+                        && t3.upgradeTo().orElseThrow().path().equals(ClassicContent.TURRET_T4)
+                        && asLong(t3.upgradeCost().amount(gold)) == 380L
+                        && asLong(t3.upgradeCost().amount(wood)) == 120L
+                        && t4.upgradeTo().isEmpty() && t4.upgradeCost().isEmpty(),
+                "哨塔阶梯 t1 -> t2 (140 金 + 50 木)、t2 -> t3 (260 金 + 90 木)、t3 -> 战王炮塔 t4 (380 金 + 120 木)，"
+                        + "t4 是阶梯顶端");
+        check.that(asLong(t1.cost().totalUnits().add(t1.upgradeCost().totalUnits())) == 330L
+                        && asLong(t2.cost().totalUnits().add(t2.upgradeCost().totalUnits())) == 680L
+                        && asLong(t3.cost().totalUnits().add(t3.upgradeCost().totalUnits())) == 1180L,
+                "每一档的 t 造价 + 升级 = 下一档直接造价（330 / 680 / 1180 单位）");
 
         // --- the whole life through the public API: BUILD, construct, upgrade twice
         OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7));
@@ -530,37 +496,35 @@ public final class ClassicCheck {
         Natural goldBefore = player.logistics().amount(gold);
         Natural woodBefore = player.logistics().amount(wood);
         var placed = engine.commands().tryBuild(engineer, t1, new GridPos(18, 14));
-        check.that(placed.placed(), "工程师通过普通 BUILD 放置哨塔 t1: " + placed.refusal());
         Building turret = placed.site();
-        check.equal(ItemBundle.of(gold, 120, wood, 20), turret.invested(),
-                "工地记录 120 金币 + 20 木材的投放成本");
-        check.equal(Natural.of(120), goldBefore.subtractClamped(player.logistics().amount(gold)),
-                "放置哨塔恰好扣 120 金币");
-        check.equal(Natural.of(20), woodBefore.subtractClamped(player.logistics().amount(wood)),
-                "放置哨塔恰好扣 20 木材");
+        check.that(placed.placed() && turret != null
+                        && turret.invested().equals(ItemBundle.of(gold, 120, wood, 20))
+                        && goldBefore.subtractClamped(player.logistics().amount(gold)).equals(Natural.of(120))
+                        && woodBefore.subtractClamped(player.logistics().amount(wood)).equals(Natural.of(20)),
+                "工程师通过普通 BUILD 放置哨塔 t1，工地记录 120 金币 + 20 木材的投放成本并恰好扣这些材料: "
+                        + placed.refusal());
         engine.tick(200);
-        check.that(turret.isConstructed(), "哨塔 t1 在 200 tick 内完工");
-        check.that(turret.type().canAttack(), "完工后的哨塔 t1 可以攻击");
+        check.that(turret != null && turret.isConstructed() && turret.type().canAttack(),
+                "哨塔 t1 在 200 tick 内完工且可以攻击");
 
         var firstUpgrade = engine.commands().upgradeBuilding(turret);
-        check.that(firstUpgrade.upgraded(), "哨塔 t1 原地升级到 t2: " + firstUpgrade.refusal());
         Building t2Site = firstUpgrade.replacement();
-        check.equal(ClassicContent.TURRET_T2, t2Site.type().key().path(), "替换建筑是 building.turret.t2");
-        check.equal(t2Site.type().sizeX(), t2.sizeX(), "升级保留 2x2 占地宽度");
-        check.that(t2Site.isConstructed(), "升级后的哨塔立刻完工");
-        check.equal(Natural.of(340), player.logistics().amount(gold),
-                "t1 -> t2 恰好再扣 140 金币（600 - 120 - 140 = 340）");
-        check.equal(Natural.of(130), player.logistics().amount(wood),
-                "t1 -> t2 恰好再扣 50 木材（200 - 20 - 50 = 130）");
+        check.that(firstUpgrade.upgraded() && t2Site != null
+                        && t2Site.type().key().path().equals(ClassicContent.TURRET_T2)
+                        && t2Site.type().sizeX() == t2.sizeX()
+                        && t2Site.isConstructed()
+                        && player.logistics().amount(gold).equals(Natural.of(340))
+                        && player.logistics().amount(wood).equals(Natural.of(130)),
+                "哨塔 t1 原地升级到 t2（替换建筑是 building.turret.t2，保留 2x2 占地宽度，立刻完工），恰好再扣 "
+                        + "140 金币与 50 木材（600-120-140=340，200-20-50=130）: " + firstUpgrade.refusal());
         var secondUpgrade = engine.commands().upgradeBuilding(t2Site);
-        check.that(secondUpgrade.upgraded(), "哨塔 t2 原地升级到 t3: " + secondUpgrade.refusal());
-        check.equal(ClassicContent.TURRET_T3, secondUpgrade.replacement().type().key().path(),
-                "替换建筑是 building.turret.t3");
-        check.equal(Natural.of(80), player.logistics().amount(gold),
-                "t2 -> t3 恰好再扣 260 金币（340 - 260 = 80）");
-        check.equal(Natural.of(40), player.logistics().amount(wood),
-                "t2 -> t3 恰好再扣 90 木材（130 - 90 = 40）");
-        check.that(t3.attackCooldownTicks() < t2.attackCooldownTicks(), "t3 的射击间隔比 t2 更短");
+        check.that(secondUpgrade.upgraded()
+                        && secondUpgrade.replacement().type().key().path().equals(ClassicContent.TURRET_T3)
+                        && player.logistics().amount(gold).equals(Natural.of(80))
+                        && player.logistics().amount(wood).equals(Natural.of(40))
+                        && t3.attackCooldownTicks() < t2.attackCooldownTicks(),
+                "哨塔 t2 原地升级到 t3（替换建筑是 building.turret.t3），恰好再扣 260 金币与 90 木材"
+                        + "（340-260=80，130-90=40），t3 的射击间隔比 t2 更短: " + secondUpgrade.refusal());
     }
 
     // ------------------------------------------------------------------ 4b) the upgrade ladders
@@ -1314,20 +1278,22 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             Player owner = host.player();
             String snapshot = host.snapshotJson();
 
-            // 1) the buildable catalogue: the gate is directly buildable, the upgrade-only tiers are not.
+            // 1) the buildable catalogue: the gate is directly buildable, every upgrade-only tier is not.
             int buildableStart = snapshot.indexOf("\"buildable\":[");
-            int buildableEnd = snapshot.indexOf("],\"players\":");
+            int buildableEnd = snapshot.indexOf("],\"content\":");
             String buildable = buildableStart >= 0 && buildableEnd > buildableStart
                     ? snapshot.substring(buildableStart, buildableEnd + 1)
                     : "";
-            check.that(buildable.contains("\"building.hell_gate\""),
-                    "buildable 数组包含地狱门（它是唯一的地狱通道，BUILD 菜单必须提供它）");
-            check.that(buildable.contains("\"building.armory.t1\"") && buildable.contains("\"building.warehouse\""),
-                    "buildable 数组包含兵营与仓库等直接可建建筑");
-            check.that(!buildable.contains("building.turret.t2") && !buildable.contains("building.purgatory"),
-                    "buildable 数组不包含只能通过升级到达的等级（哨塔 t2/t3/t4、炼狱工厂）");
-            check.that(!buildable.contains("building.turret.t3") && !buildable.contains("building.turret.t4"),
-                    "buildable 数组同样不包含哨塔 t3 与战王炮塔");
+            check.that(buildable.contains("\"building.hell_gate\"")
+                            && buildable.contains("\"building.armory.t1\"")
+                            && buildable.contains("\"building.warehouse\""),
+                    "buildable 数组包含地狱门、兵营与仓库等直接可建建筑（地狱门是唯一的地狱通道）");
+            check.that(!buildable.contains("building.turret.t2") && !buildable.contains("building.purgatory")
+                            && !buildable.contains("building.mine.t2") && !buildable.contains("building.mine.t3")
+                            && !buildable.contains("building.lumbercamp.t2")
+                            && !buildable.contains("building.lumbercamp.t3")
+                            && !buildable.contains("building.armory.t2"),
+                    "buildable 数组不包含任何只能通过升级到达的等级（哨塔 t2..t4、矿井/伐木场 t2/t3、兵营 t2、炼狱工厂）");
 
             // 2) an engineer really can raise the gate in the overworld: the passage is buildable.
             Unit engineer = spawnWalkable(world, registry, ClassicContent.ENGINEER, owner,
@@ -1459,26 +1425,37 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
      * the chunk - and never a second one; it also asserts a losing chunk stays empty and a foreign
      * catalogue is left untouched.
      */
-    private static void wildSpawns(Check check, ClassicContent classic, ContentRegistry registry) {
-        check.section("荒野魔物：首次进入区块的 1/10000 敌意刷新");
+    private static void enemyOutposts(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("敌军前哨：首次进入区块的 1/100 敌方总部");
         WorldHost host = new WorldHost(1L, classic);
         try {
             World world = host.engine().world();
             DimensionId overworld = DimensionId.overworld();
             int chunkSize = world.map(overworld).chunkSize();
+            // The hostile bot faction must exist before the frontier opens: the outposts belong to the
+            // bot players, never to the denizens or the showroom.
+            new ClassicBots(1).tick(world, 0L);
+            Player bot = null;
+            for (Player player : world.players()) {
+                if (player.id().value() == ClassicAi.PLAYER_ID) {
+                    bot = player;
+                }
+            }
+            int botBuildingsBefore = bot == null ? 0 : world.buildingsOf(bot).size();
+            int botUnitsBefore = bot == null ? 0 : world.unitsOf(bot).size();
 
-            // The winning chunk of seed 1: the first chunk whose published roll divides the denominator.
-            // One in ten thousand chunks wins, so the scan has to cover a wide frontier before the first
-            // hit shows up; the ring bound keeps startup bounded the same way every other search here is.
+            // The winning chunk of seed 1: the first chunk whose published roll divides the denominator
+            // and that offers a standable tile. One in a hundred chunks wins, so a small frontier scan
+            // finds one; the bound keeps the scan deterministic and bounded.
             int winnerX = -1;
             int winnerY = -1;
             GridPos walkableTile = null;
             outer:
-            for (int cy = -200; cy <= 200; cy++) {
-                for (int cx = -200; cx <= 200; cx++) {
+            for (int cy = -40; cy <= 40; cy++) {
+                for (int cx = -40; cx <= 40; cx++) {
                     if (Long.remainderUnsigned(
-                            WildSpawns.rollOf(1L, overworld.key(), cx, cy),
-                            WildSpawns.SPAWN_CHANCE_DENOMINATOR) != 0L) {
+                            EnemyOutposts.rollOf(1L, overworld.key(), cx, cy),
+                            EnemyOutposts.SPAWN_CHANCE_DENOMINATOR) != 0L) {
                         continue;
                     }
                     for (int dy = -2; dy <= 2; dy++) {
@@ -1496,42 +1473,42 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
                 }
             }
             check.that(walkableTile != null,
-                    "种子 1 的主世界存在一个掷中 1/10000 且可站人的区块（" + winnerX + "," + winnerY + "）");
+                    "种子 1 的主世界存在一个掷中 1/100 且可站人的区块（" + winnerX + "," + winnerY + "）");
             if (walkableTile == null) {
                 return;
             }
 
-            WildSpawns hook = new WildSpawns();
-            Player visitor = host.player();
-            Unit scout = world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), visitor, walkableTile);
-            check.that(ChunkPos.of(scout.position().tile(), chunkSize)
-                            .equals(new ChunkPos(winnerX, winnerY)),
-                    "侦察兵站在掷中的区块里");
-
+            EnemyOutposts hook = new EnemyOutposts();
+            Player visitor = Player.of(3, "scout", 0xFF66BB6A);
+            world.addPlayer(visitor);
+            world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), visitor, walkableTile);
             hook.tick(world, 1L);
-            Unit creature = null;
-            for (Player player : world.players()) {
-                if (player.id().value() != WildSpawns.FACTION_PLAYER_ID) {
-                    continue;
-                }
-                for (Unit unit : world.unitsOf(player)) {
-                    creature = unit;
+
+            // One combined check per observable fact: the outpost hall, its garrison, and the rules
+            // that keep it on walkable ground near the entered chunk.
+            Building outpost = null;
+            if (bot != null) {
+                for (Building building : world.buildingsOf(bot)) {
+                    if (building.type().key().path().equals(ClassicContent.ARMORY_T1)
+                            && !ChunkPos.of(building.origin(), chunkSize)
+                                    .equals(ChunkPos.of(new GridPos(192, 192), chunkSize))) {
+                        outpost = building;
+                    }
                 }
             }
-            check.that(creature != null, "首次进入掷中的区块后，荒野魔物出现了");
-            check.that(creature != null && (creature.type().key().path().equals(ClassicContent.HELL_HOUND)
-                            || creature.type().key().path().equals(ClassicContent.ABYSS_BRUTE)),
-                    "出现的是地狱犬或深渊魔（炼狱阵营的野外生物）");
-            check.that(creature != null && world.map(overworld).isPassable(creature.position().tile()),
-                    "魔物站在可通行的地面上，不会卡在熔岩或水里");
-            check.that(creature != null && ChunkPos.of(creature.position().tile(), chunkSize)
+            long garrison = bot == null ? 0 : world.unitsOf(bot).size() - botUnitsBefore;
+            check.that(outpost != null && garrison > 0
+                            && world.buildingsOf(bot).size() == botBuildingsBefore + 1
+                            && world.map(overworld).isPassable(outpost.origin()),
+                    "首次进入掷中的区块后，敌方 bot 阵营获得了一座总部建筑和驻军，且建在可通行的地面上");
+            check.that(ChunkPos.of(outpost == null ? walkableTile : outpost.origin(), chunkSize)
                             .equals(new ChunkPos(winnerX, winnerY)),
-                    "魔物出现在被进入的区块附近，而不是世界的另一头");
+                    "前哨出现在被进入的区块附近，而不是世界的另一头");
 
-            int afterFirst = world.unitsOf(creature == null ? visitor : creature.owner()).size();
             hook.tick(world, 2L);
             hook.tick(world, 3L);
-            check.equal(afterFirst, world.unitsOf(creature == null ? visitor : creature.owner()).size(),
+            check.that(world.buildingsOf(bot).size() == botBuildingsBefore + 1
+                            && world.unitsOf(bot).size() == botUnitsBefore + garrison,
                     "同一区块的后续 tick 不会重复刷新（每个区块只掷一次）");
 
             // A losing chunk stays empty: the roll, not the hook's mood, decides.
@@ -1541,8 +1518,8 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
                 for (int cx = 0; cx <= 60; cx++) {
                     if ((cx == winnerX && cy == winnerY)
                             || Long.remainderUnsigned(
-                                    WildSpawns.rollOf(1L, overworld.key(), cx, cy),
-                                    WildSpawns.SPAWN_CHANCE_DENOMINATOR) == 0L) {
+                                    EnemyOutposts.rollOf(1L, overworld.key(), cx, cy),
+                                    EnemyOutposts.SPAWN_CHANCE_DENOMINATOR) == 0L) {
                         continue;
                     }
                     loserX = cx;
@@ -1556,27 +1533,27 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
                         loserY * chunkSize + chunkSize / 2);
                 world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), visitor, loserTile);
                 hook.tick(world, 4L);
-                check.equal(afterFirst, world.unitsOf(creature.owner()).size(),
-                        "没有掷中的区块不刷新任何魔物");
+                check.that(world.buildingsOf(bot).size() == botBuildingsBefore + 1
+                                && world.unitsOf(bot).size() == botUnitsBefore + garrison,
+                        "没有掷中的区块不刷新任何东西");
             }
 
             // The formula is a pure function of the seed and the chunk: same inputs, same roll.
-            check.equal(WildSpawns.rollOf(7L, "overworld", 3, 4),
-                    WildSpawns.rollOf(7L, "overworld", 3, 4),
-                    "同一个种子与坐标的掷骰完全可复现（同一种子长出同样的荒野）");
-            check.that(WildSpawns.rollOf(1L, "overworld", winnerX, winnerY)
-                            != WildSpawns.rollOf(2L, "overworld", winnerX, winnerY),
-                    "不同的种子在同一区块掷出不同的点数");
+            check.that(EnemyOutposts.rollOf(7L, "overworld", 3, 4)
+                            == EnemyOutposts.rollOf(7L, "overworld", 3, 4)
+                            && EnemyOutposts.rollOf(1L, "overworld", winnerX, winnerY)
+                                    != EnemyOutposts.rollOf(2L, "overworld", winnerX, winnerY),
+                    "同一个种子与坐标的掷骰完全可复现，不同种子在同一区块掷出不同点数");
         } finally {
             host.stop();
         }
 
-        // A foreign catalogue is left untouched: no faction, no creatures.
+        // A foreign catalogue is left untouched: no faction, no outposts.
         WorldHost foreign = new WorldHost(1L);
         try {
-            new WildSpawns().tick(foreign.engine().world(), 1L);
+            new EnemyOutposts().tick(foreign.engine().world(), 1L);
             check.equal(0, foreign.engine().world().players().size() - 1,
-                    "非经典世界里荒野钩子不创建任何阵营（样板目录不受影响）");
+                    "非经典世界里前哨钩子不创建任何阵营（样板目录不受影响）");
         } finally {
             foreign.stop();
         }
@@ -3099,8 +3076,8 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
                     "第四个钩子是地狱门同步");
             check.that(context.worldTickHooks().get(4) instanceof HellDenizens,
                     "第五个钩子是地狱魔物");
-            check.that(context.worldTickHooks().get(5) instanceof WildSpawns,
-                    "第六个钩子是荒野魔物刷新（首次进入区块 1/10000）");
+            check.that(context.worldTickHooks().get(5) instanceof EnemyOutposts,
+                    "第六个钩子是敌军前哨刷新（首次进入区块 1/100）");
             check.equal(ClassicBots.DEFAULT_BOTS, plugin.bots().botCount(),
                     "上下文没有 --bots 时插件默认一个机器人");
             check.that(context.options().isEmpty(), "四参数上下文没有服务器选项");

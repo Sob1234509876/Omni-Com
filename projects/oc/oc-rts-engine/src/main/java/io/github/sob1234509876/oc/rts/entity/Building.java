@@ -87,13 +87,22 @@ public final class Building extends Entity {
                 type.storageSlots(),
                 Inventory.UNLIMITED,
                 item -> item.hasAnyTag(type.storageTags()));
-        this.rallyPoint = footprintCenter(type, origin).plus(type.sizeX() / 2f + 1.5f, 0f);
+        this.rallyPoint = footprintBottomCenter(type, origin);
         this.constructionRemaining = type.buildTimeTicks();
         this.constructed = false;
     }
 
     private static Vec2 footprintCenter(BuildingType type, GridPos origin) {
         return Vec2.of(origin.x() + type.sizeX() / 2f, origin.y() + type.sizeY() / 2f);
+    }
+
+    /**
+     * The bottom-centre of the footprint, in continuous world coordinates: half the width across and on
+     * the bottom edge. This is the anchor every spawn and drop off is measured from; see
+     * {@link #entranceTile()}.
+     */
+    private static Vec2 footprintBottomCenter(BuildingType type, GridPos origin) {
+        return Vec2.of(origin.x() + type.sizeX() / 2f, origin.y() + type.sizeY());
     }
 
     public BuildingType type() {
@@ -307,15 +316,18 @@ public final class Building extends Entity {
     }
 
     /**
-     * The <em>preferred</em> entry tile of the content layout: just outside the east side.
+     * The <em>preferred</em> entry tile of the content layout: the bottom-centre tile, just outside the
+     * south side and half the width across.
      *
      * <p>This is the tile the type declares, not necessarily the tile that is usable today. A legal flush
      * placement can put another building on it, so gameplay code must ask
      * {@link io.github.sob1234509876.oc.rts.dimension.Dimension#entranceTile(Building)} for the resolved
-     * entrance; this method stays the deterministic content anchor that resolution starts from.
+     * entrance; this method stays the deterministic content anchor that resolution starts from. Training
+     * output, builder stand tiles and hauled deliveries all measure from this one anchor, so a building
+     * has exactly one front: its bottom edge.
      */
     public GridPos entranceTile() {
-        return new GridPos(origin.x() + type.sizeX(), origin.y() + type.sizeY() / 2);
+        return new GridPos(origin.x() + type.sizeX() / 2, origin.y() + type.sizeY());
     }
 
     /** World position of the preferred entry point; see {@link #entranceTile()} for the caveat. */

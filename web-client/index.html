@@ -858,10 +858,12 @@
          overlaps; closed, the canvas keeps the whole window.
          --------------------------------------------------------------------- */
       .build-rail {
+        /* Item 2: the BUILD rail hugs the ENTIRE right edge - top, right and bottom all flush with
+           the window, no 14px inset - and the 14px rhythm lives in the section's inner padding. */
         position: absolute;
-        top: 14px;
-        right: 14px;
-        bottom: 14px;
+        top: 0;
+        right: 0;
+        bottom: 0;
         z-index: 3;
         width: var(--build-rail-width);
         display: flex;
@@ -875,8 +877,9 @@
         flex: 1 1 auto;
         min-height: 0;
         margin: 0;
-        /* The 14px edge rhythm: the rail is offset 14px from the window edges and the section keeps
-           the same 14px inner padding, so the heading and buttons never touch the panel chrome. */
+        /* The 14px edge rhythm: the rail now sits flush on the window edge, so the section carries
+           the full 14px padding on every side (item 3's left spacing included) and the heading and
+           buttons never touch the panel chrome or the window edge. */
         padding: 14px;
         border-color: #303030;
         background: #202020;
@@ -914,7 +917,7 @@
 
       body.build-rail-open .top-right {
         right: calc(var(--build-rail-width) + 14px);
-        width: min(300px, calc(100% - var(--build-rail-width) - 28px));
+        width: min(340px, calc(100% - var(--build-rail-width) - 28px));
       }
 
       /* The HUD column keeps the same clearance from the shifted top-right chrome that the closed
@@ -987,7 +990,6 @@
         white-space: nowrap;
       }
 
-      #hud-atlas,
       #hud-world,
       .jump-input {
         width: 72px;
@@ -995,51 +997,31 @@
       #hud-window,
       #hud-player,
       #hud-tile,
-      #hud-zoom,
       #hud-fps,
       #hud-selected,
       #hud-building {
         color: #e0e0e0;
       }
 
-      /* The enemy anchor line and the home line: one clickable chip each under the HUD. The enemy line
-         names the hostile factions whose starting anchors are published and points at the nearest one;
-         the home line says how far my own base is (or that it is visible) and jumps there on a click.
-         Both are pointer-transparent only when hidden, so they never cover the canvas otherwise.
-         Colours stay achromatic like the chrome; the red direction lives on the minimap arrow and the
-         white direction on the home / marker arrows, not in this text. */
-      #enemy-line,
-      #home-line {
-        pointer-events: auto;
-        display: inline-flex;
-        align-items: center;
-        max-width: 100%;
-        padding: 2px 7px;
-        border: 1px solid #303030;
-        background: #202020;
-        color: #e0e0e0;
-        font: 12px/1.4 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-        text-align: left;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        cursor: pointer;
+      /* Item 11: the dimension HUD gets the room it needs - the switcher owns a full row of the
+         top-right column (so full dimension names never truncate) and the column widens to fit. */
+      #dimension-buttons {
+        display: flex;
+        flex: 1 1 100%;
+        flex-wrap: wrap;
+        gap: 6px;
+        width: 100%;
       }
 
-      #enemy-line[hidden],
-      #home-line[hidden] {
+      #dimension-buttons:empty {
         display: none;
       }
 
-      #enemy-line:hover,
-      #home-line:hover {
-        filter: brightness(75%);
-      }
-
-      #enemy-line:focus-visible,
-      #home-line:focus-visible {
-        outline: 2px solid var(--focus);
-        outline-offset: -2px;
+      /* The deficit rows of the inventory panel: what the client computed that a selected building
+         lacks (item 4). Same layout as the stock rows; the line simply carries no amount column. */
+      .inventory-item.inventory-deficit .inventory-item-name {
+        color: #e0e0e0;
+        white-space: normal;
       }
 
       /* The dedicated inventory HUD, directly under the chips. Read-only and pointer-transparent like
@@ -2193,17 +2175,15 @@
   </head>
   <body>
     <main class="app">
-      <section id="game-view" class="stage" aria-label="游戏画面">
-        <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面"></canvas>
+      <section id="game-view" class="stage" aria-label="游戏画面" data-i18n-aria-label="aria.stage">
+        <canvas id="world-canvas" tabindex="0" aria-label="游戏世界画面" data-i18n-aria-label="aria.canvas"></canvas>
 
         <div class="top-left">
           <div class="hud" aria-live="off">
-            <span id="hud-atlas">procedural</span>
             <span id="hud-world">世界：demo</span>
             <span id="hud-window">坐标：22,16 · 窗口：0,0</span>
             <span id="hud-player">玩家：—</span>
             <span id="hud-tile">瓦片：—</span>
-            <span id="hud-zoom">缩放：1.00×</span>
             <span id="hud-fps">FPS：—</span>
             <span id="hud-selected">选中：无</span>
             <span id="hud-building">
@@ -2217,17 +2197,7 @@
             </span>
           </div>
 
-          <button id="enemy-line" class="enemy-line" type="button" hidden></button>
-          <button
-            id="home-line"
-            class="home-line"
-            type="button"
-            aria-keyshortcuts="H"
-            title="我方基地：点击把镜头移到自己的基地锚点（H）"
-            hidden
-          ></button>
-
-          <aside id="inventory-panel" class="inventory-panel" aria-label="选中单位的库存">
+          <aside id="inventory-panel" class="inventory-panel" aria-label="选中单位的库存" data-i18n-aria-label="panel.inventory">
             <h2 data-i18n="panel.inventory">单位库存</h2>
             <p id="inventory-summary" class="inventory-summary">未选中单位</p>
             <ul id="inventory-items" class="inventory-items" hidden></ul>
@@ -2240,22 +2210,22 @@
           <div class="top-right-chrome">
             <span id="status" data-state="idle" data-i18n="chrome.offline">未连接</span>
             <span id="dimension-buttons" class="chrome-buttons" hidden></span>
-            <input id="jump-x" class="jump-input" type="number" placeholder="X" aria-label="跳转坐标 X">
-            <input id="jump-y" class="jump-input" type="number" placeholder="Y" aria-label="跳转坐标 Y">
-            <button id="jump-button" type="button" title="把视角跳转到当前维度的指定坐标（不移动任何单位）" data-i18n="chrome.jump">跳转</button>
+            <input id="jump-x" class="jump-input" type="number" placeholder="X" aria-label="跳转坐标 X" data-i18n-aria-label="aria.jumpX">
+            <input id="jump-y" class="jump-input" type="number" placeholder="Y" aria-label="跳转坐标 Y" data-i18n-aria-label="aria.jumpY">
+            <button id="jump-button" type="button" title="把视角跳转到当前维度的指定坐标（不移动任何单位）" data-i18n="chrome.jump" data-i18n-title="chrome.jumpTitle">跳转</button>
             <button
               id="select-engineers"
               type="button"
               aria-keyshortcuts="O"
-              title="选中已载入窗口内自己的全部工兵；快照没有订单状态，无法只选空闲工兵"
               data-i18n="chrome.engineers"
+              data-i18n-title="chrome.engineersTitle"
             >工兵</button>
             <button
               id="home-button"
               type="button"
               aria-keyshortcuts="H"
-              title="把我方基地的锚点居中到镜头（H）。快照没有你的 anchor 时会在状态行说明"
               data-i18n="chrome.home"
+              data-i18n-title="chrome.homeTitle"
             >基地</button>
             <button
               id="marker-button"
@@ -2271,30 +2241,24 @@
               type="button"
               class="armed"
               aria-pressed="true"
-              title="路径：显示选中单位的移动路径与待定路径点（点击关闭）"
               data-i18n="chrome.paths"
+              data-i18n-title="chrome.pathsTitleOn"
             >路径</button>
-            <button
-              id="sequence-button"
-              type="button"
-              aria-pressed="false"
-              title="顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）"
-              data-i18n="chrome.sequence"
-            >顺序</button>
             <button
               id="follow-button"
               type="button"
               aria-pressed="false"
               title="跟随：把视角锁定到选中的单位；再点一次取消，目标消失时自动取消"
               data-i18n="chrome.follow"
+              data-i18n-title="chrome.followTitleFree"
             >跟随</button>
             <button
               id="open-help"
               type="button"
               aria-expanded="false"
               aria-controls="help-overlay"
-              title="帮助：连接步骤与游戏操作说明（Esc 关闭）"
               data-i18n="chrome.help"
+              data-i18n-title="chrome.helpTitle"
             >帮助</button>
             <button id="open-log" type="button" data-i18n="chrome.log">日志</button>
             <button
@@ -2302,24 +2266,24 @@
               type="button"
               aria-expanded="false"
               aria-controls="console-overlay"
-              title="打开控制台：原始协议命令与消息筛选（Esc 关闭）"
               data-i18n="chrome.console"
+              data-i18n-title="chrome.consoleTitle"
             >控制台</button>
             <button
               id="open-settings"
               type="button"
               aria-expanded="false"
               aria-controls="settings-overlay"
-              title="设置：服务器地址与界面开关；消息筛选在控制台面板（Esc 关闭）"
               data-i18n="chrome.settings"
+              data-i18n-title="chrome.settingsTitle"
             >设置</button>
             <button
               id="open-music"
               type="button"
               aria-expanded="false"
               aria-controls="music-overlay"
-              title="音乐：只播放本机音频文件，不上传、不联网（Esc 关闭）"
               data-i18n="chrome.music"
+              data-i18n-title="chrome.musicTitle"
             >音乐</button>
             <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
             <button
@@ -2327,12 +2291,12 @@
               type="button"
               aria-expanded="false"
               aria-controls="connection-overlay"
-              title="打开或关闭连接与协议面板（Esc 关闭）"
               data-i18n="chrome.connect"
+              data-i18n-title="chrome.connectTitle"
             >连接</button>
           </div>
 
-          <aside id="warehouse-panel" class="warehouse-panel" aria-label="我的仓库库存">
+          <aside id="warehouse-panel" class="warehouse-panel" aria-label="我的仓库库存" data-i18n-aria-label="panel.warehouse">
             <div class="warehouse-head">
               <h2 data-i18n="panel.warehouse">仓库库存</h2>
               <span class="warehouse-actions">
@@ -2341,9 +2305,11 @@
                   type="button"
                   hidden
                   title="显示全部仓库的合计"
+                  data-i18n="logistics.scopeSingle"
+                  data-i18n-title="logistics.scopeTitleToTotal"
                 >全部/总计</button>
-                <button id="warehouse-mark-all" type="button" title="标记下面列出的全部物品" data-i18n="warehouse.markAll">标记全部</button>
-                <button id="warehouse-clear-marks" type="button" title="清除全部标记" data-i18n="warehouse.clear">清除</button>
+                <button id="warehouse-mark-all" type="button" data-i18n="warehouse.markAll" data-i18n-title="warehouse.markAllTitle">标记全部</button>
+                <button id="warehouse-clear-marks" type="button" data-i18n="warehouse.clear" data-i18n-title="warehouse.clearTitle">清除</button>
               </span>
             </div>
             <p id="warehouse-summary" class="warehouse-summary">未发现自己的仓库</p>
@@ -2352,7 +2318,7 @@
             <form id="warehouse-transfer" class="warehouse-transfer" hidden>
               <div class="warehouse-transfer-row">
                 <span data-i18n="warehouse.item">物品</span>
-                <select id="warehouse-transfer-item" aria-label="要调拨的物品"></select>
+                <select id="warehouse-transfer-item" aria-label="要调拨的物品" data-i18n-aria-label="warehouse.itemAria"></select>
               </div>
               <div class="warehouse-transfer-row">
                 <span data-i18n="warehouse.amount">数量</span>
@@ -2363,16 +2329,19 @@
                   min="1"
                   step="1"
                   aria-label="要调拨的数量"
+                  data-i18n-aria-label="warehouse.amountAria"
                 />
                 <button
                   id="warehouse-transfer-all"
                   type="button"
                   title="把数量填成来源仓库现有的全部数量"
+                  data-i18n="logistics.transferAll"
+                  data-i18n-title="warehouse.transferAllTitle"
                 >全部</button>
               </div>
               <div class="warehouse-transfer-row">
                 <span data-i18n="warehouse.target">目标</span>
-                <select id="warehouse-transfer-target" aria-label="调拨的目标仓库"></select>
+                <select id="warehouse-transfer-target" aria-label="调拨的目标仓库" data-i18n-aria-label="warehouse.targetAria"></select>
               </div>
               <div class="warehouse-transfer-row">
                 <span></span>
@@ -2386,8 +2355,8 @@
             <div class="marker-head">
               <h2><span data-i18n="panel.marker">标记</span> <span id="marker-count">0/12</span></h2>
               <span class="marker-actions">
-                <button id="marker-clear" type="button" title="清除全部标记（只影响本页）" data-i18n="marker.clearAll">清除全部</button>
-                <button id="marker-close" type="button" title="关闭标记列表（Esc）；不会删除标记" data-i18n="ui.close">关闭</button>
+                <button id="marker-clear" type="button" data-i18n="marker.clearAll" data-i18n-title="marker.clearTitle">清除全部</button>
+                <button id="marker-close" type="button" data-i18n="ui.close" data-i18n-title="marker.closeTitle">关闭</button>
               </span>
             </div>
             <p id="marker-empty" class="marker-empty" data-i18n="marker.empty">还没有标记 · M 在当前地块放置</p>
@@ -2402,18 +2371,18 @@
             >
               <header class="connection-head">
                 <h1 id="connection-title">Omni Com <span>OC/1</span></h1>
-                <p class="lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
+                <p class="lede" data-i18n="connection.lede">浏览器客户端：一个 WebSocket，一行一条命令，一个回答。</p>
               </header>
 
               <section class="panel">
                 <h2 data-i18n="connection.accountTitle">连接与账号</h2>
-                <p class="footnote">
-                  主机与端口已移到 <strong>设置 → 连接</strong>，并在本机记住；这里保留连接按钮与账号命令。
+                <p class="footnote" data-i18n="connection.fieldsMoved">
+                  主机与端口已移到 设置 → 连接，并在本机记住；这里保留连接按钮与账号命令。
                 </p>
                 <div class="fields">
                   <label>
                     <span data-i18n="connection.userLabel">用户名</span>
-                    <input id="user" name="user" autocomplete="username" placeholder="已有账号" />
+                    <input id="user" name="user" autocomplete="username" placeholder="已有账号" data-i18n-placeholder="connection.userPlaceholder" />
                   </label>
                   <label>
                     <span data-i18n="connection.passwordLabel">密码</span>
@@ -2423,6 +2392,7 @@
                       type="password"
                       autocomplete="current-password"
                       placeholder="只用于 REGISTER 与 LOGIN 命令"
+                      data-i18n-placeholder="connection.passwordPlaceholder"
                     />
                   </label>
                 </div>
@@ -2436,19 +2406,18 @@
                   <button id="connection-help-link" type="button" title="打开帮助：连接步骤与操作说明" data-i18n="connection.guide">
                     操作说明…
                   </button>
-                  <span class="footnote">连接状态显示在右上角的 <code>#status</code> 芯片里。</span>
+                  <span class="footnote" data-i18n="connection.statusNote">连接状态显示在右上角的 #status 芯片里。</span>
                 </div>
-                <p class="footnote">
-                  开发时把主机与端口都留空，页面会连同源的 <code>/ws</code>，由 Vite 代理转发到
-                  <code>ws://127.0.0.1:25567</code>。手填主机/端口则直连。原始协议命令（
-                  <code>PING</code> / <code>COUNT</code> / <code>engine-info</code> / <code>hello</code> /
-                  <code>QUIT</code>）在左侧的 <strong>控制台</strong> 面板里。
+                <p class="footnote" data-i18n="connection.proxyNote">
+                  开发时把主机与端口都留空，页面会连同源的 /ws，由 Vite 代理转发到
+                  ws://127.0.0.1:25567。手填主机/端口则直连。原始协议命令（PING / COUNT / engine-info /
+                  hello / QUIT）在左侧的 控制台 面板里。
                 </p>
               </section>
 
-              <p class="footnote">
-                <code>engine-info</code> 使用浏览器 WebCrypto；请用 <code>http://127.0.0.1:25567/</code> 或 HTTPS
-                打开页面。普通 HTTP 的局域网 IP 不是安全上下文，<code>crypto.subtle</code> 不可用。
+              <p class="footnote" data-i18n="connection.secureNote">
+                engine-info 使用浏览器 WebCrypto；请用 http://127.0.0.1:25567/ 或 HTTPS
+                打开页面。普通 HTTP 的局域网 IP 不是安全上下文，crypto.subtle 不可用。
               </p>
             </section>
           </div>
@@ -2466,8 +2435,8 @@
                 <h2 id="console-title" data-i18n="console.title">控制台</h2>
                 <button id="console-close" type="button" data-i18n="ui.close">关闭</button>
               </header>
-              <p class="console-note">
-                原始协议命令与消息筛选；游戏命令仍在底部命令栏，账号与连接在 <strong>连接</strong> 面板。
+              <p class="console-note" data-i18n="console.note">
+                原始协议命令与消息筛选；游戏命令仍在底部命令栏，账号与连接在 连接 面板。
               </p>
               <div class="console-body">
                 <section class="panel">
@@ -2480,13 +2449,14 @@
                   </div>
                   <div class="row">
                     <label class="inline">
-                      hello 名字
+                      <span data-i18n="console.helloLabel">hello 名字</span>
                       <input
                         id="hello-name"
                         name="hello-name"
                         value="world"
                         autocomplete="off"
                         placeholder="留空 = world"
+                        data-i18n-placeholder="console.helloPlaceholder"
                       />
                     </label>
                     <button id="hello" type="button" disabled>hello</button>
@@ -2499,19 +2469,20 @@
                       rows="2"
                       spellcheck="false"
                       placeholder="64 个十六进制字符；从服务器的 data/oc-debug/debug.key 手工复制，只用于控制台里的 engine-info"
+                      data-i18n-placeholder="console.debugKeyPlaceholder"
                     ></textarea>
                   </label>
-                  <p class="footnote">
-                    <code>REQ</code> 要求先在<strong>同一条连接</strong>上成功 <code>LOGIN</code>；
-                    <code>engine-info</code> 的请求与回答外面还有一层 AES-256-GCM 信封，密钥是本面板里的
-                    <code>debug.key</code>。<code>hello</code> 是示例插件 <code>oc-hello</code> 的普通 UTF-8
-                    请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64 解码成文本。
+                  <p class="footnote" data-i18n="console.commandNote">
+                    REQ 要求先在同一条连接上成功 LOGIN；engine-info 的请求与回答外面还有一层
+                    AES-256-GCM 信封，密钥是本面板里的 debug.key。hello 是示例插件 oc-hello 的普通
+                    UTF-8 请求，没有信封：页面把名字编码成 UTF-8、base64 后发送，再把回答的 base64
+                    解码成文本。
                   </p>
                 </section>
 
                 <section class="settings-group" aria-labelledby="console-filter-title">
                   <h3 id="console-filter-title" data-i18n="console.filters">消息筛选</h3>
-                  <p class="settings-note">
+                  <p class="settings-note" data-i18n="console.filterNote">
                     筛选只作用于右下角的提示消息，日志浮层始终记录全部内容。错误不会被“只显示错误”或“安静”预设隐藏，
                     只有显式取消勾选“错误”才会隐藏。
                   </p>
@@ -2549,19 +2520,13 @@
               </header>
               <div class="help-body">
                 <section class="notice">
-                  <strong>操作说明：</strong>连接面板只负责连接与账号（<code>CONNECT</code>、<code>REGISTER</code>、
-                  <code>LOGIN</code>）；原始协议命令（<code>PING</code>、<code>COUNT</code>、
-                  <code>REQ engine-info</code>、<code>REQ hello</code>、<code>QUIT</code>）在左侧的
-                  <strong>控制台</strong> 面板里。画面底部的命令栏会发送 <code>WHOAMI</code>、<code>ORDER</code>、
-                  <code>BUILD</code> 与 <code>TRAIN</code>，这些游戏命令会改变服务器上的世界
-                  （<code>WHOAMI</code> 只登记身份）。页面不会修改服务器配置或插件状态；所有游戏命令都要求先在
-                  <strong>同一条连接</strong>上 <code>LOGIN</code>。<code>REGISTER</code> 只在服务器上创建账号，
-                  不会自动登录，也不改已有账号。
+                  <strong data-i18n="help.introTitle">操作说明：</strong>
+                  <span data-i18n="help.intro">连接面板只负责连接与账号（CONNECT、REGISTER、LOGIN）；原始协议命令（PING、COUNT、REQ engine-info、REQ hello、QUIT）在左侧的 控制台 面板里。画面底部的命令栏会发送 WHOAMI、ORDER、BUILD 与 TRAIN，这些游戏命令会改变服务器上的世界（WHOAMI 只登记身份）。页面不会修改服务器配置或插件状态；所有游戏命令都要求先在同一条连接上 LOGIN。REGISTER 只在服务器上创建账号，不会自动登录，也不改已有账号。</span>
                 </section>
 
                 <section class="panel">
                   <h2 data-i18n="help.guideTitle">游戏操作提示</h2>
-                  <p class="footnote">
+                  <p class="footnote" data-i18n="help.controls">
                     左键点选 · 双击单位选中窗口内自己的同类 · 双击建筑只选该建筑 · Shift+左键加减选单个单位
                     · 空地左键拖拽框选 · 中键拖拽（或按住空格再左键拖拽）平移
                     · 右键移动/攻击所有选中单位 · Shift+右键添加路径点（右键提交，Esc 清除）
@@ -2569,18 +2534,18 @@
                     · O 选中全部工兵 · 滚轮缩放 · WASD/方向键平移 · +/- 缩放 · F 复位 · Esc 取消
                     · 小地图左键/拖动移动镜头 · 顶部“路径”开关选中单位的路线显示。
                   </p>
-                  <p class="footnote">
-                    找不到自己基地时：按 <strong>H</strong> 或点右上角 <strong>基地</strong>，镜头会居中到快照里你自己那一行的
-                    <code>anchor</code>；顶部“我方基地”一行同时显示距离与八方向，基地在已载入窗口内时显示“可见”。
-                    <strong>M</strong> 在光标所在的地块（光标不在画布上时用镜头中心）放置个人标记，最多 12 个，同一地块不重复；
-                    <strong>Shift+M</strong> 删除最近放置的一个；右上角 <strong>标记</strong> 打开标记列表，可逐行跳转或
-                    <strong>清除全部</strong>。标记只存在于本页会话（不写 localStorage、不发给服务器），别人看不到。
+                  <p class="footnote" data-i18n="help.home">
+                    找不到自己基地时：按 H 或点右上角 基地，镜头会居中到快照里你自己那一行的 anchor。
+                    M 在光标所在的地块（光标不在画布上时用镜头中心）放置个人标记，最多 12 个，同一地块不重复；
+                    Shift+M 删除最近放置的一个；右上角 标记 打开标记列表，可逐行跳转或 清除全部。
+                    标记只存在于本页会话（不写 localStorage、不发给服务器），别人看不到。
                   </p>
-                  <p class="footnote">
-                    底部命令栏：选中单位时出现 <strong>停止</strong>、<strong>攻击移动</strong> 与选中条；
-                    建筑选中时右下角是 TRAIN、队列与 <strong>修理 / 继续建造 / 回收</strong>，工兵选中时右侧是全高的
-                    BUILD 面板。修理与回收需要自己受损的完工建筑或未完工工地；混合选择（单位 + 建筑）只提供单位动作，避免把
-                    TRAIN/BUILD 混进群体命令。
+                  <p class="footnote" data-i18n="help.commands">
+                    底部命令栏：选中单位时出现 停止、攻击移动 与选中条；
+                    建筑选中时右下角是 TRAIN、队列与 修理 / 继续建造 / 回收，工兵选中时右侧是全高的
+                    BUILD 面板。修理与回收需要自己受损的完工建筑或未完工工地。右键点击传送门建筑且选中单位时发送
+                    TRAVEL；右键点击建筑且选中工兵时发送 ASSIST，由服务器决定工兵做什么（继续建造、修理或补齐生产缺料）。
+                    混合选择（单位 + 建筑）只提供单位动作，避免把 TRAIN/BUILD 混进群体命令。
                   </p>
                 </section>
               </div>
@@ -2597,10 +2562,11 @@
               width="180"
               height="180"
               aria-label="小地图：显示已载入窗口，点击或拖动移动镜头"
+              data-i18n-aria-label="aria.minimap"
             ></canvas>
           </div>
 
-          <section id="command-bar" class="command-bar" aria-label="命令栏">
+          <section id="command-bar" class="command-bar" aria-label="命令栏" data-i18n-aria-label="bar.title">
             <div class="command-bar-head">
               <span class="command-bar-title" data-i18n="bar.title">命令</span>
               <span id="gameplay-note" class="gameplay-note">未选中任何单位 · 左键点选、拖动框选，或按 O 选中工兵</span>
@@ -2616,10 +2582,10 @@
                 data-i18n="action.attackMove"
               >攻击移动</button>
             </div>
-            <div id="selection-chips" class="selection-chips" aria-label="已选单位" hidden></div>
+            <div id="selection-chips" class="selection-chips" aria-label="已选单位" data-i18n-aria-label="hud.selected" hidden></div>
           </section>
 
-          <aside id="command-context" class="command-context" aria-label="上下文操作">
+          <aside id="command-context" class="command-context" aria-label="上下文操作" data-i18n-aria-label="aria.context">
             <section id="train-section" class="context-section" hidden>
               <h3>TRAIN <span id="train-target"></span></h3>
               <div id="train-buttons" class="context-buttons"></div>
@@ -2652,18 +2618,12 @@
                 <button id="repair-button" type="button" disabled data-i18n="ctx.repair">修理</button>
                 <button id="reclaim-button" type="button" disabled data-i18n="ctx.reclaim">回收</button>
                 <button
-                  id="haul-button"
-                  type="button"
-                  disabled
-                  title="强制搬运：让一名工兵为这座生产建筑搬运下一批缺料"
-                  data-i18n="ctx.haul"
-                >强制搬运</button>
-                <button
                   id="transfer-focus"
                   type="button"
                   disabled
                   title="在仓库面板里从这座仓库调拨物品"
                   data-i18n="ctx.transferFocus"
+                  data-i18n-title="ctx.transferFocusTitle"
                 >调拨…</button>
               </div>
             </section>
@@ -2677,7 +2637,7 @@
              bottom context zone so the panel can show a tall, readable list of large buttons. While it
              is open the stylesheet shifts the top-right column, the bottom bar and the toast stack left
              (body.build-rail-open); closed, the rail is an empty pointer-transparent column. -->
-        <aside id="build-panel" class="build-rail" aria-label="BUILD 建造面板">
+        <aside id="build-panel" class="build-rail" aria-label="BUILD 建造面板" data-i18n-aria-label="aria.buildPanel">
           <section id="build-section" class="context-section build-rail-section" hidden>
             <h3>BUILD <span id="build-target"></span></h3>
             <div id="build-buttons" class="context-buttons build-rail-buttons"></div>
@@ -2718,16 +2678,16 @@
         <header class="settings-head">
           <h2 id="settings-title" data-i18n="settings.title">设置</h2>
           <div class="settings-head-actions">
-            <button id="settings-reset" type="button" title="恢复默认设置并清除本机保存的值" data-i18n="settings.reset">重置</button>
+            <button id="settings-reset" type="button" data-i18n="settings.reset" data-i18n-title="settings.resetTitle">重置</button>
             <button id="settings-close" type="button" data-i18n="ui.close">关闭</button>
           </div>
         </header>
         <div class="settings-body">
           <section class="settings-group" aria-labelledby="settings-connection-title">
             <h3 id="settings-connection-title" data-i18n="settings.connection">连接</h3>
-            <p class="settings-note">
+            <p class="settings-note" data-i18n="settings.connectionNote">
               服务器地址与端口保存在本机；用户名、密码与 debug.key 不会被保存。连接按钮仍在右上角
-              <strong>连接</strong> 面板里。
+              连接 面板里。
             </p>
             <div class="settings-fields">
               <label>
@@ -2740,7 +2700,7 @@
               </label>
             </div>
             <div class="settings-presets">
-              <button id="settings-connection-panel" type="button" title="打开连接与账号面板">
+              <button id="settings-connection-panel" type="button" data-i18n="settings.openConnection" data-i18n-title="settings.openConnectionTitle">
                 打开连接面板…
               </button>
             </div>
@@ -2760,7 +2720,7 @@
                   max="32"
                   step="1"
                   inputmode="numeric"
-                  title="单位携带的库存标签：选中的单位总是显示；未选中的单位只在鼠标这个半径内显示"
+                  data-i18n-title="settings.radiusTitle"
                 />
               </label>
               <label>
@@ -2772,7 +2732,7 @@
                 </select>
               </label>
             </div>
-            <p class="settings-note">
+            <p class="settings-note" data-i18n="settings.radiusNote">
               库存标签：选中的单位无论多远都显示；未选中的单位只在鼠标附近这个半径内显示。标签列出全部物品。
             </p>
           </section>
@@ -2793,23 +2753,23 @@
           <h2 id="music-title" data-i18n="music.title">音乐</h2>
           <button id="music-close" type="button" data-i18n="ui.close">关闭</button>
         </header>
-        <p class="music-note">
+        <p class="music-note" data-i18n="music.note">
           只读取本机音频文件，用对象 URL 播放；不上传、不联网。刷新页面后播放列表会清空（文件输入没有可重新打开的路径）。
         </p>
         <label class="music-files-label">
           <span data-i18n="music.select">选择音频文件</span>
           <input id="music-files" type="file" multiple accept="audio/*" />
         </label>
-        <p id="music-status" class="music-status" data-state="idle">尚未选择文件。</p>
-        <p id="music-now" class="music-now">未播放</p>
+        <p id="music-status" class="music-status" data-state="idle" data-i18n="music.statusIdle">尚未选择文件。</p>
+        <p id="music-now" class="music-now" data-i18n="music.nowIdle">未播放</p>
         <div class="music-controls">
-          <button id="music-prev" type="button" title="上一首（播放器内按左方向键）" data-i18n="music.prev">上一首</button>
-          <button id="music-play" type="button" title="播放/暂停（播放器内按空格）" aria-pressed="false" data-i18n="music.play">播放</button>
-          <button id="music-next" type="button" title="下一首（播放器内按右方向键）" data-i18n="music.next">下一首</button>
+          <button id="music-prev" type="button" data-i18n="music.prev" data-i18n-title="music.prevTitle">上一首</button>
+          <button id="music-play" type="button" aria-pressed="false" data-i18n="music.play" data-i18n-title="music.playTitle">播放</button>
+          <button id="music-next" type="button" data-i18n="music.next" data-i18n-title="music.nextTitle">下一首</button>
         </div>
         <div class="music-progress-row">
           <span id="music-elapsed">0:00</span>
-          <input id="music-progress" type="range" min="0" max="1000" step="1" value="0" aria-label="播放进度" />
+          <input id="music-progress" type="range" min="0" max="1000" step="1" value="0" aria-label="播放进度" data-i18n-aria-label="music.progressLabel" />
           <span id="music-total">0:00</span>
         </div>
         <div class="music-options">
@@ -2827,8 +2787,8 @@
             <input id="music-volume" type="range" min="0" max="100" step="1" value="100" />
           </label>
         </div>
-        <p id="music-empty" class="music-empty">播放列表为空。</p>
-        <ul id="music-playlist" class="music-playlist" aria-label="播放列表" hidden></ul>
+        <p id="music-empty" class="music-empty" data-i18n="music.empty">播放列表为空。</p>
+        <ul id="music-playlist" class="music-playlist" aria-label="播放列表" data-i18n-aria-label="music.playlistLabel" hidden></ul>
       </section>
     </div>
 

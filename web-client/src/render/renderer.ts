@@ -108,6 +108,7 @@ import {
   type WorldView,
 } from "./view";
 import {
+  ATTACK_PATH_COLOR,
   PATH_COLOR,
   PATH_DASH,
   PATH_TARGET_DOT_RATIO,
@@ -119,6 +120,10 @@ import {
   type PathPoint,
 } from "./paths";
 import {
+  RasterCache,
+  rasterBucket,
+} from "./raster";
+import {
   projectileDrawState,
   projectileHeadPoints,
   projectileTrail,
@@ -129,14 +134,68 @@ import {
   SHADOW_FADE_STEP,
   approachShadowAlpha,
   chunkKey,
-  chunkOfTile,
-  shadowTargetAlpha,
+  chunkSpansInRange,
+  chunkShadowTargetAlpha,
 } from "./shadow";
 
 const BACKGROUND_COLOR = "#0b1016";
 
 /** The one achromatic colour of a personal marker on the canvas: chrome, not ownership. */
 const MARKER_COLOR = "rgba(255, 255, 255, 0.95)";
+
+/** Shared empty set for the attack-route recolour (no per-frame allocation). */
+const NO_ATTACK_ORDERED_IDS: ReadonlySet<number> = new Set<number>();
+
+/** Stable per-source ids for the raster cache keys; one number per material image, ever. */
+const sourceIds = new WeakMap<object, number>();
+let nextSourceId = 1;
+
+function sourceIdOf(image: object): number {
+  let id = sourceIds.get(image);
+  if (id === undefined) {
+    id = nextSourceId;
+    nextSourceId += 1;
+    sourceIds.set(image, id);
+  }
+  return id;
+}
+
+/**
+ * One shared rasterization cache (see `raster.ts`): every terrain tile and entity frame is
+ * rasterized once per (source, frame, zoom bucket) into an offscreen canvas, so an SVG material is
+ * vector-parsed once instead of on every per-tile `drawImage`. The keyed blit is the same fast path
+ * a raster PNG already gets.
+ */
+const spriteRasterCache = new RasterCache();
+
+/** Draws one source rect through the raster cache; falls back to the direct draw when unavailable. */
+function drawSpriteRect(
+  context: CanvasRenderingContext2D,
+  source: AtlasSource,
+  rect: SpriteRect,
+  drawX: number,
+  drawY: number,
+  drawWidth: number,
+  drawHeight: number,
+): void {
+  const bucket = rasterBucket(Math.max(drawWidth, drawHeight));
+  const cached = bucket > 0 ? spriteRasterCache.get(sourceIdOf(source.image), source.image, rect, bucket) : null;
+  if (cached !== null) {
+    context.drawImage(cached, drawX, drawY, drawWidth, drawHeight);
+    return;
+  }
+  context.drawImage(
+    source.image,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  );
+}
 
 /**
  * Draws every in-window personal marker as a small hollow square with its placement number above it.
@@ -307,6 +366,14 @@ export interface RenderOptions {
    */
   readonly projectiles?: readonly ActiveProjectile[];
   /**
+   * Entity ids whose current committed route belongs to an attack order (ORDER ATTACK /
+   * ORDER ATTACKMOVE). The page tracks the ids it sent (see `attackOrderedIds` in `main.ts`) and the
+   * route overlay recolours exactly those units' lines red (item 15); a unit without an entry keeps
+   * the achromatic path colour. The set is derived client-side from the orders the player issued —
+   * the snapshot does not carry an order kind.
+   */
+  readonly attackOrderedIds?: ReadonlySet<number>;
+  /**
    * The entity id the camera follow lock (跟随) is holding, or null when the view is free.
    *
    * The followed unit gets the pulsing white ground ring (see `follow.ts`), drawn under the ownership
@@ -377,17 +444,7 @@ function drawEntitySprite(
   const drawHeight = frame.height * scale;
   const drawX = screenX - drawWidth * sprite.anchor[0];
   const drawY = screenY - drawHeight * sprite.anchor[1];
-  context.drawImage(
-    source.image,
-    frame.x,
-    frame.y,
-    frame.width,
-    frame.height,
-    drawX,
-    drawY,
-    drawWidth,
-    drawHeight,
-  );
+  drawSpriteRect(context, source, frame, drawX, drawY, drawWidth, drawHeight);
 }
 
 /**
@@ -411,6 +468,7 @@ function drawPathOverlays(
   selectedIds: ReadonlySet<number>,
   myPlayerId: number | null,
   pendingPath: readonly TileCoord[],
+  attackOrderedIds: ReadonlySet<number>,
 ): void {
   const tileOnScreen = camera.effectiveTileSize;
   const margin = Math.max(24, tileOnScreen * 2);
@@ -444,6 +502,12 @@ function drawPathOverlays(
     if (points.length < 2) {
       continue;
     }
+    // Item 15: a unit whose current order is an attack (ORDER ATTACK / ORDER ATTACKMOVE) draws its
+    // route in the ownership red; ordinary moves keep the white/grey chrome line.
+    const attacking = attackOrderedIds.has(entity.id);
+    const routeColor = attacking ? ATTACK_PATH_COLOR : PATH_COLOR;
+    context.strokeStyle = routeColor;
+    context.fillStyle = routeColor;
     const screenPoints = points.map(toScreen);
     for (const segment of pathSegments(screenPoints)) {
       if (!pathSegmentVisible(segment.from, segment.to, bounds)) {
@@ -641,7 +705,8 @@ export class WorldRenderer {
   ): void {
     const context = this.context;
     const size = this.syncSize(camera);
-    context.clearRect(0, 0, size.width, size.height);
+    // The backing context is opaque (`alpha: false`), so the opaque background fill alone replaces the
+    // frame; the old clearRect before it was a second full-canvas pass every frame (item 13).
     context.fillStyle = BACKGROUND_COLOR;
     context.fillRect(0, 0, size.width, size.height);
 
@@ -660,18 +725,9 @@ export class WorldRenderer {
         const terrain = terrainAt(world, tileX, tileY);
         const tile = atlas === null ? undefined : lookupTile(atlas, terrain);
         if (tile !== undefined) {
-          const frame = tile.rect;
-          context.drawImage(
-            tile.source.image,
-            frame.x,
-            frame.y,
-            frame.width,
-            frame.height,
-            screenX,
-            screenY,
-            drawSize,
-            drawSize,
-          );
+          // Through the raster cache: an SVG material is vector-parsed once per bucket, not once per
+          // tile per frame (the hell-pan bottleneck, item 13).
+          drawSpriteRect(context, tile.source, tile.rect, screenX, screenY, drawSize, drawSize);
         } else {
           drawTerrainTile(context, terrain, tileX, tileY, screenX, screenY, drawSize);
         }
@@ -693,22 +749,24 @@ export class WorldRenderer {
       if (this.shadowAlphas.size > 4096) {
         this.shadowAlphas.clear();
       }
-      for (let tileY = range.minY; tileY <= range.maxY; tileY += 1) {
-        for (let tileX = range.minX; tileX <= range.maxX; tileX += 1) {
-          const chunk = chunkOfTile(tileX, tileY);
-          const key = chunkKey(chunk.x, chunk.y);
-          const target = shadowTargetAlpha(options.loadedChunks, tileX, tileY);
-          const current = approachShadowAlpha(this.shadowAlphas.get(key) ?? target, target, step);
-          if (current > 0.005) {
-            this.shadowAlphas.set(key, current);
-            const screenX = origin.x + (tileX - range.minX) * tileOnScreen;
-            const screenY = origin.y + (tileY - range.minY) * tileOnScreen;
-            context.fillStyle = `rgba(4, 8, 12, ${current.toFixed(3)})`;
-            context.fillRect(screenX, screenY, tileOnScreen + 0.5, tileOnScreen + 0.5);
-          } else {
-            this.shadowAlphas.set(key, 0);
-          }
+      // One rectangle per visible chunk instead of one per visible tile: the shade is uniform inside a
+      // chunk, so the per-tile work (chunk math, map reads, string building, fill calls) collapses from
+      // O(visible tiles) to O(visible chunks) while the dispersal animation is pixel-identical (item 13).
+      for (const span of chunkSpansInRange(range)) {
+        const key = chunkKey(span.chunkX, span.chunkY);
+        const target = chunkShadowTargetAlpha(options.loadedChunks, span.chunkX, span.chunkY);
+        const current = approachShadowAlpha(this.shadowAlphas.get(key) ?? target, target, step);
+        if (current <= 0.005) {
+          this.shadowAlphas.set(key, 0);
+          continue;
         }
+        this.shadowAlphas.set(key, current);
+        const screenX = origin.x + (span.minX - range.minX) * tileOnScreen;
+        const screenY = origin.y + (span.minY - range.minY) * tileOnScreen;
+        const spanWidth = (span.maxX - span.minX + 1) * tileOnScreen;
+        const spanHeight = (span.maxY - span.minY + 1) * tileOnScreen;
+        context.fillStyle = `rgba(4, 8, 12, ${current.toFixed(3)})`;
+        context.fillRect(screenX, screenY, spanWidth, spanHeight);
       }
     }
 
@@ -727,6 +785,7 @@ export class WorldRenderer {
         selectedIds,
         options.myPlayerId,
         options.pendingPath,
+        options.attackOrderedIds ?? NO_ATTACK_ORDERED_IDS,
       );
     }
 

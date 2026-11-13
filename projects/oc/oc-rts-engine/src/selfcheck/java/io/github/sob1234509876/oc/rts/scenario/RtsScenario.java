@@ -150,8 +150,9 @@ public final class RtsScenario {
         engine.tick(12);
 
         ChunkedMap map = (ChunkedMap) engine.map();
-        check.equal(25, map.loadedChunkCount(), "a view radius of 2 chunks keeps 5x5 chunks in memory");
-        check.that(map.isChunkLoaded(ChunkPos.of(new GridPos(0, 0), CHUNK_SIZE)), "the chunk at the origin is loaded");
+        check.that(map.loadedChunkCount() == 25
+                        && map.isChunkLoaded(ChunkPos.of(new GridPos(0, 0), CHUNK_SIZE)),
+                "a view radius of 2 chunks keeps 5x5 chunks in memory, including the origin chunk");
 
         Set<String> terrainKinds = new LinkedHashSet<>();
         int walkable = 0;
@@ -167,19 +168,17 @@ public final class RtsScenario {
                 }
             }
         }
-        check.atLeast(3f, terrainKinds.size(), "a 64x64 patch contains several terrain kinds " + terrainKinds);
-        check.that(blocked > 0, "the generator produces impassable terrain such as water or rock");
-        check.that(walkable > 0 && walkable < 64 * 64,
-                "the patch mixes walkable and blocked tiles (" + walkable + "/4096 walkable)");
+        check.that(terrainKinds.size() >= 3 && blocked > 0 && walkable > 0 && walkable < 64 * 64,
+                "a 64x64 patch mixes several terrain kinds, walkable and blocked (" + walkable
+                        + "/4096 walkable) " + terrainKinds);
         check.that(map.isPassable(new GridPos(0, 0)), "the area around the origin is walkable, so a match can start");
 
         engine.focus(new GridPos(4000, 4000));
         engine.tick(30);
-        check.that(!map.isChunkLoaded(ChunkPos.of(new GridPos(0, 0), CHUNK_SIZE)),
-                "chunks far behind the focus are unloaded");
-        check.equal(25, map.loadedChunkCount(), "the number of chunks in memory stays bounded after a long jump");
-        check.that(map.isChunkLoaded(ChunkPos.of(new GridPos(4000, 4000), CHUNK_SIZE)),
-                "the chunks around the new focus are loaded");
+        check.that(!map.isChunkLoaded(ChunkPos.of(new GridPos(0, 0), CHUNK_SIZE))
+                        && map.loadedChunkCount() == 25
+                        && map.isChunkLoaded(ChunkPos.of(new GridPos(4000, 4000), CHUNK_SIZE)),
+                "after a long jump the far-behind chunks are unloaded, the count stays bounded and the new focus is loaded");
 
         var farTerrain = map.terrainAt(9999, -9999);
         check.that(farTerrain != null, "a tile that was never streamed is generated on demand (" + farTerrain.key() + ")");
@@ -211,15 +210,15 @@ public final class RtsScenario {
         check.section("1b) deterministic noise terrain: same seed, same world, no Random");
         BiomeTable biomes = BiomeTable.of(content);
         NoiseTerrainGenerator generator = new NoiseTerrainGenerator(NOISE_SEED, biomes);
-        check.equal(CHUNK_SIZE, generator.chunkSize(), "the generator produces 16x16 chunks");
-        check.equal(6, biomes.terrains().size(), "the biome table maps six terrains");
+        check.that(generator.chunkSize() == CHUNK_SIZE && biomes.terrains().size() == 6,
+                "the generator produces 16x16 chunks and the biome table maps six terrains");
 
         ChunkPos sampled = new ChunkPos(3, 1);
         Chunk first = generator.generate(sampled);
-        check.that(sameTiles(first, new NoiseTerrainGenerator(NOISE_SEED, biomes).generate(sampled)),
-                "a fresh generator with the same seed produces the same chunk");
-        check.that(sameTiles(first, generator.generate(sampled)),
-                "the same generator produces the same chunk twice");
+        check.that(sameTiles(first, new NoiseTerrainGenerator(NOISE_SEED, biomes).generate(sampled))
+                        && sameTiles(first, generator.generate(sampled))
+                        && allFilled(first),
+                "a fresh generator and the same generator produce the same fully filled chunk twice");
 
         long otherSeed = NOISE_SEED + 1;
         Chunk other = new NoiseTerrainGenerator(otherSeed, biomes).generate(sampled);
@@ -238,11 +237,8 @@ public final class RtsScenario {
         NoiseTerrainGenerator backward = new NoiseTerrainGenerator(NOISE_SEED, biomes);
         Chunk chunk00First = backward.generate(new ChunkPos(0, 0));
         Chunk chunk31Second = backward.generate(new ChunkPos(3, 1));
-        check.that(sameTiles(chunk31First, chunk31Second),
-                "chunk (3,1) is identical whether it is generated before or after (0,0)");
-        check.that(sameTiles(chunk00First, chunk00Second),
-                "chunk (0,0) is identical whether it is generated before or after (3,1)");
-        check.that(allFilled(first), "every tile of a generated chunk is filled");
+        check.that(sameTiles(chunk31First, chunk31Second) && sameTiles(chunk00First, chunk00Second),
+                "both chunks are identical whether they are generated before or after each other");
 
         // A 64x64 patch must not be uniform: at least four paths, including water and high ground.
         Set<String> paths = new LinkedHashSet<>();
@@ -256,9 +252,8 @@ public final class RtsScenario {
                 hasHighGround |= terrain.equals(biomes.hill()) || terrain.equals(biomes.rock());
             }
         }
-        check.atLeast(4f, paths.size(), "a 64x64 patch contains at least four terrain paths " + paths);
-        check.that(hasWater, "the 64x64 patch contains water");
-        check.that(hasHighGround, "the 64x64 patch contains hill or rock");
+        check.that(paths.size() >= 4 && hasWater && hasHighGround,
+                "a 64x64 patch contains at least four terrain paths, water and hill or rock " + paths);
 
         Set<String> registered = new LinkedHashSet<>();
         for (TerrainType terrain : content.terrains()) {
@@ -297,12 +292,9 @@ public final class RtsScenario {
                 columnsAgree = false;
             }
         }
-        check.that(boundaryStable,
-                "the boundary elevation is the identical sample from the left chunk's right edge and the right chunk's left edge");
-        check.that(columnsAgree,
-                "both sides of the boundary hold the terrain the noise function returns for those world tiles");
-        check.atMost(0.15f, largestBoundaryStep,
-                "the elevation is continuous across the boundary (largest step " + largestBoundaryStep + ")");
+        check.that(boundaryStable && columnsAgree && largestBoundaryStep <= 0.15f,
+                "the chunk boundary is seamless: identical elevation samples from both sides, matching terrain columns, "
+                        + "and a continuous elevation (largest step " + largestBoundaryStep + ")");
 
         // Build a real engine on top of the generator and tick it once. Chunk streaming, path services
         // and snapshots all share the same ChunkGenerator seam, so no new plumbing is involved.
@@ -322,9 +314,9 @@ public final class RtsScenario {
         }
         check.that(ticked, "a mid sized world built on the generator ticks once without error");
         if (world != null) {
-            check.atLeast(1f, ((ChunkedMap) world.map()).loadedChunkCount(),
-                    "the tick streamed terrain in around the origin");
-            check.that(world.map().terrainAt(0, 0) != null, "the world has terrain at the origin after the tick");
+            check.that(((ChunkedMap) world.map()).loadedChunkCount() >= 1
+                            && world.map().terrainAt(0, 0) != null,
+                    "the tick streamed terrain in around the origin and the world has terrain there");
         }
     }
 
@@ -385,11 +377,12 @@ public final class RtsScenario {
             return;
         }
         Path route = path.get();
-        check.atLeast(1f, route.waypointCount(), "the route has waypoints");
-        boolean waypointsWalkable = route.waypoints().stream().allMatch(waypoint -> map.isPassable(waypoint.tile()));
-        check.that(waypointsWalkable, "every waypoint of the route is on walkable terrain");
-        check.that(map.isPassable(route.destination().tile()), "the route ends on walkable terrain");
-        check.atLeast(start.distance(goal) - 1f, route.length(), "the route is at least as long as the straight line");
+        check.that(route.waypointCount() >= 1
+                        && route.waypoints().stream().allMatch(waypoint -> map.isPassable(waypoint.tile()))
+                        && map.isPassable(route.destination().tile())
+                        && route.length() >= start.distance(goal) - 1f,
+                "the route has waypoints, every one on walkable terrain, ends on walkable terrain, "
+                        + "and is at least as long as the straight line");
         boolean straightened = true;
         List<Vec2> waypoints = route.waypoints();
         for (int i = 1; i < waypoints.size(); i++) {
@@ -431,8 +424,8 @@ public final class RtsScenario {
                 }
             }
         }
-        check.atLeast(8f, pairs, "enough land pairs could be sampled for the agreement test");
-        check.equal(0, missed, "the search finds every target a breadth first walk can reach (" + pairs + " pairs)");
+        check.that(pairs >= 8 && missed == 0,
+                "the search finds every target a breadth first walk can reach (" + pairs + " pairs sampled)");
     }
 
     /**
@@ -469,15 +462,16 @@ public final class RtsScenario {
         Group boxGroup = spawnGroup(content, start, 12);
         boxGroup.engine().commands().moveGroup(boxGroup.units(), target, FormationShape.BOX);
         boolean arrived = boxGroup.engine().tickUntil(engine -> groupSettled(boxGroup.units(), target, 4f), 1600);
-        check.that(arrived, "the whole group arrives within 80 simulated seconds");
-        check.atMost(4f, maxDistance(boxGroup.units(), target.center()),
-                "every unit ends within 4 tiles of the destination");
-        check.atLeast(0.45f, minPairwiseDistance(boxGroup.units()), "no two units end up on top of each other");
         float shortestWalk = Float.MAX_VALUE;
         for (Unit unit : boxGroup.units()) {
             shortestWalk = Math.min(shortestWalk, unit.motion().travelledDistance());
         }
-        check.atLeast(20f, shortestWalk, "every unit really walked the distance (shortest walk " + shortestWalk + ")");
+        check.that(arrived
+                        && maxDistance(boxGroup.units(), target.center()) <= 4f
+                        && minPairwiseDistance(boxGroup.units()) >= 0.45f
+                        && shortestWalk >= 20f,
+                "the whole box group arrives within 80 simulated seconds, every unit ends within 4 tiles, "
+                        + "no two units stack up, and every unit really walked (shortest walk " + shortestWalk + ")");
         check.note("box formation spread: width " + round(width(boxGroup.units()))
                 + ", height " + round(height(boxGroup.units())));
 
@@ -492,18 +486,18 @@ public final class RtsScenario {
             spreads.put(shape.id(), round(shapeWidth) + " x " + round(shapeHeight));
             check.note(shape.id() + " -> width " + round(shapeWidth) + ", height " + round(shapeHeight)
                     + ", closest pair " + round(minPairwiseDistance(group.units())));
-            check.atLeast(0.45f, minPairwiseDistance(group.units()), shape.id() + ": units keep their distance");
+            if (shape == FormationShape.COLUMN) {
+                check.that(minPairwiseDistance(group.units()) >= 0.45f && shapeWidth > shapeHeight,
+                        "column: units keep their distance and the formation is longer than it is wide");
+            } else if (shape == FormationShape.LINE) {
+                check.that(minPairwiseDistance(group.units()) >= 0.45f && shapeHeight > shapeWidth,
+                        "line: units keep their distance and the formation stretches across the direction of travel");
+            } else if (shape == FormationShape.CIRCLE || shape == FormationShape.WEDGE) {
+                check.that(minPairwiseDistance(group.units()) >= 0.45f && shapeWidth > 1.5f && shapeHeight > 1.5f,
+                        shape.id() + ": units keep their distance and the formation spreads in both axes");
+            }
             check.atMost(5f, maxDistance(group.units(), target.center()),
                     shape.id() + ": the group stays together at the destination");
-            if (shape == FormationShape.COLUMN) {
-                check.that(shapeWidth > shapeHeight, "column formation is longer than it is wide");
-            } else if (shape == FormationShape.LINE) {
-                check.that(shapeHeight > shapeWidth, "line formation stretches across the direction of travel");
-            } else if (shape == FormationShape.CIRCLE) {
-                check.that(shapeWidth > 1.5f && shapeHeight > 1.5f, "circle formation spreads in both axes");
-            } else if (shape == FormationShape.WEDGE) {
-                check.that(shapeWidth > 1.5f && shapeHeight > 1.5f, "wedge formation spreads in both axes");
-            }
         }
         check.equal(5, new LinkedHashSet<>(spreads.values()).size(),
                 "every formation shape produces a different arrangement " + spreads);
@@ -559,10 +553,10 @@ public final class RtsScenario {
         ItemType plank = content.item(ScenarioContent.PLANK);
 
         Building warehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player, new GridPos(10, 10));
-        check.that(warehouse.isWarehouse(), "the warehouse joins the player's logistics network");
         check.equal(100, warehouse.inventory().insert(iron, 100), "the warehouse accepts items");
-        check.equal(100, logistics.amount(iron), "stored items are the usable ones");
-        check.equal(100, logistics.stored().totalUnits(), "the stockpile contains exactly the warehouse contents");
+        check.that(warehouse.isWarehouse() && logistics.amount(iron).equals(Natural.of(100))
+                        && logistics.stored().totalUnits().equals(Natural.of(100)),
+                "the warehouse joins the player's logistics network, and stored items are the usable stockpile");
 
         Building barracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player, new GridPos(20, 10));
         barracks.inventory().insert(steel, 50);
@@ -573,17 +567,19 @@ public final class RtsScenario {
         check.equal(100, logistics.amount(iron), "items carried by a unit are not usable until they are stored");
 
         ItemBundle leftover = logistics.deposit(ItemBundle.of(iron, 25), worker.position());
-        check.that(leftover.isEmpty(), "depositing carried goods puts them into a warehouse");
-        check.equal(125, logistics.amount(iron), "the deposit shows up in the stockpile");
+        check.that(leftover.isEmpty() && logistics.amount(iron).equals(Natural.of(125)),
+                "depositing carried goods puts them into a warehouse and the stockpile");
 
         Building silo = world.spawnBuilding(content.building(ScenarioContent.ORE_SILO), player, new GridPos(28, 10));
-        check.that(!silo.inventory().accepts(plank), "a specialised store refuses what it is not meant to hold");
-        check.equal(0, silo.inventory().insert(plank, 10), "the rejected insert changes nothing");
-        check.equal(120, silo.inventory().insert(content.item(ScenarioContent.IRON_ORE), 120), "the silo accepts ore");
+        check.that(!silo.inventory().accepts(plank)
+                        && silo.inventory().insert(plank, 10).isZero()
+                        && silo.inventory().insert(content.item(ScenarioContent.IRON_ORE), 120)
+                                .compareTo(Natural.of(120)) == 0,
+                "a specialised store refuses what it is not meant to hold and accepts its own ore");
 
         Optional<Logistics.Reservation> reservation = logistics.reserve(ItemBundle.of(iron, 50));
-        check.that(reservation.isPresent(), "items can be reserved for a job");
-        check.equal(75, logistics.available().amount(iron), "reserved items are no longer available to other jobs");
+        check.that(reservation.isPresent() && logistics.available().amount(iron).equals(Natural.of(75)),
+                "items can be reserved for a job, and reserved items are no longer available");
         reservation.ifPresent(Logistics.Reservation::release);
         check.equal(125, logistics.available().amount(iron), "releasing a reservation gives the items back");
         logistics.reserveOrThrow(ItemBundle.of(iron, 50)).commit();
@@ -597,8 +593,9 @@ public final class RtsScenario {
                 acceptedKinds++;
             }
         }
-        check.atMost(24, secondWarehouse.inventory().usedSlots(), "a warehouse never exceeds its 24 slots");
-        check.that(secondWarehouse.inventory().isFull(), "the warehouse reports itself full once all slots are taken");
+        check.that(secondWarehouse.inventory().usedSlots().compareTo(Natural.of(24)) <= 0
+                        && secondWarehouse.inventory().isFull(),
+                "a 24 slot warehouse never exceeds its slots and reports itself full once they are taken");
         check.note("a 24 slot warehouse accepted " + acceptedKinds + " of the " + content.items().size() + " item kinds");
         ItemType rejected = null;
         for (ItemType item : content.items()) {
@@ -608,23 +605,24 @@ public final class RtsScenario {
             }
         }
         if (rejected != null) {
-            check.equal(0, secondWarehouse.inventory().insert(rejected, 10),
-                    "a full warehouse refuses a kind it does not hold yet (" + rejected.key() + ")");
+            check.that(secondWarehouse.inventory().insert(rejected, 10).isZero()
+                            && !secondWarehouse.inventory().insert(iron, 10).isZero(),
+                    "a full warehouse refuses a kind it does not hold yet (" + rejected.key()
+                            + ") but can still top up a stack of an item it holds");
         }
-        check.that(!secondWarehouse.inventory().insert(iron, 10).isZero(),
-                "a full warehouse can still top up a stack of an item it already holds");
 
         // Regression guard: a slot must hold at most ItemType.maxStack(), and a kind that needs more than
         // one stack must occupy more than one slot. Insert and the capacity query have to agree.
         Inventory probe = new Inventory("probe", Natural.of(2), Inventory.UNLIMITED, item -> true);
         check.equal(120, probe.insert(iron, 500), "two slots hold two stacks of the 60 unit item");
-        check.equal(2, probe.usedSlots(), "a kind spanning two stacks occupies two slots");
-        check.equal(0, probe.insert(iron, 10), "a full inventory refuses more of the same item");
-        check.equal(0, probe.capacityFor(iron), "the capacity query agrees with the insert");
+        check.that(probe.usedSlots().equals(Natural.of(2)) && probe.insert(iron, 10).isZero()
+                        && probe.capacityFor(iron).isZero(),
+                "a kind spanning two stacks occupies two slots and a full inventory refuses more of it");
         probe.extract(iron, 30);
-        check.equal(30, probe.capacityFor(iron), "the capacity query follows the partial stack");
-        check.equal(30, probe.insert(iron, 100), "a partially filled stack can still be topped up");
-        check.equal(0, probe.capacityFor(iron), "the top up filled the stack again");
+        check.that(probe.capacityFor(iron).equals(Natural.of(30))
+                        && probe.insert(iron, 100).equals(Natural.of(30))
+                        && probe.capacityFor(iron).isZero(),
+                "the capacity query follows the partial stack, which can be topped up again");
     }
 
     // ------------------------------------------------------------------ 5) production
@@ -657,11 +655,11 @@ public final class RtsScenario {
         Natural ironBefore = logistics.amount(iron);
         production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 3);
         boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 3, 3000);
-        check.that(trained, "the barracks trains three soldiers from warehouse materials");
-        check.equal(unitsBefore + 3, world.unitsOf(player).size(), "exactly three new units exist");
-        check.equal(ironBefore.subtractClamped(150), logistics.amount(iron),
-                "each soldier consumed 50 iron from the warehouse");
-        check.that(production.queueOf(barracks).isEmpty(), "the production queue drains when the work is done");
+        check.that(trained && world.unitsOf(player).size() == unitsBefore + 3,
+                "the barracks trains exactly three soldiers from warehouse materials");
+        check.that(logistics.amount(iron).equals(ironBefore.subtractClamped(150))
+                        && production.queueOf(barracks).isEmpty(),
+                "each soldier consumed 50 iron from the warehouse and the queue drains when the work is done");
 
         List<Unit> soldiers = world.unitsOf(player);
         float farthest = 0f;
@@ -673,27 +671,24 @@ public final class RtsScenario {
         int unitsAfter = world.unitsOf(player).size();
         production.enqueue(workshop, content.recipe(ScenarioContent.CRAFT_RIFLE), 1);
         engine.tick(400);
-        check.equal(unitsAfter, world.unitsOf(player).size(), "a job without materials produces no units");
-        check.equal(0, totalHeld(world, rifle), "a job without materials produces no goods");
-        check.that(!production.queueOf(workshop).isEmpty(), "the blocked job waits in the queue instead of vanishing");
-        check.equal(ProductionState.WAITING_MATERIALS, production.queueOf(workshop).jobs().get(0).state(),
-                "the blocked job reports that it is waiting for materials");
+        check.that(world.unitsOf(player).size() == unitsAfter && totalHeld(world, rifle).isZero()
+                        && !production.queueOf(workshop).isEmpty()
+                        && production.queueOf(workshop).jobs().get(0).state() == ProductionState.WAITING_MATERIALS,
+                "a job without materials produces no units and no goods, and waits in the queue as WAITING_MATERIALS");
         production.cancel(workshop, 0);
 
         production.enqueue(workshop, content.recipe(ScenarioContent.SMELT_STEEL), 6);
         boolean smelted = engine.tickUntil(e -> totalHeld(world, steel).compareTo(Natural.of(60)) >= 0, 3000);
-        check.that(smelted, "the workshop smelts steel from warehouse ore and coal");
-        check.equal(60, totalHeld(world, steel), "six batches yield 60 steel ingots");
+        check.that(smelted && totalHeld(world, steel).equals(Natural.of(60)),
+                "the workshop smelts exactly 60 steel ingots from warehouse ore and coal in six batches");
         check.note("steel in the workshop buffer: " + workshop.inventory().amount(steel)
                 + ", in warehouses: " + warehouse.inventory().amount(steel));
 
         Natural riflesBefore = totalHeld(world, rifle);
         production.enqueue(workshop, content.recipe(ScenarioContent.CRAFT_RIFLE), 3);
         boolean crafted = engine.tickUntil(e -> totalHeld(world, rifle).compareTo(riflesBefore.add(3)) >= 0, 3000);
-        check.that(crafted, "the workshop crafts rifles out of stored steel and planks");
-        check.equal(riflesBefore.add(3), totalHeld(world, rifle), "three rifles exist");
-        check.note("rifles in the workshop buffer: " + workshop.inventory().amount(rifle)
-                + ", in warehouses: " + warehouse.inventory().amount(rifle));
+        check.that(crafted && totalHeld(world, rifle).equals(riflesBefore.add(3)),
+                "the workshop crafts exactly three rifles out of stored steel and planks");
         check.note(engine.describe());
     }
 
@@ -725,14 +720,11 @@ public final class RtsScenario {
         engine.production().enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
         boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() > unitsBefore, 6000);
         check.that(trained, "the barracks is supplied by a hauler and trains its soldier");
-        check.that(hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.PICKUP
-                        && !haul.items().isEmpty()),
-                "the engine emits a non-empty pickup fact when the hauler loads the goods");
-        check.that(hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.DROPOFF
-                        && !haul.items().isEmpty()),
-                "the engine emits a non-empty dropoff fact when the hauler unloads at the barracks");
-        check.that(hauls.stream().allMatch(haul -> haul.tick() >= 0 && haul.unit().equals(hauler)),
-                "every haul fact names the hauler and its simulation tick");
+        check.that(hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.PICKUP && !haul.items().isEmpty())
+                        && hauls.stream().anyMatch(haul -> haul.action() == Events.HaulAction.DROPOFF
+                                && !haul.items().isEmpty())
+                        && hauls.stream().allMatch(haul -> haul.tick() >= 0 && haul.unit().equals(hauler)),
+                "the engine emits non-empty pickup and dropoff facts, every one naming the hauler and its tick");
         check.note("pending deliveries after training: " + logistics.pendingDeliveries()
                 + ", hauler travelled " + round(hauler.motion().travelledDistance()) + " tiles");
         check.that(warehouse.inventory().amount(content.item(ScenarioContent.IRON_INGOT))
@@ -774,28 +766,25 @@ public final class RtsScenario {
         ProductionQueue queue = engine.production().queueOf(barracks);
 
         var demand = queue.demand().orElseThrow();
-        check.that(!demand.ready(), "an empty producer reports its queued job as not ready");
-        check.equal(recipe.inputs().components().size(), demand.items().size(),
-                "demand lists exactly the recipe's input kinds");
-        check.equal(iron.key().path(), demand.items().get(0).item(),
-                "the first demand item is the recipe's first input");
-        check.equal((long) recipe.inputs().amount(iron).toLongSaturated(), demand.items().get(0).need(),
-                "need is the recipe amount of that input");
-        check.equal(0L, demand.items().get(0).have(), "have is zero while the building holds nothing");
-        check.that(demand.missingItems().size() == 2, "both recipe inputs are reported missing");
+        check.that(!demand.ready()
+                        && demand.items().size() == recipe.inputs().components().size()
+                        && demand.missingItems().size() == 2
+                        && demand.items().get(0).item().equals(iron.key().path())
+                        && demand.items().get(0).need() == recipe.inputs().amount(iron).toLongSaturated()
+                        && demand.items().get(0).have() == 0L,
+                "an empty producer reports its queued job as not ready: demand lists exactly the recipe's "
+                        + "input kinds in recipe order, with need from the recipe and have zero");
 
         var now = queue.producingNow().orElseThrow();
-        check.equal(ProductionQueue.outputKind(recipe), now.kind(),
-                "producingNow kind is the produced unit's content path");
-        check.equal(1, now.position(), "the first unfinished job is position 1");
-        check.equal(2, now.length(), "length is the unfinished job count");
+        check.that(now.kind().equals(ProductionQueue.outputKind(recipe)) && now.position() == 1 && now.length() == 2,
+                "producingNow names the produced unit's content path at position 1 of the 2 unfinished jobs");
 
         barracks.inventory().insert(iron, recipe.inputs().amount(iron));
         barracks.inventory().insert(plank, recipe.inputs().amount(plank));
         var supplied = queue.demand().orElseThrow();
-        check.that(supplied.ready(), "with the recipe inputs in the building buffer the job is ready");
-        check.equal((long) recipe.inputs().amount(iron).toLongSaturated(), supplied.items().get(0).have(),
-                "have reports the held amount, capped at need");
+        check.that(supplied.ready()
+                        && supplied.items().get(0).have() == recipe.inputs().amount(iron).toLongSaturated(),
+                "with the recipe inputs in the building buffer the job is ready and have reports the held amount");
 
         engine.tick(1);
         var started = queue.demand().orElseThrow();
@@ -808,23 +797,34 @@ public final class RtsScenario {
         Building depot = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
                 new GridPos(30, 10));
         depositStock(check, player, depot, ItemBundle.builder().add(iron, 100).add(plank, 50).build(),
-                "the forced-haul check stocks a warehouse");
-        Building haulBarracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                "the assist check stocks a warehouse");
+        Building assistBarracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
                 new GridPos(40, 10));
-        engine.production().enqueue(haulBarracks, recipe, 1);
+        engine.production().enqueue(assistBarracks, recipe, 1);
         Unit hauler = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(38, 10));
-        UnitDirector.HaulResult forced = engine.commands().tryHaul(hauler, haulBarracks);
-        check.that(forced.hauled(), "a forced haul reserves the missing inputs: " + forced.refusal());
-        check.equal(hauler.id(), forced.job().hauler().orElseThrow(),
-                "the forced haul names the chosen engineer");
-        check.equal(2, forced.reserved().components().size(),
-                "the reserved bundle is exactly the recipe's two missing inputs");
-        check.that(!hauler.orders().pending().isEmpty()
+        UnitDirector.AssistResult hauled = engine.commands().tryAssist(hauler, assistBarracks);
+        check.that(hauled.assisted() && UnitDirector.AssistResult.ACTION_HAUL.equals(hauled.action()),
+                "assisting a producer short of inputs hauls its missing stock: " + hauled.refusal());
+        check.that(hauled.reserved().components().size() == 2
+                        && !hauler.orders().pending().isEmpty()
                         && hauler.orders().pending().get(0) instanceof HaulOrder,
-                "the engineer's queued order is a HaulOrder");
-        UnitDirector.HaulResult noDemand = engine.commands().tryHaul(hauler, depot);
-        check.that(!noDemand.hauled() && noDemand.refusal().contains("nothing to haul"),
-                "a warehouse with no production queue refuses a forced haul");
+                "the assist reserved both missing inputs and queued a HaulOrder on the worker");
+        Building assistSite = world.placeBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(50, 10));
+        UnitDirector.AssistResult buildAssist = engine.commands().tryAssist(hauler, assistSite);
+        check.that(buildAssist.assisted()
+                        && UnitDirector.AssistResult.ACTION_BUILD.equals(buildAssist.action())
+                        && !hauler.orders().pending().isEmpty()
+                        && hauler.orders().pending().get(0) instanceof BuildOrder,
+                "assisting an unfinished site joins its construction instead");
+        UnitDirector.AssistResult noDemand = engine.commands().tryAssist(hauler, depot);
+        check.that(!noDemand.assisted() && noDemand.refusal().contains("nothing to assist"),
+                "a finished, undamaged warehouse with no waiting recipe refuses the assist");
+        depot.health().damage(10);
+        UnitDirector.AssistResult repairAssist = engine.commands().tryAssist(hauler, depot);
+        check.that(repairAssist.assisted()
+                        && UnitDirector.AssistResult.ACTION_REPAIR.equals(repairAssist.action()),
+                "assisting a damaged building repairs it instead");
     }
 
     // ------------------------------------------------------------------ 5d) engineer task strings
@@ -851,13 +851,11 @@ public final class RtsScenario {
         damaged.health().damage(100);
         damaged.inventory().insert(iron, 50);
         Unit engineer = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(6, 6).center());
-        check.that(UnitTask.isEngineer(engineer), "the scenario worker counts as an engineer");
-        check.equal(UnitTask.IDLE, UnitTask.of(engineer).orElseThrow(),
-                "an engineer with no order reads 空闲");
-        check.equal("建造中 → " + site.displayName(), UnitTask.describe(new BuildOrder(site)),
-                "a BuildOrder names its building after 建造中");
-        check.equal("修理中 → " + damaged.displayName(), UnitTask.describe(new RepairOrder(damaged)),
-                "a RepairOrder names its building after 修理中");
+        check.that(UnitTask.isEngineer(engineer) && UnitTask.of(engineer).orElseThrow().equals(UnitTask.IDLE),
+                "the scenario worker counts as an engineer, and one with no order reads 空闲");
+        check.that(UnitTask.describe(new BuildOrder(site)).equals("建造中 → " + site.displayName())
+                        && UnitTask.describe(new RepairOrder(damaged)).equals("修理中 → " + damaged.displayName()),
+                "a BuildOrder names its building after 建造中 and a RepairOrder after 修理中");
         Logistics.Reservation reservation = player.logistics().reserveOrThrow(ItemBundle.of(iron, 10));
         DeliveryJob job = new DeliveryJob(damaged, ItemBundle.of(iron, 10), reservation, world.tickNumber());
         check.equal("搬运中 → " + damaged.displayName(), UnitTask.describe(new HaulOrder(job)),
@@ -954,43 +952,34 @@ public final class RtsScenario {
         int pendingJobs = logistics.pendingDeliveries();
 
         UnitDirector.TransferResult same = commands.transfer(source, source, iron, Natural.of(1));
-        check.that(!same.transferred() && same.refusal().contains("same building"),
-                "a transfer to the same building is refused as such: " + same.refusal());
         UnitDirector.TransferResult notWarehouse = commands.transfer(barracks, target, iron, Natural.of(1));
-        check.that(!notWarehouse.transferred() && notWarehouse.refusal().contains("not a warehouse"),
-                "a non-warehouse source is refused as not a warehouse: " + notWarehouse.refusal());
         UnitDirector.TransferResult notWarehouseTarget = commands.transfer(source, barracks, iron, Natural.of(1));
-        check.that(!notWarehouseTarget.transferred()
-                        && notWarehouseTarget.refusal().contains("not a warehouse"),
-                "a non-warehouse target is refused as not a warehouse: "
-                        + notWarehouseTarget.refusal());
         UnitDirector.TransferResult unknownItem = commands.transfer(source, target, null, Natural.of(1));
-        check.that(!unknownItem.transferred() && unknownItem.refusal().contains("unknown item"),
-                "a missing item kind is refused as unknown item: " + unknownItem.refusal());
         UnitDirector.TransferResult noAmount = commands.transfer(source, target, iron, Natural.ZERO);
-        check.that(!noAmount.transferred() && noAmount.refusal().contains("must be positive"),
-                "a zero amount is refused as not positive: " + noAmount.refusal());
+        check.that(!same.transferred() && same.refusal().contains("same building")
+                        && !notWarehouse.transferred() && notWarehouse.refusal().contains("not a warehouse")
+                        && !notWarehouseTarget.transferred() && notWarehouseTarget.refusal().contains("not a warehouse")
+                        && !unknownItem.transferred() && unknownItem.refusal().contains("unknown item")
+                        && !noAmount.transferred() && noAmount.refusal().contains("must be positive"),
+                "same building, non-warehouse source and target, unknown item and a zero amount are each refused "
+                        + "with a reason naming the rule (" + same.refusal() + ")");
         Building unfinishedWarehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE),
                 player, new GridPos(52, 30));
         unfinishedWarehouse.restartConstruction();
         UnitDirector.TransferResult fromSite = commands.transfer(unfinishedWarehouse, target, iron,
                 Natural.of(1));
-        check.that(!fromSite.transferred() && fromSite.refusal().contains("under construction"),
-                "an unfinished source warehouse is refused: " + fromSite.refusal());
         UnitDirector.TransferResult toSite = commands.transfer(source, unfinishedWarehouse, iron,
                 Natural.of(1));
-        check.that(!toSite.transferred() && toSite.refusal().contains("under construction"),
-                "an unfinished target warehouse is refused: " + toSite.refusal());
+        check.that(!fromSite.transferred() && fromSite.refusal().contains("under construction")
+                        && !toSite.transferred() && toSite.refusal().contains("under construction"),
+                "an unfinished source or target warehouse is refused as under construction");
         UnitDirector.TransferResult noStock = commands.transfer(source, target, iron, Natural.of(1));
-        check.that(!noStock.transferred() && noStock.refusal().contains("no stock"),
-                "an item the source does not hold is refused as no stock: " + noStock.refusal());
         UnitDirector.TransferResult foreign = commands.transfer(source, enemyWarehouse, iron, Natural.of(1));
-        check.that(!foreign.transferred() && foreign.refusal().contains("different players"),
-                "a target warehouse of another player is refused: " + foreign.refusal());
         UnitDirector.TransferResult crossDimension = commands.transfer(source, moonWarehouse, iron, Natural.of(1));
-        check.that(!crossDimension.transferred()
-                        && crossDimension.refusal().contains("different dimensions"),
-                "a warehouse in another dimension is refused: " + crossDimension.refusal());
+        check.that(!noStock.transferred() && noStock.refusal().contains("no stock")
+                        && !foreign.transferred() && foreign.refusal().contains("different players")
+                        && !crossDimension.transferred() && crossDimension.refusal().contains("different dimensions"),
+                "no stock, another player's warehouse and a warehouse in another dimension are each refused");
 
         for (Unit unit : new ArrayList<>(world.unitsOf(player))) {
             world.destroy(unit);
@@ -998,17 +987,14 @@ public final class RtsScenario {
         engine.tick(1);
         check.that(world.unitsOf(player).isEmpty(), "the fixture has no worker left for the next transfer");
         UnitDirector.TransferResult noEngineer = commands.transfer(target, source, iron, Natural.of(1));
-        check.that(!noEngineer.transferred() && noEngineer.refusal().contains("no free engineer"),
-                "without a free engineer the transfer is refused before anything is reserved: "
+        check.that(!noEngineer.transferred() && noEngineer.refusal().contains("no free engineer")
+                        && sourceIron.equals(source.inventory().amount(iron))
+                        && targetIron.equals(target.inventory().amount(iron))
+                        && availableIron.equals(logistics.available().amount(iron))
+                        && pendingJobs == logistics.pendingDeliveries(),
+                "without a free engineer the transfer is refused before anything is reserved, and every refusal "
+                        + "left the source and target stock, the available amount and the pending jobs unchanged: "
                         + noEngineer.refusal());
-        check.equal(sourceIron, source.inventory().amount(iron),
-                "every refusal left the source stock unchanged");
-        check.equal(targetIron, target.inventory().amount(iron),
-                "every refusal left the target stock unchanged");
-        check.equal(availableIron, logistics.available().amount(iron),
-                "every refusal left no reservation behind");
-        check.equal(pendingJobs, logistics.pendingDeliveries(),
-                "every refusal registered no hauling job");
 
         // Unreachable: wall in the target's footprint and its two-tile ring, so no route exists at all.
         source.inventory().insert(iron, 7);
@@ -1018,10 +1004,10 @@ public final class RtsScenario {
             world.map().setTerrain(tile, content.terrain("water"));
         }
         UnitDirector.TransferResult unreachable = commands.transfer(source, target, iron, Natural.of(3));
-        check.that(!unreachable.transferred() && unreachable.refusal().contains("unreachable"),
-                "a walled-off target is refused as unreachable: " + unreachable.refusal());
-        check.equal(beforeUnreachable, source.inventory().amount(iron),
-                "the unreachable refusal kept the source stock");
+        check.that(!unreachable.transferred() && unreachable.refusal().contains("unreachable")
+                        && beforeUnreachable.equals(source.inventory().amount(iron)),
+                "a walled-off target is refused as unreachable and the source stock is kept: "
+                        + unreachable.refusal());
 
         // Determinism: two identically built worlds dispatch the same bundle to the same hauler and
         // deliver the same stock after the same number of ticks.
@@ -1031,18 +1017,16 @@ public final class RtsScenario {
                 left.engine().commands().transfer(left.source(), left.target(), iron, Natural.of(12));
         UnitDirector.TransferResult rightTransfer =
                 right.engine().commands().transfer(right.source(), right.target(), iron, Natural.of(12));
-        check.that(leftTransfer.transferred() && rightTransfer.transferred(),
-                "two identical worlds both accept the same transfer");
-        check.equal(leftTransfer.moved(), rightTransfer.moved(),
-                "identical worlds dispatch an identical bundle");
-        check.equal(leftTransfer.job().hauler().orElseThrow(), rightTransfer.job().hauler().orElseThrow(),
-                "identical worlds choose the same hauler");
+        check.that(leftTransfer.transferred() && rightTransfer.transferred()
+                        && leftTransfer.moved().equals(rightTransfer.moved())
+                        && leftTransfer.job().hauler().orElseThrow()
+                                .equals(rightTransfer.job().hauler().orElseThrow()),
+                "two identical worlds both accept the same transfer and dispatch the same bundle to the same hauler");
         left.engine().tick(200);
         right.engine().tick(200);
-        check.equal(left.source().inventory().amount(iron), right.source().inventory().amount(iron),
-                "identical worlds keep the same remaining source stock");
-        check.equal(left.target().inventory().amount(iron), right.target().inventory().amount(iron),
-                "identical worlds deliver the same target stock");
+        check.that(left.source().inventory().amount(iron).equals(right.source().inventory().amount(iron))
+                        && left.target().inventory().amount(iron).equals(right.target().inventory().amount(iron)),
+                "identical worlds keep the same remaining source stock and deliver the same target stock");
     }
 
     /** One real-haul transfer fixture: two finished warehouses ten tiles apart, a worker and a stock. */
@@ -1077,32 +1061,33 @@ public final class RtsScenario {
     private static void checkAnimationAndSnapshot(Check check, ContentRegistry content) {
         check.section("6) sprites and animation, and the read only snapshot a GUI would draw");
         VisualLibrary library = scenarioVisuals();
-        check.that(library.findAnimationSet("soldier").isPresent(), "the visual library knows the soldier sprite set");
-        check.that(library.findSheet("soldier").isPresent(), "the visual library knows the soldier sheet");
+        check.that(library.findAnimationSet("soldier").isPresent() && library.findSheet("soldier").isPresent(),
+                "the visual library knows the soldier sprite set and sheet");
 
         OcRtsEngine engine = flatEngine(content, library, 13L);
         Player player = engine.players().get(0);
         Unit soldier = engine.world().spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new GridPos(10, 10).center());
         engine.tick(2);
 
-        check.that(soldier.visual() instanceof UnitAnimator, "a spawned unit gets an animator from the visual library");
-        check.equal(AnimationClips.IDLE, soldier.visual().clipId(), "a unit standing still plays the idle clip");
+        check.that(soldier.visual() instanceof UnitAnimator
+                        && AnimationClips.IDLE.equals(soldier.visual().clipId()),
+                "a spawned unit gets an animator from the visual library and plays the idle clip standing still");
 
         engine.commands().move(soldier, new GridPos(40, 10));
         engine.tick(6);
-        check.equal(AnimationClips.MOVE, soldier.visual().clipId(), "a walking unit plays the move clip");
         int firstFrame = soldier.visual().frameIndex();
         engine.tick(8);
         int laterFrame = soldier.visual().frameIndex();
-        check.that(firstFrame != laterFrame, "the animation advances with the ticks (" + firstFrame + " -> " + laterFrame + ")");
-        check.atMost(0.35f, Math.abs(soldier.visual().facing()), "the unit faces the direction it walks");
+        check.that(AnimationClips.MOVE.equals(soldier.visual().clipId()) && firstFrame != laterFrame
+                        && Math.abs(soldier.visual().facing()) <= 0.35f,
+                "a walking unit plays the move clip, the animation advances with the ticks ("
+                        + firstFrame + " -> " + laterFrame + ") and it faces the direction it walks");
 
         if (soldier.visual() instanceof UnitAnimator animator) {
             SpriteFrame frame = animator.currentFrame();
-            check.that(frame != null, "the animator resolves a concrete sprite frame");
+            check.that(frame != null && frame.index() < library.sheet(frame.sheetId()).frameCount(),
+                    "the animator resolves a concrete sprite frame whose index is inside the sheet");
             if (frame != null) {
-                SpriteSheet sheet = library.sheet(frame.sheetId());
-                check.that(frame.index() < sheet.frameCount(), "the frame index is inside the sheet");
                 check.note("frame " + frame.index() + " of sheet '" + frame.sheetId() + "' at pixel ("
                         + frame.pixelX() + ", " + frame.pixelY() + "), pivot (" + frame.pivotX() + ", " + frame.pivotY() + ")");
             }
@@ -1116,34 +1101,30 @@ public final class RtsScenario {
         GridPos center = new GridPos(12, 10);
         int radius = 12;
         WorldSnapshot snapshot = engine.snapshot(center, radius);
-        check.equal(2 * radius + 1, snapshot.bounds().width(), "the snapshot covers the requested width");
-        check.equal(2 * radius + 1, snapshot.bounds().height(), "the snapshot covers the requested height");
-        check.that(snapshot.entityCount() > 0, "the snapshot contains the entities in view");
-        check.that(snapshot.terrainAt(center.x(), center.y()) != null, "the snapshot carries terrain for every tile");
-        check.that(snapshot.entity(soldier.id()).isPresent(), "the snapshot can be queried by entity id");
+        check.that(snapshot.bounds().width() == 2 * radius + 1 && snapshot.bounds().height() == 2 * radius + 1
+                        && snapshot.entityCount() > 0
+                        && snapshot.terrainAt(center.x(), center.y()) != null
+                        && snapshot.entity(soldier.id()).isPresent(),
+                "the snapshot covers the requested square, contains the entities in view, carries terrain for every tile "
+                        + "and can be queried by entity id");
 
         String picture = engine.render(center, radius);
         String[] lines = picture.split("\n", -1);
-        check.atLeast(2 * radius + 1, lines.length, "the text picture has at least one line per tile row");
-        boolean rowsFine = true;
+        boolean rowsFine = lines.length >= 2 * radius + 1;
         for (int i = 0; i < 2 * radius + 1 && i < lines.length; i++) {
             if (lines[i].length() != 2 * radius + 1) {
                 rowsFine = false;
             }
         }
-        check.that(rowsFine, "every row of the text picture has exactly one character per tile");
         // The renderer draws one character per tile with y growing downwards, and documents unit letters
         // as C (combat), W (worker) and S (support). Checking the soldier's own tile proves that the
         // snapshot and the renderer agree about where an entity is.
         int row = soldier.tile().y() - snapshot.bounds().minY();
         int column = soldier.tile().x() - snapshot.bounds().minX();
         boolean insidePicture = row >= 0 && row <= 2 * radius && column >= 0 && column <= 2 * radius;
-        check.that(insidePicture, "the soldier is inside the rendered area");
-        if (insidePicture) {
-            char drawn = lines[row].charAt(column);
-            check.that("CWS".indexOf(Character.toUpperCase(drawn)) >= 0,
-                    "the soldier is drawn at its own tile (char '" + drawn + "')");
-        }
+        check.that(rowsFine, "the text picture has one character per tile of the window");
+        check.that(insidePicture && "CWS".indexOf(Character.toUpperCase(lines[row].charAt(column))) >= 0,
+                "the soldier is drawn at its own tile (char '" + lines[row].charAt(column) + "')");
         System.out.println();
         System.out.println(picture);
     }
@@ -1253,38 +1234,35 @@ public final class RtsScenario {
         DimensionId mars = DimensionId.of("mars");
         GridPos sameSpot = new GridPos(-3, -3);
 
-        check.equal(3, world.dimensionCount(), "three dimensions exist");
-        check.equal("overworld", overworld.key(), "the default dimension is the overworld");
-        check.that(world.dimension(overworld).profile().breathable(), "the overworld is Earth like");
-        check.close(0.166f, world.dimension(moon).profile().gravity(), 1e-6f,
-                "the Moon keeps its own gravity");
-        check.that(!world.dimension(moon).profile().breathable()
-                && world.dimension(moon).profile().requiresSealedUnits(),
-                "the Moon is not breathable and forces sealed units");
-        check.close(1.25f, world.dimension(moon).profile().movementSpeedFactor(), 1e-6f,
-                "the Moon moves units faster");
-        check.equal("Mars", world.dimension(mars).profile().displayName(), "Mars has its own profile");
+        check.that(world.dimensionCount() == 3 && overworld.key().equals("overworld")
+                        && world.dimension(overworld).profile().breathable(),
+                "three dimensions exist and the default one is the breathable overworld");
+        check.that(Math.abs(world.dimension(moon).profile().gravity() - 0.166f) <= 1e-6f
+                        && !world.dimension(moon).profile().breathable()
+                        && world.dimension(moon).profile().requiresSealedUnits()
+                        && Math.abs(world.dimension(moon).profile().movementSpeedFactor() - 1.25f) <= 1e-6f
+                        && world.dimension(mars).profile().displayName().equals("Mars"),
+                "the Moon keeps its own gravity, is not breathable, forces sealed units and moves units faster; "
+                        + "Mars has its own profile");
 
         // The same tile in two dimensions must stay two different places.
         Unit onOverworld = world.spawnUnit(overworld, type, blue, sameSpot);
         Unit onMoon = world.spawnUnit(moon, type, blue, sameSpot);
-        check.that(!onOverworld.id().equals(onMoon.id()), "both units exist with different ids");
-        check.equal(2, world.entityCount(), "two entities in total across the world");
-        check.equal(1, world.spatial(overworld).size(), "the overworld index holds one entity");
-        check.equal(1, world.spatial(moon).size(), "the Moon index holds its own one");
-        check.that(world.spatial(overworld).inRadius(sameSpot.center(), 3f).stream()
-                .noneMatch(entity -> entity.id().equals(onMoon.id())),
-                "the overworld index cannot see the Moon unit");
-        check.equal("moon", onMoon.dimensionId().key(), "each unit reports its own dimension");
-        check.that(world.findEntity(onMoon.id()).orElseThrow() == onMoon,
-                "an id finds its entity across dimensions");
+        check.that(!onOverworld.id().equals(onMoon.id()) && world.entityCount() == 2
+                        && world.spatial(overworld).size() == 1 && world.spatial(moon).size() == 1
+                        && world.spatial(overworld).inRadius(sameSpot.center(), 3f).stream()
+                                .noneMatch(entity -> entity.id().equals(onMoon.id()))
+                        && onMoon.dimensionId().key().equals("moon")
+                        && world.findEntity(onMoon.id()).orElseThrow() == onMoon,
+                "the same tile in two dimensions stays two different places: distinct ids, one entity in each "
+                        + "dimension's own spatial index, no cross-map neighbours, and an id still finds its entity");
 
         // Streaming is per dimension: a focus far away on Mars loads Mars chunks and leaves the others alone.
         world.dimension(mars).focus(new Vec2(20_000f, -20_000f), 2);
         for (int i = 0; i < 12; i++) {
             engine.tick();
         }
-        check.atLeast(1, Natural.of(world.map(mars).loadedChunkCount()),
+        check.that(world.map(mars).loadedChunkCount() >= 1,
                 "the Mars focus loaded Mars chunks");
         check.note("loaded chunks: overworld=" + world.map(overworld).loadedChunkCount()
                 + ", moon=" + world.map(moon).loadedChunkCount()
@@ -1296,16 +1274,18 @@ public final class RtsScenario {
         for (int i = 0; i < 40; i++) {
             engine.tick();
         }
-        check.equal("moon", onMoon.dimensionId().key(), "a moved unit stays in its dimension");
-        check.that(onMoon.motion().travelledDistance() > before, "the unit actually travelled on the Moon");
-        check.that(onOverworld.position().tile().equals(sameSpot) || onOverworld.position().tile().x() > -3,
-                "the overworld unit was not dragged along by the Moon order");
+        check.that(onMoon.dimensionId().key().equals("moon")
+                        && onMoon.motion().travelledDistance() > before
+                        && (onOverworld.position().tile().equals(sameSpot)
+                                || onOverworld.position().tile().x() > -3),
+                "a moved unit stays in its dimension and really travelled there, "
+                        + "and the overworld unit was not dragged along by the Moon order");
 
         // Destroying in one dimension leaves the others untouched.
         world.destroy(onMoon);
         engine.tick();
-        check.equal(0, world.units(moon).size(), "the Moon is empty after the destroy");
-        check.equal(1, world.units(overworld).size(), "the overworld unit survived");
+        check.that(world.units(moon).isEmpty() && world.units(overworld).size() == 1,
+                "destroying in one dimension leaves the others untouched");
 
         // Travel: two gateways chain the overworld to Mars through the Moon, and the order walks the unit
         // through both of them, keeping its id.
@@ -1314,11 +1294,11 @@ public final class RtsScenario {
         GridPos marsPad = findWalkable(world.map(mars), new GridPos(0, 0), 6);
         world.addGateway(Gateway.of(overworld, earthPad, moon, moonPad));
         world.addGateway(Gateway.of(moon, moonPad, mars, marsPad));
-        check.equal(2, world.route(overworld, mars).orElseThrow().size(),
-                "the route from the overworld to Mars goes through the Moon");
-        check.that(world.route(mars, overworld).isEmpty(), "gateways are one way unless reversed");
-        check.that(world.gatewayAt(overworld, earthPad.center(), 1f).isPresent(),
-                "a unit standing on the pad is at the gateway");
+        check.that(world.route(overworld, mars).orElseThrow().size() == 2
+                        && world.route(mars, overworld).isEmpty()
+                        && world.gatewayAt(overworld, earthPad.center(), 1f).isPresent(),
+                "the route from the overworld to Mars goes through the Moon, gateways are one way unless reversed, "
+                        + "and a unit standing on the pad is at the gateway");
 
         Unit traveller = world.spawnUnit(overworld, type, blue, earthPad);
         var travellerId = traveller.id();
@@ -1328,23 +1308,23 @@ public final class RtsScenario {
         for (int i = 0; i < 400 && !traveller.dimensionId().equals(mars); i++) {
             engine.tick();
         }
-        check.equal("mars", traveller.dimensionId().key(), "the unit travelled to Mars through the Moon");
-        check.that(world.findEntity(travellerId).orElseThrow() == traveller,
-                "the transfer kept the entity id, so an id still finds it");
-        check.equal(2, transfers[0], "both gateways fired a transfer event");
-        check.equal(1, world.units(mars).size(), "Mars now holds the traveller");
-        check.equal(1, world.units(overworld).size(),
-                "the traveller left the overworld, which keeps its original unit");
+        check.that(traveller.dimensionId().key().equals("mars")
+                        && world.findEntity(travellerId).orElseThrow() == traveller
+                        && transfers[0] == 2
+                        && world.units(mars).size() == 1
+                        && world.units(overworld).size() == 1,
+                "the unit travelled to Mars through the Moon keeping its entity id, both gateways fired a "
+                        + "transfer event, and Mars holds the traveller while the overworld keeps its original unit");
 
         // Snapshots are per dimension: each one names the map it drew and sees only that map's entities.
         WorldSnapshot moonShot = engine.snapshot(moon, sameSpot, 12);
         WorldSnapshot earthShot = engine.snapshot(sameSpot, 12);
-        check.equal("moon", moonShot.dimension().key(), "a snapshot names the dimension it drew");
-        check.equal("Moon", moonShot.dimensionName(), "the snapshot carries the profile display name");
-        check.equal("overworld", earthShot.dimension().key(),
-                "the legacy snapshot entry point still draws the default dimension");
-        check.that(moonShot.entityCount() == 0 && earthShot.entityCount() >= 1,
-                "each snapshot sees only its own map's entities");
+        check.that(moonShot.dimension().key().equals("moon")
+                        && moonShot.dimensionName().equals("Moon")
+                        && earthShot.dimension().key().equals("overworld")
+                        && moonShot.entityCount() == 0 && earthShot.entityCount() >= 1,
+                "each snapshot names the map it drew (the legacy entry point still draws the default dimension) "
+                        + "and sees only that map's entities");
 
         // Cross dimension supply end to end: a Moon depot feeds a Mars workshop, so the goods have to be
         // shipped through the gateway. The Moon warehouse is spawned after the engine exists, which also
@@ -1449,12 +1429,14 @@ public final class RtsScenario {
 
         // --- the combat view is a projection of the catalogue, not a second copy of its numbers
         CombatStats soldier = CombatStats.of(scenarioContent.unit(ScenarioContent.SOLDIER));
-        check.equal(12L, soldier.attackDamage(), "the combat view reuses the catalogue's attack damage");
-        check.close(4.5f, soldier.attackRange(), 1e-6f, "the combat view reuses the catalogue's attack range");
-        check.equal(20, soldier.attackCooldownTicks(), "the combat view reuses the catalogue's attack cooldown");
-        check.equal(120L, soldier.maxHealth(), "the combat view reuses the catalogue's hit points");
-        check.equal(0, soldier.armour(), "armour defaults to zero when content does not set it");
-        check.that(soldier.canAttack(), "a soldier can attack");
+        check.that(soldier.attackDamage().equals(Natural.of(12))
+                        && Math.abs(soldier.attackRange() - 4.5f) <= 1e-6f
+                        && soldier.attackCooldownTicks() == 20
+                        && soldier.maxHealth().equals(Natural.of(120))
+                        && soldier.armour() == 0
+                        && soldier.canAttack(),
+                "the combat view reuses the catalogue's damage, range, cooldown and hit points, armour defaults "
+                        + "to zero when content does not set it, and a soldier can attack");
 
         // --- two units of different players in range fight, and exactly one dies on a known tick
         OcRtsEngine duel = combatEngine(content, blue, red);
@@ -1468,23 +1450,22 @@ public final class RtsScenario {
         Unit fighter = duelWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
         Unit victim = duelWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.5f, 10.5f));
         duel.tick(60);
-        check.that(fighter.isAlive() && !victim.isAlive(),
-                "of two units in range exactly the unarmed one dies");
-        check.equal(1, kills.size(), "exactly one kill was published");
+        check.that(fighter.isAlive() && !victim.isAlive() && kills.size() == 1,
+                "of two units in range exactly the unarmed one dies, with exactly one kill published");
         if (kills.size() == 1) {
-            check.equal(fighter.id(), kills.get(0).killer().id(), "the duelist is recorded as the killer");
-            check.equal(victim.id(), kills.get(0).victim().id(), "the dummy is recorded as the victim");
-            check.equal(21L, kills.get(0).tick(),
-                    "30 hit points at 10 damage every 10 ticks die on tick 21");
+            check.that(kills.get(0).killer().id().equals(fighter.id())
+                            && kills.get(0).victim().id().equals(victim.id())
+                            && kills.get(0).tick() == 21L,
+                    "the duelist is recorded as the killer and the dummy as the victim, and 30 hit points at "
+                            + "10 damage every 10 ticks die on tick 21");
         }
-        check.equal(List.of(Natural.of(10), Natural.of(10), Natural.of(10)), duelAmounts,
-                "the DamageDealt events carry the three hits of ten");
-        check.equal(3, duelShots.size(), "every one of the three shots published exactly one projectile event");
-        check.that(duelShots.stream().allMatch(shot -> shot.attacker() == fighter
-                        && shot.from().equals(fighter.position()) && shot.to().equals(victim.position())),
-                "each projectile flies from the duelist's position at fire time to the victim's position");
-        check.equal(List.of(1L, 11L, 21L), duelShots.stream().map(Events.ProjectileFired::tick).toList(),
-                "the projectile events carry the same ticks as the damage events (1, 11, 21)");
+        check.that(duelAmounts.equals(List.of(Natural.of(10), Natural.of(10), Natural.of(10)))
+                        && duelShots.size() == 3
+                        && duelShots.stream().allMatch(shot -> shot.attacker() == fighter
+                                && shot.from().equals(fighter.position()) && shot.to().equals(victim.position()))
+                        && duelShots.stream().map(Events.ProjectileFired::tick).toList().equals(List.of(1L, 11L, 21L)),
+                "the DamageDealt events carry the three hits of ten, every shot published one projectile event "
+                        + "flying from the duelist's position to the victim's, at the same ticks (1, 11, 21)");
 
         // --- a 0.9 tile melee duel hits like the duelist but stays silent: no projectile event
         OcRtsEngine melee = combatEngine(content, blue, red);
@@ -1496,8 +1477,9 @@ public final class RtsScenario {
         meleeWorld.spawnUnit(content.unit(SWORDSMAN), blue, new Vec2(10.5f, 10.5f));
         meleeWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.35f, 10.5f));
         melee.tick(60);
-        check.equal(3, meleeAmounts.size(), "the 0.9 tile swordsman still lands its three melee hits");
-        check.equal(0, meleeShots.size(), "a duel between 0.9 tile melee units publishes no projectile event");
+        check.that(meleeAmounts.size() == 3 && meleeShots.isEmpty(),
+                "the 0.9 tile swordsman still lands its three melee hits, and a duel between 0.9 tile melee "
+                        + "units publishes no projectile event");
 
         // --- overkill: the event reports what was subtracted, not what the attacker could have dealt
         OcRtsEngine overkill = combatEngine(content, blue, red);
@@ -1507,17 +1489,16 @@ public final class RtsScenario {
         overkillWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
         Unit fledgling = overkillWorld.spawnUnit(content.unit(FLEDGLING), red, new Vec2(11.5f, 10.5f));
         overkill.tick(2);
-        check.equal(List.of(Natural.of(5)), overkillAmounts,
-                "a 10 damage hit on 5 hit points reports the 5 that were subtracted");
-        check.that(!fledgling.isAlive(), "and the overkill still kills the target");
+        check.that(overkillAmounts.equals(List.of(Natural.of(5))) && !fledgling.isAlive(),
+                "a 10 damage hit on 5 hit points reports the 5 that were subtracted, and the overkill still kills");
 
         // --- armour reduces damage: the same hit points with armour 5 need twice as many hits
         long unarmouredDeath = deathTick(content, blue, red, DUMMY);
         long armouredDeath = deathTick(content, blue, red, TANK);
-        check.equal(21L, unarmouredDeath, "without armour the 30 hit point dummy dies on tick 21");
-        check.equal(51L, armouredDeath, "armour 5 halves a 10 damage hit, so six hits: tick 51");
-        check.that(armouredDeath > unarmouredDeath,
-                "more armour dies later (" + unarmouredDeath + " -> " + armouredDeath + ")");
+        check.that(unarmouredDeath == 21L && armouredDeath == 51L && armouredDeath > unarmouredDeath,
+                "without armour the 30 hit point dummy dies on tick 21, armour 5 halves a 10 damage hit so six "
+                        + "hits die on tick 51, and more armour dies later (" + unarmouredDeath + " -> "
+                        + armouredDeath + ")");
         check.equal(5L, CombatStats.of(content.unit(DUELIST))
                         .damageAgainst(CombatStats.of(content.unit(TANK))),
                 "armour 5 turns 10 damage into 5");
@@ -1530,9 +1511,9 @@ public final class RtsScenario {
         Unit watcher = farWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
         Unit outOfReach = farWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(16.5f, 10.5f));
         far.tick(60);
-        check.equal(0, farDamage.size(), "a unit out of range deals no damage at all");
-        check.equal(30L, outOfReach.health().current(), "and the enemy keeps every hit point");
-        check.that(!watcher.hasTarget(), "and no target is acquired outside the attack range");
+        check.that(farDamage.isEmpty() && outOfReach.health().current().equals(Natural.of(30)) && !watcher.hasTarget(),
+                "a unit out of range deals no damage at all, the enemy keeps every hit point, and no target is "
+                        + "acquired outside the attack range");
 
         OcRtsEngine edge = combatEngine(content, blue, red);
         edge.world().spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
@@ -1548,12 +1529,12 @@ public final class RtsScenario {
         Unit fartherLowerId = nearestWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(13.5f, 10.5f));
         Unit nearerHigherId = nearestWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.5f, 10.5f));
         nearest.tick(1);
-        check.that(nearerHigherId.id().compareTo(fartherLowerId.id()) > 0,
-                "the nearer enemy really has the higher id");
-        check.equal(nearerHigherId.id(), hunter.targetId(),
-                "the nearest enemy is chosen even when it has the higher id");
-        check.equal(20L, nearerHigherId.health().current(), "the nearer enemy took the hit");
-        check.equal(30L, fartherLowerId.health().current(), "the farther enemy is untouched");
+        check.that(nearerHigherId.id().compareTo(fartherLowerId.id()) > 0
+                        && hunter.targetId().equals(nearerHigherId.id())
+                        && nearerHigherId.health().current().equals(Natural.of(20))
+                        && fartherLowerId.health().current().equals(Natural.of(30)),
+                "the nearest enemy is chosen even when it has the higher id: it took the hit and the farther "
+                        + "enemy is untouched");
 
         OcRtsEngine tie = combatEngine(content, blue, red);
         World tieWorld = tie.world();
@@ -1561,12 +1542,12 @@ public final class RtsScenario {
         Unit tieFirst = tieWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(8.5f, 10.5f));
         Unit tieSecond = tieWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(12.5f, 10.5f));
         tie.tick(1);
-        check.that(tieFirst.id().compareTo(tieSecond.id()) < 0,
-                "the first spawned enemy of the tie has the lower id");
-        check.equal(tieFirst.id(), tieHunter.targetId(),
-                "equal distances are broken by entity id, lower id first");
-        check.equal(20L, tieFirst.health().current(), "the lower id enemy took the hit");
-        check.equal(30L, tieSecond.health().current(), "the equal distance enemy with the higher id did not");
+        check.that(tieFirst.id().compareTo(tieSecond.id()) < 0
+                        && tieHunter.targetId().equals(tieFirst.id())
+                        && tieFirst.health().current().equals(Natural.of(20))
+                        && tieSecond.health().current().equals(Natural.of(30)),
+                "equal distances are broken by entity id, lower id first: it took the hit, the higher id enemy "
+                        + "did not");
 
         // --- an attack-move engages en route, stands still for the fight, then resumes
         OcRtsEngine march = combatEngine(content, blue, red);
@@ -1585,17 +1566,16 @@ public final class RtsScenario {
         march.commands().attackMove(marcher, marchTarget);
         boolean finished = march.tickUntil(engine -> !marcher.orders().hasCurrent()
                 && marcher.position().distance(marchTarget.center()) <= 2.5f, 1200);
-        check.that(!sentinel.isAlive(), "the attack-move unit kills the enemy standing on its path");
-        check.equal(2, marchHits.size(), "it needed exactly two hits for the 20 hit point sentinel");
-        check.that(finished && !marcher.orders().hasCurrent(),
-                "and the order still finishes at its destination");
+        check.that(!sentinel.isAlive() && marchHits.size() == 2 && finished && !marcher.orders().hasCurrent(),
+                "the attack-move unit kills the enemy standing on its path with exactly two hits for the 20 hit "
+                        + "point sentinel, and the order still finishes at its destination");
         if (hitPositions.size() == 2) {
-            check.atMost(0.5f, hitPositions.get(0).distance(hitPositions.get(1)),
-                    "it stood still between the two hits instead of walking past the fight");
-            check.atMost(20.5f, hitPositions.get(0).x(),
-                    "the fight happened before it reached the enemy (x " + round(hitPositions.get(0).x()) + ")");
-            check.atLeast(5f, marcher.position().x() - hitPositions.get(1).x(),
-                    "it resumed the march after the enemy died");
+            check.that(hitPositions.get(0).distance(hitPositions.get(1)) <= 0.5f
+                            && hitPositions.get(0).x() <= 20.5f
+                            && marcher.position().x() - hitPositions.get(1).x() >= 5f,
+                    "it stood still between the two hits instead of walking past the fight, the fight happened "
+                            + "before it reached the enemy (x " + round(hitPositions.get(0).x()) + "), and it resumed "
+                            + "the march after the enemy died");
         }
 
         // --- an explicit attack order chases a target that starts out of range
@@ -1607,9 +1587,9 @@ public final class RtsScenario {
         Unit runner = chaseWorld.spawnUnit(content.unit(SENTINEL), red, new Vec2(20.5f, 10.5f));
         chase.commands().attack(chaser, runner.id());
         chase.tick(400);
-        check.that(!runner.isAlive(), "an attack order chases a target that starts out of range");
-        check.equal(1, chaseKills.size(), "and publishes exactly one kill");
-        check.that(!chaser.orders().hasCurrent(), "the order ends when the target dies");
+        check.that(!runner.isAlive() && chaseKills.size() == 1 && !chaser.orders().hasCurrent(),
+                "an attack order chases a target that starts out of range, publishes exactly one kill, and ends "
+                        + "when the target dies");
 
         OcRtsEngine ghost = combatEngine(content, blue, red);
         List<Events.OrderFinished> ghostFinishes = new ArrayList<>();
@@ -1617,12 +1597,10 @@ public final class RtsScenario {
         Unit confused = ghost.world().spawnUnit(content.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
         ghost.commands().attack(confused, EntityId.of(999_999L));
         ghost.tick(2);
-        check.that(!confused.orders().hasCurrent(), "an attack order for an unknown id fails instead of hanging");
-        check.equal(1, ghostFinishes.size(), "it reports exactly one finished order");
-        if (ghostFinishes.size() == 1) {
-            check.equal(OrderState.FAILED, ghostFinishes.get(0).state(),
-                    "and reports it as FAILED, like a move order that cannot reach its destination");
-        }
+        check.that(!confused.orders().hasCurrent() && ghostFinishes.size() == 1
+                        && ghostFinishes.get(0).state() == OrderState.FAILED,
+                "an attack order for an unknown id fails instead of hanging and reports exactly one finished "
+                        + "order as FAILED, like a move order that cannot reach its destination");
 
         // --- a kill removes the unit and drops its id from every other unit's target
         OcRtsEngine pack = combatEngine(content, blue, red);
@@ -1640,16 +1618,14 @@ public final class RtsScenario {
         Unit prey = packWorld.spawnUnit(content.unit(SENTINEL), red, new Vec2(11.5f, 11.5f));
         EntityId preyId = prey.id();
         pack.tick(2);
-        check.that(!prey.isAlive(), "the focused unit is killed");
-        check.equal(2, aimedAtVictim.size(),
-                "both attackers had it in their target slot when it died");
-        check.that(packWorld.findEntity(preyId).isEmpty(), "the killed unit is removed from the world");
-        check.that(packWorld.spatial().inRadius(new Vec2(11.5f, 11.5f), 2f).stream()
-                        .noneMatch(entity -> entity.id().equals(preyId)),
-                "and its body left the spatial index");
-        check.that(packWorld.units().stream().noneMatch(unit -> preyId.equals(unit.targetId())),
-                "and its id is dropped from every surviving unit's target");
-        check.equal(2, packWorld.units().size(), "the two attackers remain");
+        check.that(!prey.isAlive() && aimedAtVictim.size() == 2
+                        && packWorld.findEntity(preyId).isEmpty()
+                        && packWorld.spatial().inRadius(new Vec2(11.5f, 11.5f), 2f).stream()
+                                .noneMatch(entity -> entity.id().equals(preyId))
+                        && packWorld.units().stream().noneMatch(unit -> preyId.equals(unit.targetId()))
+                        && packWorld.units().size() == 2,
+                "the focused unit is killed with both attackers having had it in their target slot, and the body "
+                        + "left the world, the spatial index and every surviving unit's target");
 
         // --- damage is never below one: 1 damage against 50 armour still hits for 1
         OcRtsEngine flail = combatEngine(content, blue, red);
@@ -1659,14 +1635,13 @@ public final class RtsScenario {
         flailWorld.spawnUnit(content.unit(PINPRICK), blue, new Vec2(10.5f, 10.5f));
         Unit slab = flailWorld.spawnUnit(content.unit(SLAB), red, new Vec2(11.5f, 10.5f));
         flail.tick(20);
-        check.equal(3, amounts.size(), "a 1 damage hit against 50 armour still lands: three hits, three events");
-        boolean neverBelowOne = true;
+        boolean neverBelowOne = !amounts.isEmpty();
         for (Natural amount : amounts) {
             neverBelowOne &= amount.compareTo(Natural.ONE) >= 0;
         }
-        check.that(neverBelowOne, "no hit ever deals less than one damage " + amounts);
-        check.equal(List.of(Natural.ONE, Natural.ONE, Natural.ONE), amounts, "each hit deals exactly one");
-        check.that(!slab.isAlive(), "three hits of one kill the 3 hit point target");
+        check.that(amounts.size() == 3 && neverBelowOne && !slab.isAlive(),
+                "a 1 damage hit against 50 armour still lands three times, no hit ever deals less than one "
+                        + "damage " + amounts + ", and three hits of one kill the 3 hit point target");
 
         // --- a unit without attack damage never attacks
         OcRtsEngine peaceful = combatEngine(content, blue, red);
@@ -1676,15 +1651,15 @@ public final class RtsScenario {
         Unit unarmed = peacefulWorld.spawnUnit(content.unit(WEAKLING), blue, new Vec2(10.5f, 10.5f));
         Unit bully = peacefulWorld.spawnUnit(content.unit(DUELIST), red, new Vec2(11.5f, 10.5f));
         peaceful.tick(30);
-        check.that(!unarmed.combat().canAttack(), "a unit without attack damage cannot attack");
-        check.that(unarmed.targetId() == null, "and it never acquires a target");
         boolean onlyBullyHit = !peacefulDamage.isEmpty()
                 && peacefulDamage.stream().allMatch(event -> event.source() == bully);
-        check.that(onlyBullyHit, "it publishes no damage event while the armed enemy does the hitting");
-        check.equal(70L, unarmed.health().current(),
-                "the unarmed unit only loses hit points (three hits of 10 by tick 30)");
+        check.that(!unarmed.combat().canAttack() && unarmed.targetId() == null && onlyBullyHit
+                        && unarmed.health().current().equals(Natural.of(70)),
+                "a unit without attack damage cannot attack, never acquires a target, publishes no damage event "
+                        + "while the armed enemy hits (three hits of 10 by tick 30, 70 left), and damage with an "
+                        + "attack range of zero cannot attack either");
         check.that(!CombatStats.of(content.unit(STATUE)).canAttack(),
-                "damage with an attack range of zero cannot attack either");
+                "damage with an attack range of zero cannot attack");
 
         // --- the same seed and the same order sequence produce the same fight twice
         List<String> firstRun = combatFingerprint(content, blue, red, 707L);
@@ -1712,9 +1687,10 @@ public final class RtsScenario {
         Player red = Player.of(2, "Red", 0xFFEF5350);
         BuildingType wall = content.building(WALL);
 
-        check.equal(30L, wall.maxHealth(), "the building target declares 30 hit points");
-        check.equal(0, wall.armour(), "building armour defaults to zero when content does not set it");
-        check.close(1.5f, wall.radius(), 1e-6f, "a 3x3 building reports a 1.5 tile footprint radius");
+        check.that(wall.maxHealth().equals(Natural.of(30)) && wall.armour() == 0
+                        && Math.abs(wall.radius() - 1.5f) <= 1e-6f,
+                "the building target declares 30 hit points, building armour defaults to zero when content does "
+                        + "not set it, and a 3x3 building reports a 1.5 tile footprint radius");
 
         // --- a building takes hits and dies on the same arithmetic tick as a 30 hit point unit
         OcRtsEngine inRange = combatEngine(content, blue, red);
@@ -1726,33 +1702,31 @@ public final class RtsScenario {
         Unit attacker = inRangeWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(19.5f, 21.5f));
         Building target = inRangeWorld.spawnBuilding(wall, red, new GridPos(20, 20));
         EntityId targetId = target.id();
-        check.equal(30L, target.health().current(), "the spawned building starts at full health");
         inRange.tick(1);
-        check.equal(20L, target.health().current(), "the first hit lands on tick 1");
-        check.equal(targetId, attacker.targetId(), "the attacker records the building as its target");
-        check.equal(1, damage.size(), "the hit published a DamageDealt event for the building");
+        check.that(target.health().current().equals(Natural.of(20)) && attacker.targetId().equals(targetId) && damage.size() == 1,
+                "the spawned building starts at full health, the first hit lands on tick 1, the attacker records "
+                        + "the building as its target and the hit published a DamageDealt event");
         inRange.tick(20);
-        check.that(!target.isAlive(), "the 30 hit point building dies after three hits of 10");
-        check.equal(1, kills.size(), "exactly one EntityKilled event was published");
-        if (kills.size() == 1) {
-            check.equal(attacker.id(), kills.get(0).killer().id(), "the attacker is the recorded killer");
-            check.equal(targetId, kills.get(0).victim().id(), "the building is the recorded victim");
-            check.equal(21L, kills.get(0).tick(), "30 hit points at 10 damage every 10 ticks die on tick 21");
-        }
-        check.equal(List.of(Natural.of(10), Natural.of(10), Natural.of(10)), damage,
-                "the three hits carried exactly ten damage each");
-        check.that(inRangeWorld.findEntity(targetId).isEmpty(),
-                "the destroyed building is removed from the world");
-        check.that(inRangeWorld.spatial().inRadius(new Vec2(21.5f, 21.5f), 3f).stream()
-                        .noneMatch(entity -> entity.id().equals(targetId)),
-                "and its body left the spatial index on the kill tick");
-        check.that(attacker.targetId() == null, "and its id is dropped from the attacker's target");
+        boolean killRecorded = kills.size() == 1
+                && kills.get(0).killer().id().equals(attacker.id())
+                && kills.get(0).victim().id().equals(targetId)
+                && kills.get(0).tick() == 21L;
+        check.that(!target.isAlive() && killRecorded
+                        && damage.equals(List.of(Natural.of(10), Natural.of(10), Natural.of(10)))
+                        && inRangeWorld.findEntity(targetId).isEmpty()
+                        && inRangeWorld.spatial().inRadius(new Vec2(21.5f, 21.5f), 3f).stream()
+                                .noneMatch(entity -> entity.id().equals(targetId))
+                        && attacker.targetId() == null,
+                "the 30 hit point building dies after three hits of 10 on tick 21 with exactly one EntityKilled "
+                        + "event (attacker and victim recorded), the body left the world and the spatial index on "
+                        + "the kill tick, and its id is dropped from the attacker's target");
 
         // --- building armour is a real field read by the same damage path
         long unarmouredDeath = buildingDeathTick(content, blue, red, WALL);
         long armouredDeath = buildingDeathTick(content, blue, red, BUNKER);
-        check.equal(21L, unarmouredDeath, "the unarmoured building dies on tick 21");
-        check.equal(51L, armouredDeath, "armour 5 halves each hit, so the same building needs six hits: tick 51");
+        check.that(unarmouredDeath == 21L && armouredDeath == 51L,
+                "the unarmoured building dies on tick 21; armour 5 halves each hit, so the same building needs "
+                        + "six hits: tick 51");
         check.equal(5L, CombatStats.of(content.unit(DUELIST))
                         .damageAfterArmour(content.building(BUNKER).armour()),
                 "the combat view applies building armour exactly like unit armour");
@@ -1769,10 +1743,14 @@ public final class RtsScenario {
         check.close(hunter.position().distance(post.position()), hunter.position().distance(sameDistance.position()),
                 1e-5f, "the building and the unit stand at the same distance from the hunter");
         mixed.tick(1);
-        check.equal(post.id(), hunter.targetId(),
-                "a mixed nearest-target choice picks the lower id building on a tie");
-        check.equal(20L, post.health().current(), "the building took the hit");
-        check.equal(30L, sameDistance.health().current(), "the equal distance unit did not");
+        check.that(post.id().compareTo(sameDistance.id()) < 0
+                        && Math.abs(hunter.position().distance(post.position())
+                                - hunter.position().distance(sameDistance.position())) <= 1e-5f
+                        && hunter.targetId().equals(post.id())
+                        && post.health().current().equals(Natural.of(20))
+                        && sameDistance.health().current().equals(Natural.of(30)),
+                "a mixed nearest-target choice picks the lower id building on a tie: the building took the hit "
+                        + "and the equal distance unit did not");
 
         // --- AttackOrder accepts a building id and really reaches it
         OcRtsEngine chase = combatEngine(content, blue, red);
@@ -1784,11 +1762,11 @@ public final class RtsScenario {
         EntityId fortId = fort.id();
         chase.commands().attack(chaser, fortId);
         boolean chaseFinished = chase.tickUntil(engine -> !fort.isAlive() && !chaser.orders().hasCurrent(), 1200);
-        check.that(chaseFinished, "an AttackOrder with a building id reaches and kills the building");
-        check.equal(1, chaseKills.size(), "the long chase published exactly one kill");
-        check.equal(fortId, chaseKills.isEmpty() ? null : chaseKills.get(0).victim().id(),
-                "the killed entity is the building the order named");
-        check.that(!chaser.orders().hasCurrent(), "the attack order ends when the building dies");
+        check.that(chaseFinished && chaseKills.size() == 1
+                        && chaseKills.get(0).victim().id().equals(fortId)
+                        && !chaser.orders().hasCurrent(),
+                "an AttackOrder with a building id reaches and kills the building it named with exactly one "
+                        + "kill event, and the order ends when the building dies");
 
         // --- AttackMoveOrder accepts a building id too, through the director and directly
         OcRtsEngine march = combatEngine(content, blue, red);
@@ -1803,8 +1781,9 @@ public final class RtsScenario {
                 "attackMove(unit, buildingId) queues a targeted AttackMoveOrder");
         boolean marchFinished = march.tickUntil(engine -> !bunker.isAlive() && !marcher.orders().hasCurrent(),
                 1600);
-        check.that(marchFinished, "an AttackMoveOrder with a building id reaches and kills the armoured building");
-        check.that(!marcher.orders().hasCurrent(), "the attack-move order ends when the building dies");
+        check.that(marchFinished && !marcher.orders().hasCurrent(),
+                "an AttackMoveOrder with a building id reaches and kills the armoured building, and the order "
+                        + "ends when the building dies");
     }
 
     /**
@@ -1823,10 +1802,9 @@ public final class RtsScenario {
         Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
         Player red = Player.of(2, "Red", 0xFFEF5350);
         BuildingType tower = content.building(TOWER);
-        check.equal(7L, tower.attackDamage(), "the tower declares 7 damage");
-        check.close(5f, tower.attackRange(), 1e-6f, "the tower reaches 5 tiles");
-        check.equal(10, tower.attackCooldownTicks(), "the tower fires every 10 ticks");
-        check.that(tower.canAttack(), "the building type reports that it can attack");
+        check.that(tower.attackDamage().equals(Natural.of(7)) && Math.abs(tower.attackRange() - 5f) <= 1e-6f
+                        && tower.attackCooldownTicks() == 10 && tower.canAttack(),
+                "the tower declares 7 damage at 5 tiles, fires every 10 ticks, and reports that it can attack");
 
         // --- a hostile unit in range takes damage on the first tick and the nearest one is preferred
         OcRtsEngine shot = combatEngine(content, blue, red);
@@ -1840,19 +1818,16 @@ public final class RtsScenario {
         Unit far = shotWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(25.5f, 21.5f));
         check.equal(30L, near.health().current(), "the nearest hostile unit starts at full health");
         shot.tick(1);
-        check.equal(23L, near.health().current(), "the tower hits the nearest hostile unit for 7 on tick 1");
-        check.equal(30L, far.health().current(), "the further hostile unit is untouched while the near one stands");
-        check.equal(1, hits.size(), "the tower published exactly one DamageDealt event");
-        check.equal(towerBuilding.id(), hits.get(0).source().id(), "the building is the recorded attacker");
-        check.equal(near.id(), towerBuilding.targetId(), "the tower records the nearest unit as its target");
-        check.equal(1, towerShots.size(), "the tower's shot published exactly one projectile event");
-        if (towerShots.size() == 1) {
-            Events.ProjectileFired towerShot = towerShots.get(0);
-            check.that(towerShot.attacker() == towerBuilding
-                            && towerShot.from().equals(towerBuilding.position())
-                            && towerShot.to().equals(near.position()),
-                    "the tower's projectile flies from the tower to the nearest hostile unit's position");
-        }
+        boolean projectileFlies = towerShots.size() == 1
+                && towerShots.get(0).attacker() == towerBuilding
+                && towerShots.get(0).from().equals(towerBuilding.position())
+                && towerShots.get(0).to().equals(near.position());
+        check.that(near.health().current().equals(Natural.of(23)) && far.health().current().equals(Natural.of(30))
+                        && hits.size() == 1 && hits.get(0).source().id().equals(towerBuilding.id())
+                        && towerBuilding.targetId().equals(near.id()) && projectileFlies,
+                "the tower hits the nearest hostile unit for 7 on tick 1 while the further one stands untouched, "
+                        + "publishes exactly one DamageDealt event as the recorded attacker, records the nearest "
+                        + "unit as its target, and its projectile flies from the tower to that unit's position");
 
         // --- out of range: no shot at all
         OcRtsEngine outside = combatEngine(content, blue, red);
@@ -1862,8 +1837,8 @@ public final class RtsScenario {
         outsideWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
         Unit distant = outsideWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(30.5f, 21.5f));
         outside.tick(5);
-        check.equal(30L, distant.health().current(), "a hostile unit outside the 5 tile range is never hit");
-        check.equal(0, outsideShots.size(), "and no projectile event is published for a shot out of range");
+        check.that(distant.health().current().equals(Natural.of(30)) && outsideShots.isEmpty(),
+                "a hostile unit outside the 5 tile range is never hit and no projectile event is published");
 
         // --- own and allied units are never targets; a neutral showroom player is not on a team
         OcRtsEngine safe = combatEngine(content, blue, red);
@@ -1874,9 +1849,9 @@ public final class RtsScenario {
         Unit own = safeWorld.spawnUnit(content.unit(DUMMY), blue, new Vec2(22.5f, 21.5f));
         Unit friendly = safeWorld.spawnUnit(content.unit(DUMMY), ally, new Vec2(20.5f, 23.5f));
         safe.tick(20);
-        check.equal(30L, own.health().current(), "an own unit is never shot by an own building");
-        check.equal(30L, friendly.health().current(), "an allied unit is never shot");
-        check.that(safeTower.targetId() == null, "with only own and allied units the tower has no target");
+        check.that(own.health().current().equals(Natural.of(30)) && friendly.health().current().equals(Natural.of(30))
+                        && safeTower.targetId() == null,
+                "own and allied units are never shot, and with only them the tower has no target");
 
         // --- a hostile building in range is not a unit target
         OcRtsEngine structure = combatEngine(content, blue, red);
@@ -1884,9 +1859,9 @@ public final class RtsScenario {
         Building attackerTower = structureWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
         Building enemyWall = structureWorld.spawnBuilding(content.building(WALL), red, new GridPos(23, 21));
         structure.tick(5);
-        check.equal(30L, enemyWall.health().current(),
-                "a hostile building in range is not shot: buildings target units only");
-        check.that(attackerTower.targetId() == null, "and the tower records no target");
+        check.that(enemyWall.health().current().equals(Natural.of(30)) && attackerTower.targetId() == null,
+                "a hostile building in range is not shot: buildings target units only, and the tower records "
+                        + "no target");
 
         // --- a site under construction does not shoot
         OcRtsEngine unfinished = combatEngine(content, blue, red);
@@ -1894,8 +1869,8 @@ public final class RtsScenario {
         Building site = unfinishedWorld.placeBuilding(tower, blue, new GridPos(20, 20));
         Unit visitor = unfinishedWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(23.5f, 21.5f));
         unfinished.tick(3);
-        check.that(!site.isConstructed(), "the site is still under construction");
-        check.equal(30L, visitor.health().current(), "an unfinished building does not shoot");
+        check.that(!site.isConstructed() && visitor.health().current().equals(Natural.of(30)),
+                "a site under construction does not shoot");
     }
 
     /** Tick one duelist needs to destroy a building type, or {@code -1} when nothing died. */
@@ -1949,36 +1924,28 @@ public final class RtsScenario {
         Natural plankBefore = player.logistics().amount(plank);
 
         var first = engine.commands().tryBuild(worker, barracks, new GridPos(20, 20));
-        check.that(first.placed(), "an affordable barracks is placed: " + first.refusal());
-        check.that(first.site() != null && !first.site().isConstructed(),
-                "the placed site is unfinished, so the charge is for placing, not for finishing");
-        check.equal(Natural.of(100), ironBefore.subtractClamped(player.logistics().amount(iron)),
-                "exactly 100 iron was charged for the barracks");
-        check.equal(Natural.of(50), plankBefore.subtractClamped(player.logistics().amount(plank)),
-                "exactly 50 plank was charged for the barracks");
-        check.equal(player.logistics().stored(), player.logistics().available(),
-                "the committed charge left no reservation behind");
+        check.that(first.placed() && first.site() != null && !first.site().isConstructed()
+                        && ironBefore.subtractClamped(player.logistics().amount(iron)).equals(Natural.of(100))
+                        && plankBefore.subtractClamped(player.logistics().amount(plank)).equals(Natural.of(50))
+                        && player.logistics().stored().equals(player.logistics().available()),
+                "an affordable barracks is placed unfinished and exactly its 100 iron + 50 plank cost is charged "
+                        + "once, leaving no reservation behind: " + first.refusal());
 
         int buildingsAfterFirst = world.buildingsOf(player).size();
         var second = engine.commands().tryBuild(worker, barracks, new GridPos(26, 20));
-        check.that(!second.placed(), "a second barracks with only 50 iron and 10 plank left is refused");
-        check.that(second.refusal() != null && second.refusal().contains("cannot afford"),
-                "the refusal names the missing cost: " + second.refusal());
-        check.equal(Natural.of(50), player.logistics().amount(iron),
-                "the refused second build left the remaining iron untouched");
-        check.equal(Natural.of(10), player.logistics().amount(plank),
-                "the refused second build left the remaining plank untouched");
-        check.equal(buildingsAfterFirst, world.buildingsOf(player).size(),
-                "the refused second build placed nothing");
+        check.that(!second.placed() && second.refusal() != null && second.refusal().contains("cannot afford")
+                        && player.logistics().amount(iron).equals(Natural.of(50))
+                        && player.logistics().amount(plank).equals(Natural.of(10))
+                        && world.buildingsOf(player).size() == buildingsAfterFirst,
+                "a second barracks with only 50 iron and 10 plank left is refused with the missing cost named, "
+                        + "leaving the remaining stock untouched and placing nothing: " + second.refusal());
 
         var blocked = engine.commands().tryBuild(worker, barracks, new GridPos(10, 10));
-        check.that(!blocked.placed(), "a site overlapping the warehouse is refused");
-        check.that(blocked.refusal() != null && blocked.refusal().contains("cannot place"),
-                "the occupied-tile refusal says it cannot place: " + blocked.refusal());
-        check.equal(Natural.of(50), player.logistics().amount(iron),
-                "a placement that cannot happen claims no iron");
-        check.equal(Natural.of(10), player.logistics().amount(plank),
-                "a placement that cannot happen claims no plank");
+        check.that(!blocked.placed() && blocked.refusal() != null && blocked.refusal().contains("cannot place")
+                        && player.logistics().amount(iron).equals(Natural.of(50))
+                        && player.logistics().amount(plank).equals(Natural.of(10)),
+                "a site overlapping the warehouse is refused as cannot place and claims no goods: "
+                        + blocked.refusal());
 
         // Exactly the cost in stock: the build succeeds and the warehouses are empty, not negative.
         OcRtsEngine exact = costEngine(content);
@@ -1990,11 +1957,10 @@ public final class RtsScenario {
         depositStock(check, exactPlayer, exactWarehouse, expected,
                 "the exact-cost check starts with exactly one barracks worth of goods");
         var exactBuild = exact.commands().tryBuild(exactWorker, barracks, new GridPos(20, 20));
-        check.that(exactBuild.placed(), "a build with exactly the cost in stock succeeds");
-        check.equal(ItemBundle.EMPTY, exactPlayer.logistics().stored(),
-                "the exact cost was charged once and the warehouses are empty");
-        check.equal(ItemBundle.EMPTY, exactPlayer.logistics().available(),
-                "and nothing is still promised to the build");
+        check.that(exactBuild.placed() && exactPlayer.logistics().stored().equals(ItemBundle.EMPTY)
+                        && exactPlayer.logistics().available().equals(ItemBundle.EMPTY),
+                "a build with exactly the cost in stock succeeds, charged once, warehouses empty and nothing "
+                        + "still promised");
 
         // Not enough in stock: nothing appears, nothing is taken.
         OcRtsEngine poor = costEngine(content);
@@ -2006,15 +1972,13 @@ public final class RtsScenario {
         depositStock(check, poorPlayer, poorWarehouse, ItemBundle.of(iron, 90, plank, 10),
                 "the unaffordable check starts with 90 iron and 10 plank");
         var poorBuild = poor.commands().tryBuild(poorWorker, barracks, new GridPos(20, 20));
-        check.that(!poorBuild.placed(), "a barracks the warehouses cannot cover is not placed");
-        check.that(poorBuild.refusal() != null && poorBuild.refusal().contains("cannot afford"),
-                "the unaffordable refusal says it cannot afford the cost: " + poorBuild.refusal());
-        check.equal(Natural.of(90), poorPlayer.logistics().amount(iron),
-                "the unaffordable build charged no iron");
-        check.equal(Natural.of(10), poorPlayer.logistics().amount(plank),
-                "the unaffordable build charged no plank");
-        check.equal(1, poor.world().buildingsOf(poorPlayer).size(),
-                "the unaffordable build placed nothing (the warehouse is still the only building)");
+        check.that(!poorBuild.placed() && poorBuild.refusal() != null
+                        && poorBuild.refusal().contains("cannot afford")
+                        && poorPlayer.logistics().amount(iron).equals(Natural.of(90))
+                        && poorPlayer.logistics().amount(plank).equals(Natural.of(10))
+                        && poor.world().buildingsOf(poorPlayer).size() == 1,
+                "a barracks the warehouses cannot cover is not placed, charged nothing, and the warehouse is "
+                        + "still the only building: " + poorBuild.refusal());
     }
 
     /**
@@ -2043,13 +2007,12 @@ public final class RtsScenario {
         Natural nearIron = nearPlayer.logistics().amount(iron);
         Natural nearPlank = nearPlayer.logistics().amount(plank);
         var nearResult = near.commands().tryBuild(nearBuilder, barracks, new GridPos(18, 14));
-        check.that(nearResult.placed(), "a site beside the builder is placed: " + nearResult.refusal());
-        check.that(nearResult.site() != null && nearResult.site().type().equals(barracks),
-                "the accepted site has the requested building type");
-        check.equal(Natural.of(100), nearIron.subtractClamped(nearPlayer.logistics().amount(iron)),
-                "the reachable site charged its 100 iron ingot cost");
-        check.equal(Natural.of(50), nearPlank.subtractClamped(nearPlayer.logistics().amount(plank)),
-                "the reachable site charged its 50 plank cost");
+        check.that(nearResult.placed() && nearResult.site() != null
+                        && nearResult.site().type().equals(barracks)
+                        && nearIron.subtractClamped(nearPlayer.logistics().amount(iron)).equals(Natural.of(100))
+                        && nearPlank.subtractClamped(nearPlayer.logistics().amount(plank)).equals(Natural.of(50)),
+                "a site beside the builder is placed with the requested type and charged its 100 iron + 50 plank "
+                        + "cost: " + nearResult.refusal());
 
         // --- a site twenty tiles away is refused before anything is claimed
         OcRtsEngine far = costEngine(content);
@@ -2063,18 +2026,14 @@ public final class RtsScenario {
         Natural farPlank = farPlayer.logistics().amount(plank);
         int farBuildings = farWorld.buildingsOf(farPlayer).size();
         var farResult = far.commands().tryBuild(farBuilder, barracks, new GridPos(34, 14));
-        check.that(!farResult.placed(), "a site 20 tiles away is refused");
-        check.that(farResult.refusal() != null
-                        && farResult.refusal().contains(CommandService.OUT_OF_REACH),
-                "the far refusal says it is out of reach: " + farResult.refusal());
-        check.equal(farBuildings, farWorld.buildingsOf(farPlayer).size(),
-                "the refused far site placed nothing");
-        check.equal(farIron, farPlayer.logistics().amount(iron),
-                "the refused far site charged no iron");
-        check.equal(farPlank, farPlayer.logistics().amount(plank),
-                "the refused far site charged no plank");
-        check.equal(farPlayer.logistics().stored(), farPlayer.logistics().available(),
-                "the refused far site left no reservation in the warehouse network");
+        check.that(!farResult.placed() && farResult.refusal() != null
+                        && farResult.refusal().contains(CommandService.OUT_OF_REACH)
+                        && farWorld.buildingsOf(farPlayer).size() == farBuildings
+                        && farIron.equals(farPlayer.logistics().amount(iron))
+                        && farPlank.equals(farPlayer.logistics().amount(plank))
+                        && farPlayer.logistics().stored().equals(farPlayer.logistics().available()),
+                "a site 20 tiles away is refused as out of reach, placed nothing, charged nothing and left no "
+                        + "reservation in the warehouse network: " + farResult.refusal());
 
         // --- a site walled off by water is refused even though it is close in a straight line
         OcRtsEngine wet = costEngine(content);
@@ -2098,18 +2057,14 @@ public final class RtsScenario {
         Natural wetPlank = wetPlayer.logistics().amount(plank);
         int wetBuildings = wetWorld.buildingsOf(wetPlayer).size();
         var wetResult = wet.commands().tryBuild(wetBuilder, barracks, new GridPos(20, 14));
-        check.that(!wetResult.placed(), "a site on dry ground behind a water ring is refused");
-        check.that(wetResult.refusal() != null
-                        && wetResult.refusal().contains(CommandService.OUT_OF_REACH),
-                "the water refusal says it is out of reach: " + wetResult.refusal());
-        check.equal(wetBuildings, wetWorld.buildingsOf(wetPlayer).size(),
-                "the refused site behind water placed nothing");
-        check.equal(wetIron, wetPlayer.logistics().amount(iron),
-                "the refused site behind water charged no iron");
-        check.equal(wetPlank, wetPlayer.logistics().amount(plank),
-                "the refused site behind water charged no plank");
-        check.equal(wetPlayer.logistics().stored(), wetPlayer.logistics().available(),
-                "the refused site behind water left no reservation in the warehouse network");
+        check.that(!wetResult.placed() && wetResult.refusal() != null
+                        && wetResult.refusal().contains(CommandService.OUT_OF_REACH)
+                        && wetWorld.buildingsOf(wetPlayer).size() == wetBuildings
+                        && wetIron.equals(wetPlayer.logistics().amount(iron))
+                        && wetPlank.equals(wetPlayer.logistics().amount(plank))
+                        && wetPlayer.logistics().stored().equals(wetPlayer.logistics().available()),
+                "a site on dry ground behind a water ring is refused as out of reach, placing nothing, charging "
+                        + "nothing and leaving no reservation: " + wetResult.refusal());
     }
 
     // ------------------------------------------------------------------ 14b) touching footprints
@@ -2153,13 +2108,14 @@ public final class RtsScenario {
             Player actualPlayer = actual.players().get(0);
             World actualWorld = actual.world();
             Building first = actualWorld.spawnBuilding(type, actualPlayer, new GridPos(0, 0));
-            GridPos touching = new GridPos(type.sizeX(), 0);
-            check.that(actualWorld.canPlace(type, touching),
-                    label + ": the right-hand touching origin " + touching + " is legal");
+            // The entrance is the bottom-centre tile, so the flush neighbour that covers it stands BELOW.
+            GridPos touching = new GridPos(0, type.sizeY());
+            boolean touchingLegal = actualWorld.canPlace(type, touching);
             Building second = actualWorld.placeBuilding(type, actualPlayer, touching);
-            check.equal(touching, second.origin(), label + ": the touching site is really created there");
-            check.equal(2, actualWorld.buildingsOf(actualPlayer).size(),
-                    label + ": two buildings now stand side by side");
+            check.that(touchingLegal
+                            && second.origin().equals(touching)
+                            && actualWorld.buildingsOf(actualPlayer).size() == 2,
+                    label + ": the below touching origin " + touching + " is legal and the site is really created there");
             // The flush neighbour covers the first building's preferred entrance, so hauling and unit
             // production must use the resolved ring tile instead of aiming inside the new building.
             GridPos resolvedEntrance = actualWorld.defaultDimension().entranceTile(first);
@@ -2181,27 +2137,21 @@ public final class RtsScenario {
                 "two 3x3 buildings at origins 0 and 2 overlap and are illegal");
     }
 
-    /** Asserts the legal touching origin and the illegal one-tile-in origin on all four sides. */
+    /** Asserts the legal touching origins and the illegal one-tile-in origins on all four sides. */
     private static void assertTouchingSides(Check check, World world, BuildingType type, GridPos base,
             String label) {
         int width = type.sizeX();
         int height = type.sizeY();
-        check.that(world.canPlace(type, base.plus(width, 0)),
-                label + ": touching on the right (+x) is legal");
-        check.that(!world.canPlace(type, base.plus(width - 1, 0)),
-                label + ": one tile into the right edge overlaps and is illegal");
-        check.that(world.canPlace(type, base.plus(-width, 0)),
-                label + ": touching on the left (-x, negative origin) is legal");
-        check.that(!world.canPlace(type, base.plus(-width + 1, 0)),
-                label + ": one tile into the left edge overlaps and is illegal");
-        check.that(world.canPlace(type, base.plus(0, height)),
-                label + ": touching below (+y) is legal");
-        check.that(!world.canPlace(type, base.plus(0, height - 1)),
-                label + ": one tile into the bottom edge overlaps and is illegal");
-        check.that(world.canPlace(type, base.plus(0, -height)),
-                label + ": touching above (-y, negative origin) is legal");
-        check.that(!world.canPlace(type, base.plus(0, -height + 1)),
-                label + ": one tile into the top edge overlaps and is illegal");
+        check.that(world.canPlace(type, base.plus(width, 0))
+                        && world.canPlace(type, base.plus(-width, 0))
+                        && world.canPlace(type, base.plus(0, height))
+                        && world.canPlace(type, base.plus(0, -height)),
+                label + ": touching on all four sides (including negative origins) is legal");
+        check.that(!world.canPlace(type, base.plus(width - 1, 0))
+                        && !world.canPlace(type, base.plus(-width + 1, 0))
+                        && !world.canPlace(type, base.plus(0, height - 1))
+                        && !world.canPlace(type, base.plus(0, -height + 1)),
+                label + ": one tile into any edge overlaps and is illegal");
     }
 
     // ------------------------------------------------------------------ 15) building upgrades
@@ -2270,40 +2220,37 @@ public final class RtsScenario {
         Natural goldBefore = player.logistics().amount(content.item("gold"));
 
         var upgraded = engine.commands().upgradeBuilding(fort);
-        check.that(upgraded.upgraded(), "an affordable upgrade succeeds: " + upgraded.refusal());
         Building replacement = upgraded.replacement();
-        check.equal(content.building("fort.t2"), replacement.type(),
-                "the replacement has the type its predecessor named");
-        check.equal(origin, replacement.origin(), "the replacement stands on the same origin tile");
-        check.equal(player, replacement.owner(), "the replacement keeps the same owner");
-        check.that(replacement.isConstructed(), "the replacement is finished, not a new construction site");
-        check.close(0.75f, replacement.health().fraction(), 1e-6f,
-                "the replacement keeps the old health fraction (not the absolute hit points)");
-        check.equal(150L, replacement.health().current(),
-                "three quarters of the new 200 hit points is 150");
-        check.equal(goldBefore.subtractClamped(Natural.of(50)), player.logistics().amount(
-                        content.item("gold")),
-                "exactly the 50 gold upgrade cost was charged, once");
-        check.that(!fort.isAlive(), "the old building was destroyed");
+        check.that(upgraded.upgraded() && replacement != null
+                        && replacement.type().equals(content.building("fort.t2"))
+                        && replacement.origin().equals(origin)
+                        && replacement.owner().equals(player)
+                        && replacement.isConstructed()
+                        && Math.abs(replacement.health().fraction() - 0.75f) <= 1e-6f
+                        && replacement.health().current().equals(Natural.of(150))
+                        && player.logistics().amount(content.item("gold"))
+                                .equals(goldBefore.subtractClamped(Natural.of(50)))
+                        && !fort.isAlive(),
+                "an affordable upgrade succeeds: the replacement has the named type on the same origin for the "
+                        + "same owner, is finished, keeps the old health fraction (three quarters of 200 is 150), "
+                        + "and exactly the 50 gold cost was charged once: " + upgraded.refusal());
         check.that(engine.production().queue(fort).isEmpty()
                         && engine.production().queue(replacement).isEmpty()
-                        && engine.production().totalJobs() == 0,
-                "a queued production job is cancelled with the old building, not carried over");
-        check.that(watcher.targetId() == null,
-                "the old id is cleared from a unit's combat target");
-        check.that(world.spatial().inRect(footprint).stream()
-                        .noneMatch(entity -> entity.id().equals(oldId)),
-                "the spatial index no longer knows the old id");
-        check.that(world.spatial().inRect(footprint).stream()
-                        .anyMatch(entity -> entity.id().equals(replacement.id())),
-                "the spatial index knows the replacement at the same footprint");
+                        && engine.production().totalJobs() == 0
+                        && watcher.targetId() == null
+                        && world.spatial().inRect(footprint).stream()
+                                .noneMatch(entity -> entity.id().equals(oldId))
+                        && world.spatial().inRect(footprint).stream()
+                                .anyMatch(entity -> entity.id().equals(replacement.id())),
+                "a queued production job is cancelled with the old building rather than carried over, the old id "
+                        + "is cleared from a unit's combat target and from the spatial index, which now knows the "
+                        + "replacement at the same footprint");
         world.flush();
-        check.that(world.findEntity(oldId).isEmpty(),
-                "after the flush the old id is gone from the world entirely");
-        check.equal(1L, world.buildingsOf(player).stream()
-                        .filter(building -> building.type().equals(content.building("fort.t2")))
-                        .count(),
-                "the player ends up with one tier two fort and no tier one fort");
+        check.that(world.findEntity(oldId).isEmpty()
+                        && world.buildingsOf(player).stream()
+                                .filter(building -> building.type().equals(content.building("fort.t2"))).count() == 1L,
+                "after the flush the old id is gone from the world entirely and the player ends up with one tier "
+                        + "two fort and no tier one fort");
 
         // --- unaffordable: nothing is charged and the old building stays
         OcRtsEngine poor = flatEngine(content, VisualLibrary.empty(), 32L);
@@ -2317,17 +2264,14 @@ public final class RtsScenario {
                 new GridPos(20, 10));
         EntityId poorId = poorFort.id();
         var refused = poor.commands().upgradeBuilding(poorFort);
-        check.that(!refused.upgraded(), "an unaffordable upgrade is refused");
-        check.that(refused.refusal() != null && refused.refusal().contains("cannot afford"),
-                "the unaffordable refusal says it cannot afford the cost: " + refused.refusal());
-        check.that(poorFort.isAlive() && poorFort.type().equals(content.building("fort.t1")),
-                "the refused upgrade leaves the old building standing");
-        check.equal(10L, poorPlayer.logistics().amount(content.item("gold")),
-                "the refused upgrade charges nothing");
-        check.that(poorWorld.findEntity(poorId).orElseThrow() == poorFort,
-                "the refused upgrade creates no replacement");
-        check.equal(poorPlayer.logistics().stored(), poorPlayer.logistics().available(),
-                "the refused upgrade leaves no reservation behind");
+        check.that(!refused.upgraded() && refused.refusal() != null
+                        && refused.refusal().contains("cannot afford")
+                        && poorFort.isAlive() && poorFort.type().equals(content.building("fort.t1"))
+                        && poorPlayer.logistics().amount(content.item("gold")).equals(Natural.of(10))
+                        && poorWorld.findEntity(poorId).orElseThrow() == poorFort
+                        && poorPlayer.logistics().stored().equals(poorPlayer.logistics().available()),
+                "an unaffordable upgrade is refused with the cost named, leaving the old building standing, no "
+                        + "replacement, no charge and no reservation: " + refused.refusal());
 
         // --- a target that does not exist: a readable refusal, no charge
         OcRtsEngine broken = flatEngine(content, VisualLibrary.empty(), 33L);
@@ -2340,13 +2284,12 @@ public final class RtsScenario {
         Building brokenBuilding = brokenWorld.spawnBuilding(content.building("broken"), brokenPlayer,
                 new GridPos(20, 10));
         var missing = broken.commands().upgradeBuilding(brokenBuilding);
-        check.that(!missing.upgraded(), "an upgrade whose target does not exist is refused");
-        check.that(missing.refusal() != null && missing.refusal().contains("does not exist"),
-                "the missing-target refusal names the problem: " + missing.refusal());
-        check.that(brokenBuilding.isAlive() && brokenBuilding.type().equals(content.building("broken")),
-                "the missing-target refusal leaves the old building standing");
-        check.equal(20L, brokenPlayer.logistics().amount(content.item("gold")),
-                "the missing-target refusal charges nothing");
+        check.that(!missing.upgraded() && missing.refusal() != null
+                        && missing.refusal().contains("does not exist")
+                        && brokenBuilding.isAlive() && brokenBuilding.type().equals(content.building("broken"))
+                        && brokenPlayer.logistics().amount(content.item("gold")).equals(Natural.of(20)),
+                "an upgrade whose target does not exist is refused, leaves the old building standing and charges "
+                        + "nothing: " + missing.refusal());
 
         // --- a target with another footprint is refused before anything is charged
         OcRtsEngine wide = flatEngine(content, VisualLibrary.empty(), 34L);
@@ -2354,10 +2297,10 @@ public final class RtsScenario {
         Building wideBuilding = wide.world().spawnBuilding(content.building("wide"), widePlayer,
                 new GridPos(20, 10));
         var mismatched = wide.commands().upgradeBuilding(wideBuilding);
-        check.that(!mismatched.upgraded(), "a target with a different footprint is refused");
-        check.that(mismatched.refusal() != null && mismatched.refusal().contains("footprint"),
-                "the footprint refusal explains the mismatch: " + mismatched.refusal());
-        check.that(wideBuilding.isAlive(), "the footprint refusal leaves the old building standing");
+        check.that(!mismatched.upgraded() && mismatched.refusal() != null
+                        && mismatched.refusal().contains("footprint") && wideBuilding.isAlive(),
+                "a target with a different footprint is refused and leaves the old building standing: "
+                        + mismatched.refusal());
 
         // --- defaults: a type without an upgrade link has neither a target nor a cost
         ContentRegistry plain = ContentRegistry.builder("plain")
@@ -2393,26 +2336,22 @@ public final class RtsScenario {
         BuildingType hut = content.building(COOP_HUT);
 
         // --- the documented formula itself
-        check.equal(0, ConstructionSystem.progressPerTick(0),
-                "no attached builder means no progress: progressPerTick(0) is 0");
-        check.equal(1, ConstructionSystem.progressPerTick(1), "progressPerTick(1) is 1");
-        check.equal(2, ConstructionSystem.progressPerTick(2), "progressPerTick(2) is 2");
-        check.equal(3, ConstructionSystem.progressPerTick(3), "progressPerTick(3) is 3");
-        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(4),
-                "four builders reach the cap of " + ConstructionSystem.MAX_BUILDERS_PER_SITE);
-        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(5),
-                "a fifth builder is capped at " + ConstructionSystem.MAX_BUILDERS_PER_SITE);
-        check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(9),
-                "progressPerTick depends only on min(builders, MAX_BUILDERS_PER_SITE)");
+        check.that(ConstructionSystem.progressPerTick(0) == 0
+                        && ConstructionSystem.progressPerTick(1) == 1
+                        && ConstructionSystem.progressPerTick(2) == 2
+                        && ConstructionSystem.progressPerTick(3) == 3
+                        && ConstructionSystem.progressPerTick(4) == ConstructionSystem.MAX_BUILDERS_PER_SITE
+                        && ConstructionSystem.progressPerTick(5) == ConstructionSystem.MAX_BUILDERS_PER_SITE
+                        && ConstructionSystem.progressPerTick(9) == ConstructionSystem.MAX_BUILDERS_PER_SITE,
+                "progressPerTick counts min(builders, MAX_BUILDERS_PER_SITE): 0, 1, 2, 3, then capped at "
+                        + ConstructionSystem.MAX_BUILDERS_PER_SITE + " for four, five and nine builders");
         // --- the per-builder work rate: the rates sum, the cap counts workers
-        check.equal(2, ConstructionSystem.progressPerTick(java.util.List.of(2)),
-                "a rate-2 builder alone contributes two points per tick");
-        check.equal(4, ConstructionSystem.progressPerTick(java.util.List.of(2, 2)),
-                "two rate-2 builders contribute four points per tick");
-        check.equal(5, ConstructionSystem.progressPerTick(java.util.List.of(2, 2, 1)),
-                "mixed rates sum: 2 + 2 + 1");
-        check.equal(12, ConstructionSystem.progressPerTick(java.util.List.of(3, 3, 3, 3, 1)),
-                "the cap counts workers: four rate-3 builders sum to 12 and the fifth is dropped");
+        check.that(ConstructionSystem.progressPerTick(java.util.List.of(2)) == 2
+                        && ConstructionSystem.progressPerTick(java.util.List.of(2, 2)) == 4
+                        && ConstructionSystem.progressPerTick(java.util.List.of(2, 2, 1)) == 5
+                        && ConstructionSystem.progressPerTick(java.util.List.of(3, 3, 3, 3, 1)) == 12,
+                "the per-builder work rates sum (2, 2+2, 2+2+1), and the cap counts workers: four rate-3 "
+                        + "builders sum to 12 and the fifth is dropped");
 
         // --- one builder takes the full build time; two take half; four equal five
         int[] builderCounts = {1, 2, 4, 5};
@@ -2453,15 +2392,14 @@ public final class RtsScenario {
         check.that(repeatAgain.placed() && repeatAgain.site() == repeatPlaced.site(),
                 "the same build command on the unfinished site joins it instead of being refused");
         repeatEngine.tick();
-        check.equal(2, repeatPlaced.site().builderCount(),
-                "two engineers ordered with the ordinary placement command both attach to the same site");
-        check.that(repeatFirst.orders().current() instanceof BuildOrder
-                        && repeatSecond.orders().current() instanceof BuildOrder,
-                "both engineers really run the build order of that one site");
-        check.equal(2, repeatWorld.buildingsOf(repeatPlayer).size(),
-                "the join path still leaves exactly one site (depot plus site)");
-        check.equal(Natural.of(90), repeatPlayer.logistics().amount(content.item("gold")),
-                "the join path charges nothing a second time (100 minus the 10 placement cost)");
+        check.that(repeatPlaced.site().builderCount() == 2
+                        && repeatFirst.orders().current() instanceof BuildOrder
+                        && repeatSecond.orders().current() instanceof BuildOrder
+                        && repeatWorld.buildingsOf(repeatPlayer).size() == 2
+                        && repeatPlayer.logistics().amount(content.item("gold")).equals(Natural.of(90)),
+                "two engineers ordered with the ordinary placement command both attach to and run the build order "
+                        + "of that one site, which is still the only site, and the join charged nothing a second "
+                        + "time (100 minus the 10 placement cost)");
 
         // --- progress per tick with a known set of three attached builders
         CoopSite three = beginCoop(check, content, 3, 73L);
@@ -2469,12 +2407,12 @@ public final class RtsScenario {
             return;
         }
         three.engine.tick();
-        check.equal(3, three.site.builderCount(), "all three builders attach on the first order tick");
-        check.equal(COOP_BUILD_TIME - 3, three.site.constructionRemaining(),
-                "three attached builders remove 3 construction points in one tick");
+        int afterFirstTick = three.site.constructionRemaining();
         three.engine.tick();
-        check.equal(COOP_BUILD_TIME - 6, three.site.constructionRemaining(),
-                "and 3 more in the second tick");
+        check.that(three.site.builderCount() == 3
+                        && afterFirstTick == COOP_BUILD_TIME - 3
+                        && three.site.constructionRemaining() == COOP_BUILD_TIME - 6,
+                "all three builders attach on the first order tick and remove 3 construction points per tick");
 
         // --- completion finishes every attached order in the same tick and leaves nobody holding the site
         CoopSite pair = beginCoop(check, content, 2, 74L);
@@ -2488,17 +2426,16 @@ public final class RtsScenario {
                 "both builders are running a build order");
         GridPos firstTile = pair.site.builderStandTile(pair.builders.get(0));
         GridPos secondTile = pair.site.builderStandTile(pair.builders.get(1));
-        check.that(firstTile != null && secondTile != null && !firstTile.equals(secondTile),
-                "the two builders claim different standing tiles (" + firstTile + " and " + secondTile + ")");
         TileRect footprint = pair.site.occupiedTiles();
-        boolean adjacent = true;
+        boolean adjacent = firstTile != null && secondTile != null && !firstTile.equals(secondTile);
         for (Unit builder : pair.builders) {
             GridPos tile = pair.site.builderStandTile(builder);
             adjacent &= tile != null && !footprint.contains(tile)
                     && footprint.expanded(1).contains(tile) && pair.engine.map().isPassable(tile);
         }
         check.that(adjacent,
-                "each standing tile is a walkable tile of the footprint's one tile approach ring");
+                "the two builders claim different standing tiles (" + firstTile + " and " + secondTile + "), each "
+                        + "a walkable tile of the footprint's one tile approach ring");
         pair.engine.tick(10);
         boolean working = true;
         float farthest = 0f;
@@ -2514,25 +2451,23 @@ public final class RtsScenario {
             pair.engine.tick();
             completionTick++;
         }
-        check.equal(COOP_BUILD_TIME / 2L, completionTick,
-                "the two builder site completes on tick " + (COOP_BUILD_TIME / 2));
-        check.that(pair.site.isConstructed(), "the site is operational");
-        check.equal(0, pair.site.builderCount(), "the completed site keeps no attached builder");
+        final long finishedTick = completionTick;
+        boolean buildersIdle = true;
         for (Unit builder : pair.builders) {
-            check.that(builder.orders().isEmpty() && builder.orders().current() == null,
-                    "builder " + builder.id().value() + " is idle after completion");
-            check.that(builder.motion().goalOrNull() == null,
-                    "builder " + builder.id().value() + " has no leftover movement goal");
+            buildersIdle &= builder.orders().isEmpty() && builder.orders().current() == null
+                    && builder.motion().goalOrNull() == null;
         }
-        check.that(((BuildOrder) firstOrder).site() == null
-                        && ((BuildOrder) secondOrder).site() == null,
-                "both finished orders dropped their site reference");
-        long finishedAt = completionTick;
         long completedEvents = pair.buildEvents.stream()
-                .filter(event -> event.endsWith(":COMPLETED@" + finishedAt))
+                .filter(event -> event.endsWith(":COMPLETED@" + finishedTick))
                 .count();
-        check.equal(2L, completedEvents,
-                "both attached orders report COMPLETED on the completion tick " + completionTick);
+        check.that(completionTick == COOP_BUILD_TIME / 2L && pair.site.isConstructed()
+                        && pair.site.builderCount() == 0 && buildersIdle
+                        && ((BuildOrder) firstOrder).site() == null
+                        && ((BuildOrder) secondOrder).site() == null
+                        && completedEvents == 2L,
+                "the two builder site completes on tick " + (COOP_BUILD_TIME / 2) + " and is operational, keeps no "
+                        + "attached builder (both idle with no leftover goal), both finished orders dropped their "
+                        + "site reference, and both orders report COMPLETED on the completion tick");
 
         // --- cancelling one builder leaves the others attached and the site progressing
         CoopSite leaving = beginCoop(check, content, 3, 75L);
@@ -2547,17 +2482,6 @@ public final class RtsScenario {
                 "three builders made 6 points of progress before one of them leaves");
         Natural goldBeforeCancel = leaving.player.logistics().amount(content.item("gold"));
         leaving.engine.commands().stop(leavingBuilder);
-        check.that(!leaving.site.hasBuilder(leavingBuilder),
-                "the stopped builder is detached from the site immediately");
-        check.that(leavingBuilder.orders().isEmpty(),
-                "the stopped builder has no dangling build order");
-        check.that(((BuildOrder) leavingOrder).site() == null,
-                "the cancelled order dropped its site reference");
-        check.equal(2, leaving.site.builderCount(), "the other two builders stay attached");
-        int remainingBefore = leaving.site.constructionRemaining();
-        leaving.engine.tick();
-        check.equal(remainingBefore - 2, leaving.site.constructionRemaining(),
-                "the site keeps progressing with the remaining two builders (2 points per tick)");
         boolean othersStillBuilding = true;
         for (Unit builder : leaving.builders) {
             if (builder.equals(leavingBuilder)) {
@@ -2566,17 +2490,26 @@ public final class RtsScenario {
             Order current = builder.orders().current();
             othersStillBuilding &= current instanceof BuildOrder order && order.site() == leaving.site;
         }
-        check.that(othersStillBuilding, "the remaining builders still hold their build orders");
-        check.equal(goldBeforeCancel, leaving.player.logistics().amount(content.item("gold")),
-                "cancelling one builder's order charges nothing");
+        check.that(!leaving.site.hasBuilder(leavingBuilder)
+                        && leavingBuilder.orders().isEmpty()
+                        && ((BuildOrder) leavingOrder).site() == null
+                        && leaving.site.builderCount() == 2
+                        && othersStillBuilding
+                        && leaving.player.logistics().amount(content.item("gold")).equals(goldBeforeCancel),
+                "the stopped builder is detached from the site immediately with no dangling build order whose "
+                        + "site reference is dropped, the other two builders stay attached and still hold their "
+                        + "orders, and cancelling charged nothing");
+        int remainingBefore = leaving.site.constructionRemaining();
+        leaving.engine.tick();
+        check.that(leaving.site.constructionRemaining() == remainingBefore - 2,
+                "the site keeps progressing with the remaining two builders (2 points per tick)");
         long leavingCompletion = ticksToCompletion(leaving, 300);
-        check.that(leavingCompletion > 0 && leaving.site.isConstructed(),
-                "the site still completes after one builder was cancelled");
-        check.that(leaving.buildEvents.contains(leavingBuilder.id().value() + ":CANCELLED@2"),
-                "the stopped builder's order is reported CANCELLED on tick 2");
-        check.that(leaving.buildEvents.stream()
-                        .noneMatch(event -> event.startsWith(leavingBuilder.id().value() + ":COMPLETED")),
-                "the stopped builder never reports COMPLETED");
+        check.that(leavingCompletion > 0 && leaving.site.isConstructed()
+                        && leaving.buildEvents.contains(leavingBuilder.id().value() + ":CANCELLED@2")
+                        && leaving.buildEvents.stream()
+                                .noneMatch(event -> event.startsWith(leavingBuilder.id().value() + ":COMPLETED")),
+                "the site still completes after one builder was cancelled, whose order is reported CANCELLED on "
+                        + "tick 2 and never COMPLETED");
 
         // --- destroying the site fails every attached order and charges nothing again
         CoopSite doomed = beginCoop(check, content, 3, 76L);
@@ -2591,28 +2524,26 @@ public final class RtsScenario {
         doomed.engine.tick();
         Natural goldBeforeDestroy = doomed.player.logistics().amount(content.item("gold"));
         doomed.world.destroy(doomed.site);
-        check.that(!doomed.site.isAlive(), "the site is marked dead");
-        check.equal(0, doomed.site.builderCount(),
-                "destroying the site detaches every builder immediately, without waiting for a tick");
+        check.that(!doomed.site.isAlive() && doomed.site.builderCount() == 0,
+                "destroying the site marks it dead and detaches every builder immediately, without waiting for a tick");
         doomed.engine.tick();
         boolean allReleased = true;
         for (Unit builder : doomed.builders) {
             allReleased &= builder.orders().isEmpty() && builder.orders().current() == null
                     && !doomed.site.hasBuilder(builder);
         }
-        check.that(allReleased, "every attached builder's order failed and was detached immediately");
-        check.equal(0, doomed.site.builderCount(), "the destroyed site keeps no attached builder");
         boolean refsDropped = true;
         for (Order order : doomedOrders) {
             refsDropped &= order instanceof BuildOrder build && build.site() == null;
         }
-        check.that(refsDropped, "every failed build order dropped its reference to the destroyed site");
         long failedEvents = doomed.buildEvents.stream()
                 .filter(event -> event.endsWith(":FAILED@2"))
                 .count();
-        check.equal(3L, failedEvents, "all three orders report FAILED on the destruction tick itself");
-        check.equal(goldBeforeDestroy, doomed.player.logistics().amount(content.item("gold")),
-                "a destroyed site charges nothing a second time");
+        check.that(allReleased && refsDropped && failedEvents == 3L
+                        && doomed.player.logistics().amount(content.item("gold")).equals(goldBeforeDestroy),
+                "every attached builder's order failed and was detached immediately with the site reference "
+                        + "dropped, all three orders report FAILED on the destruction tick itself, and a destroyed "
+                        + "site charges nothing a second time");
 
         // --- determinism: the same script twice gives identical ticks, progress and order events
         CoopSite firstRun = beginCoop(check, content, 3, 77L);
@@ -2667,10 +2598,11 @@ public final class RtsScenario {
                 sites.add(result.site());
             }
         }
-        check.equal(3, builder.orders().size(), "all three build orders are in the one engineer's queue");
-        check.equal(3, sites.size(), "all three sites exist immediately, because placement is synchronous");
-        check.equal(Natural.of(30), goldBefore.subtractClamped(player.logistics().amount(gold)),
-                "queueing three 10 gold huts charges exactly 30 gold at placement time");
+        check.that(builder.orders().size() == 3 && sites.size() == 3
+                        && goldBefore.subtractClamped(player.logistics().amount(gold)).equals(Natural.of(30)),
+                "all three build orders are in the one engineer's queue, all three sites exist immediately "
+                        + "because placement is synchronous, and queueing three 10 gold huts charges exactly 30 "
+                        + "gold at placement time");
         List<String> labels = OrderLabels.of(builder);
         check.equal(List.of("建造 Hut @ (16,10)", "建造 Hut @ (16,14)", "建造 Hut @ (16,18)"), labels,
                 "the snapshot labels list the queued builds in execution order");
@@ -2683,11 +2615,9 @@ public final class RtsScenario {
         for (Building site : sites) {
             allBuilt &= site.isConstructed() && site.isAlive();
         }
-        check.that(allBuilt, "the engineer finishes all three queued sites in order");
-        check.that(builder.orders().isEmpty(), "the queue is empty when the last site completes");
-        for (int index = 0; index < sites.size(); index++) {
-            check.that(sites.get(index).isConstructed(), "site " + (index + 1) + " is constructed");
-        }
+        check.that(allBuilt && builder.orders().isEmpty(),
+                "the engineer finishes all three queued sites in order and the queue is empty when the last "
+                        + "site completes");
 
         // --- the middle site is destroyed after queueing: the third order must still run
         OcRtsEngine damaged = flatEngine(content, VisualLibrary.empty(), 602L);
@@ -2705,11 +2635,11 @@ public final class RtsScenario {
         damagedWorld.destroy(damagedSites.get(1));
         check.that(!damagedSites.get(1).isAlive(), "the middle site is destroyed before its order starts");
         damaged.tick(240);
-        check.that(damagedSites.get(0).isAlive() && damagedSites.get(0).isConstructed(),
-                "the first queued site still completes");
-        check.that(damagedSites.get(2).isAlive() && damagedSites.get(2).isConstructed(),
-                "the third queued site completes even though the middle order failed");
-        check.that(damagedBuilder.orders().isEmpty(), "the failed middle order did not leave the queue stuck");
+        check.that(damagedSites.get(0).isAlive() && damagedSites.get(0).isConstructed()
+                        && damagedSites.get(2).isAlive() && damagedSites.get(2).isConstructed()
+                        && damagedBuilder.orders().isEmpty(),
+                "the first and third queued sites complete even though the middle order failed, and the failed "
+                        + "order did not leave the queue stuck");
 
         // --- the snapshot list is capped with a marker
         OrderQueue longQueue = new OrderQueue();
@@ -2717,10 +2647,11 @@ public final class RtsScenario {
             longQueue.push(new MoveOrder(new GridPos(index, 0)));
         }
         List<String> capped = OrderLabels.of(longQueue);
-        check.equal(OrderLabels.MAX_ORDER_LABELS, capped.size(), "a ten order queue is capped at 8 entries");
-        check.equal("… 还有 3 项", capped.get(capped.size() - 1),
-                "the last capped entry is the truncation marker, not a task");
-        check.equal("移动 → (1,0)", capped.get(0), "the head of the capped list is the first task");
+        check.that(capped.size() == OrderLabels.MAX_ORDER_LABELS
+                        && capped.get(capped.size() - 1).equals("… 还有 3 项")
+                        && capped.get(0).equals("移动 → (1,0)"),
+                "a ten order queue is capped at 8 entries whose head is the first task and whose last entry is "
+                        + "the truncation marker, not a task");
     }
 
     // ------------------------------------------------------------------ 16b) the builder must arrive first
@@ -2751,15 +2682,13 @@ public final class RtsScenario {
         builder.orders().push(new BuildOrder(site));
         engine.tick();
         Order current = builder.orders().current();
-        check.that(current instanceof BuildOrder, "the builder is running its build order");
         GridPos standTile = current instanceof BuildOrder order ? order.standTile() : null;
-        check.that(standTile != null, "the order claimed a standing tile on the approach ring: " + standTile);
-        check.equal(1, site.builderCount(),
-                "the builder is attached to the site from the first order tick");
-        check.that(!BuildOrder.isAtStandTile(builder, standTile),
-                "the builder is still twenty tiles away, not standing at its tile");
-        check.equal(buildTime, site.constructionRemaining(),
-                "an attached but walking builder removes no construction point");
+        check.that(current instanceof BuildOrder && standTile != null && site.builderCount() == 1
+                        && !BuildOrder.isAtStandTile(builder, standTile)
+                        && site.constructionRemaining() == buildTime,
+                "the builder is running its build order from the first order tick, which claimed a standing tile "
+                        + "on the approach ring (" + standTile + "), but being twenty tiles away it is not standing "
+                        + "at it and removes no construction point");
 
         int arrivalTick = -1;
         int tick = 1;
@@ -2780,18 +2709,16 @@ public final class RtsScenario {
                 }
             }
         }
-        check.that(noProgressBeforeArrival,
-                "no construction point was removed on any tick before the builder arrived");
-        check.that(arrivalTick > 1, "the walk really took more than one tick (arrived on tick "
-                + arrivalTick + ")");
-        check.that(site.isConstructed(), "the site completed after the builder arrived");
+        check.that(noProgressBeforeArrival && arrivalTick > 1 && site.isConstructed(),
+                "no construction point was removed on any tick before the builder arrived, the walk really took "
+                        + "more than one tick (arrived on tick " + arrivalTick + "), and the site completed after "
+                        + "the builder arrived");
         int walkTicks = arrivalTick - 1;
         int buildTicks = tick - arrivalTick + 1;
-        check.equal(buildTime, buildTicks,
-                "the building took its full " + buildTime + " construction ticks after arrival");
-        check.equal(walkTicks + buildTime, tick,
-                "walk plus build (" + walkTicks + " + " + buildTime + ") equals the completion tick " + tick);
-        check.equal(0, site.builderCount(), "the completed site keeps no attached builder");
+        check.that(buildTicks == buildTime && walkTicks + buildTime == tick && site.builderCount() == 0,
+                "the building took its full " + buildTime + " construction ticks after arrival, walk plus build ("
+                        + walkTicks + " + " + buildTime + ") equals the completion tick " + tick
+                        + ", and the completed site keeps no attached builder");
     }
 
     // ------------------------------------------------------------------ 17) repair and reclaim
@@ -2843,19 +2770,18 @@ public final class RtsScenario {
         Natural goldBeforeRepair = player.logistics().amount(gold);
 
         var repair = engine.commands().tryRepair(repairer, tower);
-        check.that(repair.repairing(), "an affordable repair order is issued: " + repair.refusal());
-        check.that(!repairer.orders().pending().isEmpty()
-                        && repairer.orders().pending().get(0) instanceof RepairOrder,
-                "the engineer's queued order is a repair order");
-        check.equal(goldBeforeRepair, player.logistics().amount(gold),
-                "issuing a repair charges nothing yet; only the affordability probe ran");
+        check.that(repair.repairing() && !repairer.orders().pending().isEmpty()
+                        && repairer.orders().pending().get(0) instanceof RepairOrder
+                        && player.logistics().amount(gold).equals(goldBeforeRepair),
+                "an affordable repair order is issued as a RepairOrder, and issuing charges nothing yet; only "
+                        + "the affordability probe ran: " + repair.refusal());
 
         engine.tick();
-        check.equal(Natural.of(104), tower.health().current(),
+        check.that(tower.health().current().equals(Natural.of(104))
+                        && player.logistics().amount(gold)
+                                .equals(goldBeforeRepair.subtractClamped(Natural.of(4))),
                 "the first standing tick restores " + RepairOrder.REPAIR_POINTS_PER_TICK
-                        + " hit points (100 -> 104)");
-        check.equal(goldBeforeRepair.subtractClamped(Natural.of(4)), player.logistics().amount(gold),
-                "that tick charged exactly four gold, one per restored hit point");
+                        + " hit points (100 -> 104) and charged exactly four gold, one per restored hit point");
         engine.tick(24);
         check.equal(Natural.of(200), tower.health().current(), "25 ticks restore all 100 missing hit points");
         check.equal(goldBeforeRepair.subtractClamped(Natural.of(100)), player.logistics().amount(gold),
@@ -2867,26 +2793,25 @@ public final class RtsScenario {
 
         Natural goldAtFull = player.logistics().amount(gold);
         engine.tick(5);
-        check.equal(Natural.of(200), tower.health().current(), "extra ticks do not heal past the maximum");
-        check.equal(goldAtFull, player.logistics().amount(gold),
-                "extra ticks after full health charge nothing (no over-repair)");
+        check.that(tower.health().current().equals(Natural.of(200))
+                        && player.logistics().amount(gold).equals(goldAtFull),
+                "extra ticks do not heal past the maximum and charge nothing (no over-repair)");
 
         var fullRepair = engine.commands().tryRepair(repairer, tower);
-        check.that(!fullRepair.repairing(), "a full-health tower cannot be repaired again");
-        check.that(fullRepair.refusal() != null && fullRepair.refusal().contains("full health"),
-                "the full-health refusal says so: " + fullRepair.refusal());
-        check.equal(goldAtFull, player.logistics().amount(gold),
-                "the refused full-health repair charges nothing");
-
+        check.that(!fullRepair.repairing() && fullRepair.refusal() != null
+                        && fullRepair.refusal().contains("full health")
+                        && player.logistics().amount(gold).equals(goldAtFull),
+                "a full-health tower cannot be repaired again and the refusal charges nothing: "
+                        + fullRepair.refusal());
 
         // Q16: the queue form appends the repair behind an existing order instead of replacing it.
         tower.health().damage(4);
         engine.commands().queueMove(repairer, entrance);
         var queuedRepair = engine.commands().tryQueueRepair(repairer, tower);
-        check.that(queuedRepair.repairing(), "a queued repair is issued: " + queuedRepair.refusal());
-        check.that(repairer.orders().size() == 2
+        check.that(queuedRepair.repairing() && repairer.orders().size() == 2
                         && repairer.orders().pending().get(1) instanceof RepairOrder,
-                "the queued repair is pushed behind the queued move, not in front of it");
+                "a queued repair is issued and pushed behind the queued move, not in front of it: "
+                        + queuedRepair.refusal());
         engine.commands().stop(repairer);
         check.equal(goldAtFull, player.logistics().amount(gold),
                 "queueing a repair holds no stock and charges nothing");
@@ -2910,10 +2835,10 @@ public final class RtsScenario {
         EntityId towerId = tower.id();
         world.destroy(tower);
         var destroyedRepair = engine.commands().tryRepair(repairer, tower);
-        check.that(!destroyedRepair.repairing() && destroyedRepair.refusal().contains("destroyed"),
-                "a destroyed building cannot be repaired: " + destroyedRepair.refusal());
-        check.equal(goldAtFull, player.logistics().amount(gold),
-                "the destroyed-building refusal charges nothing");
+        check.that(!destroyedRepair.repairing() && destroyedRepair.refusal().contains("destroyed")
+                        && player.logistics().amount(gold).equals(goldAtFull),
+                "a destroyed building cannot be repaired and the refusal charges nothing: "
+                        + destroyedRepair.refusal());
         world.flush();
         check.that(world.findEntity(towerId).isEmpty(), "the destroyed tower is gone from the world");
 
@@ -2929,13 +2854,12 @@ public final class RtsScenario {
         GridPos poorEntrance = poor.world().dimensionOf(poorTower).entranceTile(poorTower);
         Unit poorRepairer = poor.world().spawnUnit(content.unit(SERVICE_ENGINEER), poorPlayer, poorEntrance);
         var poorRepair = poor.commands().tryRepair(poorRepairer, poorTower);
-        check.that(!poorRepair.repairing() && poorRepair.refusal().contains("cannot afford"),
-                "a repair the warehouses cannot cover is refused: " + poorRepair.refusal());
-        check.equal(Natural.of(10), poorPlayer.logistics().amount(gold),
-                "the unaffordable repair charged nothing");
-        check.equal(Natural.of(100), poorTower.health().current(),
-                "the unaffordable repair healed nothing");
-        check.that(poorRepairer.orders().isEmpty(), "the unaffordable repair issued no order");
+        check.that(!poorRepair.repairing() && poorRepair.refusal().contains("cannot afford")
+                        && poorPlayer.logistics().amount(gold).equals(Natural.of(10))
+                        && poorTower.health().current().equals(Natural.of(100))
+                        && poorRepairer.orders().isEmpty(),
+                "a repair the warehouses cannot cover is refused with nothing charged, nothing healed and no "
+                        + "order issued: " + poorRepair.refusal());
 
         // ------------------------------------------------------------------ reclaim
         BuildingType hutType = content.building(SERVICE_HUT);
@@ -2963,35 +2887,32 @@ public final class RtsScenario {
         check.equal(expectedRefund, CommandService.reclaimRefund(site),
                 "a reclaim refunds half of the 10 gold placement cost");
         var reclaimed = engine.commands().tryReclaim(site);
-        check.that(reclaimed.reclaimed(), "the unfinished site is reclaimed: " + reclaimed.refusal());
-        check.equal(expectedRefund, reclaimed.refund(), "the returned refund is exactly half the cost");
-        check.equal(goldBeforeReclaim.add(expectedRefund.amount(gold)), player.logistics().amount(gold),
-                "the refund was deposited into the warehouse and nothing else was charged");
-        check.that(!site.isAlive(), "the reclaimed site is destroyed");
-        check.equal(0, site.builderCount(), "the reclaimed site keeps no attached builder");
         boolean allDetached = true;
         for (Unit builder : List.of(firstBuilder, secondBuilder)) {
             allDetached &= builder.orders().isEmpty() && builder.orders().current() == null;
         }
-        check.that(allDetached, "both builders lost their build order on the reclaim tick");
-        check.equal(2, buildFinishEvents.size(), "both build orders report a terminal event");
-        boolean reasonsClear = true;
+        boolean reasonsClear = buildFinishEvents.size() == 2;
         for (Events.OrderFinished event : buildFinishEvents) {
             reasonsClear &= event.state() == OrderState.FAILED
                     && event.reason().contains("reclaimed");
         }
-        check.that(reasonsClear, "both failures carry the reclaim reason: "
-                + buildFinishEvents.stream().map(Events.OrderFinished::reason).toList());
+        check.that(reclaimed.reclaimed() && reclaimed.refund().equals(expectedRefund)
+                        && player.logistics().amount(gold).equals(goldBeforeReclaim.add(expectedRefund.amount(gold)))
+                        && !site.isAlive() && site.builderCount() == 0 && allDetached && reasonsClear,
+                "the unfinished site is reclaimed with exactly half the cost refunded into the warehouse and "
+                        + "nothing else charged, the site is destroyed and keeps no attached builder, both "
+                        + "builders lost their build order on the reclaim tick, and both build orders report "
+                        + "FAILED with the reclaim reason: " + reclaimed.refusal());
         check.equal(goldBeforeBuild.subtractClamped(Natural.of(10)), player.logistics().amount(gold)
                         .subtractClamped(expectedRefund.amount(gold)),
                 "placement charged ten gold and the reclaim returned five, with no further charge");
 
         var finishedReclaim = engine.commands().tryReclaim(depot);
         check.that(!finishedReclaim.reclaimed()
-                        && finishedReclaim.refusal().contains("already finished"),
-                "a finished building cannot be reclaimed: " + finishedReclaim.refusal());
-        check.equal(ItemBundle.EMPTY, finishedReclaim.refund(),
-                "the refused finished reclaim returns nothing");
+                        && finishedReclaim.refusal().contains("already finished")
+                        && finishedReclaim.refund().equals(ItemBundle.EMPTY),
+                "a finished building cannot be reclaimed and the refused reclaim returns nothing: "
+                        + finishedReclaim.refusal());
 
         // --- the unit's work rate multiplies the repair: a rate-2 engineer restores 8 per tick
         Building fastTower = world.spawnBuilding(towerType, player, new GridPos(26, 10));
@@ -3001,13 +2922,13 @@ public final class RtsScenario {
         check.equal(2, fastRepairer.type().buildRate(), "the fast engineer's content rate is 2");
         Natural goldBeforeFast = player.logistics().amount(gold);
         var fastRepair = engine.commands().tryRepair(fastRepairer, fastTower);
-        check.that(fastRepair.repairing(), "the fast engineer takes the repair order: " + fastRepair.refusal());
         engine.tick();
-        check.equal(Natural.of(108), fastTower.health().current(),
-        "one standing tick of a rate-2 engineer restores "
-        + RepairOrder.REPAIR_POINTS_PER_TICK * 2 + " hit points (100 -> 108)");
-        check.equal(goldBeforeFast.subtractClamped(Natural.of(8)), player.logistics().amount(gold),
-        "that tick charged eight gold, one per restored hit point");
+        check.that(fastRepair.repairing() && fastTower.health().current().equals(Natural.of(108))
+                        && player.logistics().amount(gold)
+                                .equals(goldBeforeFast.subtractClamped(Natural.of(8))),
+                "the fast engineer takes the repair order, and one standing tick of a rate-2 engineer restores "
+                        + RepairOrder.REPAIR_POINTS_PER_TICK * 2 + " hit points (100 -> 108), charging eight gold, "
+                        + "one per restored hit point: " + fastRepair.refusal());
     }
 
     /** Content for the repair/reclaim checks: a repairable tower, a shed with no price and a hut. */
@@ -3060,9 +2981,9 @@ public final class RtsScenario {
         Unit runner = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 5));
         List<GridPos> route = List.of(new GridPos(10, 5), new GridPos(10, 10), new GridPos(15, 10));
         var moved = engine.commands().moveRoute(runner, route);
-        check.that(moved.issued(), "a three point route is issued: " + moved.refusal());
-        check.equal(3, moved.order().route().size(), "the order carries all three points");
-        check.equal(0, moved.order().legIndex(), "the order starts at the first leg");
+        check.that(moved.issued() && moved.order().route().size() == 3 && moved.order().legIndex() == 0,
+                "a three point route is issued carrying all three points, starting at the first leg: "
+                        + moved.refusal());
         List<GridPos> goalsSeen = new ArrayList<>();
         for (int tick = 0; tick < 800 && !runner.orders().isEmpty(); tick++) {
             engine.tick();
@@ -3074,12 +2995,12 @@ public final class RtsScenario {
                 }
             }
         }
-        check.that(runner.orders().isEmpty(), "the three point order finishes");
-        check.equal(route, goalsSeen, "the unit visited the legs in order, with no repeats");
-        check.atMost(1.0f, runner.position().distance(route.get(2).center()),
-                "the unit ends at the last point");
-        check.equal(2, moved.order().legIndex(), "the finished order reports the final leg");
-        check.that(moved.order().failureReason() == null, "the successful route reports no failure reason");
+        check.that(runner.orders().isEmpty() && goalsSeen.equals(route)
+                        && runner.position().distance(route.get(2).center()) <= 1.0f
+                        && moved.order().legIndex() == 2
+                        && moved.order().failureReason() == null,
+                "the three point order finishes: the unit visited the legs in order with no repeats, ends at the "
+                        + "last point, the finished order reports the final leg and no failure reason");
 
         // A one point route behaves like the historical single-target order.
         Unit single = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 15));
@@ -3098,17 +3019,16 @@ public final class RtsScenario {
         // Empty and over-cap routes are refused and leave the unit idle.
         Unit idle = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 25));
         var empty = engine.commands().moveRoute(idle, List.of());
-        check.that(!empty.issued() && empty.refusal().contains("at least one"),
-                "an empty route is refused: " + empty.refusal());
         List<GridPos> tooMany = new ArrayList<>();
         for (int index = 0; index <= UnitDirector.MAX_MOVE_POINTS; index++) {
             tooMany.add(new GridPos(10 + index, 25));
         }
         var overCap = engine.commands().moveRoute(idle, tooMany);
-        check.that(!overCap.issued() && overCap.refusal().contains("at most"),
-                "a route longer than " + UnitDirector.MAX_MOVE_POINTS + " points is refused: "
-                        + overCap.refusal());
-        check.that(idle.orders().isEmpty(), "neither refused route replaced the unit's order");
+        check.that(!empty.issued() && empty.refusal().contains("at least one")
+                        && !overCap.issued() && overCap.refusal().contains("at most")
+                        && idle.orders().isEmpty(),
+                "an empty route and a route longer than " + UnitDirector.MAX_MOVE_POINTS + " points are each "
+                        + "refused without replacing the unit's order: " + empty.refusal());
 
         // A walled-off second leg fails the order and names the leg.
         for (int dy = -2; dy <= 2; dy++) {
@@ -3124,10 +3044,10 @@ public final class RtsScenario {
         for (int tick = 0; tick < 2600 && !trapped.orders().isEmpty(); tick++) {
             engine.tick();
         }
-        check.that(trapped.orders().isEmpty(), "the order eventually fails instead of hanging");
-        check.that(doomed.order().failureReason() != null
+        check.that(trapped.orders().isEmpty() && doomed.order().failureReason() != null
                         && doomed.order().failureReason().contains("waypoint 2"),
-                "the failure names the unreachable second leg: " + doomed.order().failureReason());
+                "the order eventually fails instead of hanging and names the unreachable second leg: "
+                        + doomed.order().failureReason());
 
         // The snapshot reports a moving unit's remaining path and goal, and omits them when it stops.
         Unit marcher = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 40));
@@ -3135,22 +3055,16 @@ public final class RtsScenario {
         engine.tick(2);
         WorldSnapshot shot = engine.snapshot(new GridPos(30, 40), 32);
         EntitySnapshot marcherShot = shot.entity(marcher.id()).orElseThrow();
-        check.that(marcherShot.hasPath(), "a moving unit reports a non-empty path");
-        check.equal(new GridPos(60, 40), marcherShot.target(),
-                "the path's target is the goal tile");
-        check.atMost(SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS, marcherShot.path().size(),
-                "the reported path is at most " + SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS + " points");
+        check.that(marcherShot.hasPath() && marcherShot.target().equals(new GridPos(60, 40))
+                        && marcherShot.path().size() <= SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS,
+                "a moving unit reports a non-empty remaining path whose target is the goal tile and which is "
+                        + "capped at " + SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS + " points");
 
         List<Vec2> hundred = new ArrayList<>();
         for (int index = 0; index < 100; index++) {
             hundred.add(new Vec2(10f + index, 40.5f));
         }
         marcher.motion().setPath(hundred);
-        EntitySnapshot capped = engine.snapshot(new GridPos(30, 40), 32)
-                .entity(marcher.id()).orElseThrow();
-        check.equal(SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS, capped.path().size(),
-                "a longer route is capped at " + SnapshotFactory.MAX_SNAPSHOT_PATH_POINTS + " points");
-
         engine.commands().stop(marcher);
         EntitySnapshot stopped = engine.snapshot(new GridPos(30, 40), 32)
                 .entity(marcher.id()).orElseThrow();
@@ -3160,23 +3074,19 @@ public final class RtsScenario {
         check.section("18b) the queue forms append orders in order (Q16)");
         Unit queued = engine.world().spawnUnit(content.unit("runner"), player, new GridPos(5, 50));
         engine.commands().move(queued, new GridPos(6, 50));
-        check.equal(1, queued.orders().size(), "a plain move is the only order");
         engine.commands().queueMove(queued, new GridPos(7, 50));
-        check.equal(2, queued.orders().size(), "queueMove appends instead of replacing");
         var queuedRoute = engine.commands().queueMoveRoute(queued,
                 List.of(new GridPos(8, 50), new GridPos(9, 50)));
-        check.that(queuedRoute.issued(), "queueMoveRoute is issued");
-        check.equal(3, queued.orders().size(), "queueMoveRoute appends one order for the whole route");
-        check.that(queued.orders().pending().get(2) instanceof MoveOrder routeOrder
-                        && routeOrder.route().size() == 2,
-                "the queued route keeps both points in one order");
         EntityId unreachable = EntityId.of(999_999L);
         engine.commands().queueAttack(queued, unreachable);
         engine.commands().queueAttackMove(queued, new GridPos(10, 50));
-        check.equal(5, queued.orders().size(), "queueAttack and queueAttackMove append");
-        check.that(queued.orders().pending().get(3) instanceof AttackOrder
+        check.that(queuedRoute.issued() && queued.orders().size() == 5
+                        && queued.orders().pending().get(2) instanceof MoveOrder routeOrder
+                        && routeOrder.route().size() == 2
+                        && queued.orders().pending().get(3) instanceof AttackOrder
                         && queued.orders().pending().get(4) instanceof AttackMoveOrder,
-                "the queued orders are an attack, then an attack-move, in push order");
+                "queueMove appends instead of replacing, queueMoveRoute is issued as one order keeping both "
+                        + "points, and queueAttack and queueAttackMove append after it in push order");
         engine.commands().stop(queued);
         check.that(queued.orders().isEmpty(), "stop clears every queued order");
     }
@@ -3251,19 +3161,18 @@ public final class RtsScenario {
             // command a second engineer sends when the client batches one BUILD per engineer.
             var join = engine.commands().tryBuild(builders.get(index), content.building(COOP_HUT),
                     new GridPos(16, 10));
-            joined &= join.placed();
-            check.that(join.placed() && join.site() == run.site, "builder " + (index + 1)
-                    + " joins the existing site instead of placing another: " + join.refusal());
+            joined &= join.placed() && join.site() == run.site;
         }
+        check.that(joined, "every extra builder joins the existing site instead of placing another");
         if (!joined) {
             return null;
         }
         Natural goldAfterJoins = player.logistics().amount(content.item("gold"));
-        check.equal(Natural.of(10), goldBefore.subtractClamped(goldAfterPlacement),
-                "placing the hut charged its 10 gold cost exactly once");
-        check.equal(goldAfterPlacement, goldAfterJoins, "joining the site charged nothing");
-        check.equal(2, world.buildingsOf(player).size(),
-                "the joins created no second site (depot plus one hut site)");
+        check.that(goldBefore.subtractClamped(goldAfterPlacement).equals(Natural.of(10))
+                        && goldAfterPlacement.equals(goldAfterJoins)
+                        && world.buildingsOf(player).size() == 2,
+                "placing the hut charged its 10 gold cost exactly once, joining charged nothing, and the joins "
+                        + "created no second site (depot plus one hut site)");
         run.builders.addAll(builders);
         return run;
     }
@@ -3410,11 +3319,12 @@ public final class RtsScenario {
                                 DimensionId.overworld(), new GridPos(8, 8)));
             }
         };
-        check.equal(1, hellGame.dimensions().size(), "the content declares exactly one extra dimension");
-        check.equal("Hell", hellGame.dimensions().get(0).displayName(), "the dimension has a display name");
-        check.equal(2, hellGame.gateways().size(), "the gateway pair is declared in both directions");
-        check.that(hellGame.dimensions().get(0).settings().waterPath().equals(content.key("hell_lava")),
-                "the hell terrain paths point at the catalogue's lava as its water");
+        check.that(hellGame.dimensions().size() == 1
+                        && hellGame.dimensions().get(0).displayName().equals("Hell")
+                        && hellGame.gateways().size() == 2
+                        && hellGame.dimensions().get(0).settings().waterPath().equals(content.key("hell_lava")),
+                "the content declares exactly one extra dimension with a display name and a gateway pair in both "
+                        + "directions, and its terrain paths point at the catalogue's lava as its water");
 
         // The engine: flat grass overworld plus the content-declared hell.
         OcRtsEngine engine = OcRtsEngine.builder(content)
@@ -3428,29 +3338,26 @@ public final class RtsScenario {
         World world = engine.world();
         DimensionId overworld = DimensionId.overworld();
         DimensionId hellId = DimensionId.of("hell");
-        check.that(world.dimensions().stream().anyMatch(dimension -> dimension.id().equals(hellId)),
-                "the engine built the declared hell dimension");
-        check.equal("Hell", world.dimension(hellId).profile().displayName(),
-                "the hell profile carries the content's display name");
-        check.equal(content.terrain("hell_ground"), world.map(hellId).terrainAt(0, 0),
-                "the tile at the hell origin is the catalogue's hell ground, not overworld grass");
-        check.equal(content.terrain("grass"), world.map(overworld).terrainAt(0, 0),
-                "the overworld stays flat grass");
+        check.that(world.dimensions().stream().anyMatch(dimension -> dimension.id().equals(hellId))
+                        && world.dimension(hellId).profile().displayName().equals("Hell")
+                        && world.map(hellId).terrainAt(0, 0).equals(content.terrain("hell_ground"))
+                        && world.map(overworld).terrainAt(0, 0).equals(content.terrain("grass")),
+                "the engine built the declared hell dimension carrying the content's display name, its origin "
+                        + "tile is the catalogue's hell ground and the overworld stays flat grass");
 
         // The gateways from the content, registered by the host (here: the scenario).
         for (Gateway gateway : hellGame.gateways()) {
             world.addGateway(gateway);
         }
-        check.that(world.route(overworld, hellId).isPresent(), "the route overworld -> hell resolves");
-        check.that(world.route(hellId, overworld).isPresent(), "the route hell -> overworld resolves too");
+        check.that(world.route(overworld, hellId).isPresent() && world.route(hellId, overworld).isPresent(),
+                "the routes overworld -> hell and hell -> overworld both resolve");
 
         // Dimension restriction: the purgatory refuses the overworld and accepts hell.
-        check.that(!world.canPlace(overworld, content.building("purgatory"), new GridPos(10, 10)),
-                "the purgatory is refused on the overworld by the dimension rule");
-        check.that(world.canPlace(hellId, content.building("purgatory"), new GridPos(6, 6)),
-                "the same purgatory fits in hell, whose origin area is buildable");
-        check.that(world.canPlace(hellId, content.building("depot"), new GridPos(2, 2)),
-                "an unrestricted building stands anywhere");
+        check.that(!world.canPlace(overworld, content.building("purgatory"), new GridPos(10, 10))
+                        && world.canPlace(hellId, content.building("purgatory"), new GridPos(6, 6))
+                        && world.canPlace(hellId, content.building("depot"), new GridPos(2, 2)),
+                "the purgatory is refused on the overworld by the dimension rule but fits in hell, and an "
+                        + "unrestricted building stands anywhere");
         Player blue = engine.players().get(0);
 
         // A worker travels through the gate: overworld -> hell.
@@ -3459,17 +3366,17 @@ public final class RtsScenario {
         for (int i = 0; i < 400 && !worker.dimensionId().equals(hellId); i++) {
             engine.tick();
         }
-        check.equal("hell", worker.dimensionId().key(), "the worker travelled through the gate into hell");
-        check.equal(1, world.units(hellId).size(), "hell now holds the worker");
+        check.that(worker.dimensionId().key().equals("hell") && world.units(hellId).size() == 1,
+                "the worker travelled through the gate into hell, which now holds it");
 
         // Variant upgrades: fort.t1 offers two successors, priced differently.
         BuildingType fortType = content.building("fort.t1");
-        check.equal(2, fortType.upgradeOptions().size(), "fort.t1 declares exactly two upgrade variants");
-        check.that(fortType.upgradeTo().orElseThrow().equals(content.key("fort.t2"))
-                        && fortType.upgradeCost().equals(ItemBundle.of(content.item("gold"), 50)),
-                "the single-target view still reads the first variant");
-        check.that(fortType.upgradeOptions().get(1).target().equals(content.key("purgatory")),
-                "the second variant is the purgatory");
+        check.that(fortType.upgradeOptions().size() == 2
+                        && fortType.upgradeTo().orElseThrow().equals(content.key("fort.t2"))
+                        && fortType.upgradeCost().equals(ItemBundle.of(content.item("gold"), 50))
+                        && fortType.upgradeOptions().get(1).target().equals(content.key("purgatory")),
+                "fort.t1 declares exactly two upgrade variants, the single-target view still reads the first, "
+                        + "and the second variant is the purgatory");
         Building fortOver = world.spawnBuilding(overworld, fortType, blue, new GridPos(20, 20));
         Building depotOver = world.spawnBuilding(overworld, content.building("depot"), blue, new GridPos(14, 14));
         depositStock(check, blue, depotOver, ItemBundle.of(content.item("gold"), 300),
@@ -3477,25 +3384,23 @@ public final class RtsScenario {
         Natural goldBefore = blue.logistics().amount(content.item("gold"));
 
         var ambiguous = engine.commands().upgradeBuilding(fortOver);
-        check.that(!ambiguous.upgraded() && ambiguous.refusal().contains("2 variants"),
-                "an upgrade without a target is refused while the choice is ambiguous: " + ambiguous.refusal());
         var wrong = engine.commands().upgradeBuilding(fortOver, content.key("fort.missing"));
-        check.that(!wrong.upgraded() && wrong.refusal().contains("does not offer"),
-                "a target outside the offered variants is refused: " + wrong.refusal());
         var restricted = engine.commands().upgradeBuilding(fortOver, content.key("purgatory"));
-        check.that(!restricted.upgraded() && restricted.refusal().contains("restricts it to hell"),
-                "upgrading into the purgatory on the overworld is refused by the dimension rule: "
-                        + restricted.refusal());
-        check.that(blue.logistics().amount(content.item("gold")).equals(goldBefore),
-                "every refusal left the gold untouched");
+        check.that(!ambiguous.upgraded() && ambiguous.refusal().contains("2 variants")
+                        && !wrong.upgraded() && wrong.refusal().contains("does not offer")
+                        && !restricted.upgraded() && restricted.refusal().contains("restricts it to hell")
+                        && blue.logistics().amount(content.item("gold")).equals(goldBefore),
+                "an upgrade without a target is refused while the choice is ambiguous, a target outside the "
+                        + "offered variants is refused, upgrading into the purgatory on the overworld is refused "
+                        + "by the dimension rule, and every refusal left the gold untouched (" + ambiguous.refusal()
+                        + ")");
 
         var ordinary = engine.commands().upgradeBuilding(fortOver, content.key("fort.t2"));
-        check.that(ordinary.upgraded(), "choosing fort.t2 explicitly succeeds: " + ordinary.refusal());
-        check.equal(content.building("fort.t2"), ordinary.replacement().type(),
-                "the chosen variant is the type that replaced the fort");
-        check.equal(goldBefore.subtractClamped(Natural.of(50)),
-                blue.logistics().amount(content.item("gold")),
-                "the chosen variant's own price (50 gold) was charged");
+        check.that(ordinary.upgraded() && ordinary.replacement().type().equals(content.building("fort.t2"))
+                        && blue.logistics().amount(content.item("gold"))
+                                .equals(goldBefore.subtractClamped(Natural.of(50))),
+                "choosing fort.t2 explicitly succeeds and the chosen variant's own price (50 gold) was charged: "
+                        + ordinary.refusal());
 
         // The same step succeeds in hell: the purgatory may rise there.
         Building fortHell = world.spawnBuilding(hellId, fortType, blue, new GridPos(6, 6));
@@ -3504,23 +3409,20 @@ public final class RtsScenario {
                 "hell's warehouse holds the gold for the purgatory step");
         Natural goldBeforeHell = blue.logistics().amount(content.item("gold"));
         var purgatory = engine.commands().upgradeBuilding(fortHell, content.key("purgatory"));
-        check.that(purgatory.upgraded(), "the purgatory variant succeeds in hell: " + purgatory.refusal());
-        check.equal(content.building("purgatory"), purgatory.replacement().type(),
-                "the replacement is the purgatory");
-        check.equal("hell", purgatory.replacement().dimensionId().key(),
-                "the purgatory stands in hell");
-        check.equal(goldBeforeHell.subtractClamped(Natural.of(20)),
-                blue.logistics().amount(content.item("gold")),
-                "the purgatory step charged its own price (20 gold), not the fort.t2 price");
+        check.that(purgatory.upgraded() && purgatory.replacement().type().equals(content.building("purgatory"))
+                        && purgatory.replacement().dimensionId().key().equals("hell")
+                        && blue.logistics().amount(content.item("gold"))
+                                .equals(goldBeforeHell.subtractClamped(Natural.of(20))),
+                "the purgatory variant succeeds in hell, the replacement is the purgatory standing there, and the "
+                        + "step charged its own price (20 gold), not the fort.t2 price: " + purgatory.refusal());
 
         // And back: the worker returns through the reversed gateway.
         world.director().travel(worker, overworld);
         for (int i = 0; i < 400 && worker.dimensionId().equals(hellId); i++) {
             engine.tick();
         }
-        check.equal("overworld", worker.dimensionId().key(), "the worker travelled back out of hell");
-        check.equal(0, world.units(hellId).size(),
-                "hell keeps only its buildings after the worker leaves");
+        check.that(worker.dimensionId().key().equals("overworld") && world.units(hellId).isEmpty(),
+                "the worker travelled back out of hell, which keeps only its buildings after the worker leaves");
     }
 
 
@@ -3546,10 +3448,10 @@ public final class RtsScenario {
         UnitType engineerT2Type = content.unit(SERVICE_ENGINEER_T2);
 
         check.that(engineerType.canUpgrade()
-                        && engineerType.upgradeTo().orElseThrow().equals(content.key(SERVICE_ENGINEER_T2)),
-                "the engineer names the tier two engineer as its successor in the catalogue namespace");
-        check.equal(ItemBundle.of(gold, 10), engineerType.upgradeCost(),
-                "the engineer -> engineer.t2 step costs exactly ten gold");
+                        && engineerType.upgradeTo().orElseThrow().equals(content.key(SERVICE_ENGINEER_T2))
+                        && engineerType.upgradeCost().equals(ItemBundle.of(gold, 10)),
+                "the engineer names the tier two engineer as its successor in the catalogue namespace and the "
+                        + "step costs exactly ten gold");
         check.that(!engineerT2Type.canUpgrade()
                         && engineerT2Type.upgradeTo().isEmpty()
                         && engineerT2Type.upgradeCost().isEmpty(),
@@ -3567,18 +3469,15 @@ public final class RtsScenario {
 
         // --- refusals: every one is free and leaves the engineer untouched
         var unknown = engine.commands().upgradeUnit(engineer, content.key("engineer.missing"));
-        check.that(!unknown.upgraded() && unknown.refusal().contains("does not exist"),
-                "an upgrade whose target does not exist is refused: " + unknown.refusal());
         var offLadder = engine.commands().upgradeUnit(engineer, content.key(SERVICE_ENGINEER));
-        check.that(!offLadder.upgraded() && offLadder.refusal().contains("does not offer"),
-                "a target the ladder does not offer - here the unit itself - is refused: "
-                        + offLadder.refusal());
-        check.equal(goldBefore, player.logistics().amount(gold),
-                "every refusal left the gold untouched");
-        check.equal(player.logistics().stored(), player.logistics().available(),
-                "every refusal left no reservation behind");
-        check.that(engineer.isAlive() && engineer.type().equals(engineerType),
-                "the refused upgrades leave the old engineer standing");
+        check.that(!unknown.upgraded() && unknown.refusal().contains("does not exist")
+                        && !offLadder.upgraded() && offLadder.refusal().contains("does not offer")
+                        && player.logistics().amount(gold).equals(goldBefore)
+                        && player.logistics().stored().equals(player.logistics().available())
+                        && engineer.isAlive() && engineer.type().equals(engineerType),
+                "an upgrade whose target does not exist and a target the ladder does not offer - here the unit "
+                        + "itself - are each refused with the gold untouched, no reservation left behind, and the "
+                        + "old engineer standing (" + unknown.refusal() + ")");
 
         // --- the affordable upgrade: position, owner, facing, health fraction, cargo and one charge
         engineer.health().damage(20);
@@ -3592,31 +3491,27 @@ public final class RtsScenario {
         EntityId oldId = engineer.id();
 
         var upgraded = engine.commands().upgradeUnit(engineer, content.key(SERVICE_ENGINEER_T2));
-        check.that(upgraded.upgraded(), "an affordable unit upgrade succeeds: " + upgraded.refusal());
         Unit replacement = upgraded.replacementUnit();
-        check.equal(engineerT2Type, replacement.type(), "the replacement has the type the ladder named");
-        check.close(0f, replacement.position().distance(position), 1e-6f,
-                "the replacement stands at the old unit's exact position");
-        check.equal(player, replacement.owner(), "the replacement keeps the same owner");
-        check.close(1.25f, replacement.motion().facing(), 1e-6f,
-                "the replacement faces the old unit's direction");
-        check.close(0.75f, replacement.health().fraction(), 1e-6f,
-                "the replacement keeps the old health fraction (not the absolute hit points)");
-        check.equal(120L, replacement.health().current(),
-                "three quarters of the new 160 hit points is 120");
-        check.equal(goldBefore.subtractClamped(Natural.of(10)), player.logistics().amount(gold),
-                "exactly the ten gold upgrade cost was charged, once");
-        check.equal(6L, replacement.cargo().amount(gold),
-                "the old engineer's backpack is carried over into the new one");
-        check.that(!engineer.isAlive(), "the old engineer was destroyed");
-        check.that(engineer.orders().isEmpty(), "the old engineer's order queue was cancelled");
-        check.that(replacement.orders().isEmpty(), "the replacement starts with no orders");
+        check.that(upgraded.upgraded() && replacement != null
+                        && replacement.type().equals(engineerT2Type)
+                        && Math.abs(replacement.position().distance(position)) <= 1e-6f
+                        && replacement.owner().equals(player)
+                        && Math.abs(replacement.motion().facing() - 1.25f) <= 1e-6f
+                        && Math.abs(replacement.health().fraction() - 0.75f) <= 1e-6f
+                        && replacement.health().current().equals(Natural.of(120))
+                        && player.logistics().amount(gold).equals(goldBefore.subtractClamped(Natural.of(10)))
+                        && replacement.cargo().amount(gold).equals(Natural.of(6))
+                        && !engineer.isAlive() && engineer.orders().isEmpty()
+                        && replacement.orders().isEmpty(),
+                "an affordable unit upgrade succeeds: the replacement has the ladder's type at the old unit's "
+                        + "exact position, keeps the owner, the facing and the health fraction (three quarters of "
+                        + "160 is 120), carries the six gold backpack over, was charged exactly ten gold once, and "
+                        + "the old engineer was destroyed with its order queue cancelled: " + upgraded.refusal());
         check.that(world.spatial().inRect(replacement.occupiedTiles()).stream()
-                        .noneMatch(entity -> entity.id().equals(oldId)),
-                "the spatial index no longer knows the old id");
-        check.that(world.spatial().inRect(replacement.occupiedTiles()).stream()
-                        .anyMatch(entity -> entity.id().equals(replacement.id())),
-                "the spatial index knows the replacement at the same tile");
+                        .noneMatch(entity -> entity.id().equals(oldId))
+                        && world.spatial().inRect(replacement.occupiedTiles()).stream()
+                                .anyMatch(entity -> entity.id().equals(replacement.id())),
+                "the spatial index no longer knows the old id and knows the replacement at the same tile");
         world.flush();
         check.that(world.findEntity(oldId).isEmpty(),
                 "after the flush the old id is gone from the world entirely");
@@ -3634,15 +3529,13 @@ public final class RtsScenario {
                 "the unaffordable check starts with five gold");
         Unit poorEngineer = poor.world().spawnUnit(engineerType, poorPlayer, new GridPos(20, 12).center());
         var refused = poor.commands().upgradeUnit(poorEngineer, null);
-        check.that(!refused.upgraded(), "an unaffordable upgrade is refused");
-        check.that(refused.refusal() != null && refused.refusal().contains("cannot afford"),
-                "the unaffordable refusal says it cannot afford the cost: " + refused.refusal());
-        check.that(poorEngineer.isAlive() && poorEngineer.type().equals(engineerType),
-                "the refused upgrade leaves the old engineer standing");
-        check.equal(Natural.of(5), poorPlayer.logistics().amount(gold),
-                "the refused upgrade charges nothing");
-        check.equal(poorPlayer.logistics().stored(), poorPlayer.logistics().available(),
-                "the refused upgrade leaves no reservation behind");
+        check.that(!refused.upgraded() && refused.refusal() != null
+                        && refused.refusal().contains("cannot afford")
+                        && poorEngineer.isAlive() && poorEngineer.type().equals(engineerType)
+                        && poorPlayer.logistics().amount(gold).equals(Natural.of(5))
+                        && poorPlayer.logistics().stored().equals(poorPlayer.logistics().available()),
+                "an unaffordable upgrade is refused with the cost named, leaving the old engineer standing, no "
+                        + "charge and no reservation: " + refused.refusal());
     }
 
     // ------------------------------------------------------------------ 5f) the pre-stocked buffer
@@ -3675,10 +3568,9 @@ public final class RtsScenario {
         // carry-over leaves behind.
         warehouse.inventory().insert(iron, 50);
         warehouse.inventory().insert(plank, 20);
-        check.equal(50L, barracks.inventory().insert(iron, 50),
-                "the buffer accepted exactly one recipe's worth of iron");
-        check.equal(20L, barracks.inventory().insert(plank, 20),
-                "the buffer holds the recipe's plank input as well");
+        check.that(barracks.inventory().insert(iron, 50).equals(Natural.of(50))
+                        && barracks.inventory().insert(plank, 20).equals(Natural.of(20)),
+                "the buffer accepted exactly one recipe's worth of iron and plank");
         Natural ironBefore = logistics.amount(iron);
         Natural plankBefore = logistics.amount(plank);
         check.equal(Natural.of(50), ironBefore, "the warehouses hold exactly one further recipe's worth");
@@ -3686,26 +3578,23 @@ public final class RtsScenario {
         int unitsBefore = world.unitsOf(player).size();
         production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
         boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 1, 3000);
-        check.that(trained, "a job whose inputs sit in the buffer starts without a delivery");
-        check.equal(unitsBefore + 1, world.unitsOf(player).size(), "the pre-stocked job produced its unit");
-        check.equal(Natural.ZERO, barracks.inventory().amount(iron),
-                "the job consumed the buffer's iron instead of leaving it for the next job");
-        check.equal(Natural.ZERO, barracks.inventory().amount(plank),
-                "the job consumed the buffer's planks as well");
-        check.equal(ironBefore, logistics.amount(iron),
-                "the warehouses were not charged: the buffer goods were the payment");
-        check.equal(plankBefore, logistics.amount(plank), "and the planks were not charged either");
+        check.that(trained && world.unitsOf(player).size() == unitsBefore + 1
+                        && barracks.inventory().amount(iron).isZero()
+                        && barracks.inventory().amount(plank).isZero()
+                        && logistics.amount(iron).equals(ironBefore)
+                        && logistics.amount(plank).equals(plankBefore),
+                "a job whose inputs sit in the buffer starts without a delivery, produced its unit, consumed the "
+                        + "buffer's iron and planks instead of leaving them for the next job, and the warehouses "
+                        + "were not charged: the buffer goods were the payment");
 
         // The next job finds an empty buffer and therefore pays the network, exactly like before.
         production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
         boolean charged = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 2, 3000);
-        check.that(charged, "the follow-up job is supplied through the ordinary delivery path");
-        check.equal(unitsBefore + 2, world.unitsOf(player).size(), "the follow-up job produced its unit");
-        check.equal(Natural.ZERO, logistics.amount(iron),
-                "the follow-up job took its inputs from the warehouse network");
-        check.equal(Natural.ZERO, logistics.amount(plank), "and paid the planks too");
-        check.equal(Natural.ZERO, barracks.inventory().amount(iron),
-                "and consumed them from the buffer, leaving no free stock behind");
+        check.that(charged && world.unitsOf(player).size() == unitsBefore + 2
+                        && logistics.amount(iron).isZero() && logistics.amount(plank).isZero()
+                        && barracks.inventory().amount(iron).isZero(),
+                "the follow-up job is supplied through the ordinary delivery path, paid the warehouse network's "
+                        + "iron and planks, and consumed them leaving no free stock behind");
     }
 
     // ------------------------------------------------------------------ 21) inherit
@@ -3735,28 +3624,26 @@ public final class RtsScenario {
         UnitType base = content.unit("sapper");
         UnitType tierTwo = content.unit("sapper.t2");
         UnitType tierThree = content.unit("sapper.t3");
-        check.that(tierTwo.hasTag(ContentRegistry.BUILDER_TAG),
-                "the tier that only inherits carries the builder capability tag");
-        check.equal(Natural.of(60), tierTwo.cargoCapacity(), "inherit copies the cargo capacity");
-        check.equal(3, tierTwo.buildRate(), "inherit copies the build rate");
-        check.equal(Natural.of(200), tierThree.cargoCapacity(),
-                "an explicit local cargo wins over the inherited one");
-        check.equal(3, tierThree.buildRate(),
-                "a field the tier leaves unset comes from its source, transitively up the chain");
-        check.that(tierThree.hasTag(ContentRegistry.BUILDER_TAG),
-                "the chain resolves through tier two up to the root's builder tag");
-        check.that(base.hasTag(ContentRegistry.BUILDER_TAG) && !base.upgradeTo().isPresent(),
-                "the base type itself is unchanged by its tiers' inheritance");
+        check.that(tierTwo.hasTag(ContentRegistry.BUILDER_TAG)
+                        && tierTwo.cargoCapacity().equals(Natural.of(60))
+                        && tierTwo.buildRate() == 3
+                        && tierThree.cargoCapacity().equals(Natural.of(200))
+                        && tierThree.buildRate() == 3
+                        && tierThree.hasTag(ContentRegistry.BUILDER_TAG)
+                        && base.hasTag(ContentRegistry.BUILDER_TAG) && !base.upgradeTo().isPresent(),
+                "inherit copies the builder capability tag, the cargo capacity and the build rate; an explicit "
+                        + "local cargo wins over the inherited one, a field the tier leaves unset comes from its "
+                        + "source transitively up the chain, and the base type itself is unchanged");
 
         // A missing source and a cycle are content errors: the build fails with a readable message.
+        String missingSource = null;
+        String cycleSource = null;
         try {
             ContentRegistry.builder("bad_inherit")
                     .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
                     .unit("loner").name("Loner").inherit("missing").build();
-            check.that(false, "an undefined inherit source fails the build");
         } catch (IllegalStateException expected) {
-            check.that(expected.getMessage().contains("undefined"),
-                    "an undefined inherit source fails the build: " + expected.getMessage());
+            missingSource = expected.getMessage();
         }
         try {
             ContentRegistry.builder("bad_cycle")
@@ -3764,11 +3651,13 @@ public final class RtsScenario {
                     .unit("a").name("A").inherit("b")
                     .unit("b").name("B").inherit("a")
                     .build();
-            check.that(false, "an inheritance cycle fails the build");
         } catch (IllegalStateException expected) {
-            check.that(expected.getMessage().contains("cycle"),
-                    "an inheritance cycle fails the build: " + expected.getMessage());
+            cycleSource = expected.getMessage();
         }
+        check.that(missingSource != null && missingSource.contains("undefined")
+                        && cycleSource != null && cycleSource.contains("cycle"),
+                "an undefined inherit source and an inheritance cycle both fail the build with a readable "
+                        + "message (" + missingSource + ")");
 
         // Gameplay: the tier that only inherited its capability raises a site and pays the bill.
         OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 421L);
@@ -3781,14 +3670,14 @@ public final class RtsScenario {
         Natural goldBefore = player.logistics().amount(content.item("gold"));
         var built = engine.commands().tryBuild(tierTwoUnit, content.building("post"),
                 new GridPos(20, 13));
-        check.that(built.placed(),
-                "a unit whose build capability comes only from inherit can place a site: "
-                        + built.refusal());
-        check.equal(goldBefore.subtractClamped(Natural.of(25)), player.logistics().amount(content.item("gold")),
-                "the site was charged exactly its placement cost, once");
         engine.tick(60);
-        check.that(built.placed() && built.site().isConstructed(),
-                "the inherited build rate of three finished the small post quickly");
+        check.that(built.placed()
+                        && player.logistics().amount(content.item("gold"))
+                                .equals(goldBefore.subtractClamped(Natural.of(25)))
+                        && built.site().isConstructed(),
+                "a unit whose build capability comes only from inherit can place a site, charged exactly its "
+                        + "placement cost once, and the inherited build rate of three finished the small post "
+                        + "quickly: " + built.refusal());
     }
 
 
@@ -3911,38 +3800,36 @@ public final class RtsScenario {
                 .unit("titan").name("Titan").health(titanHealth).speed(1.5f).radius(0.4f)
                         .cargo(0).spriteSet("titan")
                 .build();
-        check.equal("10^5000", NaturalFormat.scientific(hugeStack), "one slot of an item can hold 10^5000 units");
-        check.equal("10↑↑10", titanHealth.toString(), "the hit point ceiling can be a power tower");
+        check.that(NaturalFormat.scientific(hugeStack).equals("10^5000") && titanHealth.toString().equals("10↑↑10"),
+                "one slot of an item can hold 10^5000 units and the hit point ceiling can be a power tower");
 
         OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 4242L);
         Player player = engine.players().get(0);
         Unit titan = engine.spawnUnit("titan", player, new GridPos(8, 8));
-        check.equal(titanHealth, titan.health().max(), "the unit spawns with 10↑↑10 hit points");
-        check.close(1f, titan.health().fraction(), 1.0e-6f, "a full health bar is a ratio of one");
+        check.that(titan.health().max().equals(titanHealth)
+                        && Math.abs(titan.health().fraction() - 1f) <= 1.0e-6f,
+                "the unit spawns with 10↑↑10 hit points and a full health bar is a ratio of one");
 
         Natural dealt = titan.health().damage(Natural.of(1000));
-        check.equal(1000, dealt, "all 1000 damage is dealt");
-        check.that(!titan.health().isDead() && titan.health().current().equals(titanHealth),
-                "at that magnitude losing 1000 changes nothing, so the unit is still at full health");
+        check.that(dealt.equals(Natural.of(1000)) && !titan.health().isDead()
+                        && titan.health().current().equals(titanHealth),
+                "all 1000 damage is dealt, yet at that magnitude losing 1000 changes nothing");
         titan.health().damage(Natural.BEYOND);
         check.that(titan.health().isDead(), "BEYOND damage kills outright, because damage is min(health, amount)");
 
         ItemType relic = content.item("relic");
         Inventory vault = new Inventory("vault of titans", Inventory.UNLIMITED, Inventory.UNLIMITED, item -> true);
-        check.equal(titanHealth, vault.insert(relic, titanHealth), "a vault takes 10↑↑10 units in one call");
-        check.equal(titanHealth, vault.amount(relic), "and reports exactly that amount back");
-        check.that(vault.usedSlots().isBeyond(),
-                "the slot count itself is out of exact range, so it reports BEYOND instead of pretending");
-        check.that(!vault.isFull(),
-                "an unlimited vault is still not full: with both limits unlimited the free count is BEYOND too");
+        check.that(vault.insert(relic, titanHealth).equals(titanHealth)
+                        && vault.amount(relic).equals(titanHealth)
+                        && vault.usedSlots().isBeyond() && !vault.isFull(),
+                "an unlimited vault takes and reports exactly 10↑↑10 units in one call, reports its slot count as BEYOND "
+                        + "instead of pretending, and is still not full");
         Inventory fourSlotVault = new Inventory("four slot vault", Natural.of(4), Inventory.UNLIMITED, item -> true);
-        check.equal(hugeStack, fourSlotVault.insert(relic, titanHealth),
-                "a four slot vault accepts four stacks of 10^5000, capped by its headroom");
-        check.that(fourSlotVault.isFull(),
-                "with a finite slot count the same structural amount does report the inventory as full");
-        check.equal("10↑↑10x big:relic", ItemBundle.of(relic, titanHealth).toString(),
-                "an item bundle still prints readably");
-        check.equal(0, vault.extract(relic, 5).compareTo(Natural.of(5)), "taking 5 units out stays exact");
+        check.that(fourSlotVault.insert(relic, titanHealth).equals(hugeStack) && fourSlotVault.isFull(),
+                "a four slot vault accepts four stacks of 10^5000, capped by its headroom, and reports itself full");
+        check.that(ItemBundle.of(relic, titanHealth).toString().equals("10↑↑10x big:relic")
+                        && vault.extract(relic, 5).equals(Natural.of(5)),
+                "an item bundle still prints readably and taking 5 units out stays exact");
     }
 
     private static Natural totalHeld(World world, ItemType item) {
