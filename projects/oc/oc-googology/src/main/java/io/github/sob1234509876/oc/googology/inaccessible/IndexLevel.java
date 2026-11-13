@@ -1,6 +1,6 @@
 package io.github.sob1234509876.oc.googology.inaccessible;
 
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 import io.github.sob1234509876.oc.googology.ComparisonResult;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.Ordinal;
@@ -289,8 +289,8 @@ public final class IndexLevel implements Comparable<IndexLevel> {
     @Override
     public String toString() {
         return switch (layer) {
-            case PLAIN -> tupleSyntax ? renderTuple(prefix) : prefix.get(0).toString();
-            case ENTRY -> coefficient + " @ " + renderEntryLevel(level);            case LIMIT -> renderLimit(nestingLinks);
+            case PLAIN -> tupleSyntax ? renderTuple(prefix) : prefix.get(0).render();
+            case ENTRY -> coefficient.render() + " @ " + renderEntryLevel(level);            case LIMIT -> renderLimit(nestingLinks);
             default -> throw new AssertionError("unknown level layer " + layer);
         };
     }
@@ -301,7 +301,7 @@ public final class IndexLevel implements Comparable<IndexLevel> {
             if (index > 0) {
                 text.append(", ");
             }
-            text.append(coordinates.get(index));
+            text.append(coordinates.get(index).render());
         }
         return text.append(')').toString();
     }
@@ -372,6 +372,6 @@ public final class IndexLevel implements Comparable<IndexLevel> {
     }
 
     private static Ordinal finite(long value) {
-        return CantorNormalForm.standard().finite(Natural.of(value));
+        return BmsOrdinalNotation.standard().finite(Natural.of(value));
     }
 }

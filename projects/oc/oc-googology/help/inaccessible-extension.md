@@ -18,7 +18,7 @@
 | 用 `inaccessible(α)` 生成 `I_α` | 从枚举或列表里"取出"第 α 个不可达基数 |
 | 用 `veblen(α, β)`、`veblen(prefix, β)` 生成维布伦形式 | 把值展开成基本列（没有 `fundamentalSequence` / `expand`） |
 | 用 `coefficient(...)` 生成 `I(a @ b)` / `I(a @ b, β)` | 把 `a @ b` 算成 `ω^b · a` |
-| 在类型内用 `compareTo` / `compareMagnitude` 做**全序证明** | 和 `Natural`、`Ordinal`、`CantorOrdinal` 做算术或比较 |
+| 在类型内用 `compareTo` / `compareMagnitude` 做**全序证明** | 和 `Natural`、`Ordinal`、`BmsOrdinal` 做算术或比较 |
 | 用 `selfNesting()` 描述自嵌套极限 | 把极限描述当成有限项、给它最后一项或展开它 |
 | 用 `IndexLevel` 构造任意有限嵌套层级 | 把 `InaccessibleCardinal` 当 `LadderOrdinal`、`CardinalRung` 或 `Ordinal` |
 
@@ -129,7 +129,7 @@ InaccessibleCardinal.coefficient(IndexLevel..., a, β);       // I(a @ B, β)
 例如：
 
 ```java
-IndexLevel zero = IndexLevel.ordinal(CantorNormalForm.standard().zero());
+IndexLevel zero = IndexLevel.ordinal(BmsOrdinalNotation.standard().zero());
 InaccessibleCardinal.coefficient(IndexLevel.entry(1, zero), 1, 0);
 // I(1 @ (1 @ 0))
 

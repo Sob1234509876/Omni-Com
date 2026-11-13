@@ -16,7 +16,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (791 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (808 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
@@ -69,22 +69,23 @@ there.
 ## Transfinite levels
 
 `Ordinal` is a comparable ordinal with a successor and fundamental sequences, `OrdinalNotation` is the
-seam for plugging in a notation of your own, and `CantorNormalForm` is the default notation: Cantor
-normal form, whose values are the ordinals below `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, ...)`.
+seam for plugging in a notation of your own, and `BmsOrdinalNotation` is the default notation: the
+Bashicu matrix system, whose golden nodes identify `(0)(1)` with `ω`, `(0)(1)(2)` with `ω^ω` and whose
+ceiling is `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, ...)`, the boundary of the golden ε₀ expansion.
 
 ```java
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
 import io.github.sob1234509876.oc.googology.Ordinal;
 import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 
-CantorNormalForm notation = CantorNormalForm.standard();
-Ordinal omega = notation.omega();                          // ω
-Ordinal omegaSquared = notation.omegaPower(notation.of(2)); // ω^2
+BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
+Ordinal omega = notation.omega();                          // (0)(1), the reference's ω
+Ordinal omegaSquared = notation.omegaPower(notation.finite(Natural.TWO)); // (0)(1)(1), the reference's ω^2
 Ordinal epsilonZero = notation.limit();                     // ε₀, the notation's ceiling
 
-epsilonZero.fundamentalSequence(1);            // ω^ω
+epsilonZero.fundamentalSequence(1);            // ω
 omegaSquared.fundamentalSequence(5);           // ω·6, because (ω^2)[n] = ω·(n+1)
-omega.add(omega);                              // ω·2
+omega.add(omega);                              // ω·2, by matrix concatenation
 omega.successor();                             // ω + 1
 
 TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3));   // 2{ω}3 = 2{4}3 = 16
@@ -92,6 +93,10 @@ TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);     // 10{ω}1
 Natural huge = TransfiniteHyperoperation.apply(Natural.TEN, notation.omegaPower(omega), Natural.TEN);
 huge.toString();                                                      // "10{ω^ω}10", or a reduced level
 ```
+
+The Bashicu matrix value type keeps `toString()` as the matrix writing (`(0)(1)(2)`) and answers
+`render()` with the identified ordinal name (`ω^ω`) wherever a readable form is wanted - tower levels
+and cardinal subscripts use it.
 
 A limit level is walked with `n {λ} m = n {λ[m]} m`, which is an identity at every step, never an
 approximation. When the descent finishes inside the budget the result keeps the reduced level; when the
@@ -218,9 +223,9 @@ The trailing zero is a writing convention, not a column to drop: `(0)(0)` is `2`
 zero *rows* are removed. `of` demands an already-canonical matrix, while `canonical`, `parse` and
 `BmsOrdinal.of(int[][])` normalise. For standard forms the lexicographic order is claimed to coincide with
 the order of the ordinals the matrices denote — the reference's `(0)(1) = ω`, `(0)(1)(2) = ω^ω` and
-`(0,0)(1,1) = ε₀` nodes are cross checked against Cantor normal form — and for non-standard matrices it is
-not, which is why construction normalises the trailing zeros and rejects a first column that is not all
-zeros.
+`(0,0)(1,1) = ε₀` nodes are pinned against the `BmsOrdinalNotation` vocabulary itself — and for
+non-standard matrices it is not, which is why construction normalises the trailing zeros and rejects a
+first column that is not all zeros.
 
 **Expansion.** `BmsOrdinal.fundamentalSequence(int n)` implements the reference's rules:
 
@@ -606,17 +611,18 @@ keep the same code path for a finite limit and for `BEYOND`.
 ```
 src/main/java/io/github/sob1234509876/oc/googology/
     Natural.java                  the value type: factories, arithmetic, ordering, parsing, notation
+    NaturalNumber.java            the value interface Natural keeps: everything an instance can answer
     HyperOperation.java           the classic finite levels (succession .. octation)
     NaturalFormat.java            decimal / scientific / arrow / descriptive text
     Ordinal.java                  a comparable ordinal with a successor and fundamental sequences
     OrdinalNotation.java          the seam for plugging in a notation of your own
-    CantorNormalForm.java         the default notation: Cantor normal form, ceiling ε₀
-    CantorOrdinal.java            its values: ω^α₁·c₁ + ω^α₂·c₂ + ... with Term(exponent, coefficient)
-    EpsilonZero.java              the ceiling ε₀, whose fundamental sequence is the ω tower
     TransfiniteHyperoperation.java  n {α} m for ordinal levels, including n {λ} m = n {λ[m]} m
     package-info.java             package documentation
     bms/BmsMatrix.java            the immutable matrix, its canonical short form and its parser
-    bms/BmsOrdinal.java           a standard form read as an ordinal: order, successor, expansion
+    bms/BmsOrdinal.java           a standard form read as an ordinal: order, expansion, the Ordinal interface
+    bms/BmsOrdinalNotation.java   the default ordinal notation: the Bashicu matrix factory over the golden nodes
+    bms/BmsEpsilonZero.java       the ε₀ boundary, whose fundamental sequence is the golden expansion
+    bms/BmsLargeFinite.java       finite ordinals above the materialisation bound (package private)
     bms/BmsAnalysis.java          parent table, LNZ, bad root, Δ and the ascension matrix (package private)
     bms/BmsOrder.java             the shared lexicographic comparison (package private)
     bms/NonRecursiveBms.java      the non-recursive variant: first column of ones, (1) successor, expansion
@@ -642,7 +648,7 @@ help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
 help/inaccessible-extension.md    the Chinese guide to the stage-five inaccessible extension
-src/selfcheck/java/.../check/GoogologyCheck.java    the 791 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 808 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)

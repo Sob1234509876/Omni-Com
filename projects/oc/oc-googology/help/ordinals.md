@@ -5,7 +5,7 @@
 ## 这一篇讲什么
 
 - 为什么超运算的级别天然是序数，以及极限级别的那条规则 `n{λ}m = n{λ[m]}m` 怎么用。
-- 默认记号：**康托尔标准式**（Cantor normal form），它的极限是 `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, …)`。
+- 默认记号：**Bashicu 矩阵系统**（`BmsOrdinalNotation`），它的极限是 `ε₀ = sup(1, ω, ω^ω, ω^ω^ω, …)`。
 - `Ordinal` 与 `OrdinalNotation` 两个接口：怎么自定义一套序数记号接到超运算上。
 - `Natural` 的结构形如何携带序数级别（`10{ω^ω}10`），以及排序与渲染的规则。
 
@@ -45,44 +45,58 @@ n {λ} m = n {λ[m]} m        （λ 是极限序数）
    `a ↑^k 0 = 1`、`a ↑^k 1 = a` 一致；`m ≥ 2` 才走基本列。先判退化情形还能避免"先把 `ω` 展开成有限级别
    `1`，再按加法算出 `n + 0 = n`"这类偏差。
 
-## 三、默认记号：康托尔标准式（极限 `ε₀`）
+## 三、默认记号：Bashicu 矩阵（极限 `ε₀`）
 
-`CantorNormalForm.standard()` 是库里的默认记号。它把序数写成唯一的范式
+`BmsOrdinalNotation.standard()` 是库里的默认记号，它把 `bms` 层的标准式矩阵接上 `Ordinal` 接口：
+`BmsOrdinal` 就是它的值，一个矩阵（`(0)(1)`、`(0)(1)(1)`、…），按字典序比较。记号的词汇表全部从
+参考文件的金例数据推导：五个**可命名的节点**被钉死——
 
-```text
-ω^α₁·c₁ + ω^α₂·c₂ + … + ω^αₖ·cₖ        α₁ > α₂ > … > αₖ,  cᵢ 为正整数
-```
+| 矩阵 | 序数 | 来源 |
+| --- | --- | --- |
+| `(0)` | `1` | 参考节点 |
+| `(0)(0)` | `2` | 参考节点 |
+| `(0)(1)` | `ω` | 参考节点 |
+| `(0)(1)(1)` | `ω²` | 参考节点 |
+| `(0)(1)(2)` | `ω^ω` | 参考节点 |
+| `(0)(1,1)` | `ε₀` | 金例展开序列的上确界 |
 
-外加 `0`。`CantorOrdinal` 就是这个范式：`terms()` 给出项，`Term(Ordinal exponent, Natural coefficient)` 是一项。
-相等即"同一个序数"，所以用 `equals`/`compareTo` 判断序数关系是可靠的。
+记号能写出的序数在 `ε₀` 之下一直延伸到参考节点表（`ψ(Ω_ω)` 等都在），而**记号的上界** `limit()`
+是 `BmsEpsilonZero`：金例展开 `ε₀[n] = 0, 1, ω, ω^ω, ω^ω^ω, …` 的上确界。`contains(ε₀)` 返回 `false`：
+`ε₀` 是记号**能命名但不能由词汇表构造**的边界。因此 `ε₀ + 1`、`ε₀·2` 这类值在这个记号里不存在，
+`successor()`、`times(n ≥ 2)` 会抛出 `UnsupportedOperationException` 而不是编造一个值；反过来 `ε₀`
+吸收更小的加法（`α + ε₀ = ε₀ + α = ε₀`），并且 `ω^ε₀ = ε₀`。
 
-这个记号能写出的序数恰好是**小于 `ε₀`** 的那些，而 `ε₀` 是 `1, ω, ω^ω, ω^ω^ω, …` 的上确界——也就是你所说的
-"极限为 `ω^ω^ω^…` 的记号"。它的上界由 `limit()`（同义 `epsilonZero()`）给出：`EpsilonZero` 是一个极限序数，
-它的基本列正是那串 ω 塔：
-
-```text
-ε₀[0] = ω        ε₀[1] = ω^ω        ε₀[2] = ω^ω^ω        …
-```
-
-`contains(ε₀)` 返回 `false`：`ε₀` 是记号**能命名但不能写成范式**的边界（它的范式会是 `ω^ε₀`，指数等于整个序数）。
-因此 `ε₀ + 1`、`ε₀·2` 这类值在这个记号里不存在，`successor()`、`times(n ≥ 2)` 会抛出
-`UnsupportedOperationException` 而不是编造一个值；反过来 `ε₀` 吸收更小的加法（`α + ε₀ = ε₀ + α = ε₀`），
-并且 `ω^ε₀ = ε₀`。
-
-基本列的完整约定（索引 `n` 从 0 开始）：
+基本列的约定（索引 `n` 从 0 开始）：`BmsOrdinal.fundamentalSequence(Natural)` 报告的是原始展开
+`S[n] = G ~ B₀ ~ … ~ B_{n-1}` 在 **`n+1`** 处的元素——原始展开从 `S[0] = G` 起步（对 `ω` 来说是 0），
+跳过它正好得到超限超运算钉死的 **`ω[m] = m+1`** 约定，而且 `ω`、`ω·k`、`ω²`、`ω³`、`ω^ω` 的序列逐项
+与康托尔标准式的老结果落在相同的位置上（自校验第 44 节做过逐对对照）。唯一的约定差异在 `ε₀`：
+原始序列在 `ω` 之前多含一个开头元素，所以 `ε₀[0] = 1`（康托尔记号曾取 `ε₀[0] = ω`）——两者都是
+ε₀ 的真基本列，这是有文档的记号选择，不是数学分歧。
 
 | 序数 | 基本列 |
 | --- | --- |
-| `ω^(β+1)` | `ω^β·(n+1)`，因此 **`ω[n] = n+1`** |
-| `ω^β`（`β` 是极限） | `ω^(β[n])` |
-| `γ + ω^β·c` | `γ + ω^β·(c-1) + (ω^β)[n]` |
-| `ε₀` | `ω^ω^…^ω`（`n+1` 个 `ω`） |
+| `ω` | `n+1` |
+| `ω^2` | `ω·(n+1)` |
+| `ω^ω` | `ω^(n+1)` |
+| `ω^k`（有限 `k`） | `ω^(k-1)·(n+1)` |
+| `ω^10·11` 这类多块矩阵 | `ω^10·10 + ω^9·(n+1)`（坏部重复拼接，指数系数逐级递减） |
+| `ε₀` | `0, 1, ω, ω^ω, ω^ω^ω, …`（金例展开错开一位） |
 
-`n` 本身是 `Natural`，所以基本列的索引也可以是天文数字；当索引大到记号写不出对应元素时
-`fundamentalSequence(...)` 返回空（例如 `ε₀[300]` 超出了库愿意materialise 的 ω 塔高度）。
+`n` 本身是 `Natural`，所以基本列的索引也可以是天文数字；`ω` 的序列元素是有限序数 `n+1`，无论 `n`
+多大都表示得出（超界时退到结构有限值）；其他矩阵的元素物化受两个上限约束——拷贝数
+`MAX_FUNDAMENTAL_INDEX = 4096`、矩阵列数 `MAX_EXPANSION_COLUMNS = 2048`——超限时
+`fundamentalSequence(...)` 返回空（例如 `ε₀[5000]`），这是有文档的实现边界，不是数学断言。
 
-序数算术的两条容易记错的地方：加法**不交换**（`1 + ω = ω`，而 `ω + 1` 是 `ω` 的后继），乘法**乘的是首项系数**
-（`(ω+1)·2 = ω·2 + 1`，不是 `ω + 2`）。
+算术按矩阵语义实现：`add` 是矩阵拼接，当右侧是超限序数时先剥掉左侧的有限尾巴（`2 + ω = ω`、
+`(ω+1) + ω = ω·2`，尾巴被吸收，否则拼接式在字典序下会落到它该超过的和之下）；`times(n)` 是重复加法
+（`(ω+1)·2 = ω·2 + 1`）；`omegaPower()` 只对有限与纯塔指数可推导，一般矩阵的 `ω^α` 会抛
+`UnsupportedOperationException`（本库不计算一般矩阵的序数）。**Bashicu 矩阵不是范式系统**：两串不同的
+矩阵可以指同一个序数（`(0)(0)(1)` 与 `(0)(1)` 都是 `ω`），相等仍是矩阵相等，字典序只在标准式上被
+声称与序数同向。为了显示，`render()` 会把金例钉住的形状画成序数名（`(0)(1)(2)` 显示成 `ω^ω`，
+有限矩阵显示成数字），`toString()` 永远是矩阵原样。
+
+序数算术的两条容易记错的地方：加法**不交换**（`1 + ω = ω`，而 `ω + 1` 是 `ω` 的后继），乘法**乘的是
+首项**（`(ω+1)·2 = ω·2 + 1`，不是 `ω + 2`）。
 
 ## 四、超运算在序数级别上的规则
 
@@ -98,13 +112,13 @@ n {λ} m = n {λ[m]} m        （λ 是极限序数）
 实测（自校验第 12 节）：
 
 ```java
-CantorNormalForm notation = CantorNormalForm.standard();
-Ordinal omega = notation.omega();                       // ω
+BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
+Ordinal omega = notation.omega();                       // (0)(1)，参考节点的 ω
 
 TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3));    // 2{ω}3  = 2{4}3 = 2↑↑3 = 16
 TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);      // 10{ω}10 = 10{11}10 → 9 个箭头
 TransfiniteHyperoperation.apply(Natural.TWO, omega.successor(), Natural.TWO);   // 2{ω+1}2 = 2{ω}2 = 2{3}2 = 4
-TransfiniteHyperoperation.apply(Natural.TEN, notation.omegaPower(notation.of(2)), Natural.TEN, 0);  // 预算 0：级别保持 ω^2
+TransfiniteHyperoperation.apply(Natural.TEN, notation.omegaPower(notation.finite(Natural.TWO)), Natural.TEN, 0);  // 预算 0：级别保持 ω^2
 ```
 
 `10{ω^2}10` 会走两步——`(ω^2)[10] = ω·11`，再 `(ω·11)[10] = ω·10 + 11`——然后停在那里：`ω·10 + 11` 是后继序数，
@@ -141,7 +155,7 @@ TransfiniteHyperoperation.apply(Natural.TEN, notation.omegaPower(notation.of(2))
 ```java
 private static final class BelowOmegaOmega implements OrdinalNotation {
 
-    private final CantorNormalForm delegate = CantorNormalForm.standard();
+    private final BmsOrdinalNotation delegate = BmsOrdinalNotation.standard();
     private final Ordinal ceiling = delegate.omegaPower(delegate.omega());   // ω^ω
 
     @Override public String name() { return "below-omega-omega"; }
@@ -159,13 +173,13 @@ private static final class BelowOmegaOmega implements OrdinalNotation {
 
     @Override public Ordinal sum(List<Ordinal> terms) { return delegate.sum(terms); }
     @Override public boolean contains(Ordinal ordinal) {
-        return ordinal instanceof CantorOrdinal && ordinal.compareTo(ceiling) < 0;
+        return ordinal instanceof BmsOrdinal && ordinal.compareTo(ceiling) < 0;
     }
     @Override public Ordinal limit() { return ceiling; }
 }
 ```
 
-它复用了 `CantorOrdinal` 值类型，只把边界换成自己的：`notation.contains(ω)` 为真、`contains(ω^ω)` 为假，
+它复用了 `BmsOrdinal` 值类型，只把边界换成自己的：`notation.contains(ω)` 为真、`contains(ω^ω)` 为假，
 而 `TransfiniteHyperoperation.apply(Natural.TWO, notation.omega(), Natural.of(3))` 依然等于 `16`——
 超运算只依赖 `Ordinal` 接口，不关心记号是谁实现的。
 
@@ -389,9 +403,9 @@ switch (lean) {
 | --- | --- | --- |
 | `Ordinal` | 一个可比较的序数，带后继与基本列 | `notation()`、`isZero()`、`isLimit()`、`isSuccessor()`、`isFinite()`、`isOne()`、`successor()`、`predecessor()`、`fundamentalSequence(Natural)`、`normaliseAt(index, budget)`（按索引归约到非极限序数，预算受限）、`finiteValue()`、`add()`、`times()`、`omegaPower()`、`plus()`、`omegaPowerTimes()`、`min()`、`max()`、`finiteOrThrow()`、`asNaturalOrBeyond()` |
 | `OrdinalNotation` | 序数记号的可插拔接口 | `name()`、`zero()`、`one()`、`finite()`、`omega()`、`omegaPower()`、`sum()`、`contains()`、`limit()`、`of(long)`、`term()`、`sameAs()` |
-| `CantorNormalForm` | 默认记号（康托尔标准式，上界 `ε₀`） | `standard()`、`NAME`、`omegaTower(int)`、`epsilonZero()`、`limit()` |
-| `CantorOrdinal` | 范式值：`ω^α₁·c₁ + …` | `terms()`、`leadingTerm()`、`lastTerm()`、`Term(exponent, coefficient)` |
-| `EpsilonZero` | 记号上界 `ε₀`，基本列是 ω 塔 | `fundamentalSequence(n)`、`omegaPower()`、`add()`（吸收） |
+| `BmsOrdinalNotation` | 默认记号（Bashicu 矩阵，上界 `ε₀`） | `standard()`、`NAME`、`omegaTower(int)`、`epsilonZero()`、`limit()`、`MAX_FINITE_COLUMNS`、`MAX_FUNDAMENTAL_INDEX`、`MAX_EXPANSION_COLUMNS` |
+| `BmsOrdinal` | 记号的值：标准式矩阵 + `Ordinal` 接口 | `of(int[][])`、`matrix()`、`fundamentalSequence(int)`（原始展开）、`fundamentalSequence(Natural)`（ω[m]=m+1）、`finiteValue()`、`add()`、`times()`、`omegaPower()`、`render()`、`compareTo(Ordinal)`、`compareMagnitude()` |
+| `BmsEpsilonZero` | 记号上界 `ε₀`，基本列是金例展开错开一位 | `fundamentalSequence(n)`、`omegaPower()`、`add()`（吸收） |
 | `TransfiniteHyperoperation` | 序数级别的超运算 | `apply(base, level, height)`、`apply(..., budget)`、`applyFinite(base, rank, height)`、`DEFAULT_REDUCTION_BUDGET = 64`、`DEFAULT_SUCCESSOR_RECURSION_LIMIT = 8` |
 | `ComparisonResult` | 六值比较结果：`LESS`/`EQUAL`/`GREATER` 是**证明**，`PROBABLE_LESS`/`PROBABLE_GREATER` 是**倾向**（来自全序），`UNKNOWN` 是"连倾向都没有" | `LESS`、`EQUAL`、`GREATER`、`PROBABLE_LESS`、`PROBABLE_GREATER`、`UNKNOWN`、`isProof()`、`isProbable()`、`isUnknown()`、`isDecided()`、`signum()`、`reversed()`、`of(int)`、`leanOf(int)` |
 | `Natural`（比较相关） | 排序用全序（按值归约后的键），真相用四值比较，要"说法"用带倾向的六值比较 | `compareTo(other)`（全序兜底）、`compareMagnitude(other)`、`compareMagnitude(other, budget)`、`compareWithLean(other)`、`reducedLevel()`、`reducedLevel(budget)`、`log10Approx()`、`log2Approx()`、`COMPARISON_REDUCTION_BUDGET = 32`、`COMPARISON_DESCENT_DEPTH = 24` |
@@ -406,23 +420,25 @@ switch (lean) {
 3. **退化情形先于基本列**：`n{α}0 = 1`、`n{α}1 = n` 对所有超限级别成立（`α ≥ 3` 的经典约定），不要指望
    `n{ω}0` 会先展开成 `n{1}0 = n + 0 = n`。
 4. **`ε₀` 是记号的上界，不是记号里的值**。`notation.contains(notation.limit())` 为 `false`；对 `ε₀` 求后继或乘 2 会
-   抛 `UnsupportedOperationException`——这不是缺陷，而是"范式写不出它"的诚实反映。
-5. **`fundamentalSequence(...)` 可能返回空**。极限序数的索引可能大到记号无法写出对应元素（例如 `ε₀[300]`），
-   或者实现根本不支持；调用方要处理 `Optional.empty()`。
+   抛 `UnsupportedOperationException`——这不是缺陷，而是"词汇表构造不出它"的诚实反映。
+5. **`fundamentalSequence(...)` 可能返回空**。极限序数的元素物化受两个上限约束（拷贝数 4096、矩阵列数 2048；
+   例如 `ε₀[5000]` 为空）；`ω` 例外，它的元素是有限序数 `n+1`，任何索引都表示得出。调用方要处理
+   `Optional.empty()`。
 6. **跨记号比较按记号名排序**。同一个记号的序数按数学顺序比较；两个不同记号之间没有共同的"坐标系"，
    库选择了一个确定性的兜底顺序（先比 `name()`），不要把它当成数学结论。
-7. **不要混着用不同记号做算术**。`CantorOrdinal` 的 `add` 要求另一边也是同一个值类型，否则抛
-   `IllegalArgumentException`——两套不同记号的序数不能塞进同一个范式。
+7. **不要混着用不同记号做算术**。`BmsOrdinal` 的 `add` 要求另一边也是同一个值类型，否则抛
+   `IllegalArgumentException`——两套不同记号的序数不能塞进同一次拼接。
 8. **序数加法不交换，乘系数作用于首项**：`1 + ω = ω` 但 `ω + 1 > ω`；`(ω+1)·2 = ω·2 + 1`。
 9. **别指望 `10{ω^ω}10` 被算成一个数字**。它已经远超任何可表示的整数；库给的是**可比较、可渲染、可继续运算的记号值**，
    这正是 4096 位阈值之上的既有设计。
 10. **箭头数可以大到离谱**，所以渲染会在 `MAX_ARROW_RUN = 10_000` 之后切到 `base{level}height` 形式；
     想拿到箭头数本身请用 `finiteLevel()`，`arrows()` 在大数上会饱和。
-11. **序数值的 `Natural` 系数仍然遵循精确阈值**：范式里的系数是 `Natural`，所以"每项多少倍"依旧可以是天文数字，
-    但超过 4096 位同样进入结构形近似。
+11. **有限序数可以大到没有矩阵**：超过 `MAX_FINITE_COLUMNS = 1024` 的有限序数不写成零列，而是退到
+    可比较、可加减的结构有限值（`finiteValue()` 仍然是那个 `Natural`）；`ω^n` 这类需要列的幂在指数超界时
+    会被拒绝。
 12. **`compareTo` 是量级序，`equals` 是形式序**。`10{ω}10`、`10{11}10` 与未归约的 `10{ω}10` 三者比较都是 `0`，
     但 `equals` 只对**形式**相同的两个为 `true`。用它们当 `TreeSet`/`TreeMap` 键时，库按量级去重；要区分形式请
-    自己存另一份键（例如 `toString()`）。
+    自己存另一份键（例如 `toString()`）。序数侧同理：`(0)(0)(1)` 与 `(0)(1)` 都指 `ω` 但矩阵不等。
 13. **比较自带预算，超过就不归约**。`Natural.COMPARISON_REDUCTION_BUDGET = 32`：`ω^ω` 及以下能在预算内归约到
     后继级别，`ω^ω^ω`、`ε₀` 这类步数是大数级的级别会回落到"级别字典序"。
 14. **要真相就用 `compareMagnitude`，要排序就用 `compareTo`**。`compareMagnitude` 在判不了时返回 `UNKNOWN`
@@ -433,15 +449,15 @@ switch (lean) {
 
 ## 十、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **774 项**，其中第 11–15 节是序数层，
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **808 项**，其中第 11–15 节是序数层，
 第 16–18 节是 BMS（标准式与比较、展开、非递归 BMS），第 19–20 节是 BMS 极限之上的抽象序数名册，
 第 21–31 节是阶段一至阶段三序数阶梯（`LadderCheck`，183 项，见 [`ordinal-ladder.md`](ordinal-ladder.md)），
 第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
 [`cardinal-register.md`](cardinal-register.md)）：
 
 - **11) 序数**：`0 < 1 < 2 < ω < ω+1 < ω·2 < ω^2 < ω^ω < ω^ω^ω < ε₀` 严格递增；`1 + ω = ω`、`ω + ω = ω·2`、
-  `ω + ω^2 = ω^2`、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、`ε₀[1] = ω^ω`、`ε₀[2] = ω^ω^ω`；
-  `ε₀+1` 与 `ε₀·2` 明确失败。
+  `ω + ω^2` 是 `ω^2` 的非规范拼接、`(ω+1)·2 = ω·2+1`；`(ω^2)[n] = ω·(n+1)`、`(ω^ω)[2] = ω^3`、
+  `ε₀[0] = 1`（约定差异）、`ε₀[1] = ω`、`ε₀[2] = ω^ω`、`ε₀[3] = ω^ω^ω`；`ε₀+1` 与 `ε₀·2` 明确失败。
 - **12) 超限超运算**：`2{ω}3 = 16`；`10{ω}10` 折叠成 9 个箭头；`2{ω+1}2 = 4`；`10{ω^2}10` 两步后停在
   `ω·10 + 11`；`10{ω^ω}10` 降到一个后继级别后停住，且更大预算给出同一形式；六层 ω 塔的降链走不完，
   于是保留入口级别且预算 0 与 64 得到同一形式；`n{λ}0 = 1`、`n{λ}1 = n`；
@@ -472,7 +488,8 @@ switch (lean) {
 
 第 16–18 节（BMS）不在本篇范围内，单列在 [`bms.md`](bms.md)：第 16 节覆盖规范形（`(0)(1)(2)` 的三种写法相等、
 `isStandard`）、三个顺序例子（`A > B`、`B > C`）、`0 < 1 < 2 < ω < … < ζ₀` 的严格递增、121 对反对称、
-165 组传递、固定种子的 12 个矩阵、参考节点与康托尔标准式的 36 对同序，以及 8 个矩阵的渲染往返；
+165 组传递、固定种子的 12 个矩阵、五个可命名参考节点与 `BmsOrdinalNotation` 词汇表的同一性，
+以及 8 个矩阵的渲染往返；
 第 17 节覆盖展开（文章三个实例、`S > S[n]`、`S[0] < S[1] < …`、16 个标准式 × 5 个下标的一致性）；
 第 18 节覆盖非递归 BMS（两条金例、BMS 分支与无限列的非递归展开）。
 
@@ -492,8 +509,8 @@ SHO 及以上五个具名阶段的声明秩、声明未知对 `(SHO, MHO)`，以
 
 - [`../src/main/java/io/github/sob1234509876/oc/googology/Ordinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/Ordinal.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/OrdinalNotation.java`](../src/main/java/io/github/sob1234509876/oc/googology/OrdinalNotation.java)
-- [`../src/main/java/io/github/sob1234509876/oc/googology/CantorNormalForm.java`](../src/main/java/io/github/sob1234509876/oc/googology/CantorNormalForm.java)
-- [`../src/main/java/io/github/sob1234509876/oc/googology/CantorOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/CantorOrdinal.java)
-- [`../src/main/java/io/github/sob1234509876/oc/googology/EpsilonZero.java`](../src/main/java/io/github/sob1234509876/oc/googology/EpsilonZero.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinalNotation.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinalNotation.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsOrdinal.java)
+- [`../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsEpsilonZero.java`](../src/main/java/io/github/sob1234509876/oc/googology/bms/BmsEpsilonZero.java)
 - [`../src/main/java/io/github/sob1234509876/oc/googology/TransfiniteHyperoperation.java`](../src/main/java/io/github/sob1234509876/oc/googology/TransfiniteHyperoperation.java)
 - [`../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java`](../src/selfcheck/java/io/github/sob1234509876/oc/googology/check/GoogologyCheck.java)

@@ -23,9 +23,12 @@ import java.util.Objects;
  * notation's ordinals must be immutable values with a working {@code equals}, {@code hashCode} and
  * {@code compareTo}, since they are used as tower levels inside {@link Natural}.
  *
- * <p>The library ships one implementation, {@code io.github.sob1234509876.oc.googology.ordinal
- * .CantorNormalForm}, and that is also the notation {@link Natural} uses for the finite levels of its
- * structural values.
+ * <p>The library ships one implementation, {@code io.github.sob1234509876.oc.googology.bms
+ * .BmsOrdinalNotation}, and that is also the notation {@link Natural} uses for the finite levels of its
+ * structural values. Its vocabulary is derived from the Bashicu matrix golden data; operations a notation
+ * cannot model (a general {@code ω^exponent} for a Bashicu matrix) are allowed to throw
+ * {@link UnsupportedOperationException}, which is why this interface documents them as
+ * implementation-optional.
  *
  * @see Ordinal
  */

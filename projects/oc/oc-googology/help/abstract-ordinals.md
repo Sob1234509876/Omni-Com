@@ -31,7 +31,7 @@
 | 能做 | 不能做 |
 | --- | --- |
 | 报 `name()`、`description()`、`rank()` | 展开成基本列（没有 `fundamentalSequence` / `expand`） |
-| 和另一个 `AbstractOrdinal` 按**声明秩**比较（`compareTo`、`compareMagnitude`） | 和 `Natural`、`Ordinal`、`CantorOrdinal` 做任何比较或算术 |
+| 和另一个 `AbstractOrdinal` 按**声明秩**比较（`compareTo`、`compareMagnitude`） | 和 `Natural`、`Ordinal`、`BmsOrdinal` 做任何比较或算术 |
 | `compareWithBms` 得到 `GREATER`（这是**公理**） | 加、乘、取后继、`ω^`，或当成 RTS 的数量值 |
 | 作为 `Comparable` 排序（全序、传递、反对称） | 从名字反推出它在 OCF 里的具体序数 |
 | 用 `equals` / `==` 比较两个枚举常量 | 放进 `Natural.tower(...)` 的 level 位置 |
@@ -193,7 +193,7 @@ wiki 的分析本身。
 
 - [`../README.md`](../README.md) —— 库总览，抽象序数在其中的位置
 - [`bms.md`](bms.md) —— BMS 标准式、比较、展开与非递归 BMS，以及极限之前的节点表
-- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
+- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、Bashicu 矩阵记号、基本列与超限超运算
 - [`ordinal-ladder.md`](ordinal-ladder.md) —— 阶段一至阶段三序数阶梯：段一委托本页的 `SHO`，段二、段三
   是抽象 `f(α) = TTBMS(0)(1^α)` 与 NRBMS/TNRBMS 段，段四是 `ω_α` 段，并带 `ω₁^CK`、`ψ`、`LRPO`、
   `lim(NRBMS)`、`X`、`ψ_𝕀(𝕀)` 边界

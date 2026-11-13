@@ -988,7 +988,7 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 - [`../README.md`](../README.md) —— 库总览，阶段一至三阶梯、阶段四基数寄存器与阶段五不可达扩展在其中的位置
 - [`cardinal-register.md`](cardinal-register.md) —— 阶段四：19 个基数梯级、文档委托、Berkeley/Reinhardt 约定与未核实条目
 - [`inaccessible-extension.md`](inaccessible-extension.md) —— 阶段五：不可达基数的函数生成层级、比较规则与自嵌套极限
-- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
+- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、Bashicu 矩阵记号、基本列与超限超运算
 - [`bms.md`](bms.md) —— BMS 标准式、比较、展开与非递归 BMS
 - [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的旧名册，以及 `SHO` 的声明
 - [`../../../../documents/Human/Ordinals.md`](../../../../documents/Human/Ordinals.md) —— 21 级阶梯的原始规格

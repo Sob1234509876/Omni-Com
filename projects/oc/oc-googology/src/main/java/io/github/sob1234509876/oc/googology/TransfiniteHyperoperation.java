@@ -23,7 +23,7 @@ import java.util.Optional;
  * </ul>
  *
  * <p>Because a limit level is reduced with the index {@code m}, a small amount of arithmetic often
- * collapses into the finite hierarchy: with the {@link CantorNormalForm} convention {@code ω[m] = m+1},
+ * collapses into the finite hierarchy: with the {@code ω[m] = m+1} convention of the default notation,
  * {@code 10 {ω} 10} is {@code 10 {11} 10}, i.e. nine arrows, and {@code 2 {ω} 3} is exactly
  * {@code 2 {4} 3 = 2↑↑3 = 16}.
  *

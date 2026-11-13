@@ -1,5 +1,7 @@
 package io.github.sob1234509876.oc.googology;
 
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
+
 import java.math.BigInteger;
 import java.util.Objects;
 import java.util.Optional;
@@ -530,7 +532,7 @@ public final class Natural implements NaturalNumber {
         if (level != null) {
             return Optional.of(level);
         }
-        return Optional.of(CantorNormalForm.standard().finite(finiteLevel.add(TWO)));
+        return Optional.of(BmsOrdinalNotation.standard().finite(finiteLevel.add(TWO)));
     }
 
     /**
@@ -568,7 +570,7 @@ public final class Natural implements NaturalNumber {
             return cached;
         }
         Ordinal rank = level != null ? reducedLevel().orElse(level)
-                : CantorNormalForm.standard().finite(finiteLevel.add(TWO));
+                : BmsOrdinalNotation.standard().finite(finiteLevel.add(TWO));
         comparisonRankCache = rank;
         return rank;
     }
@@ -1572,7 +1574,7 @@ public final class Natural implements NaturalNumber {
                 return value.toString();
             case TOWER:
                 if (level != null) {
-                    return hyperoperationForm(level.toString());
+                    return hyperoperationForm(level.render());
                 }
                 long count = finiteLevel.toLongSaturated();
                 if (count > MAX_ARROW_RUN) {
@@ -1616,7 +1618,7 @@ public final class Natural implements NaturalNumber {
                 return value.toString();
             case TOWER:
                 if (level != null) {
-                    return hyperoperationFormLatex(latexSymbols(level.toString()));
+                    return hyperoperationFormLatex(latexSymbols(level.render()));
                 }
                 long count = finiteLevel.toLongSaturated();
                 if (count > MAX_ARROW_RUN) {
@@ -1653,7 +1655,7 @@ public final class Natural implements NaturalNumber {
                 StringBuilder text = new StringBuilder();
                 text.append(this).append(" (structural ");
                 if (level != null) {
-                    text.append("hyperoperation of level ").append(level);
+                    text.append("hyperoperation of level ").append(level.render());
                 } else if (finiteLevel.isOne()) {
                     text.append("exponentiation");
                 } else if (finiteLevel.equals(TWO)) {

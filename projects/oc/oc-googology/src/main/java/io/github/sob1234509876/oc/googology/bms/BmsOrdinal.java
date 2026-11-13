@@ -30,14 +30,13 @@ import java.util.Optional;
  * <p><b>What the order is claimed to be.</b> The task states, and the reference's analysis section is
  * consistent with, the claim that on <em>standard forms</em> this lexicographic order coincides with the
  * order of the ordinals the matrices denote: {@code (0)(1)} is {@code ω}, {@code (0)(1)(2)} is
- * {@code ω^ω}, {@code (0,0)(1,1)} is {@code ε₀}, {@code (0,0)(1,1)(1,1)} is {@code ε₁},
+ * {@code ω^ω}, {@code (0)(1,1)} is {@code ε₀}, {@code (0,0)(1,1)(1,1)} is {@code ε₁},
  * {@code (0,0)(1,1)(2,0)} is {@code ε_ω} and {@code (0,0)(1,1)(2,1)} is {@code ζ₀}. Those identifications
  * come from the reference, not from this class: this class does not compute the ordinal of a matrix. The
- * self check cross checks the six nodes up to {@code ε₀} - {@code (0)}, {@code (0)(0)}, {@code (0)(1)},
- * {@code (0)(1)(1)}, {@code (0)(1)(2)} and {@code (0,0)(1,1)} - against the corresponding ordinals of
- * {@link io.github.sob1234509876.oc.googology.CantorNormalForm} and {@code ε₀}, and the higher nodes only
- * against each other's order. The claim is not proved here, and it is not a definition of the ordinal
- * order.
+ * self check pins the five nameable nodes - {@code (0)}, {@code (0)(0)}, {@code (0)(1)}, {@code (0)(1)(1)}
+ * and {@code (0)(1)(2)} - against this notation's own vocabulary, the {@code ε₀} boundary against the
+ * golden expansion sequence, and the higher nodes only against each other's order. The claim is not proved
+ * here, and it is not a definition of the ordinal order.
  *
  * <p><b>What the order is not valid for.</b> For a matrix that is not a standard form the lexicographic
  * order and the ordinal order come apart: the raw column {@code (1,0)} is lexicographically greater than
@@ -212,6 +211,10 @@ public final class BmsOrdinal implements Ordinal {
      * {@code S[n] = G ~ B ~ B_1 ~ ... ~ B_{n-1}} is the same formula with {@code B = B_0}, where the
      * displayed list has {@code n} entries.
      *
+     * <p>The element is reported empty when it would have more than
+     * {@link BmsOrdinalNotation#MAX_EXPANSION_COLUMNS} columns: a walk whose every step repeats the bad
+     * part must stop somewhere, and this is the documented place where it does.
+     *
      * @throws IllegalArgumentException if {@code index} is negative, or if a last column with a non-zero
      *         entry has no LNZ parent (which means the matrix is not a standard form)
      */
@@ -230,6 +233,11 @@ public final class BmsOrdinal implements Ordinal {
         if (!analysis.hasBadRoot()) {
             throw new IllegalArgumentException("the lowermost non-zero element of " + matrix
                     + " has no parent, so the matrix has no bad root and is not a standard form");
+        }
+        long width = (long) analysis.badRoot()
+                + (long) index * (matrix.length() - 1 - analysis.badRoot());
+        if (width > BmsOrdinalNotation.MAX_EXPANSION_COLUMNS) {
+            return Optional.empty();   // the element would not be writable down at this implementation's bound
         }
         return Optional.of(of(analysis.expand(index)));
     }
@@ -295,10 +303,23 @@ public final class BmsOrdinal implements Ordinal {
             return Optional.empty();
         }
         Natural shifted = index.add(Natural.ONE);
+        if (isOmega()) {
+            // ω[m] = m+1 is the convention itself: the elements of ω's sequence are the finite ordinals
+            // 1, 2, 3, ..., and a finite ordinal is representable as a Natural whatever its size, so this
+            // is the one sequence that stays total over astronomical indices. It is what lets a
+            // comparison's floor certificate resolve a transfinite level against an astronomical one.
+            return Optional.of(notation().finite(shifted));
+        }
         if (!shifted.isExact() || shifted.toLongSaturated() > BmsOrdinalNotation.MAX_FUNDAMENTAL_INDEX) {
             return Optional.empty();
         }
         return fundamentalSequence((int) shifted.toLongSaturated()).map(ordinal -> ordinal);
+    }
+
+    /** Whether this matrix is the reference's ω, the two-column writing {@code (0)(1)}. */
+    private boolean isOmega() {
+        List<List<Integer>> columns = matrix.columns();
+        return columns.size() == 2 && columns.get(0).equals(List.of(0)) && columns.get(1).equals(List.of(1));
     }
 
     /**
@@ -384,6 +405,89 @@ public final class BmsOrdinal implements Ordinal {
     @Override
     public Ordinal omegaPower() {
         return notation().omegaPower(this);
+    }
+
+    /**
+     * The readable display form, derived from the reference's golden identifications and used when this
+     * ordinal appears inside another value (a tower level, a cardinal subscript). Finite matrices render
+     * as digits; a block-shaped matrix {@code k} repetitions of {@code (0)} followed by {@code c} columns
+     * of {@code (1)}, plus a tail of zero columns, renders as the ordinal it denotes
+     * ({@code ω·2 + 3}, {@code ω^2·5}); a pure tower renders as {@code ω^ω^...^ω}. Everything else keeps
+     * the matrix writing of {@link #toString()}, because this module does not compute the ordinal of a
+     * general matrix and must not pretend it does.
+     */
+    @Override
+    public String render() {
+        Optional<Natural> finite = finiteValue();
+        if (finite.isPresent()) {
+            return finite.get().toString();
+        }
+        List<List<Integer>> columns = matrix.columns();
+        String tower = renderTower(columns);
+        if (tower != null) {
+            return tower;
+        }
+        String blocks = renderBlocks(columns);
+        if (blocks != null) {
+            return blocks;
+        }
+        return toString();
+    }
+
+    /** The tower writing {@code (0)(1)...(k)} as {@code ω^ω^...^ω}, or null for any other shape. */
+    private String renderTower(List<List<Integer>> columns) {
+        for (int column = 0; column < columns.size(); column++) {
+            if (!columns.get(column).equals(List.of(column))) {
+                return null;
+            }
+        }
+        int omegas = columns.size() - 1;
+        return "ω" + "^ω".repeat(omegas - 1);
+    }
+
+    /**
+     * The block writing {@code k} repetitions of {@code (0)} followed by {@code c} columns of {@code (1)}
+     * (one block is {@code ω^c}, so {@code k} blocks are {@code ω^c·k}), plus a tail of {@code m} zero
+     * columns ({@code + m}), or null for any other shape.
+     */
+    private String renderBlocks(List<List<Integer>> columns) {
+        int size = columns.size();
+        int end = size;
+        while (end > 0 && columns.get(end - 1).equals(List.of(0))) {
+            end--;
+        }
+        int tail = size - end;
+        if (end == 0 || !columns.get(0).equals(List.of(0))) {
+            return null;
+        }
+        int blockLength = 1;
+        while (blockLength < end && columns.get(blockLength).equals(List.of(1))) {
+            blockLength++;
+        }
+        if (blockLength == 1 || end % blockLength != 0) {
+            return null;
+        }
+        for (int block = 0; block < end / blockLength; block++) {
+            for (int offset = 0; offset < blockLength; offset++) {
+                List<Integer> expected = offset == 0 ? List.of(0) : List.of(1);
+                if (!columns.get(block * blockLength + offset).equals(expected)) {
+                    return null;
+                }
+            }
+        }
+        int coefficient = end / blockLength;
+        int exponent = blockLength - 1;
+        StringBuilder text = new StringBuilder("ω");
+        if (exponent > 1) {
+            text.append('^').append(exponent);
+        }
+        if (coefficient > 1) {
+            text.append('·').append(coefficient);
+        }
+        if (tail > 0) {
+            text.append(" + ").append(tail);
+        }
+        return text.toString();
     }
 
     /**

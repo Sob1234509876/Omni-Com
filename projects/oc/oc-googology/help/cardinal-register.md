@@ -42,7 +42,7 @@
 | 能做 | 不能做 |
 | --- | --- |
 | 报 `title()`、`notation()`、`gloss()`、`definition()`、`rank()`、`isVerified()` | 展开成基本列（没有 `fundamentalSequence` / `expand`） |
-| 和另一个 `CardinalRung` 按**声明秩**比较（`compareTo`、`compareMagnitude`） | 和 `Natural`、`Ordinal`、`CantorOrdinal` 做任何比较或算术 |
+| 和另一个 `CardinalRung` 按**声明秩**比较（`compareTo`、`compareMagnitude`） | 和 `Natural`、`Ordinal`、`BmsOrdinal` 做任何比较或算术 |
 | `compareWithLadder` 得到 `GREATER`（这是**公理**） | 当 `LadderOrdinal` 的段五值使用，或当作 `LadderArgument` 下标 |
 | `INACCESSIBLE.inaccessibleDelegate()` 得到 `I_0` 的函数值（阶段五入口） | 指望寄存器里有第二份不可达基数数组或枚举 |
 | 作为 `Comparable` 排序（全序、传递、反对称） | 加、乘、取后继、`ω^`，或当成 RTS 的数量值 |
@@ -350,7 +350,7 @@ CardinalRung.ORD_BERKELEY.isVerified();             // false
 - [`ordinal-ladder.md`](ordinal-ladder.md) —— 阶段一至阶段三的序数阶梯；第十一节记录阶段四已落地
 - [`inaccessible-extension.md`](inaccessible-extension.md) —— 阶段五：秩 0 内部的函数生成层级、比较规则与自嵌套极限
 - [`abstract-ordinals.md`](abstract-ordinals.md) —— BMS 极限之上的旧名册，以及 `compareWithBms` 公理
-- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、康托尔标准式、基本列与超限超运算
+- [`ordinals.md`](ordinals.md) —— 序数层：`Ordinal`、Bashicu 矩阵记号、基本列与超限超运算
 - [`../../../../documents/Human/Ordinals.md`](../../../../documents/Human/Ordinals.md) —— 21 级阶梯的原始规格
 - [`../../../../documents/Human/Cardinals/Big Cardinals.md`](../../../../documents/Human/Cardinals/Big%20Cardinals.md) —— 阶段四的 15 条定义、排序表与待核实清单
 - [`../../../../documents/Human/Cardinals/Inaccessible Cardinal Extension.md`](../../../../documents/Human/Cardinals/Inaccessible%20Cardinal%20Extension.md) —— 不可达基数与 Veblen 式扩展

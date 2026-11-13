@@ -1,6 +1,6 @@
 package io.github.sob1234509876.oc.googology.inaccessible;
 
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 import io.github.sob1234509876.oc.googology.ComparisonResult;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.Ordinal;
@@ -148,7 +148,7 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
     }
 
     /**
-     * {@code I_alpha} for a finite index, using the module's default Cantor normal form.
+     * {@code I_alpha} for a finite index, using the module's default Bashicu matrix notation.
      *
      * @throws IllegalArgumentException if {@code alpha} is negative
      */
@@ -173,7 +173,7 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
         return veblen(List.of(alpha), beta);
     }
 
-    /** {@code I(alpha, beta)} for finite ordinals, using the module's default Cantor normal form. */
+    /** {@code I(alpha, beta)} for finite ordinals, using the module's default Bashicu matrix notation. */
     public static InaccessibleCardinal veblen(long alpha, long beta) {
         return veblen(finite(alpha), finite(beta));
     }
@@ -290,7 +290,7 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
 
     /**
      * The ordinal-coefficient form with an arbitrary level term and finite coefficient and trailing
-     * index, using the module's default Cantor normal form.
+     * index, using the module's default Bashicu matrix notation.
      *
      * @throws IllegalArgumentException if {@code alphaOrder} is not positive or {@code beta} is negative
      */
@@ -470,10 +470,10 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
     @Override
     public String toString() {
         return switch (form) {
-            case UNARY -> "I_" + subscript(alpha.toString());
+            case UNARY -> "I_" + subscript(alpha.render());
             case VEBLEN -> renderVeblen();
             case COEFFICIENT -> "I(" + level
-                    + (coefficientBeta.isZero() ? ")" : ", " + coefficientBeta + ")");
+                    + (coefficientBeta.isZero() ? ")" : ", " + coefficientBeta.render() + ")");
             case LIMIT -> renderSelfNesting();
             default -> throw new AssertionError("unknown cardinal form " + form);
         };
@@ -481,16 +481,16 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
 
     private String renderVeblen() {
         if (prefix.isEmpty()) {
-            return "I_" + subscript(ordinalBeta.toString());
+            return "I_" + subscript(ordinalBeta.render());
         }
         StringBuilder text = new StringBuilder("I(");
         for (int index = 0; index < prefix.size(); index++) {
             if (index > 0) {
                 text.append(", ");
             }
-            text.append(prefix.get(index));
+            text.append(prefix.get(index).render());
         }
-        return text.append(", ").append(ordinalBeta).append(')').toString();
+        return text.append(", ").append(ordinalBeta.render()).append(')').toString();
     }
 
     private String renderSelfNesting() {
@@ -567,13 +567,13 @@ public final class InaccessibleCardinal implements Comparable<InaccessibleCardin
     // ------------------------------------------------------------------ helpers
 
     private static Ordinal zeroOrdinal() {
-        return CantorNormalForm.standard().finite(Natural.ZERO);
+        return BmsOrdinalNotation.standard().finite(Natural.ZERO);
     }
 
     private static Ordinal finite(long value) {
         if (value < 0) {
             throw new IllegalArgumentException("an ordinal index must be non-negative, but got " + value);
         }
-        return CantorNormalForm.standard().finite(Natural.of(value));
+        return BmsOrdinalNotation.standard().finite(Natural.of(value));
     }
 }

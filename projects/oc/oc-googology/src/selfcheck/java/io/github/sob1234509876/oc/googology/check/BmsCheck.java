@@ -1,8 +1,8 @@
 package io.github.sob1234509876.oc.googology.check;
 
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
 import io.github.sob1234509876.oc.googology.ComparisonResult;
-import io.github.sob1234509876.oc.googology.Ordinal;
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 import io.github.sob1234509876.oc.googology.bms.BmsMatrix;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinal;
 import io.github.sob1234509876.oc.googology.bms.NonRecursiveBms;
@@ -194,38 +194,39 @@ public final class BmsCheck {
 
     // ------------------------------------------------------------------ reference nodes
 
+    /**
+     * The reference's ordinal nodes, pinned against the Bashicu matrix notation's own vocabulary: the five
+     * nameable matrices equal the factory outputs, and the ε₀ boundary sits where the golden expansion
+     * sequence places it. The identifications are the reference's conclusions, not something this module
+     * computes; see {@link BmsOrdinal} for the exact scope of the claim.
+     */
     private static void referenceIdentities() {
-        CantorNormalForm notation = CantorNormalForm.standard();
-        List<Ordinal> ordinals = List.of(
-                notation.one(),                                    // (0)       = 1
-                notation.of(2),                                    // (0)(0)    = 2
-                notation.omega(),                                  // (0)(1)    = ω
-                notation.omegaPower(notation.of(2)),               // (0)(1)(1) = ω²
-                notation.omegaPower(notation.omega()),             // (0)(1)(2) = ω^ω
-                notation.limit());                                 // (0,0)(1,1) = ε₀
-        List<BmsOrdinal> matrices = List.of(
-                BmsOrdinal.of(new int[][]{{0}}),
-                BmsOrdinal.of(new int[][]{{0}, {0}}),
-                BmsOrdinal.of(new int[][]{{0}, {1}}),
-                BmsOrdinal.of(new int[][]{{0}, {1}, {1}}),
-                BmsOrdinal.of(new int[][]{{0}, {1}, {2}}),
-                BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}}));
-        int pairs = 0;
-        boolean agrees = true;
-        for (int left = 0; left < matrices.size(); left++) {
-            for (int right = 0; right < matrices.size(); right++) {
-                int byMatrix = matrices.get(left).compareTo(matrices.get(right));
-                int byOrdinal = ordinals.get(left).compareTo(ordinals.get(right));
-                agrees &= Integer.signum(byMatrix) == Integer.signum(byOrdinal);
-                pairs++;
-            }
-        }
-        check("参考节点与康托尔序数同序（(0)=1、(0)(0)=2、(0)(1)=ω、(0)(1)(1)=ω²、"
-                + "(0)(1)(2)=ω^ω、(0,0)(1,1)=ε₀；" + pairs + " 对）", agrees);
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
+        equal("参考节点：(0) = 1", notation.one(), BmsOrdinal.of(new int[][]{{0}}));
+        equal("参考节点：(0)(0) = 2", notation.finite(Natural.TWO), BmsOrdinal.of(new int[][]{{0}, {0}}));
+        equal("参考节点：(0)(1) = ω", notation.omega(), BmsOrdinal.of(new int[][]{{0}, {1}}));
+        equal("参考节点：(0)(1)(1) = ω^2", notation.omegaPower(notation.finite(Natural.TWO)),
+                BmsOrdinal.of(new int[][]{{0}, {1}, {1}}));
+        equal("参考节点：(0)(1)(2) = ω^ω", notation.omegaPower(notation.omega()),
+                BmsOrdinal.of(new int[][]{{0}, {1}, {2}}));
+        equal("ε₀ 边界与金例展开 (0)(1,1) 同位", 0,
+                Integer.signum(notation.limit().compareTo(BmsOrdinal.of(new int[][]{{0}, {1, 1}}))));
+        check("ε₀ 高于 ω^ω，与参考节点 (0,0)(1,1) 同位（首列的补零规范化后 (0,0)(1,1) 就是 (0)(1,1)）",
+                notation.limit().compareTo(notation.omegaPower(notation.omega())) > 0
+                        && notation.limit().compareTo(BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}})) == 0);
+        check("ε₀ 的基本列是金例展开错开一位的序列：ε₀[1] = ω、ε₀[2] = ω^ω、ε₀[3] = ω^ω^ω",
+                notation.limit().fundamentalSequence(Natural.ONE).orElseThrow()
+                        .equals(notation.omega())
+                        && notation.limit().fundamentalSequence(Natural.TWO).orElseThrow()
+                                .equals(notation.omegaPower(notation.omega()))
+                        && notation.limit().fundamentalSequence(Natural.of(3)).orElseThrow()
+                                .equals(notation.omegaPower(notation.omegaPower(notation.omega()))));
         check("参考节点的相邻关系：(0)(1)(1) < (0)(1)(2) < (0,0)(1,1) < (0,0)(1,1)(1,1)",
-                matrices.get(3).compareTo(matrices.get(4)) < 0
-                        && matrices.get(4).compareTo(matrices.get(5)) < 0
-                        && matrices.get(5).compareTo(BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}, {1, 1}})) < 0);
+                BmsOrdinal.of(new int[][]{{0}, {1}, {1}}).compareTo(BmsOrdinal.of(new int[][]{{0}, {1}, {2}})) < 0
+                        && BmsOrdinal.of(new int[][]{{0}, {1}, {2}})
+                                .compareTo(BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}})) < 0
+                        && BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}})
+                                .compareTo(BmsOrdinal.of(new int[][]{{0, 0}, {1, 1}, {1, 1}})) < 0);
     }
 
     // ------------------------------------------------------------------ rendering

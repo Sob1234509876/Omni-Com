@@ -11,8 +11,8 @@
  * <p>Ordinals extend that hierarchy past the finite: {@link io.github.sob1234509876.oc.googology.Ordinal}
  * is a comparable ordinal with a successor and fundamental sequences,
  * {@link io.github.sob1234509876.oc.googology.OrdinalNotation} is the seam for plugging in a custom
- * notation, {@link io.github.sob1234509876.oc.googology.CantorNormalForm} is the default notation (Cantor
- * normal form, whose ceiling is {@code ε₀}, the supremum of {@code 1, ω, ω^ω, ω^ω^ω, ...}) and
+ * notation, {@link io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation} is the default notation (the
+ * Bashicu matrix system, whose ceiling is {@code ε₀}, the supremum of {@code 1, ω, ω^ω, ω^ω^ω, ...}) and
  * {@link io.github.sob1234509876.oc.googology.TransfiniteHyperoperation} is the hyperoperation at those
  * levels, with {@code n {λ} m = n {λ[m]} m} for limit ordinals {@code λ}.
  *

@@ -94,6 +94,17 @@ public interface Ordinal extends Comparable<Ordinal> {
     /** {@code ω^this}. */
     Ordinal omegaPower();
 
+    /**
+     * The display form of this ordinal: what a caller prints when the ordinal appears inside another
+     * value, for example as the level of a hyperoperation tower or as a subscript of a cardinal. It may
+     * differ from {@link #toString()} when the notation's {@code toString} is a canonical writing rather
+     * than a readable name (the Bashicu matrix notation prints its matrices); the default simply returns
+     * {@code toString()}.
+     */
+    default String render() {
+        return toString();
+    }
+
     default boolean isFinite() {
         return finiteValue().isPresent();
     }

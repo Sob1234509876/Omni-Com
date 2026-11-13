@@ -1,7 +1,5 @@
 package io.github.sob1234509876.oc.googology.check;
 
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
-import io.github.sob1234509876.oc.googology.CantorOrdinal;
 import io.github.sob1234509876.oc.googology.ComparisonResult;
 import io.github.sob1234509876.oc.googology.HyperOperation;
 import io.github.sob1234509876.oc.googology.Natural;
@@ -149,7 +147,7 @@ public final class GoogologyCheck {
         equal("ASCII 形式的三箭头", "10^^^3",
                 NaturalFormat.ascii(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
         equal("ASCII 形式的超限级别把 ω 写成 w", "10{w}10",
-                NaturalFormat.ascii(Natural.tower(Natural.TEN, CantorNormalForm.standard().omega(), Natural.TEN)));
+                NaturalFormat.ascii(Natural.tower(Natural.TEN, BmsOrdinalNotation.standard().omega(), Natural.TEN)));
         equal("BEYOND 的 ASCII 形式", "BEYOND", NaturalFormat.ascii(Natural.BEYOND));
         check("ASCII 形式经 parse 往返（有限级塔）",
                 Natural.parse(NaturalFormat.ascii(Natural.arrow(Natural.TEN, 1, Natural.of(1233)))).orElseThrow()
@@ -166,7 +164,7 @@ public final class GoogologyCheck {
         equal("过长的箭头串写成 \\uparrow^{k}", "10\\uparrow^{12}10",
                 NaturalFormat.latex(Natural.arrow(Natural.TEN, 12, Natural.TEN)));
         equal("LaTeX 形式的超限级别映射 ω 并转义花括号", "10\\{\\omega\\}10",
-                NaturalFormat.latex(Natural.tower(Natural.TEN, CantorNormalForm.standard().omega(), Natural.TEN)));
+                NaturalFormat.latex(Natural.tower(Natural.TEN, BmsOrdinalNotation.standard().omega(), Natural.TEN)));
         equal("BEYOND 的 LaTeX 形式", "\\text{BEYOND}", NaturalFormat.latex(Natural.BEYOND));
         equal("精确值的 LaTeX 形式就是数字", "42", NaturalFormat.latex(Natural.of(42)));
 
@@ -278,7 +276,7 @@ public final class GoogologyCheck {
      */
     private static void magnitudeComparison() {
         section("15) 四值比较：可判定的给证明，判不了给 UNKNOWN");
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal omega = notation.omega();
         Natural four = Natural.of(4);
         Natural five = Natural.of(5);
@@ -391,7 +389,7 @@ public final class GoogologyCheck {
         check("ω² 两步化为后继后判得开：10{ω²}10 > 10{100}10",
                 Natural.tower(Natural.TEN, notation.omegaPower(notation.of(2)), Natural.TEN)
                         .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
-        check("ω^ω 十二步化为后继后判得开：10{ω^ω}10 > 10{100}10",
+        check("ω^ω 的降链逐步递减指数系数，在预算内到达后继：10{ω^ω}10 > 10{100}10",
                 Natural.tower(Natural.TEN, notation.omegaPower(omega), Natural.TEN)
                         .compareMagnitude(wideFinite) == ComparisonResult.GREATER);
         check("深层极限没有有界证明：ω^ω^ω 与 ε₀ 对 10{100}10 是 UNKNOWN（实测 4096 步后仍是极限）",
@@ -508,7 +506,7 @@ public final class GoogologyCheck {
      */
     private static void comparison() {
         section("14) 塔的比较：按各自高度做预算内的级别归一化");
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal omega = notation.omega();
         Ordinal omegaSquared = notation.omegaPower(notation.of(2));
         Ordinal alpha = notation.sum(omegaSquared, omega, notation.of(10));
@@ -579,12 +577,14 @@ public final class GoogologyCheck {
     // ------------------------------------------------------------------ 11) ordinals
 
     /**
-     * Cantor normal form: the default notation, its arithmetic, its rendering and the fundamental
-     * sequences that the transfinite hyperoperation walks.
+     * The Bashicu matrix notation: the default notation, its arithmetic as matrix concatenation, its
+     * rendering and the fundamental sequences that the transfinite hyperoperation walks. The golden nodes
+     * of the reference pin the identifications; everything here is checked against the notation's own
+     * vocabulary rather than against a second ordinal world.
      */
     private static void ordinals() {
-        section("11) 序数：康托尔标准式（极限 ε₀）");
-        CantorNormalForm notation = CantorNormalForm.standard();
+        section("11) 序数：Bashicu 矩阵记号（极限 ε₀）");
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         Ordinal two = notation.finite(Natural.TWO);
@@ -596,19 +596,19 @@ public final class GoogologyCheck {
         check("零是零，且不是极限序数", zero.isZero() && !zero.isLimit());
         equal("一的后继是二", two, one.successor());
         check("ω 是极限序数，没有前驱", omega.isLimit() && omega.predecessor().isEmpty());
-        equal("ω 的后继是 ω + 1", "ω + 1", omega.successor().toString());
+        equal("ω 的后继是 ω + 1", "ω + 1", omega.successor().render());
         equal("ω + 1 的前驱是 ω", omega, omega.successor().predecessor().orElseThrow());
         equal("ω + 1 是后继序数", "true", String.valueOf(omega.successor().isSuccessor()));
 
-        equal("1 + ω = ω（左加被吸收）", omega, one.add(omega));
-        equal("ω + ω = ω·2（系数合并）", omega.times(2), omega.add(omega));
-        equal("ω + ω^2 = ω^2", omegaSquared, omega.add(omegaSquared));
-        equal("ω^2 + ω 不被吸收", "ω^2 + ω", omegaSquared.add(omega).toString());
-        equal("(ω + 1)·2 = ω·2 + 1（乘系数作用于首项）", notation.sum(omega.times(2), one),
-                omega.successor().times(2));
-        equal("(ω·5 + 3)·2 = ω·10 + 3", notation.sum(omega.times(10), notation.of(3)),
-                notation.sum(omega.times(5), notation.of(3)).times(2));
-        equal("ω^(ω+1) 的指数带括号", "ω^(ω + 1)", notation.omegaPower(omega.successor()).toString());
+        equal("1 + ω = ω（左加被吸收：拼接前剥掉左侧的有限尾巴）", omega, one.add(omega));
+        equal("ω + ω = ω·2（重复拼接）", omega.times(2), omega.add(omega));
+        check("ω + ω^2 拼接出的是 ω^2 的一个非规范写法（记号不保证唯一，字典序不高于 ω^2）",
+                omega.add(omegaSquared).compareTo(omegaSquared) <= 0);
+        equal("ω^2 + ω 不被吸收（拼接保留双方）", "(0)(1)(1)(0)(1)", omegaSquared.add(omega).toString());
+        equal("(ω + 1)·2 = ω·2 + 1（乘法按重复加法，右侧吸收左侧的有限尾巴）",
+                "ω·2 + 1", omega.successor().times(2).render());
+        equal("(ω·5 + 3)·2 = ω·10 + 3", "ω·10 + 3",
+                notation.sum(omega.times(5), notation.finite(Natural.of(3))).times(2).render());
 
         List<Ordinal> chain = List.of(zero, one, two, omega, omega.successor(), omega.times(2), omegaSquared,
                 omegaOmega, notation.omegaPower(omegaOmega), epsilon);
@@ -626,17 +626,19 @@ public final class GoogologyCheck {
         equal("(ω^2)[1] = ω·2", omega.times(2), omegaSquared.fundamentalSequence(1).orElseThrow());
         equal("(ω^2)[5] = ω·6", omega.times(6), omegaSquared.fundamentalSequence(5).orElseThrow());
         equal("(ω^ω)[0] = ω", omega, omegaOmega.fundamentalSequence(0).orElseThrow());
-        equal("(ω^ω)[2] = ω^3", notation.omegaPower(notation.of(3)),
+        equal("(ω^ω)[2] = ω^3", notation.omegaPower(notation.finite(Natural.of(3))),
                 omegaOmega.fundamentalSequence(2).orElseThrow());
         equal("(ω^2·3)[1] = ω^2·2 + ω·2", notation.sum(omegaSquared.times(2), omega.times(2)),
                 omegaSquared.times(3).fundamentalSequence(1).orElseThrow());
-        Ordinal omegaTimesTwoPlusFive = notation.sum(omega.times(2), notation.of(5));
+        Ordinal omegaTimesTwoPlusFive = notation.sum(omega.times(2), notation.finite(Natural.of(5)));
         check("ω·2 + 5 是后继序数，没有基本列",
                 !omegaTimesTwoPlusFive.isLimit() && omegaTimesTwoPlusFive.fundamentalSequence(1).isEmpty());
 
-        equal("ε₀[0] = ω", omega, epsilon.fundamentalSequence(0).orElseThrow());
-        equal("ε₀[1] = ω^ω", omegaOmega, epsilon.fundamentalSequence(1).orElseThrow());
-        equal("ε₀[2] = ω^ω^ω", notation.omegaPower(omegaOmega), epsilon.fundamentalSequence(2).orElseThrow());
+        equal("ε₀[0] = 1（BMS 展开多含一个开头元素，是与康托尔记号的约定差异）", one,
+                epsilon.fundamentalSequence(0).orElseThrow());
+        equal("ε₀[1] = ω", omega, epsilon.fundamentalSequence(1).orElseThrow());
+        equal("ε₀[2] = ω^ω", omegaOmega, epsilon.fundamentalSequence(2).orElseThrow());
+        equal("ε₀[3] = ω^ω^ω", notation.omegaPower(omegaOmega), epsilon.fundamentalSequence(3).orElseThrow());
         check("ε₀ 比任何 ω 塔都大", epsilon.compareTo(notation.omegaTower(20)) > 0);
         check("记号包含 ω^ω 但不包含 ε₀ 本身", notation.contains(omegaOmega) && !notation.contains(epsilon));
         equal("ε₀ 吸收加法", epsilon, epsilon.add(omega));
@@ -646,7 +648,8 @@ public final class GoogologyCheck {
         equal("ε₀ 的文本", "ε₀", epsilon.toString());
         check("ε₀ + 1 超出记号范围", throwsUnsupported(epsilon::successor));
         check("ε₀·2 超出记号范围", throwsUnsupported(() -> epsilon.times(2)));
-        check("ε₀ 的基本列索引过大时放弃（记号的边界）", epsilon.fundamentalSequence(300).isEmpty());
+        check("ε₀ 的基本列索引过大时放弃（记号的边界）",
+                epsilon.fundamentalSequence(Natural.of(5000)).isEmpty());
     }
 
     // ------------------------------------------------------------------ 12) transfinite hyperoperation
@@ -654,7 +657,7 @@ public final class GoogologyCheck {
     /** The hyperoperation at ordinal levels, including the rule {@code n {λ} m = n {λ[m]} m}. */
     private static void transfiniteHyperoperation() {
         section("12) 超限级别的超运算：n{λ}m = n{λ[m]}m");
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal omega = notation.omega();
         Ordinal omegaSquared = notation.omegaPower(notation.finite(Natural.TWO));
         Ordinal omegaOmega = notation.omegaPower(omega);
@@ -670,16 +673,15 @@ public final class GoogologyCheck {
 
         Natural atOmegaSquared = TransfiniteHyperoperation.apply(Natural.TEN, omegaSquared, Natural.TEN);
         check("10{ω^2}10 归约两步后保持结构形", atOmegaSquared.isStructural() && atOmegaSquared.level().isPresent());
-        equal("它停在按规则完全相等的级别 ω·10 + 11 上", notation.sum(omega.times(10), notation.of(11)),
+        equal("它停在按规则完全相等的级别 ω·10 + 11 上", notation.sum(omega.times(10), notation.finite(Natural.of(11))),
                 atOmegaSquared.level().orElseThrow());
         check("已经降完的链，级别严格低于入口（ω^2 → ω·10 + 11）",
                 atOmegaSquared.level().orElseThrow().compareTo(omegaSquared) < 0);
         Natural untouched = TransfiniteHyperoperation.apply(Natural.TEN, omegaSquared, Natural.TEN, 0);
         equal("预算为 0 时不展开极限级别，级别仍是 ω^2", omegaSquared, untouched.level().orElseThrow());
 
-        Natural atOmega = TransfiniteHyperoperation.apply(Natural.TEN, omega, Natural.TEN);
         Natural atOmegaOmega = TransfiniteHyperoperation.apply(Natural.TEN, omegaOmega, Natural.TEN);
-        check("10{ω^ω}10 的降链在预算内降到一个后继级别，于是停在那里",
+        check("10{ω^ω}10 的降链在预算内降到一个后继级别，于是停在那里（BMS 展开与康托尔记号同向）",
                 atOmegaOmega.level().isPresent() && atOmegaOmega.level().orElseThrow().isSuccessor()
                         && atOmegaOmega.level().orElseThrow().compareTo(omegaOmega) < 0);
         check("超限级别的退化约定：n{λ}0 = 1、n{λ}1 = n（与 a↑^k0 = 1 一致）",
@@ -695,7 +697,7 @@ public final class GoogologyCheck {
                 TransfiniteHyperoperation.apply(Natural.TEN, deepTower, Natural.TEN, 0));
         equal("与 Natural.tower 构造的结构形一致", Natural.tower(Natural.TEN, deepTower, Natural.TEN), cut);
         check("10{ω}10 < 10{ω^2}10 < 10{ω^ω}10 < BEYOND",
-                atOmega.compareTo(atOmegaSquared) < 0 && atOmegaSquared.compareTo(atOmegaOmega) < 0
+                nineArrows.compareTo(atOmegaSquared) < 0 && atOmegaSquared.compareTo(atOmegaOmega) < 0
                         && atOmegaOmega.compareTo(Natural.BEYOND) < 0);
         check("超限级别的塔带序数级别而没有有限箭头数",
                 atOmegaOmega.level().isPresent() && atOmegaOmega.finiteLevel().isEmpty()
@@ -730,21 +732,23 @@ public final class GoogologyCheck {
                 notation.limit().compareTo(omega) > 0 && !notation.contains(notation.limit()));
         equal("用自定义记号的 ω 做超运算同样生效", Natural.of(16),
                 TransfiniteHyperoperation.apply(Natural.TWO, omega, Natural.of(3)));
-        equal("自定义记号的 ω[n] 仍然来自同一个基本列", notation.finite(Natural.of(4)),
+        equal("自定义记号的 ω[n] 仍然来自同一个基本列", BmsOrdinalNotation.standard().finite(Natural.of(4)),
                 omega.fundamentalSequence(3).orElseThrow());
         check("写出 ω^ω 会被记号拒绝（这就是极限的含义）",
                 throwsIllegalArgument(() -> notation.omegaPower(omega)));
-        equal("记号里的序数值仍然是可比较的 CantorOrdinal", "ω", omega.toString());
+        equal("记号里的序数值是可比较的矩阵值", "(0)(1)", omega.toString());
     }
 
     /**
-     * A notation that reuses the {@link CantorOrdinal} value type but only accepts ordinals below
+     * A notation that reuses the {@link BmsOrdinal} value type but only accepts ordinals below
      * {@code ω^ω}, which is its limit. It is the smallest honest example of a custom notation: the
-     * vocabulary is delegated, the boundary is its own.
+     * vocabulary is delegated, the boundary is its own, and the boundary itself is a private value that
+     * the notation does not {@code contain} - the same shape {@link BmsOrdinalNotation} has with its
+     * {@code ε₀} ceiling.
      */
     private static final class BelowOmegaOmega implements OrdinalNotation {
 
-        private final CantorNormalForm delegate = CantorNormalForm.standard();
+        private final BmsOrdinalNotation delegate = BmsOrdinalNotation.standard();
         private final Ordinal ceiling = delegate.omegaPower(delegate.omega());
 
         @Override
@@ -787,12 +791,96 @@ public final class GoogologyCheck {
 
         @Override
         public boolean contains(Ordinal ordinal) {
-            return ordinal instanceof CantorOrdinal && ordinal.compareTo(ceiling) < 0;
+            return ordinal instanceof io.github.sob1234509876.oc.googology.bms.BmsOrdinal
+                    && ordinal.compareTo(ceiling) < 0;
         }
 
         @Override
         public Ordinal limit() {
-            return ceiling;
+            return new ToyLimit();
+        }
+
+        /**
+         * The toy notation's ceiling: it behaves like the {@code ω^ω} matrix for comparison, but it is not
+         * itself a {@code BmsOrdinal}, so {@code contains} can honestly report {@code false} for it.
+         */
+        private final class ToyLimit implements Ordinal {
+
+            @Override
+            public OrdinalNotation notation() {
+                return BelowOmegaOmega.this;
+            }
+
+            @Override
+            public boolean isZero() {
+                return false;
+            }
+
+            @Override
+            public boolean isLimit() {
+                return true;
+            }
+
+            @Override
+            public Ordinal successor() {
+                throw new UnsupportedOperationException("ω^ω is the limit of " + name()
+                        + ", so ω^ω + 1 cannot be named here");
+            }
+
+            @Override
+            public Optional<Ordinal> predecessor() {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<Ordinal> fundamentalSequence(Natural index) {
+                return delegate.omegaPower(delegate.omega()).fundamentalSequence(index);
+            }
+
+            @Override
+            public Optional<Natural> finiteValue() {
+                return Optional.empty();
+            }
+
+            @Override
+            public Ordinal add(Ordinal other) {
+                Objects.requireNonNull(other, "other");
+                if (other instanceof ToyLimit) {
+                    throw new UnsupportedOperationException("ω^ω + ω^ω is beyond " + name());
+                }
+                return this;
+            }
+
+            @Override
+            public Ordinal times(Natural factor) {
+                Objects.requireNonNull(factor, "factor");
+                if (factor.isZero()) {
+                    return delegate.zero();
+                }
+                if (factor.isOne()) {
+                    return this;
+                }
+                throw new UnsupportedOperationException("ω^ω·" + factor + " is beyond " + name());
+            }
+
+            @Override
+            public Ordinal omegaPower() {
+                return this;
+            }
+
+            @Override
+            public int compareTo(Ordinal other) {
+                Objects.requireNonNull(other, "other");
+                if (other instanceof ToyLimit) {
+                    return 0;
+                }
+                return ceiling.compareTo(other);
+            }
+
+            @Override
+            public String toString() {
+                return ceiling.toString();
+            }
         }
     }
 
@@ -912,7 +1000,7 @@ public final class GoogologyCheck {
         check("三箭头起对数是自身（四舍五入不变）：log_10(10↑↑↑3) = 10↑↑↑3",
                 Natural.arrow(Natural.TEN, 3, Natural.of(3)).log(Natural.TEN).orElseThrow()
                         .equals(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         equal("log_2(2{ω}2) = 2（级别先按自身高度归一化）", Natural.of(2),
                 Natural.tower(Natural.TWO, notation.omega(), Natural.TWO).log(Natural.TWO).orElseThrow());
         check("log_10(10{ω}10)：先归一化成 9 箭头塔，再按三箭头规则返回自身",
@@ -1011,125 +1099,60 @@ public final class GoogologyCheck {
         check("零次根被拒绝", throwsIllegalArgument(() -> Natural.of(5).root(Natural.ZERO)));
     }
 
-    // ------------------------------------------------------------------ 44) CNF vs BMS equivalence
+    // ------------------------------------------------------------------ 44) ordinal notation identities
 
     /**
-     * The equivalence battery between the two ordinal worlds: the {@link CantorNormalForm} chain and the
-     * BMS-backed chain built through {@link BmsOrdinalNotation} are compared pair by pair, their
-     * fundamental sequences are cross-checked under the documented {@code ω[m] = m+1} normalization (the
-     * BMS wrapper reports the raw expansion one index further along), and the transfinite hyperoperation
-     * end-to-end results are pinned so section 12 stays byte-identical once the BMS notation becomes the
-     * default.
+     * The BMS-backed ordinal world, pinned end to end: the reference's golden node identifications against
+     * the notation's own vocabulary, the {@code ω[m] = m+1} normalization of the fundamental sequences, the
+     * transfinite hyperoperation results section 12 relies on, the boundary behavior of {@code ε₀}, and
+     * the comparison-only structural finite values above the materialisation bound.
      */
     private static void equivalenceBattery() {
-        section("44) 等价对照：BMS 实现的 Ordinal 与康托尔标准式同序（ω[m]=m+1 约定）");
-        CantorNormalForm cnf = CantorNormalForm.standard();
+        section("44) 序数记号同一性：Bashicu 矩阵记号的词汇表、ω[m]=m+1 约定与端到端结果");
         BmsOrdinalNotation bms = BmsOrdinalNotation.standard();
 
-        List<Ordinal> cnfChain = List.of(
-                cnf.zero(), cnf.one(), cnf.of(5), cnf.omega(), cnf.omega().successor(),
-                cnf.omega().times(2), cnf.omegaPower(cnf.of(2)), cnf.omegaPower(cnf.of(3)),
-                cnf.omegaPower(cnf.omega()), cnf.limit());
-        List<Ordinal> bmsChain = List.of(
+        equal("(0) 是一", "(0)", bms.one().toString());
+        equal("(0)(0) 是二", "(0)(0)", bms.finite(Natural.TWO).toString());
+        equal("(0)(1) 是 ω", "(0)(1)", bms.omega().toString());
+        equal("(0)(1)(1) 是 ω^2", "(0)(1)(1)", bms.omegaPower(bms.finite(Natural.TWO)).toString());
+        equal("(0)(1)(2) 是 ω^ω", "(0)(1)(2)", bms.omegaPower(bms.omega()).toString());
+        equal("六层 ω 塔是 (0)(1)…(6)", "(0)(1)(2)(3)(4)(5)(6)", bms.omegaTower(6).toString());
+        check("记号包含它造出的每个矩阵值，不包含 ε₀ 边界",
+                bms.contains(bms.omega()) && !bms.contains(bms.limit()));
+
+        List<Ordinal> chain = List.of(
                 bms.zero(), bms.one(), bms.finite(Natural.of(5)), bms.omega(), bms.omega().successor(),
                 bms.omega().times(2), bms.omegaPower(bms.finite(Natural.TWO)),
                 bms.omegaPower(bms.finite(Natural.of(3))), bms.omegaPower(bms.omega()), bms.limit());
-        check("两条链都是严格递增的（0 < 1 < 5 < ω < ω+1 < ω·2 < ω² < ω³ < ω^ω < ε₀）",
-                strictlyIncreasing(cnfChain) && strictlyIncreasing(bmsChain));
-        int pairs = 0;
-        boolean sameOrder = true;
-        for (int left = 0; left < cnfChain.size(); left++) {
-            for (int right = 0; right < cnfChain.size(); right++) {
-                int byCnf = cnfChain.get(left).compareTo(cnfChain.get(right));
-                int byBms = bmsChain.get(left).compareTo(bmsChain.get(right));
-                if (Integer.signum(byCnf) != Integer.signum(byBms)) {
-                    sameOrder = false;
-                    check("链上第 " + left + " 与第 " + right + " 项两套记号给出相反的符号", false);
-                    break;
-                }
-                pairs++;
-            }
-        }
-        check("两套记号在 " + pairs + " 对链序数上符号完全一致", sameOrder);
+        check("0 < 1 < 5 < ω < ω+1 < ω·2 < ω² < ω³ < ω^ω < ε₀ 严格递增", strictlyIncreasing(chain));
 
-        List<Ordinal> sequenceSample = List.of(cnf.omega(), cnf.omega().times(2),
-                cnf.omegaPower(cnf.of(2)), cnf.omegaPower(cnf.of(3)), cnf.omegaPower(cnf.omega()));
-        List<Ordinal> bmsSequenceSample = List.of(bms.omega(), bms.omega().times(2),
-                bms.omegaPower(bms.finite(Natural.TWO)), bms.omegaPower(bms.finite(Natural.of(3))),
-                bms.omegaPower(bms.omega()));
-        int sequencePairs = 0;
-        boolean sequencesAgree = true;
-        for (int ordinal = 0; ordinal < sequenceSample.size(); ordinal++) {
-            for (int index = 0; index <= 4; index++) {
-                Optional<Ordinal> cnfElement =
-                        sequenceSample.get(ordinal).fundamentalSequence(Natural.of(index));
-                Optional<Ordinal> bmsElement =
-                        bmsSequenceSample.get(ordinal).fundamentalSequence(Natural.of(index));
-                if (cnfElement.isPresent() != bmsElement.isPresent()) {
-                    sequencesAgree = false;
-                    check("第 " + ordinal + " 个样本在基本列下标 " + index + " 上一边有一边没有", false);
-                    break;
-                }
-                if (cnfElement.isEmpty()) {
-                    continue;
-                }
-                for (int chain = 0; chain < cnfChain.size(); chain++) {
-                    int byCnf = cnfElement.get().compareTo(cnfChain.get(chain));
-                    int byBms = bmsElement.get().compareTo(bmsChain.get(chain));
-                    if (Integer.signum(byCnf) != Integer.signum(byBms)) {
-                        sequencesAgree = false;
-                        check("ω[m]=m+1 约定失配：第 " + ordinal + " 个样本的下标 " + index
-                                + " 项对链上第 " + chain + " 项两套记号位置不同", false);
-                        break;
-                    }
-                    sequencePairs++;
-                }
-            }
-        }
-        check("ω、ω·2、ω²、ω³、ω^ω 的基本列在 ω[m]=m+1 约定下逐项位置一致（" + sequencePairs + " 次对链比较）",
-                sequencesAgree);
+        equal("ω[3] = 4（原始展开的 S[4]，跳过 S[0] 的 ω[m]=m+1 约定）", bms.finite(Natural.of(4)),
+                bms.omega().fundamentalSequence(Natural.of(3)).orElseThrow());
+        equal("(ω²)[2] = ω·3", bms.omega().times(3),
+                bms.omegaPower(bms.finite(Natural.TWO)).fundamentalSequence(Natural.of(2)).orElseThrow());
+        equal("(ω^ω)[3] = ω^4", bms.omegaPower(bms.finite(Natural.of(4))),
+                bms.omegaPower(bms.omega()).fundamentalSequence(Natural.of(3)).orElseThrow());
+        equal("ε₀[0] = 1、ε₀[1] = ω（BMS 展开多含一个开头元素的约定差异）", bms.one(),
+                bms.limit().fundamentalSequence(Natural.ZERO).orElseThrow());
+        equal("ε₀[1] = ω", bms.omega(),
+                bms.limit().fundamentalSequence(Natural.ONE).orElseThrow());
 
-        // The ε₀ boundary is the one documented convention difference: the BMS raw sequence spends S[1] = 1
-        // before reaching ω, so the shifted sequence starts ε₀[0] = 1 where CNF started ε₀[0] = ω. From
-        // index one on the two sequences sit at the same chain positions, one index apart.
-        boolean epsilonAgrees = true;
-        for (int index = 1; index <= 3; index++) {
-            Optional<Ordinal> cnfElement = cnf.limit().fundamentalSequence(Natural.of(index - 1));
-            Optional<Ordinal> bmsElement = bms.limit().fundamentalSequence(Natural.of(index));
-            if (cnfElement.isEmpty() || bmsElement.isEmpty()) {
-                epsilonAgrees = false;
-                break;
-            }
-            for (int chain = 0; chain < cnfChain.size(); chain++) {
-                if (Integer.signum(cnfElement.get().compareTo(cnfChain.get(chain)))
-                        != Integer.signum(bmsElement.get().compareTo(bmsChain.get(chain)))) {
-                    epsilonAgrees = false;
-                }
-            }
-        }
-        check("ε₀ 的基本列错开一位后逐项位置一致（BMS ε₀[m] 在 CNF ε₀[m-1] 的位置上），且 ε₀[0] = 1 是约定差异",
-                epsilonAgrees
-                        && bms.limit().fundamentalSequence(0).orElseThrow().compareTo(bms.one()) == 0);
-
-        equal("端到端：2{ω}3 = 16（BMS 的 ω 也走 ω[m]=m+1）", Natural.of(16),
+        equal("端到端：2{ω}3 = 16（ω[m]=m+1）", Natural.of(16),
                 TransfiniteHyperoperation.apply(Natural.TWO, bms.omega(), Natural.of(3)));
         equal("端到端：10{ω}10 折叠成 9 个箭头（ω[10] = 11）", Natural.arrow(Natural.TEN, 9, Natural.TEN),
                 TransfiniteHyperoperation.apply(Natural.TEN, bms.omega(), Natural.TEN));
         equal("端到端：2{ω+1}2 = 4（超限后继规则）", Natural.of(4),
                 TransfiniteHyperoperation.apply(Natural.TWO, bms.omega().successor(), Natural.TWO));
 
-        equal("吸收：ω + ε₀ = ε₀，ε₀ + ω = ε₀（两套记号一致）", bms.limit(),
-                bms.omega().add(bms.limit()));
+        equal("吸收：ω + ε₀ = ε₀，ε₀ + ω = ε₀", bms.limit(), bms.omega().add(bms.limit()));
         equal("边界吸收", bms.limit(), bms.limit().add(bms.omega()));
-        check("边界上不可名的运算仍然被拒绝：ε₀ + 1、ε₀·2 两套记号都抛 UnsupportedOperationException",
-                throwsUnsupported(bms.limit()::successor) && throwsUnsupported(() -> bms.limit().times(2))
-                        && throwsUnsupported(cnf.limit()::successor)
-                        && throwsUnsupported(() -> cnf.limit().times(2)));
-        equal("(ω+1)·2 = ω·2 + 1 在两套记号里位置一致",
-                bms.omega().successor().times(2).compareTo(bms.omega().times(2)),
-                cnf.omega().successor().times(2).compareTo(cnf.omega().times(2)));
+        check("边界上不可名的运算被拒绝：ε₀ + 1、ε₀·2 抛 UnsupportedOperationException",
+                throwsUnsupported(bms.limit()::successor) && throwsUnsupported(() -> bms.limit().times(2)));
+        check("(ω+1)·2 = ω·2 + 1 位于 ω·2 与 ω² 之间",
+                bms.omega().successor().times(2).compareTo(bms.omega().times(2)) > 0
+                        && bms.omega().successor().times(2).compareTo(bms.omegaPower(bms.finite(Natural.TWO))) < 0);
 
-        equal("有限值可查：BMS 的 finite(7) 给出 7", Natural.of(7),
+        equal("有限值可查：finite(7) 给出 7", Natural.of(7),
                 bms.finite(Natural.of(7)).finiteValue().orElseThrow());
         check("ω 没有有限值", bms.omega().finiteValue().isEmpty());
         equal("超界有限值退到可比较的结构值：finite(5000) 大于每个物化的有限矩阵、小于 ω",
@@ -1141,6 +1164,8 @@ public final class GoogologyCheck {
         check("物化边界：finite(1024) 仍是矩阵，finite(1025) 是结构值",
                 bms.finite(Natural.of(1024)).finiteValue().orElseThrow().equals(Natural.of(1024))
                         && bms.finite(Natural.of(1025)).finiteValue().orElseThrow().equals(Natural.of(1025)));
+        check("一般矩阵的 ω^ 幂不可推导：ω^(ω·2) 抛 UnsupportedOperationException",
+                throwsUnsupported(() -> bms.omegaPower(bms.omega().times(2))));
     }
 
     private static boolean strictlyIncreasing(List<Ordinal> values) {

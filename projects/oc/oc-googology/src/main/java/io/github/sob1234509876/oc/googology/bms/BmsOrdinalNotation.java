@@ -76,6 +76,16 @@ public final class BmsOrdinalNotation implements OrdinalNotation {
      */
     public static final int MAX_FUNDAMENTAL_INDEX = 4096;
 
+    /**
+     * Largest number of columns a fundamental sequence element may materialise. A multi-block matrix such
+     * as {@code ω^10·11} expands by repeating its bad part, so every step of a walk from it grows the
+     * matrix; without a bound, a comparison budget of a few thousand steps would build matrices of
+     * hundreds of thousands of columns and spend quadratic work analysing each. When the element would
+     * exceed the bound the sequence reports empty - the walk stops and keeps its entry level, which is
+     * the same "documented limit of the implementation" the index bound already establishes.
+     */
+    public static final int MAX_EXPANSION_COLUMNS = 2048;
+
     private static final BmsOrdinalNotation STANDARD = new BmsOrdinalNotation();
 
     private final BmsOrdinal zero;

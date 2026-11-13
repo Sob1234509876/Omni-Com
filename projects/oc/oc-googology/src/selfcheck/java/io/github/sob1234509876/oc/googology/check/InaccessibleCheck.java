@@ -1,6 +1,6 @@
 package io.github.sob1234509876.oc.googology.check;
 
-import io.github.sob1234509876.oc.googology.CantorNormalForm;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 import io.github.sob1234509876.oc.googology.ComparisonResult;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.googology.Ordinal;
@@ -89,7 +89,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 37 base cases
 
     private static void baseCases() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         Ordinal two = notation.finite(Natural.TWO);
@@ -158,7 +158,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 38 Veblen
 
     private static void veblen() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         Ordinal two = notation.finite(Natural.TWO);
@@ -227,7 +227,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 39 multi-variable
 
     private static void multiVariable() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         Ordinal two = notation.finite(Natural.TWO);
@@ -281,7 +281,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 40 coefficients
 
     private static void coefficient() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         Ordinal two = notation.finite(Natural.TWO);
@@ -341,8 +341,8 @@ public final class InaccessibleCheck {
                 omegaValue(one).compareTo(omegaValue(two).times(2)) < 0);
         check("文档答案 3：I(1 @ (1 @ 0)) > I(100 @ 100)",
                 nestedAtZero.compareTo(flatHundredAtHundred) > 0);
-        check("朴素 ω^b*a 答案 3：ω < ω^100·100，与文档答案相反",
-                omegaValue(one).compareTo(omegaValue(notation.finite(Natural.of(100))).times(100)) < 0);
+        check("朴素 ω^b*a 答案 3：ω < ω^100·2（系数取 2：·100 超出矩阵列的物化上界），与文档答案相反",
+                omegaValue(one).compareTo(omegaValue(notation.finite(Natural.of(100))).times(2)) < 0);
         check("同层级系数不可被“基数乘法吸收”：I(1 @ 2) < I(3 @ 2)，"
                         + "而把层级读成无穷基数时两者会相等",
                 InaccessibleCardinal.coefficient(2, 1, 0)
@@ -375,7 +375,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 41 self nesting
 
     private static void selfNesting() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         InaccessibleCardinal limit = InaccessibleCardinal.selfNesting();
@@ -406,7 +406,7 @@ public final class InaccessibleCheck {
                 InaccessibleCardinal.coefficient(100, 100, 0),
                 InaccessibleCardinal.coefficient(
                         IndexLevel.entry(1, IndexLevel.tuple(List.of(
-                                CantorNormalForm.standard().one(), CantorNormalForm.standard().zero()))), 1, 0));
+                                BmsOrdinalNotation.standard().one(), BmsOrdinalNotation.standard().zero()))), 1, 0));
         boolean above = true;
         for (InaccessibleCardinal value : finite) {
             if (limit.compareTo(value) <= 0 || value.compareTo(limit) >= 0) {
@@ -426,7 +426,7 @@ public final class InaccessibleCheck {
     // ------------------------------------------------------------------ 42 order and equality
 
     private static void ordering() {
-        CantorNormalForm notation = CantorNormalForm.standard();
+        BmsOrdinalNotation notation = BmsOrdinalNotation.standard();
         Ordinal zero = notation.zero();
         Ordinal one = notation.one();
         IndexLevel oneAtZero = IndexLevel.entry(1, IndexLevel.ordinal(zero));
@@ -637,7 +637,7 @@ public final class InaccessibleCheck {
 
     /** A naive {@code omega^x} used only to contrast the term order with an ordinal reading. */
     private static Ordinal omegaValue(Ordinal exponent) {
-        return CantorNormalForm.standard().omegaPower(exponent);
+        return BmsOrdinalNotation.standard().omegaPower(exponent);
     }
 
     private static boolean throwsNull(Runnable action) {
