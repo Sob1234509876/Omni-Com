@@ -2,7 +2,7 @@
 
 > `oc-googology` 的 BMS 层：把 Bashicu 矩阵按**标准式**读成序数，用逐列、逐行的字典序比较它们，
 > 并按参考文件的规则给出**后继**与**基本列**。
-> 这一层做"表示 + 顺序 + 展开"；加法、乘法、`ω^` 和 `Ordinal` 接口仍未接上。
+> 这一层做"表示 + 顺序 + 展开"；`Ordinal` 接口与记号工厂 `BmsOrdinalNotation` 也已接上：加法按矩阵拼接（右侧超限时剥掉左侧的有限尾巴）、乘法按重复拼接、`ω^` 只对有限与纯塔指数可推导（其余抛 `UnsupportedOperationException`），记号的极限是 ε₀ 边界 `BmsEpsilonZero`。
 
 ## 这一篇讲什么
 
@@ -148,7 +148,7 @@ compare(A, B):
 [`abstract-ordinals.md`](abstract-ordinals.md) 的内容；TSSO 和 QSSO 都是可表示的矩阵，所以它们留在
 本表，不进入那张"高于一切 BMS 值"的名册。
 
-这些等号是**参考文件的结论**，不是本库算出来的：`BmsOrdinal` 不把矩阵映射成 `Ordinal`，它只保存矩阵、
+这些等号是**参考文件的结论**，不是本库算出来的：`BmsOrdinal` 不把矩阵映射成唯一的序数（两串不同的矩阵可以指同一个序数），它保存矩阵、
 比较顺序并展开基本列。
 自校验做的是"顺序一致性"：把 `(0)=1`、`(0)(0)=2`、`(0)(1)=ω`、`(0)(1)(1)=ω²`、`(0)(1)(2)=ω^ω`、
 `(0,0)(1,1)=ε₀` 这六个节点和康托尔标准式里的对应序数逐对比较，36 对的符号全部一致；再往上的
@@ -324,7 +324,7 @@ BMS 从 0 起、NRBMS 从 1 起，NRBMS 表示的又是非递归序数。所以�
 | 类型 | 作用 | 主要成员 |
 | --- | --- | --- |
 | `BmsMatrix` | 不可变的 BMS 矩阵（规范形），带写法校验 | `of(int[][])`（严格）、`canonical(int[][])`（规范化）、`parse(String)`、`builder()`、`isStandard()`、`columns()`、`rows()`、`length()`、`isEmpty()`、`appendColumn(int...)`、`removeLastColumn()`、`toString()`、`equals()`/`hashCode()` |
-| `BmsOrdinal` | 标准式矩阵读成的序数，按字典序比较，带后继与基本列 | `of(int[][])`、`of(BmsMatrix)`、`matrix()`、`rows()`、`length()`、`isEmpty()`、`isZero()`、`isSuccessor()`、`isLimit()`、`successor()`、`predecessor()`、`fundamentalSequence(int)`、`expand(int)`、`compareTo(BmsOrdinal)`、`compareMagnitude(BmsOrdinal)`、`toString()`、`equals()`/`hashCode()` |
+| `BmsOrdinal` | 标准式矩阵读成的序数，按字典序比较，带后继与基本列；实现了 `Ordinal` 接口 | `of(int[][])`、`of(BmsMatrix)`、`matrix()`、`rows()`、`length()`、`isEmpty()`、`isZero()`、`isSuccessor()`、`isLimit()`、`successor()`、`predecessor()`、`fundamentalSequence(int)`（原始展开）、`fundamentalSequence(Natural)`（ω[m]=m+1 约定）、`expand(int)`、`finiteValue()`、`add()`、`times()`、`omegaPower()`、`compareTo(Ordinal)`、`compareMagnitude(BmsOrdinal)`、`notation()`、`toString()`、`equals()`/`hashCode()` |
 | `NonRecursiveBms` | 非递归 BMS 的有限矩阵 | `of(int[][])`、`of(BmsMatrix)`、`parse(String)`、`matrix()`、`rows()`、`length()`、`isEmpty()`、`isZero()`、`isSuccessor()`、`isLimit()`、`successor()`、`predecessor()`、`hasBadRoot()`、`fundamentalSequence(int)`、`expand(int)`、`nonRecursiveExpansion()`、`compareTo(NonRecursiveBms)`、`compareMagnitude(NonRecursiveBms)`、`toString()`、`equals()`/`hashCode()` |
 | `NonRecursiveExpansion` | 非递归展开的**描述**（无限列，不可比较） | `fixed()`（含截断末列的有限前缀）、`column()`（新列的有限前缀）、`toString()` |
 

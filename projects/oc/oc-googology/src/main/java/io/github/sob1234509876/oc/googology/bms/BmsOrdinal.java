@@ -1,6 +1,9 @@
 package io.github.sob1234509876.oc.googology.bms;
 
 import io.github.sob1234509876.oc.googology.ComparisonResult;
+import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.googology.Ordinal;
+import io.github.sob1234509876.oc.googology.OrdinalNotation;
 
 import java.util.List;
 import java.util.Objects;
@@ -65,17 +68,23 @@ import java.util.Optional;
  * {@code Natural}, no budget is involved and no approximation is made. Expansion is exact as well: it is a
  * finite rearrangement of the columns under the reference's rules, not a search or an approximation.
  *
- * <p><b>An ordinal notation, not an {@link io.github.sob1234509876.oc.googology.Ordinal}.</b> This type
- * implements {@link Comparable} and now has a successor, a predecessor and fundamental sequences, but it
- * still has no addition, no multiplication by a finite coefficient and no {@code ω^} operation, so it is
- * not the module's {@code Ordinal} interface and it is not plugged into {@code OrdinalNotation}. It is the
- * BMS notation by itself.
+ * <p><b>An {@link io.github.sob1234509876.oc.googology.Ordinal} as well.</b> This type implements the
+ * module's {@code Ordinal} interface through the {@link BmsOrdinalNotation} factory: the vocabulary the
+ * interface needs is mapped onto BMS semantics where the golden data pins it - addition as matrix
+ * concatenation (the ordinal sum under the lexicographic absorption), multiplication as repeated
+ * concatenation, {@code ω^} for finite and pure-tower exponents, and {@code ε₀} as the
+ * {@link BmsEpsilonZero} boundary. Operations the module cannot derive for a general matrix
+ * ({@code ω^(ω·2)} and friends) throw {@code UnsupportedOperationException} with a precise message, which
+ * the {@code Ordinal} javadoc marks as implementation-optional. The fundamental sequence of the interface,
+ * {@link #fundamentalSequence(Natural)}, reports the raw expansion one index further along, which is what
+ * aligns it with the {@code ω[m] = m+1} convention {@code TransfiniteHyperoperation} documents; see the
+ * method javadoc.
  *
  * @see BmsMatrix
  * @see NonRecursiveBms
  * @see io.github.sob1234509876.oc.googology.ComparisonResult#of(int)
  */
-public final class BmsOrdinal implements Comparable<BmsOrdinal> {
+public final class BmsOrdinal implements Ordinal {
 
     private final BmsMatrix matrix;
 
@@ -171,11 +180,11 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
      * The {@code β} with {@code β + 1 = this}: the matrix without its last column when the last column is
      * all zeros. Empty for zero and for limit ordinals.
      */
-    public Optional<BmsOrdinal> predecessor() {
+    public Optional<Ordinal> predecessor() {
         if (!isSuccessor()) {
             return Optional.empty();
         }
-        return Optional.of(of(matrix.removeLastColumn()));
+        return Optional.<Ordinal>of(of(matrix.removeLastColumn()));
     }
 
     /**
@@ -239,6 +248,144 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
                 this + " has no fundamental sequence: it is zero or a successor"));
     }
 
+    // ------------------------------------------------------------------ the Ordinal interface
+
+    /** The Bashicu matrix notation, the factory these values come from. */
+    @Override
+    public BmsOrdinalNotation notation() {
+        return BmsOrdinalNotation.standard();
+    }
+
+    /**
+     * The finite value when every column is the single zero column, i.e. when the matrix is the BMS
+     * writing of a finite ordinal: {@code n} columns of {@code (0)} is {@code n}. Empty for every
+     * transfinite matrix.
+     */
+    @Override
+    public Optional<Natural> finiteValue() {
+        for (List<Integer> column : matrix.columns()) {
+            if (column.size() != 1 || column.get(0) != 0) {
+                return Optional.empty();
+            }
+        }
+        return Optional.of(Natural.of(matrix.length()));
+    }
+
+    /**
+     * The {@code index}-th element of the fundamental sequence in the {@code Ordinal} interface's
+     * {@code ω[m] = m+1} convention: the raw expansion {@link #fundamentalSequence(int)} at index
+     * {@code m+1}, skipping the raw sequence's leading {@code S[0] = G} element.
+     *
+     * <p>The shift is what aligns this sequence with the CNF outcomes the transfinite hyperoperation pins:
+     * the raw expansion of {@code ω = (0)(1)} reads {@code S[n] = n} (starting at zero), so the shifted
+     * sequence reads {@code ω[m] = m+1}; the same one-step shift carries over to {@code (ω²)[m] = ω·(m+1)}
+     * and {@code (ω^ω)[m] = ω^(m+1)}. For the ε₀ boundary the shift makes {@code ε₀[0] = 1} where the old
+     * CNF notation started at {@code ε₀[0] = ω} - a documented convention difference, since both are
+     * genuine fundamental sequences.
+     *
+     * <p>Empty when this ordinal is zero or a successor, and also when the shifted index is structural or
+     * above {@link BmsOrdinalNotation#MAX_FUNDAMENTAL_INDEX}: the expansion would need that many copies of
+     * the bad part materialised, which is a documented limit of this implementation rather than a
+     * mathematical claim.
+     */
+    @Override
+    public Optional<Ordinal> fundamentalSequence(Natural index) {
+        Objects.requireNonNull(index, "index");
+        if (!isLimit()) {
+            return Optional.empty();
+        }
+        Natural shifted = index.add(Natural.ONE);
+        if (!shifted.isExact() || shifted.toLongSaturated() > BmsOrdinalNotation.MAX_FUNDAMENTAL_INDEX) {
+            return Optional.empty();
+        }
+        return fundamentalSequence((int) shifted.toLongSaturated()).map(ordinal -> ordinal);
+    }
+
+    /**
+     * Ordinal addition as matrix concatenation, with one normalisation: a transfinite right operand
+     * absorbs a finite left tail ({@code (ω+1) + ω = ω·2}, {@code 2 + ω = ω}), so the left operand's
+     * trailing zero columns are dropped before the matrices are written one after the other. Without that
+     * strip the concatenation would be a non-standard writing whose lexicographic position sits below the
+     * summand it should exceed. A finite right operand is the successor step repeated, which concatenates
+     * safely: {@code (0)(1)~(0)(0) = ω + 2}.
+     *
+     * <p>Adding the {@link BmsEpsilonZero ε₀} boundary returns the boundary, because {@code ε₀} absorbs
+     * every ordinal below it. Two finite values add through the {@link Natural} arithmetic, which covers
+     * sums above the materialisation bound as {@link BmsLargeFinite} values.
+     *
+     * @throws IllegalArgumentException when the other ordinal belongs to a foreign notation
+     * @throws UnsupportedOperationException when a transfinite matrix is added to a finite value above the
+     *         materialisation bound, whose sum would need that value written as columns
+     */
+    @Override
+    public Ordinal add(Ordinal other) {
+        Objects.requireNonNull(other, "other");
+        if (other instanceof BmsEpsilonZero) {
+            return other;
+        }
+        if (other instanceof BmsLargeFinite finite) {
+            Optional<Natural> mine = finiteValue();
+            if (mine.isPresent()) {
+                return notation().finite(mine.get().add(finite.value()));
+            }
+            throw new UnsupportedOperationException("the sum " + this + " + " + finite.value()
+                    + " needs the finite addend written as columns, which this notation does not materialise");
+        }
+        if (!(other instanceof BmsOrdinal right)) {
+            throw new IllegalArgumentException("cannot combine " + other + " (" + other.notation().name()
+                    + ") with a " + notation().name() + " ordinal");
+        }
+        if (right.finiteValue().isPresent()) {
+            return of(concat(matrix, right.matrix));
+        }
+        return of(concat(withoutFiniteTail(matrix), right.matrix));
+    }
+
+    /**
+     * Multiplication by a finite coefficient as repeated addition: {@code α·n} is {@code α} added to
+     * itself {@code n} times, which for a transfinite matrix scales its leading part exactly as the CNF
+     * rule does ({@code (ω+1)·2 = ω·2+1}). Two finite values multiply through the {@link Natural}
+     * arithmetic, which covers products above the materialisation bound.
+     *
+     * @throws UnsupportedOperationException when the product of a transfinite matrix with the factor would
+     *         exceed the column bound, so the copies cannot be materialised
+     */
+    @Override
+    public Ordinal times(Natural factor) {
+        Objects.requireNonNull(factor, "factor");
+        if (factor.isZero()) {
+            return notation().zero();
+        }
+        if (factor.isOne()) {
+            return this;
+        }
+        Optional<Natural> finite = finiteValue();
+        if (finite.isPresent()) {
+            return notation().finite(finite.get().multiply(factor));
+        }
+        if (!factor.isExact() || factor.toLongSaturated() > BmsOrdinalNotation.MAX_FINITE_COLUMNS
+                || (long) matrix.length() * factor.toLongSaturated() > BmsOrdinalNotation.MAX_FINITE_COLUMNS) {
+            throw new UnsupportedOperationException(this + " · " + factor + " needs " + factor
+                    + " concatenated copies, above this notation's materialisation bound "
+                    + BmsOrdinalNotation.MAX_FINITE_COLUMNS + " columns");
+        }
+        int copies = (int) factor.toLongSaturated();
+        Ordinal result = this;
+        for (int copy = 1; copy < copies; copy++) {
+            result = result.add(this);
+        }
+        return result;
+    }
+
+    /**
+     * {@code ω^this}, answered by {@link BmsOrdinalNotation#omegaPower(Ordinal)}: derivable for finite and
+     * pure-tower exponents, refused with a precise message for a general matrix.
+     */
+    @Override
+    public Ordinal omegaPower() {
+        return notation().omegaPower(this);
+    }
+
     /**
      * The lexicographic order: columns from the left, each column row by row from the top, a shorter
      * column smaller when it is a prefix, and the longer matrix larger when every common column is equal.
@@ -246,12 +393,24 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
      * <p>For standard forms this is the order of the ordinals the matrices denote (see the class
      * documentation for the claim and its source). The comparison is exact, total and transitive, and it
      * is <em>not</em> valid for non-standard matrices - construction normalises the trailing-zero writing
-     * but cannot decide deep standardness.
+     * but cannot decide deep standardness. Against the {@link BmsEpsilonZero ε₀} boundary the wrapped
+     * matrix decides; against an ordinal of a foreign notation the notation names order the values, as the
+     * {@code Ordinal} interface documents.
      */
     @Override
-    public int compareTo(BmsOrdinal other) {
+    public int compareTo(Ordinal other) {
         Objects.requireNonNull(other, "other");
-        return BmsOrder.compare(matrix, other.matrix);
+        if (other instanceof BmsOrdinal ordinal) {
+            return BmsOrder.compare(matrix, ordinal.matrix);
+        }
+        if (other instanceof BmsEpsilonZero boundary) {
+            return BmsOrder.compare(matrix, boundary.comparisonMatrix().matrix);
+        }
+        if (other instanceof BmsLargeFinite finite) {
+            Optional<Natural> mine = finiteValue();
+            return mine.isPresent() ? mine.get().compareTo(finite.value()) : 1;
+        }
+        return notation().name().compareTo(other.notation().name());
     }
 
     /**
@@ -291,5 +450,51 @@ public final class BmsOrdinal implements Comparable<BmsOrdinal> {
                         + first + "; " + matrix + " is not a standard form");
             }
         }
+    }
+
+    /** The two matrices written one after the other, canonicalised; the ordinal sum under the lex order. */
+    private static BmsMatrix concat(BmsMatrix left, BmsMatrix right) {
+        int[][] raw = new int[left.length() + right.length()][];
+        int index = 0;
+        for (List<Integer> column : left.columns()) {
+            raw[index++] = toArray(column);
+        }
+        for (List<Integer> column : right.columns()) {
+            raw[index++] = toArray(column);
+        }
+        return BmsMatrix.canonical(raw);
+    }
+
+    /**
+     * The matrix without its trailing single-zero columns: the finite tail a transfinite right operand
+     * absorbs in an addition. A finite matrix strips to the empty matrix, which is exactly the reading
+     * {@code n + λ = λ}.
+     */
+    private static BmsMatrix withoutFiniteTail(BmsMatrix matrix) {
+        List<List<Integer>> columns = matrix.columns();
+        int end = columns.size();
+        while (end > 0) {
+            List<Integer> column = columns.get(end - 1);
+            if (column.size() != 1 || column.get(0) != 0) {
+                break;
+            }
+            end--;
+        }
+        if (end == columns.size()) {
+            return matrix;
+        }
+        int[][] raw = new int[end][];
+        for (int index = 0; index < end; index++) {
+            raw[index] = toArray(columns.get(index));
+        }
+        return BmsMatrix.canonical(raw);
+    }
+
+    private static int[] toArray(List<Integer> column) {
+        int[] values = new int[column.size()];
+        for (int row = 0; row < values.length; row++) {
+            values[row] = column.get(row);
+        }
+        return values;
     }
 }

@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.googology.NaturalFormat;
 import io.github.sob1234509876.oc.googology.Ordinal;
 import io.github.sob1234509876.oc.googology.OrdinalNotation;
 import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
+import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 
 import java.math.BigInteger;
 import java.util.*;
@@ -264,6 +265,7 @@ public final class GoogologyCheck {
         InaccessibleCheck.Result inaccessible = InaccessibleCheck.run();
         passed += inaccessible.passed();
         FAILURES.addAll(inaccessible.failures());
+        equivalenceBattery();
 
         summary();
     }
@@ -1007,6 +1009,147 @@ public final class GoogologyCheck {
                 Natural.power(Natural.TWO, Natural.of(100)).root(Natural.tetration(Natural.TEN, Natural.TEN))
                         .orElseThrow().isOne());
         check("零次根被拒绝", throwsIllegalArgument(() -> Natural.of(5).root(Natural.ZERO)));
+    }
+
+    // ------------------------------------------------------------------ 44) CNF vs BMS equivalence
+
+    /**
+     * The equivalence battery between the two ordinal worlds: the {@link CantorNormalForm} chain and the
+     * BMS-backed chain built through {@link BmsOrdinalNotation} are compared pair by pair, their
+     * fundamental sequences are cross-checked under the documented {@code ω[m] = m+1} normalization (the
+     * BMS wrapper reports the raw expansion one index further along), and the transfinite hyperoperation
+     * end-to-end results are pinned so section 12 stays byte-identical once the BMS notation becomes the
+     * default.
+     */
+    private static void equivalenceBattery() {
+        section("44) 等价对照：BMS 实现的 Ordinal 与康托尔标准式同序（ω[m]=m+1 约定）");
+        CantorNormalForm cnf = CantorNormalForm.standard();
+        BmsOrdinalNotation bms = BmsOrdinalNotation.standard();
+
+        List<Ordinal> cnfChain = List.of(
+                cnf.zero(), cnf.one(), cnf.of(5), cnf.omega(), cnf.omega().successor(),
+                cnf.omega().times(2), cnf.omegaPower(cnf.of(2)), cnf.omegaPower(cnf.of(3)),
+                cnf.omegaPower(cnf.omega()), cnf.limit());
+        List<Ordinal> bmsChain = List.of(
+                bms.zero(), bms.one(), bms.finite(Natural.of(5)), bms.omega(), bms.omega().successor(),
+                bms.omega().times(2), bms.omegaPower(bms.finite(Natural.TWO)),
+                bms.omegaPower(bms.finite(Natural.of(3))), bms.omegaPower(bms.omega()), bms.limit());
+        check("两条链都是严格递增的（0 < 1 < 5 < ω < ω+1 < ω·2 < ω² < ω³ < ω^ω < ε₀）",
+                strictlyIncreasing(cnfChain) && strictlyIncreasing(bmsChain));
+        int pairs = 0;
+        boolean sameOrder = true;
+        for (int left = 0; left < cnfChain.size(); left++) {
+            for (int right = 0; right < cnfChain.size(); right++) {
+                int byCnf = cnfChain.get(left).compareTo(cnfChain.get(right));
+                int byBms = bmsChain.get(left).compareTo(bmsChain.get(right));
+                if (Integer.signum(byCnf) != Integer.signum(byBms)) {
+                    sameOrder = false;
+                    check("链上第 " + left + " 与第 " + right + " 项两套记号给出相反的符号", false);
+                    break;
+                }
+                pairs++;
+            }
+        }
+        check("两套记号在 " + pairs + " 对链序数上符号完全一致", sameOrder);
+
+        List<Ordinal> sequenceSample = List.of(cnf.omega(), cnf.omega().times(2),
+                cnf.omegaPower(cnf.of(2)), cnf.omegaPower(cnf.of(3)), cnf.omegaPower(cnf.omega()));
+        List<Ordinal> bmsSequenceSample = List.of(bms.omega(), bms.omega().times(2),
+                bms.omegaPower(bms.finite(Natural.TWO)), bms.omegaPower(bms.finite(Natural.of(3))),
+                bms.omegaPower(bms.omega()));
+        int sequencePairs = 0;
+        boolean sequencesAgree = true;
+        for (int ordinal = 0; ordinal < sequenceSample.size(); ordinal++) {
+            for (int index = 0; index <= 4; index++) {
+                Optional<Ordinal> cnfElement =
+                        sequenceSample.get(ordinal).fundamentalSequence(Natural.of(index));
+                Optional<Ordinal> bmsElement =
+                        bmsSequenceSample.get(ordinal).fundamentalSequence(Natural.of(index));
+                if (cnfElement.isPresent() != bmsElement.isPresent()) {
+                    sequencesAgree = false;
+                    check("第 " + ordinal + " 个样本在基本列下标 " + index + " 上一边有一边没有", false);
+                    break;
+                }
+                if (cnfElement.isEmpty()) {
+                    continue;
+                }
+                for (int chain = 0; chain < cnfChain.size(); chain++) {
+                    int byCnf = cnfElement.get().compareTo(cnfChain.get(chain));
+                    int byBms = bmsElement.get().compareTo(bmsChain.get(chain));
+                    if (Integer.signum(byCnf) != Integer.signum(byBms)) {
+                        sequencesAgree = false;
+                        check("ω[m]=m+1 约定失配：第 " + ordinal + " 个样本的下标 " + index
+                                + " 项对链上第 " + chain + " 项两套记号位置不同", false);
+                        break;
+                    }
+                    sequencePairs++;
+                }
+            }
+        }
+        check("ω、ω·2、ω²、ω³、ω^ω 的基本列在 ω[m]=m+1 约定下逐项位置一致（" + sequencePairs + " 次对链比较）",
+                sequencesAgree);
+
+        // The ε₀ boundary is the one documented convention difference: the BMS raw sequence spends S[1] = 1
+        // before reaching ω, so the shifted sequence starts ε₀[0] = 1 where CNF started ε₀[0] = ω. From
+        // index one on the two sequences sit at the same chain positions, one index apart.
+        boolean epsilonAgrees = true;
+        for (int index = 1; index <= 3; index++) {
+            Optional<Ordinal> cnfElement = cnf.limit().fundamentalSequence(Natural.of(index - 1));
+            Optional<Ordinal> bmsElement = bms.limit().fundamentalSequence(Natural.of(index));
+            if (cnfElement.isEmpty() || bmsElement.isEmpty()) {
+                epsilonAgrees = false;
+                break;
+            }
+            for (int chain = 0; chain < cnfChain.size(); chain++) {
+                if (Integer.signum(cnfElement.get().compareTo(cnfChain.get(chain)))
+                        != Integer.signum(bmsElement.get().compareTo(bmsChain.get(chain)))) {
+                    epsilonAgrees = false;
+                }
+            }
+        }
+        check("ε₀ 的基本列错开一位后逐项位置一致（BMS ε₀[m] 在 CNF ε₀[m-1] 的位置上），且 ε₀[0] = 1 是约定差异",
+                epsilonAgrees
+                        && bms.limit().fundamentalSequence(0).orElseThrow().compareTo(bms.one()) == 0);
+
+        equal("端到端：2{ω}3 = 16（BMS 的 ω 也走 ω[m]=m+1）", Natural.of(16),
+                TransfiniteHyperoperation.apply(Natural.TWO, bms.omega(), Natural.of(3)));
+        equal("端到端：10{ω}10 折叠成 9 个箭头（ω[10] = 11）", Natural.arrow(Natural.TEN, 9, Natural.TEN),
+                TransfiniteHyperoperation.apply(Natural.TEN, bms.omega(), Natural.TEN));
+        equal("端到端：2{ω+1}2 = 4（超限后继规则）", Natural.of(4),
+                TransfiniteHyperoperation.apply(Natural.TWO, bms.omega().successor(), Natural.TWO));
+
+        equal("吸收：ω + ε₀ = ε₀，ε₀ + ω = ε₀（两套记号一致）", bms.limit(),
+                bms.omega().add(bms.limit()));
+        equal("边界吸收", bms.limit(), bms.limit().add(bms.omega()));
+        check("边界上不可名的运算仍然被拒绝：ε₀ + 1、ε₀·2 两套记号都抛 UnsupportedOperationException",
+                throwsUnsupported(bms.limit()::successor) && throwsUnsupported(() -> bms.limit().times(2))
+                        && throwsUnsupported(cnf.limit()::successor)
+                        && throwsUnsupported(() -> cnf.limit().times(2)));
+        equal("(ω+1)·2 = ω·2 + 1 在两套记号里位置一致",
+                bms.omega().successor().times(2).compareTo(bms.omega().times(2)),
+                cnf.omega().successor().times(2).compareTo(cnf.omega().times(2)));
+
+        equal("有限值可查：BMS 的 finite(7) 给出 7", Natural.of(7),
+                bms.finite(Natural.of(7)).finiteValue().orElseThrow());
+        check("ω 没有有限值", bms.omega().finiteValue().isEmpty());
+        equal("超界有限值退到可比较的结构值：finite(5000) 大于每个物化的有限矩阵、小于 ω",
+                1, Integer.signum(bms.finite(Natural.of(5000)).compareTo(bms.finite(Natural.of(7)))));
+        equal("结构有限值与 ω 的位置", -1,
+                Integer.signum(bms.finite(Natural.of(5000)).compareTo(bms.omega())));
+        equal("结构有限值加法走 Natural 算术", Natural.of(5005),
+                bms.finite(Natural.of(5000)).add(bms.finite(Natural.of(5))).finiteValue().orElseThrow());
+        check("物化边界：finite(1024) 仍是矩阵，finite(1025) 是结构值",
+                bms.finite(Natural.of(1024)).finiteValue().orElseThrow().equals(Natural.of(1024))
+                        && bms.finite(Natural.of(1025)).finiteValue().orElseThrow().equals(Natural.of(1025)));
+    }
+
+    private static boolean strictlyIncreasing(List<Ordinal> values) {
+        for (int index = 1; index < values.size(); index++) {
+            if (values.get(index - 1).compareTo(values.get(index)) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void section(String title) {

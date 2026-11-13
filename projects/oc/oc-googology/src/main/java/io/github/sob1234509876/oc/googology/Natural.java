@@ -35,8 +35,9 @@ import java.util.regex.Pattern;
  *
  * @see HyperOperation
  * @see NaturalFormat
+ * @see NaturalNumber
  */
-public final class Natural implements Comparable<Natural> {
+public final class Natural implements NaturalNumber {
 
     /**
      * Largest bit length an exact value may have.
