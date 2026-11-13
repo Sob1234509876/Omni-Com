@@ -1245,6 +1245,24 @@ public final class RtsScenario {
                 "the Moon keeps its own gravity, is not breathable, forces sealed units and moves units faster; "
                         + "Mars has its own profile");
 
+        // Dimensions are mutable world state: a late addDimension must announce itself, because a server
+        // side host caches the static dimension roster behind that registration. One combined check
+        // covers the contract: the event fires on registration, carries the new dimension's id and the
+        // tick it was registered at, and only then does the roster grow.
+        DimensionId venus = DimensionId.of("venus");
+        List<Events.DimensionAdded> registrations = new ArrayList<>();
+        world.events().subscribe(Events.DimensionAdded.class, registrations::add);
+        long tickBefore = engine.tickNumber();
+        world.addDimension(venus, DimensionProfile.moon(),
+                new ChunkedMap(new FlatChunkGenerator(content.terrain("grass"))));
+        check.that(registrations.size() == 1 && registrations.get(0).dimension().equals(venus)
+                        && registrations.get(0).tick() == tickBefore
+                        && world.hasDimension(venus),
+                "a late addDimension publishes exactly one DimensionAdded carrying the dimension id and the "
+                        + "registration tick, and the roster is already grown when the subscriber runs ("
+                        + registrations.size() + " event, tick " + (registrations.isEmpty() ? -1 : registrations.get(0).tick())
+                        + ")");
+
         // The same tile in two dimensions must stay two different places.
         Unit onOverworld = world.spawnUnit(overworld, type, blue, sameSpot);
         Unit onMoon = world.spawnUnit(moon, type, blue, sameSpot);

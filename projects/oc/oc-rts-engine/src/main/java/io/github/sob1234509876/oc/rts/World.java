@@ -186,6 +186,9 @@ public final class World {
      * Registers a dimension. The first one registered becomes the default, so a world built the old way
      * (one map) behaves exactly as before.
      *
+     * <p>Registration publishes {@link Events.DimensionAdded} after the dimension is fully registered, so
+     * a subscriber (a world host, a plugin) can react to the roster change on the same call.
+     *
      * @return the new dimension, for spawning its first entities
      */
     public Dimension addDimension(DimensionId id, DimensionProfile profile, TerrainMap map) {
@@ -198,6 +201,11 @@ public final class World {
         Dimension dimension = new Dimension(id, profile, map, this::nextId, this::tickNumber, events);
         dimensions.put(id, dimension);
         wireChunkUnloadEvents(id, map);
+        // Dimensions are mutable world state, so the registration is a fact worth publishing: a server
+        // side host subscribes to this to notice that its static dimension roster (and with it the cached
+        // bootstrap payload) just went stale. The event fires after the dimension is fully registered, so
+        // a subscriber that reads the world back sees a consistent roster.
+        events.publish(new Events.DimensionAdded(id, tickNumber));
         return dimension;
     }
 

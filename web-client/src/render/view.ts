@@ -927,6 +927,13 @@ export const WORLD_SNAPSHOT_PATH = "/world/snapshot";
  */
 export interface ServerWorldView extends WorldView {
   readonly tick: number;
+  /**
+   * Version of the static per-world payload this snapshot belongs to, or `undefined` when the server
+   * predates the field (and so does the handshake). The snapshot flow compares it against the version
+   * recorded with the bootstrap document to detect a mid-run dimension registration; see
+   * {@link ../src/bootstrap.ts!bootstrapVersionHandshake | bootstrapVersionHandshake}.
+   */
+  readonly contentVersion?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1753,6 +1760,14 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
   const projectiles = snapshotProjectiles(payload["projectiles"]);
   const buildable = snapshotBuildable(payload["buildable"]);
   const content = parseContentCatalogue(payload["content"]);
+  // The handshake version repeats the bootstrap document's `contentVersion`. Defensive like every
+  // other field: a non-negative integer is readable, everything else (an old server's missing field,
+  // or a malformed value) degrades to `undefined`, which makes the handshake do nothing.
+  const rawContentVersion = finiteNumber(payload["contentVersion"]);
+  const contentVersion =
+    rawContentVersion !== null && Number.isInteger(rawContentVersion) && rawContentVersion >= 0
+      ? rawContentVersion
+      : undefined;
 
   return {
     tick,
@@ -1766,6 +1781,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     ...(projectiles === undefined ? {} : { projectiles }),
     ...(buildable === undefined ? {} : { buildable }),
     ...(content === undefined ? {} : { content }),
+    ...(contentVersion === undefined ? {} : { contentVersion }),
     ...snapshotWorldMeta(payload),
   };
 }

@@ -87,9 +87,10 @@ import java.util.concurrent.atomic.AtomicLong;
      * <p><strong>World bootstrap.</strong> {@code GET /world/bootstrap} serves the one-time static
      * document a client fetches when it first joins: the content catalogue, the top-level BUILD array,
      * the dimension roster and {@code tilePixels}. Those blocks used to ride on every snapshot poll;
-     * they are static for the life of the host, so they moved here and are served straight from the
-     * host's cache with an immutable cache policy and an {@code ETag} (a matching {@code If-None-Match}
-     * is answered {@code 304}). The route follows the snapshot's rules elsewhere: unauthenticated, only
+     * they are static until a dimension is added to the running world, so they moved here and are
+     * served straight from the host's cache with an {@code ETag} revalidation policy
+     * ({@code Cache-Control: public, no-cache}; a matching {@code If-None-Match} is answered
+     * {@code 304}). The route follows the snapshot's rules elsewhere: unauthenticated, only
      * {@code GET} and {@code HEAD}, and the same short {@code 503} when the host is stopped or absent
      * ({@code --world off}).
      *
@@ -126,13 +127,20 @@ public final class HttpWebServer implements AutoCloseable {
     /**
      * The cache policy of the world bootstrap document.
      *
-     * <p>The document is static for the life of the host - the served catalogue, the BUILD array and
-     * the dimension roster cannot change while the world runs - so a browser may cache it for a year
-     * and never ask again; a client that rejoins another world simply fetches that world's document.
-     * The route also sends an {@code ETag} and answers a matching {@code If-None-Match} with
-     * {@code 304}, which keeps a non-caching client honest without re-sending the bytes.
+     * <p>The document is static <em>until a dimension is added to the running world</em>: the served
+     * catalogue and the BUILD array never change, but the dimension roster can grow at any moment
+     * because {@code World.addDimension(...)} is a public engine API that a plugin tick hook may call
+     * mid-run. A year-long {@code immutable} promise would therefore let a browser serve a roster that
+     * has silently gone stale and never refetch it. {@code no-cache} keeps the caching useful while
+     * dropping the immutability claim: a browser may still store the document but must revalidate it
+     * with the {@code ETag} before every use, so an unchanged world costs one small {@code 304} per
+     * page load instead of a full re-download, and a version bump changes the bytes, which changes the
+     * {@code ETag}, which turns the next revalidation into a fresh {@code 200} with the new roster.
+     * Clients additionally cross-check the embedded {@code contentVersion} against their snapshot
+     * polls, so the handshake does not rely on cache timing at all; the header is the transport layer
+     * of the same contract.
      */
-    private static final String WORLD_BOOTSTRAP_CACHE_CONTROL = "public, max-age=31536000, immutable";
+    private static final String WORLD_BOOTSTRAP_CACHE_CONTROL = "public, no-cache";
 
     private final WebSocketConfig config;
     private final WebSocketHandler handler;
@@ -530,11 +538,15 @@ public final class HttpWebServer implements AutoCloseable {
      * <p>The method rule is the same one the snapshot route applies (only {@code GET} and {@code HEAD},
      * other methods answer {@code 405} with {@code Allow: GET, HEAD}), and an absent or stopped world
      * answers the same short {@code 503} the snapshot answers, never a fall through to the SPA fallback.
-     * Unlike the snapshot the document is immutable for the life of the host, so the answer is marked
-     * {@code Cache-Control: public, max-age=31536000, immutable} and carries an {@code ETag} over the
-     * cached bytes; a request whose {@code If-None-Match} names that ETag is answered {@code 304} with
-     * no body. The ETag is a hash of the exact bytes served, so it changes only when the document
-     * changes, which in practice means never while this endpoint holds the same world.
+     * Unlike the snapshot the document is static until a dimension is added to the running world (which
+     * drops the host's cache and bumps the document's {@code contentVersion}), so the answer is marked
+     * {@code Cache-Control: public, no-cache} - store, but revalidate before every use - and carries an
+     * {@code ETag} over the cached bytes; a request whose {@code If-None-Match} names that ETag is
+     * answered {@code 304} with no body. The ETag is a hash of the exact bytes served, so it changes
+     * only when the document changes: an unchanged world answers every revalidation with a cheap
+     * {@code 304}, and a late {@code addDimension} turns the next revalidation into a fresh {@code 200}
+     * with the new roster. The immutable year-long promise this route used to make was dropped for
+     * exactly that reason - a browser honouring it would never see a dimension registered mid-run.
      */
     private void serveWorldBootstrap(Socket socket, HttpRequest request) throws IOException {
         OutputStream out = socket.getOutputStream();

@@ -163,8 +163,9 @@ LRU 预算兜底 → 客户端对未加载区块画阴影。
 
 - HTTP 路由 `GET /world/snapshot[?cx=&cy=&r=]`（`ws/HttpWebServer.java`，`WORLD_SNAPSHOT_PATH`；
   `Cache-Control: no-store`；世界停用/停止时 503）。同文件另有一次性引导路由 `GET /world/bootstrap`
-  （`WORLD_BOOTSTRAP_PATH`，见 §5.0），从宿主缓存直接应答静态世界数据，带
-  `Cache-Control: public, max-age=31536000, immutable` 与 ETag（命中 `If-None-Match` 回 304）。
+  （`WORLD_BOOTSTRAP_PATH`，见 §5.0），从宿主缓存直接应答静态世界数据（添加维度前），带
+  `Cache-Control: public, no-cache` 与 ETag（命中 `If-None-Match` 回 304；不再声明 immutable，
+  因为维度可变，缓存必须可失效——见 §5.0）。
 - 参数解析 → `WorldHost.dimensionByKey()`（可带 `dimension` 维度键，未知则 400）→ `clampSnapshotRadius()`：
   **只有 `r` 被钳制**到 `[MIN_SNAPSHOT_RADIUS=16, MAX_SNAPSHOT_RADIUS=64]`，缺省
   `DEFAULT_SNAPSHOT_RADIUS = 40`（80×80 窗口 = 五个 16 瓦片区块宽；协议文档 `protocol/oc-protocol.md`
@@ -224,22 +225,39 @@ tick 矛盾）。手写 StringBuilder JSON，零依赖。
 
 实现要点：
 
-- 文档对每个宿主**只构建一次**（`bootstrapJson` 缓存字段，`stateLock` 内惰性构建；目录不可变、
-  维度集合不可变，缓存不会失效），路由直接复制缓存字节应答，不再参与每次轮询的序列化。
-- 应答带 `Cache-Control: public, max-age=31536000, immutable` 与对字节哈希的 `ETag`；
-  `If-None-Match` 命中回 304。世界未运行时与快照同样回 503（不落入 SPA 回退），仅 GET/HEAD。
+- 文档**构建一次后逐字节复用，直到有人向运行中的世界添加维度**（`bootstrapJson` 缓存字段，
+  `stateLock` 内惰性构建；目录与 BUILD 数组来自不可变注册表，但**维度集合是可变世界状态**：
+  `World.addDimension(...)` 是公开引擎 API，插件 tick 钩子可以在运行中途调用它）。引擎在注册那一刻
+  发布 `Events.DimensionAdded`（`oc-rts-engine` 的 `World.addDimension` 尾部），宿主构造时订阅它：
+  版本 `contentVersion`（`volatile long`，从 1 起）加一，同时丢弃 `bootstrapJson` 与
+  `contentCatalogueJson` 两个缓存（目录里的 `dimensions` 块也镜像花名册，所以一并失效），
+  下一个请求按当前花名册重建。选事件而不是逐 tick 比对维度集合，是因为事件只在真正发生变化的
+  那一刻触发，零常态开销，且发布点在维度完全注册之后，订阅者回读世界看到的是一致状态。
+  构造期订阅在 builder 添加内容维度之后，所以启动期的注册不会抬版本。
+- 应答带 `Cache-Control: public, no-cache` 与对字节哈希的 `ETag`；`If-None-Match` 命中回 304。
+  原来的 `max-age=31536000, immutable` 已废除：维度可变，一份"缓存一年"的承诺会让浏览器永远
+  端着过期的花名册。`no-cache` = 可存储但每次使用前用 ETag 重验证——世界不变时每次页面加载
+  只花一个小 304，版本变化改变字节、字节改变 ETag，下次重验证即得全新 200。
+  世界未运行时与快照同样回 503（不落入 SPA 回退），仅 GET/HEAD。
 - `dimensionName` 保留在快照里：静态但只有几个字节，且它随所画窗口同行，客户端不必跨文档查表。
+- **`contentVersion`（两份文档都带，快照顶层、引导文档顶层各一个整数）**：宿主构建时从 1 开始，
+  每次运行中注册维度加一（无移除 API，永不减少）。快照每轮带着它，是为了让缓存了引导文档的
+  客户端从下一次轮询就能发现版本不一致。
 - 实测收益（默认场景世界，80×80 窗口）：移出的静态块约 3.0 KB / 旧快照约 53 KB（≈5.7%）；
   经典目录更大（15 建筑 + 22 单位 + 20 配方），约 9.5 KB（≈14.6%）。这是每轮轮询省下的
   字节数与缓存字符串的重复拼接；快照主体（tiles/entities）本来就是动态的，仍逐请求重建。
-- 客户端契约：首次加入（快照路由 200）时拉取一次，失败容忍（离线 demo 自带目录）；
-  字段全部按可选解析。协议文档"世界引导"一节是权威形状定义。
+- 客户端契约：首次加入（快照路由 200）时拉取一次并记录文档里的 `contentVersion`；此后每次快照
+  轮询比对快照的 `contentVersion`——相等就继续用缓存；不一致就**重取一次**引导文档，重建维度
+  切换器等派生态，并更新记录值（不要循环：重取后的下一份快照携带的就是刚拉到的版本；重取后仍
+  不一致是服务器 bug）。重取失败保留旧文档照常可玩。字段全部按可选解析。协议文档
+  "世界引导"一节是权威形状定义与握手契约（en+zh 同步）。
 
 ### 5.1 顶层字段
 
 | 字段 | 内容 |
 | --- | --- |
 | `tick` | 当前引擎 tick。 |
+| `contentVersion` | 静态世界载荷版本（§5.0）；与引导文档同源，客户端用它察觉维度花名册变化并重取引导文档一次。 |
 | `originX`/`originY`/`width`/`height` | 窗口左上瓦片与尺寸（`2r×2r`）；文档**没有** mapWidth/mapHeight——世界无界。 |
 | `dimension` / `dimensionName` | 所画维度键与显示名（静态但极小，随窗口同行）。 |
 | `loadedChunks` | 所画维度内存中的区块坐标 `[[cx,cy],...]`，**上限 1024 项**（防病态预算撑爆文档）。客户端据此画未加载阴影。 |
@@ -388,7 +406,8 @@ socket 线程: dispatcher.execute(line, session)
 - **消费快照**：`web-client/src/main.ts` 每 500 ms（`WORLD_POLL_MS`）`fetch /world/snapshot`（带当前维度键）；
   请求失败回退内置确定性 demo 世界，HUD 显示 `server|demo + tick`。Vite 开发代理把 `/world` 转发到 Java 服务器。
   静态世界数据（目录、BUILD 数组、维度花名册、tilePixels）改为首次加入时 `fetch /world/bootstrap` 一次
-  （§5.0）；快照轮询不再携带它们，客户端要防御性解析引导文档并容忍其缺失。
+  （§5.0）；此后每轮轮询比对快照顶层的 `contentVersion` 与记录值，不一致时重取一次引导文档并重建
+  维度切换器等派生态（§5.0 的版本握手）；快照轮询不再携带静态块，客户端要防御性解析引导文档并容忍其缺失。
 - **防御性解析**：每个字段容错——`loadedChunks` 缺失（旧服务器）不画阴影；数值非有限即回退默认；
   未知 `kind` 回退程序化形状绘制（`render/fallback.ts`）。客户端把世界当作无界：没有地图尺寸概念。
 - **图集**：`render/atlas.ts` 解析合并清单，每材质一图（PNG 或 SVG，SVG 需自带 width/height；

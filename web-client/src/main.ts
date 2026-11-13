@@ -135,10 +135,12 @@ import {
   registerCatalogueNames,
 } from "./content";
 import {
+  bootstrapVersionHandshake,
   fetchWorldBootstrap,
   getWorldBootstrap,
   setWorldBootstrap,
   withBootstrapData,
+  type WorldBootstrap,
 } from "./bootstrap";
 import {
   transferAnswerLabel,
@@ -4947,6 +4949,22 @@ let bootstrapFetchInFlight = false;
  * not per poll; the stored payload from a previous join stays in place, and snapshots keep their
  * own-field fallback until the next success.
  */
+/**
+ * The post-fetch wiring every successful bootstrap fetch shares: store the payload (its
+ * `contentVersion` included, which the snapshot handshake compares against), register the catalogue
+ * names in the i18n server namespace so display labels resolve even before the next snapshot merges
+ * the catalogue into the view, and pull one snapshot so the BUILD rail and the dimension switcher
+ * fill immediately instead of waiting up to 500 ms (the poll skips itself while another request is
+ * still in flight). Both the join-time fetch and the version-mismatch refetch end here, so a late
+ * dimension registration re-does exactly what the join did.
+ */
+function adoptWorldBootstrap(data: WorldBootstrap): void {
+  setWorldBootstrap(data);
+  registerCatalogueNames(data.content);
+  log("info", t("log.bootstrapOk"));
+  void pollWorldSnapshot();
+}
+
 async function ensureWorldBootstrap(): Promise<void> {
   if (bootstrapFetchInFlight) {
     return;
@@ -4958,14 +4976,64 @@ async function ensureWorldBootstrap(): Promise<void> {
       log("info", t("log.bootstrapFail"));
       return;
     }
-    setWorldBootstrap(data);
-    // Register the names immediately so display labels resolve even before the next snapshot merges
-    // the catalogue into the view (the registration also re-runs on every snapshot that follows).
-    registerCatalogueNames(data.content);
-    log("info", t("log.bootstrapOk"));
-    // Pull one snapshot now so the BUILD rail and the dimension switcher fill immediately instead of
-    // waiting up to 500 ms; the poll skips itself while another request is still in flight.
-    void pollWorldSnapshot();
+    adoptWorldBootstrap(data);
+  } finally {
+    bootstrapFetchInFlight = false;
+  }
+}
+
+/**
+ * The snapshot `contentVersion` a mismatch refetch already covered, or `undefined`. A mismatch that
+ * survives its one refetch keeps this value set, so the handshake settles (the refetched document is
+ * authoritative) instead of polling the bootstrap route forever; a failed refetch clears it, so the
+ * next mismatched poll retries.
+ */
+let bootstrapMismatchHandled: number | undefined;
+
+/** Timestamp of the last mismatch refetch attempt, for the minimum-interval storm guard. */
+let lastBootstrapRefetchAt = -Infinity;
+
+/** Minimum time between two mismatch refetch attempts, so a down server is not hammered per poll. */
+const BOOTSTRAP_REFETCH_MIN_INTERVAL_MS = 5000;
+
+/**
+ * Re-fetches `GET /world/bootstrap` once because a snapshot's `contentVersion` stopped matching the
+ * recorded one — the documented handshake for a dimension registered mid-run.
+ *
+ * Detected in {@link applySnapshot} (within one poll interval), throttled to one attempt in flight
+ * (shared with {@link ensureWorldBootstrap}) and at most one per
+ * {@link BOOTSTRAP_REFETCH_MIN_INTERVAL_MS}. On success the shared post-fetch wiring
+ * ({@link adoptWorldBootstrap}) stores the new document, refreshes the i18n server namespace and
+ * pulls a snapshot so the dimension switcher and BUILD rail rebuild from the new roster. On failure
+ * the old document stays and the page stays playable; the handled marker is cleared so the next
+ * mismatched poll retries after the interval. A mismatch that survives a successful refetch is a
+ * server bug: it is logged once here and never re-fetched while the version stays the same.
+ */
+async function refetchWorldBootstrap(snapshotVersion: number): Promise<void> {
+  if (bootstrapFetchInFlight) {
+    return;
+  }
+  const now = performance.now();
+  if (now - lastBootstrapRefetchAt < BOOTSTRAP_REFETCH_MIN_INTERVAL_MS) {
+    return;
+  }
+  // Mark the mismatch as handled before the attempt: concurrent snapshots of the same version must
+  // not queue more refetches, and only a failed attempt hands the retry back to the next poll.
+  bootstrapMismatchHandled = snapshotVersion;
+  lastBootstrapRefetchAt = now;
+  bootstrapFetchInFlight = true;
+  try {
+    const data = await fetchWorldBootstrap("");
+    if (data === null) {
+      bootstrapMismatchHandled = undefined;
+      log("info", t("log.bootstrapFail"));
+      return;
+    }
+    log(
+      "info",
+      `世界静态数据版本已变化（快照 contentVersion ${snapshotVersion}），已重新拉取 /world/bootstrap`,
+    );
+    adoptWorldBootstrap(data);
   } finally {
     bootstrapFetchInFlight = false;
   }
@@ -4984,6 +5052,22 @@ function applySnapshot(rawSnapshot: ServerWorldView): void {
   // wins as before; a snapshot without it is topped up from the session bootstrap holder. No holder
   // (demo world, old server, failed fetch) changes nothing, so degradation matches today exactly.
   const snapshot = withBootstrapData(rawSnapshot, getWorldBootstrap());
+  // The documented version handshake: every snapshot repeats the bootstrap document's
+  // `contentVersion`. A readable snapshot version that differs from the recorded one means a
+  // dimension was registered mid-run, so the bootstrap document is refetched once and everything
+  // derived from it is rebuilt. An unreadable version on either side (old server, demo world) does
+  // nothing, and a mismatch that survives its refetch settles instead of looping.
+  const snapshotVersion = rawSnapshot.contentVersion;
+  if (
+    snapshotVersion !== undefined &&
+    bootstrapVersionHandshake(
+      getWorldBootstrap(),
+      snapshotVersion,
+      bootstrapMismatchHandled,
+    ) === "refetch"
+  ) {
+    void refetchWorldBootstrap(snapshotVersion);
+  }
   // The server echoes the drawn dimension back; adopting it keeps the view state and the fetch
   // parameter in step even when the first snapshot arrived without an explicit dim.
   if (snapshot.dimension !== undefined && snapshot.dimension !== viewDimension) {

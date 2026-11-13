@@ -262,11 +262,13 @@ import {
 import {
   WORLD_BOOTSTRAP_PATH,
   bootstrapUrl,
+  bootstrapVersionHandshake,
   clearWorldBootstrap,
   getWorldBootstrap,
   parseWorldBootstrap,
   setWorldBootstrap,
   withBootstrapData,
+  type WorldBootstrap,
 } from "../src/bootstrap.ts";
 import { ATTACK_PATH_COLOR } from "../src/render/paths.ts";
 import {
@@ -7232,6 +7234,118 @@ check(
       parseWorldBootstrap({}) === undefined &&
       parseWorldBootstrap({ buildable: ["  ", 42] }) === undefined
     );
+  })(),
+);
+
+check(
+  "bootstrap 内容版本握手：双方 contentVersion 防御解析（缺/坏字段容忍）；不相等 → refetch 一次，已处理过 → settle 不循环；任一侧不可读或相等 → 不动；换新版本重新触发",
+  (() => {
+    // Snapshot side: a readable non-negative integer lands on the view; an old server's missing
+    // field and every malformed value degrade to `undefined` without rejecting the snapshot.
+    const versioned = worldViewFromSnapshot({
+      tick: 4,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+      contentVersion: 2,
+    });
+    const unversioned = worldViewFromSnapshot({
+      tick: 5,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+    });
+    const malformed = worldViewFromSnapshot({
+      tick: 6,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+      contentVersion: "2",
+    });
+    const fractional = worldViewFromSnapshot({
+      tick: 7,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+      contentVersion: 1.5,
+    });
+    const negative = worldViewFromSnapshot({
+      tick: 8,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+      contentVersion: -1,
+    });
+    const snapshotParsed =
+      versioned !== null &&
+      versioned.contentVersion === 2 &&
+      unversioned !== null &&
+      unversioned.contentVersion === undefined &&
+      malformed !== null &&
+      malformed.contentVersion === undefined &&
+      fractional !== null &&
+      fractional.contentVersion === undefined &&
+      negative !== null &&
+      negative.contentVersion === undefined;
+    if (!snapshotParsed) {
+      return false;
+    }
+    // Bootstrap side: the same defensiveness, and the version is stored with the document.
+    const doc1 = parseWorldBootstrap({ tilePixels: 16, contentVersion: 1, buildable: ["building.mine.t1"] });
+    const docNoVersion = parseWorldBootstrap({ buildable: ["building.warehouse"] });
+    const docBadVersion = parseWorldBootstrap({ contentVersion: "9" });
+    const docParsed =
+      doc1 !== undefined &&
+      doc1.contentVersion === 1 &&
+      docNoVersion !== undefined &&
+      docNoVersion.contentVersion === undefined &&
+      docBadVersion === undefined;
+    if (!docParsed) {
+      return false;
+    }
+    // The handshake decision table for one received snapshot poll.
+    const decide = (
+      bootstrap: WorldBootstrap | undefined,
+      snapshotVersion: number | undefined,
+      refetchedFor: number | undefined,
+    ) => bootstrapVersionHandshake(bootstrap, snapshotVersion, refetchedFor);
+    const decided =
+      decide(undefined, 2, undefined) === "none" && // no stored document (demo world): nothing to compare
+      decide(doc1, undefined, undefined) === "none" && // old server snapshot: do nothing
+      decide(docNoVersion, 2, undefined) === "none" && // stored document predates the field: nothing to compare
+      decide(doc1, 1, undefined) === "none" && // equal: no request is spent
+      decide(doc1, 2, undefined) === "refetch" && // mismatch: refetch once
+      decide(doc1, 2, 2) === "settle" && // surviving mismatch: refetched doc is authoritative, no loop
+      decide(doc1, 3, 2) === "refetch"; // a later bump is a new mismatch
+    // End-to-end through the session holder: v1 stored → snapshot v2 detected → refetch stores v2 →
+    // the same snapshot version now compares equal.
+    clearWorldBootstrap();
+    setWorldBootstrap(doc1);
+    const detected = decide(getWorldBootstrap(), 2, undefined) === "refetch";
+    const doc2 = parseWorldBootstrap({
+      tilePixels: 16,
+      contentVersion: 2,
+      buildable: ["building.mine.t1", "building.hell_gate"],
+      dimensions: [{ key: "overworld", name: "主世界" }, { key: "hell", name: "地狱" }],
+    });
+    if (doc2 === undefined) {
+      return false;
+    }
+    setWorldBootstrap(doc2);
+    const stored = getWorldBootstrap();
+    const refetched =
+      stored !== undefined &&
+      stored.contentVersion === 2 &&
+      stored.buildable?.length === 2 &&
+      stored.dimensions?.length === 2 &&
+      decide(stored, 2, undefined) === "none";
+    clearWorldBootstrap();
+    return snapshotParsed && docParsed && decided && detected && refetched;
   })(),
 );
 

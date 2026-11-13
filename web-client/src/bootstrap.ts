@@ -5,7 +5,7 @@
  * world is up: the top-level `content` catalogue, the `buildable` array and the `dimensions` roster.
  * The server now serves them once from `GET /world/bootstrap`
  *
- *     { "tilePixels": n, "buildable": [...], "dimensions": [{"key": ..., "name": ...}],
+ *     { "tilePixels": n, "contentVersion": v, "buildable": [...], "dimensions": [{"key": ..., "name": ...}],
  *       "content": {"dimensions": ..., "items": ..., "buildings": ..., "units": ..., "recipes": ...} }
  *
  * and drops them from the snapshot, so joining the world fetches this document once instead of every
@@ -20,6 +20,11 @@
  * parsing its own optional `content` / `buildable` / `dimensions` fields as before. The demo world
  * never touches this module. A failed fetch is retried at the next join event, never per poll.
  *
+ * The document and every snapshot poll both carry a `contentVersion` (bumped when a dimension is
+ * registered mid-run): {@link bootstrapVersionHandshake} compares the recorded version against each
+ * snapshot's and decides whether the document must be refetched once, so the page keeps its static
+ * data current without polling this route.
+ *
  * Everything here except {@link fetchWorldBootstrap} is pure and DOM-free, so
  * `scripts/check-render-math.ts` can exercise the parse and the merge directly.
  */
@@ -31,6 +36,12 @@ import type { DimensionView, ServerWorldView } from "./render/view.ts";
 export interface WorldBootstrap {
   /** Tile size in pixels the server draws at, when the document carries one. */
   readonly tilePixels?: number;
+  /**
+   * Version of the static per-world payload, bumped by exactly 1 each time a dimension is registered
+   * on the running world. Every snapshot poll repeats it so the client can detect the bump; missing
+   * or malformed on either side means the handshake does nothing.
+   */
+  readonly contentVersion?: number;
   /** Content paths of every directly-buildable building, in the server's declared order. */
   readonly buildable?: readonly string[];
   /** Every dimension of the world, key first. */
@@ -127,14 +138,29 @@ export function parseWorldBootstrap(payload: unknown): WorldBootstrap | undefine
     typeof rawTilePixels === "number" && Number.isFinite(rawTilePixels) && rawTilePixels > 0
       ? rawTilePixels
       : undefined;
+  // The handshake version: readable only as a non-negative integer, tolerated as absent otherwise.
+  const rawContentVersion = payload["contentVersion"];
+  const contentVersion =
+    typeof rawContentVersion === "number" &&
+    Number.isSafeInteger(rawContentVersion) &&
+    rawContentVersion >= 0
+      ? rawContentVersion
+      : undefined;
   const buildable = parseBuildable(payload["buildable"]);
   const dimensions = parseBootstrapDimensions(payload["dimensions"]);
   const content = parseContentCatalogue(payload["content"]);
-  if (tilePixels === undefined && buildable === undefined && dimensions === undefined && content === undefined) {
+  if (
+    tilePixels === undefined &&
+    contentVersion === undefined &&
+    buildable === undefined &&
+    dimensions === undefined &&
+    content === undefined
+  ) {
     return undefined;
   }
   return {
     ...(tilePixels === undefined ? {} : { tilePixels }),
+    ...(contentVersion === undefined ? {} : { contentVersion }),
     ...(buildable === undefined ? {} : { buildable }),
     ...(dimensions === undefined ? {} : { dimensions }),
     ...(content === undefined ? {} : { content }),
@@ -179,6 +205,50 @@ export function withBootstrapData(
       ? { content: bootstrap.content }
       : {}),
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Version handshake
+// ---------------------------------------------------------------------------------------------
+
+/** What the documented version handshake does for one received snapshot poll. */
+export type BootstrapHandshakeAction =
+  /** Both versions equal, or at least one unreadable: keep everything as is. */
+  | "none"
+  /** Recorded and snapshot versions differ and this mismatch has not been handled yet: refetch once. */
+  | "refetch"
+  /**
+   * The mismatch survives a refetch that already ran for this snapshot version: the refetched
+   * document is authoritative, so no further request is spent (no loop).
+   */
+  | "settle";
+
+/**
+ * The one decision of the documented version handshake, pure so the offline check can exercise it.
+ *
+ * The client records the `contentVersion` it fetched the bootstrap document with; every snapshot
+ * poll repeats the field. A readable snapshot version that differs from the recorded one means a
+ * dimension was registered mid-run, so the bootstrap document is refetched once and everything
+ * derived from it (dimension switcher, BUILD rail, i18n server namespace) is rebuilt from the new
+ * bytes. Anything unreadable degrades to `"none"`: an old server never sends the field on either
+ * side, and a stored document without it has nothing to compare against — the current behaviour.
+ *
+ * `refetchedFor` is the snapshot version a refetch attempt already covered (or `undefined`); it
+ * turns a surviving mismatch into `"settle"` instead of another `"refetch"`, which is what keeps the
+ * handshake from looping against a buggy or restarting server.
+ */
+export function bootstrapVersionHandshake(
+  bootstrap: WorldBootstrap | undefined,
+  snapshotVersion: number | undefined,
+  refetchedFor: number | undefined,
+): BootstrapHandshakeAction {
+  if (bootstrap === undefined || snapshotVersion === undefined || bootstrap.contentVersion === undefined) {
+    return "none";
+  }
+  if (bootstrap.contentVersion === snapshotVersion) {
+    return "none";
+  }
+  return refetchedFor === snapshotVersion ? "settle" : "refetch";
 }
 
 // ---------------------------------------------------------------------------------------------

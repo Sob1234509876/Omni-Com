@@ -8,6 +8,8 @@ import io.github.sob1234509876.oc.server.ws.WebSocketConfig;
 import io.github.sob1234509876.oc.server.ws.WebSocketHandler;
 import io.github.sob1234509876.oc.server.ws.WebSocketSession;
 import io.github.sob1234509876.oc.rts.World;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
@@ -25,6 +27,8 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
 import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
+import io.github.sob1234509876.oc.rts.map.ChunkedMap;
+import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.OrderContext;
@@ -62,7 +66,9 @@ import java.util.stream.Stream;
  * {@code 200 application/json} while the host ticks and {@code 503} when it is stopped or absent (the
  * {@code --world off} case). The snapshot carries the dynamic data only; the static per-world blocks
  * (content catalogue, BUILD array, dimension roster, tilePixels) are asserted on the one-time
- * {@code /world/bootstrap} route instead, byte-stable across calls. The endpoint assertions go over a
+ * {@code /world/bootstrap} route instead, byte-stable across calls until a dimension is registered on
+ * the running world - at that point the host bumps {@code contentVersion}, drops the cache and the
+ * rebuilt document (and its ETag) change, which the route checks assert too. The endpoint assertions go over a
  * real socket, not a mocked dispatcher.
  *
  * <p>The JSON validator is deliberately hand written and tiny: this module has no test framework and no
@@ -1118,12 +1124,11 @@ public final class WorldHostCheck {
             String bootstrapBody = bootstrap.text();
             check.that(bootstrap.status() == 200
                             && "application/json; charset=utf-8".equals(bootstrap.header("content-type"))
-                            && bootstrap.header("cache-control") != null
-                                    && bootstrap.header("cache-control").contains("immutable")
+                            && "public, no-cache".equals(bootstrap.header("cache-control"))
                             && bootstrap.header("etag") != null
                             && bootstrapBody.startsWith("{") && bootstrapBody.endsWith("}"),
-                    "GET /world/bootstrap 返回 200，Content-Type 是 JSON、Cache-Control 带 immutable 并带"
-                            + " ETag，正文以 { 开头、以 } 结尾");
+                    "GET /world/bootstrap 返回 200，Content-Type 是 JSON、Cache-Control 是 public, no-cache"
+                            + "（ETag 协商缓存，不再声明 immutable）并带 ETag，正文以 { 开头、以 } 结尾");
             check.that(bootstrapBody.contains("\"tilePixels\":16")
                             && bootstrapBody.contains("\"dimensions\":[{\"key\":")
                             && bootstrapBody.contains("\"buildable\":[")
@@ -1144,6 +1149,42 @@ public final class WorldHostCheck {
             Response bootstrapPost = request(port, "POST", "/world/bootstrap");
             check.that(bootstrapPost.status() == 405 && "GET, HEAD".equals(bootstrapPost.header("allow")),
                     "POST /world/bootstrap 返回 405，说明只允许 GET 与 HEAD");
+
+            check.section("世界引导：维度可变，contentVersion 版本握手");
+            // Dimensions are mutable world state: a plugin hook may register one on a ticking world via
+            // World.addDimension. One combined check covers the whole version handshake - the engine
+            // publishes Events.DimensionAdded, the host bumps contentVersion and drops its cached
+            // bootstrap bytes, the rebuilt document carries the new roster and version, every snapshot
+            // repeats the version so a client can detect the change from its next poll, and the HTTP
+            // ETag changes so a revalidating browser gets a fresh 200 instead of a stale 304.
+            long versionBefore = host.contentVersion();
+            String etagBefore = bootstrap.header("etag");
+            host.submitCommand(running -> {
+                        running.engine().world().addDimension(
+                                DimensionId.of("moon"), DimensionProfile.moon(),
+                                new ChunkedMap(new FlatChunkGenerator(
+                                        running.engine().world().content().terrain("grass"))));
+                        return "OK";
+                    })
+                    .await();
+            Response refreshed = request(port, "GET", "/world/bootstrap");
+            String refreshedBody = refreshed.text();
+            Map<String, Object> refreshedDocument = MiniJson.parseObject(refreshedBody);
+            Map<String, Object> snapshotAfterAdd = MiniJson.parseObject(
+                    request(port, "GET", "/world/snapshot").text());
+            check.that(host.contentVersion() == versionBefore + 1
+                            && longField(refreshedDocument, "contentVersion") == versionBefore + 1
+                            && refreshedBody.contains("\"key\":\"moon\"")
+                            && longField(snapshotAfterAdd, "contentVersion") == versionBefore + 1
+                            && !refreshed.header("etag").equals(etagBefore),
+                    "向运行中的世界通过引擎 API 注册维度 moon 后：宿主 contentVersion 从 " + versionBefore
+                            + " 升到 " + host.contentVersion() + "，重建的引导文档带新花名册条目与新"
+                            + " contentVersion，快照顶层携带同一 contentVersion，ETag 已改变");
+            Response staleRevalidation = request(port, "GET", "/world/bootstrap",
+                    Map.of("If-None-Match", etagBefore));
+            check.that(staleRevalidation.status() == 200
+                            && staleRevalidation.header("etag").equals(refreshed.header("etag")),
+                    "携带旧 ETag 的重验证请求得到 200 而非 304（版本已变，缓存失效），新 ETag 与重建文档一致");
 
             host.stop();
             Response unavailable = request(port, "GET", "/world/snapshot");

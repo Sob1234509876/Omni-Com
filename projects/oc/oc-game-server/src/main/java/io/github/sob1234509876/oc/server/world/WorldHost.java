@@ -556,6 +556,21 @@ public final class WorldHost {
                 recentShots.subList(0, recentShots.size() - PROJECTILE_LIMIT).clear();
             }
         });
+        // The bootstrap document is cached, but dimensions are mutable world state: a plugin hook can
+        // register one on a world that is already ticking. The engine publishes Events.DimensionAdded at
+        // exactly that moment, so subscribing here is the reliable way to notice the roster change - no
+        // per-tick diffing of the dimension set. The subscription is installed after the builder has added
+        // the content's dimensions, so construction time registrations do not bump the version; only late
+        // additions do. The handler mutates the caches under the publisher's thread; on the legitimate
+        // path (a WorldTickHook or WorldCommand) that is the world thread holding stateLock, the same
+        // lock bootstrapJson() serialises under.
+        engine.world().events().subscribe(Events.DimensionAdded.class, event -> {
+            contentVersion++;
+            bootstrapJson = null;
+            contentCatalogueJson = null;
+            LOG.log(System.Logger.Level.INFO, "dimension " + event.dimension().key()
+                    + " registered at tick " + event.tick() + "; content version is now " + contentVersion);
+        });
         // Player 1 is the sample-scene / human anchor. Its faction anchor is the tile the whole scene was
         // laid out around, so a snapshot can report where the human side started without inventing one.
         this.player.setAnchor(spawnAnchor);
@@ -1758,6 +1773,12 @@ public final class WorldHost {
      * that fetched the catalogue from every snapshot must fetch the bootstrap document once instead;
      * the field shapes are unchanged.
      *
+     * <p><strong>The snapshot carries {@code contentVersion}.</strong> The top-level field repeats the
+     * static payload's current version (see {@link #contentVersion()}), so a client that cached the
+     * bootstrap document can detect a late dimension registration from the very next poll and refetch
+     * the bootstrap document once instead of polling a roster that has silently grown. The field is a
+     * few bytes per poll; a client that ignores it keeps working exactly as before.
+     *
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson() {
@@ -1838,21 +1859,53 @@ public final class WorldHost {
     /**
      * The cached JSON of the served content catalogue; built on first use under the state lock.
      *
-     * <p>The registry is immutable for the life of the host, so the document never changes and the
-     * bootstrap document after the first build reuses the same bytes.
+     * <p>The registry is immutable for the life of the host, so the item, building, unit and recipe
+     * blocks never change; the {@code dimensions} block mirrors the world's dimension set, which can
+     * grow, so the cache is dropped together with the bootstrap document when
+     * {@link Events.DimensionAdded} fires and the next build re-serialises the current roster.
      */
     private String contentCatalogueJson;
 
     /**
      * The cached JSON of the one-time bootstrap document; built on first use under the state lock.
      *
-     * <p>Everything the document carries is static for the life of the host - the catalogue, the
-     * BUILD catalogue and the dimension roster are all read from the immutable registry and the
-     * immutable dimension set - so the document is built exactly once and every later request is
-     * answered with the same characters. The snapshot deliberately carries none of it any more; see
+     * <p>Everything the document carries is static until a dimension is added: the catalogue, the
+     * BUILD catalogue and the dimension roster are read from the immutable registry and the world's
+     * dimension set, and the dimension set is the one thing that can grow while the host runs. When
+     * {@link Events.DimensionAdded} fires the field is dropped and the next request rebuilds the
+     * document from the current roster. The snapshot deliberately carries none of it; see
      * {@link #bootstrapJson()}.
      */
     private String bootstrapJson;
+
+    /**
+     * Version of the static per-world payload, starting at 1 and incremented every time a dimension is
+     * added to a running world.
+     *
+     * <p>This is the number that reconciles "the bootstrap document is cached" with "dimensions are
+     * mutable": the version is embedded in both the bootstrap document and every snapshot, the cached
+     * bootstrap bytes are dropped when it bumps, and the HTTP route keeps the {@code ETag} derived from
+     * the exact bytes served, so a revalidating client sees a changed ETag - and a changed document - the
+     * moment the roster grows. Written from the {@link Events.DimensionAdded} handler, read from JSON
+     * builders on the world thread; {@code volatile} so an HTTP thread that reads it between steps never
+     * sees a stale value.
+     */
+    private volatile long contentVersion = 1L;
+
+    /**
+     * The current version of the static per-world payload.
+     *
+     * <p>Starts at 1 and increments every time a dimension is registered on a world that is already
+     * running (see {@link #bootstrapJson()}). Clients compare this against the value they fetched with
+     * the bootstrap document; a mismatch means the dimension roster changed and the bootstrap document
+     * must be fetched again. This is a diagnostic read for checks and clients; the wire form is the
+     * {@code contentVersion} field of the two documents.
+     *
+     * @return the current content version, at least 1
+     */
+    public long contentVersion() {
+        return contentVersion;
+    }
 
     /**
      * Serialises the served catalogue as the bootstrap document's raw {@code content} object: the
@@ -1897,6 +1950,7 @@ public final class WorldHost {
      * <p>The shape is stable and compact:
      * <pre>{@code
      * {"tilePixels":16,
+     *  "contentVersion":1,
      *  "dimensions":[{"key":"overworld","name":"Earth"},{"key":"hell","name":"地狱"}],
      *  "buildable":["building.armory.t1","building.mine.t1","building.lumbercamp.t1",
      *               "building.warehouse","building.turret.t1","building.hell_gate"],
@@ -1906,7 +1960,8 @@ public final class WorldHost {
      * }</pre>
      *
      * <p>Each field is exactly what the snapshot used to re-emit per poll, unchanged in shape:
-     * {@code tilePixels} is the pixel size of one tile, {@code dimensions} is the roster the client
+     * {@code tilePixels} is the pixel size of one tile, {@code contentVersion} is the version of the
+     * static payload (see below), {@code dimensions} is the roster the client
      * renders as its dimension switcher (the same objects the snapshot's roster carried),
      * {@code buildable} is the top-level BUILD catalogue - the content paths a builder may place
      * directly with {@code BUILD <engineerId> <path> <x> <y>}, in the server's declared button order,
@@ -1915,13 +1970,18 @@ public final class WorldHost {
      * tiles, entities, players, projectiles, loadedChunks) stays in the snapshot; nothing dynamic is
      * duplicated here.
      *
-     * <p>The document is built once per host and then reused byte for byte: the catalogue is cached
-     * by {@link #contentCatalogueJson()}, the dimension roster comes from the engine's immutable
-     * dimension set and the BUILD catalogue from the immutable registry, so the build is deterministic
-     * and the cache cannot go stale. The served route is {@code GET /world/bootstrap}, which marks the
-     * answer immutable and answers a matching {@code If-None-Match} with {@code 304}; a client fetches
-     * it once per page load and falls back to its own static demo catalogue when the world is not
-     * running.
+     * <p>The document is built once and then reused byte for byte <em>until a dimension is added</em>:
+     * the catalogue is cached by {@link #contentCatalogueJson()}, the dimension roster comes from the
+     * world's dimension set and the BUILD catalogue from the immutable registry, so the build is
+     * deterministic and the cache cannot go stale - but dimensions are mutable world state, and a
+     * plugin hook may register one on a world that is already ticking. {@link Events.DimensionAdded}
+     * fires exactly then; the subscription installed in the constructor drops both caches and bumps
+     * {@link #contentVersion()}, so the next request rebuilds the document from the current roster and
+     * the embedded {@code contentVersion} tells clients their cached copy is outdated. The served route
+     * is {@code GET /world/bootstrap}, which answers a matching {@code If-None-Match} with {@code 304}
+     * and keeps the {@code ETag} over the exact bytes served - the ETag therefore changes with the
+     * version; a client fetches it once per page load and falls back to its own static demo catalogue
+     * when the world is not running.
      *
      * @return the bootstrap document as UTF-8 JSON text, never {@code null}
      */
@@ -1939,6 +1999,7 @@ public final class WorldHost {
         StringBuilder json = new StringBuilder(4096 + content.buildings().size() * 192
                 + content.units().size() * 128 + content.recipes().size() * 96);
         json.append("{\"tilePixels\":").append(TILE_PIXELS);
+        json.append(",\"contentVersion\":").append(contentVersion);
         json.append(",\"dimensions\":[");
         boolean first = true;
         for (Dimension dimension : dimensions()) {
@@ -2281,6 +2342,7 @@ public final class WorldHost {
         int capacity = 96 + size * size * 8 + entities.size() * 320 + 4096;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
+                .append(",\"contentVersion\":").append(contentVersion)
                 .append(",\"originX\":").append(originX)
                 .append(",\"originY\":").append(originY)
                 .append(",\"width\":").append(size)

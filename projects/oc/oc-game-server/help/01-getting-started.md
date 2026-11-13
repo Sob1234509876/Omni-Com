@@ -4,7 +4,7 @@
 
 ## 这一篇讲什么
 
-- 怎么构建、怎么跑自校验，以及 825 条断言分别落在哪十二组。
+- 怎么构建、怎么跑自校验，以及 827 条断言分别落在哪十二组。
 - 启动器的全部命令行选项、默认值，以及解析器的脾气。
 - 插件目录、数据目录与浏览器静态根的默认位置，谁往里写什么。
 - 一次启动打印什么、一次关闭按什么顺序发生。
@@ -31,11 +31,11 @@
 两个任务的末尾各打印一行结论：
 
 ```text
-game server self check: all 825 checks passed.
+game server self check: all 827 checks passed.
 debug plugin self check: all 85 checks passed.
 ```
 
-825 条来自 `ServerCheck` 依次调用的十二个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 166 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率、逐任务 `queueItems`、`storage` / `inbound` 仓库字段）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 100 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象，以及 `TRANSFER` 的语法、所有权、回答文本、`all` 数量与“没有空闲工程师”的拒绝）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）、`BotsOptionCheck` 20 条（`--bots` 解析、插件选项缝，以及真实插件 jar 在 `onLoad` 里读到 `bots=3`）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
+827 条来自 `ServerCheck` 依次调用的十二个检查类：`AuthCheck` 65 条（账号、本地存储、转义、并发、PBKDF2 参数）、`NetworkCheck` 57 条（真实回环 socket 上的握手、命令、并发、异构客户端）、`PluginCheck` 76 条（运行时生成真 jar 并加载）、`RequestCheck` 43 条（`REQ` 的鉴权、透明转发与失败处理）、`WebSocketCheck` 88 条（真实 socket 上的升级、版本握手、帧规则、来源规则、可配置空闲超时与服务端心跳）、`HttpCheck` 47 条（静态文件、穿越、缓存、缺失的静态根）、`PluginAssetsCheck` 80 条（真实插件 jar 上的清单合并与资源路由）、`WorldHostCheck` 168 条（daemon tick 线程、无界 `InfiniteTerrainMap` 与 4096 区块预算、从 `(0,0)` 起 64 格内的出生锚点、带 `cx` / `cy` / `r` 的窗口快照（含远中心与负原点）、无地图边缘的启动、种子确定性、`/world/snapshot` 的 200/503/405，以及收入速率、逐任务 `queueItems`、`storage` / `inbound` 仓库字段）、`WorldTickHookCheck` 23 条（插件 tick 钩子的契约与顺序）、`PlayerCommandCheck` 100 条（`WHOAMI`、账号身份、世界线程命令队列、移动命令、所有权、建造成本、生产等级门槛、建造可达、`UPGRADE` 的所有权/成本规则与快照 `upgrade` 对象，以及 `TRANSFER` 的语法、所有权、回答文本、`all` 数量与“没有空闲工程师”的拒绝）、`JoinBaseCheck` 60 条（加入世界时的仓库、工程师与开局资源，以及重连后原样保留）、`BotsOptionCheck` 20 条（`--bots` 解析、插件选项缝，以及真实插件 jar 在 `onLoad` 里读到 `bots=3`）。85 条来自 `DebugPluginCheck` 的四节：信封 15 条、密钥文件与 `engine-info` 报告 37 条、请求注册表 14 条、真实 socket 端到端 19 条。
 
 ## 启动服务器
 

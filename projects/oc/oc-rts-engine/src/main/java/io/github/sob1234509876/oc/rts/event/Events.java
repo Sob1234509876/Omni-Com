@@ -119,6 +119,19 @@ public final class Events {
         }
     }
 
+    /**
+     * A dimension was registered on a world by {@link io.github.sob1234509876.oc.rts.World#addDimension}.
+     *
+     * <p>Dimensions are mutable world state: a plugin tick hook may legitimately add one to a world that is
+     * already ticking (the chunk streamer picks it up from the next tick on). This is the fact subscribers
+     * such as a server side world host need to notice that the static dimension roster just changed - the
+     * event carries the id of the dimension and the tick at which it was registered. The engine builder's
+     * own construction time registrations publish the event too, so a subscriber that only cares about
+     * <em>late</em> additions must subscribe before the builder runs or filter by its own bookkeeping.
+     */
+    public record DimensionAdded(DimensionId dimension, long tick) {
+    }
+
     /** A chunk of a dimension was generated or loaded into memory. */
     public record ChunkLoaded(DimensionId dimension, ChunkPos pos, long tick) {
     }
