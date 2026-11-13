@@ -16,7 +16,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (808 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (843 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
@@ -628,6 +628,9 @@ src/main/java/io/github/sob1234509876/oc/googology/
     bms/NonRecursiveBms.java      the non-recursive variant: first column of ones, (1) successor, expansion
     bms/NonRecursiveExpansion.java  the infinite-column description of the non-recursive expansion
     bms/package-info.java         BMS package documentation
+    calc/Calc.java                the debugging calculator's REPL (Gradle task `calc`)
+    calc/CalcEngine.java          its pure command engine: one line in, one answer out, never a throw
+    calc/package-info.java        calc package documentation
     abstractordinal/AbstractOrdinal.java      the register of names above the BMS limit, with declared ranks
     abstractordinal/LadderOrdinal.java        the value side: BMS, f(alpha), NRBMS/TNRBMS, omega_alpha, the named boundaries
     abstractordinal/LadderArgument.java       the argument side: BMS, NRBMS and the six shared boundary names; never built from a value
@@ -648,13 +651,40 @@ help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
 help/inaccessible-extension.md    the Chinese guide to the stage-five inaccessible extension
-src/selfcheck/java/.../check/GoogologyCheck.java    the 808 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 843 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)
 src/selfcheck/java/.../check/CardinalRegisterCheck.java  its cardinal-register section (sections 32-36)
 src/selfcheck/java/.../check/InaccessibleCheck.java  its inaccessible-extension section (sections 37-43)
 ```
+
+## The debugging calculator
+
+For the owner's own debugging there is a REPL over the whole layer, started instantly with
+
+```
+./gradlew :projects:oc:oc-googology:calc --console=plain -q
+```
+
+It reads commands from stdin one line at a time (piping works for scripted use:
+`echo "2^10+5" | ./gradlew :projects:oc:oc-googology:calc --console=plain -q`), command arguments run as
+one-shot queries, and `quit` or the end of input exits. The grammar is forgiving and the loop never
+crashes - bad input comes back as an error line.
+
+- natural expressions: `+ - * / mod` at the usual precedence, `^ ^^ ↑ ↑↑ ...` right associative on top,
+  atoms per `Natural.parse` (`1e100`, `beyond`);
+- `cmp a b` - the total order, the four-valued proof (or `UNKNOWN`) and the lean;
+- `log base x`, `slog base x`, `root d x`, `hyperinv arrows base x` - the level-resolved inverses;
+- `hyp base level height` - `base{level}height` through `TransfiniteHyperoperation`, the level written as
+  a Bashicu matrix (`(0)(1)` is `ω`) or a plain number for a finite level;
+- `rank x` - the hyperoperation rank and the level reduced at the tower's own height;
+- `ord matrix`, `ordcmp a b`, `ordseq matrix [n]` - ordinal reading, comparison and fundamental sequences
+  in the `ω[m] = m+1` convention;
+- `format plain|ascii|latex` - the output rendering, `help` lists everything.
+
+The engine behind the loop (`calc/CalcEngine.java`) is a pure function from line to answer, which is what
+section 45 of the self check drives.
 
 ## Related
 

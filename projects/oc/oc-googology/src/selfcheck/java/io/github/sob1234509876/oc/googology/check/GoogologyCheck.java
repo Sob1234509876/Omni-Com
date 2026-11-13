@@ -8,6 +8,7 @@ import io.github.sob1234509876.oc.googology.Ordinal;
 import io.github.sob1234509876.oc.googology.OrdinalNotation;
 import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
 import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
+import io.github.sob1234509876.oc.googology.calc.CalcEngine;
 
 import java.math.BigInteger;
 import java.util.*;
@@ -264,6 +265,7 @@ public final class GoogologyCheck {
         passed += inaccessible.passed();
         FAILURES.addAll(inaccessible.failures());
         equivalenceBattery();
+        calculator();
 
         summary();
     }
@@ -1166,6 +1168,79 @@ public final class GoogologyCheck {
                         && bms.finite(Natural.of(1025)).finiteValue().orElseThrow().equals(Natural.of(1025)));
         check("一般矩阵的 ω^ 幂不可推导：ω^(ω·2) 抛 UnsupportedOperationException",
                 throwsUnsupported(() -> bms.omegaPower(bms.omega().times(2))));
+    }
+
+    // ------------------------------------------------------------------ 45) the debugging calculator
+
+    /**
+     * The debugging calculator's pure command engine: one method, one line in, one answer out, never a
+     * throw. The values the commands produce are already pinned by the sections above; what is checked
+     * here is the forgiving grammar, the precedence, the error paths and the ordinal side.
+     */
+    private static void calculator() {
+        section("45) 调试计算器：CalcEngine 的纯命令求值");
+        CalcEngine engine = new CalcEngine();
+
+        equal("表达式：2^10", Natural.of(1024), engine.evalNatural("2^10"));
+        equal("表达式：2 ^ 3 ^ 2 右结合（2^(3^2) = 512）", Natural.of(512), engine.evalNatural("2 ^ 3 ^ 2"));
+        equal("表达式：10 ^^ 10 是四则幂塔", Natural.arrow(Natural.TEN, 2, Natural.TEN),
+                engine.evalNatural("10 ^^ 10"));
+        equal("表达式：2^10+8 的优先级", Natural.of(1032), engine.evalNatural("2^10+8"));
+        equal("表达式：100 / 7 与 100 mod 7", Natural.of(14), engine.evalNatural("100 / 7"));
+        equal("mod 的余数", Natural.of(2), engine.evalNatural("100 mod 7"));
+        equal("表达式：1e100", Natural.power(Natural.TEN, Natural.of(100)), engine.evalNatural("1e100"));
+        check("表达式：结构形上的近似减一保持原值", engine.evalNatural("10^^10 - 1")
+                .equals(Natural.arrow(Natural.TEN, 2, Natural.TEN)));
+        check("表达式：beyond 吸收加法", engine.evalNatural("beyond + 1").isBeyond());
+
+        check("空行没有输出", engine.execute("").isEmpty() && engine.execute("   ").isEmpty());
+        check("坏输入给错误信息而不是异常：无法解析的记号",
+                engine.execute("2 + * bad").startsWith("错误："));
+        check("坏输入给错误信息而不是异常：cmp 缺参数", engine.execute("cmp 5").startsWith("错误："));
+        check("坏输入给错误信息而不是异常：非法格式", engine.execute("format pink").startsWith("错误："));
+        check("坏输入给错误信息而不是异常：非矩阵序数", engine.execute("ord (1)(2)").startsWith("错误："));
+        check("quit 是约定的退出信号", engine.execute("quit").equals("quit"));
+
+        String comparison = engine.execute("cmp 5 5");
+        check("cmp：相等的两值给 EQUAL 证明", comparison.contains("EQUAL") && comparison.contains("四值证明"));
+        check("cmp：2^^4 = 65536 < 2^65536 = 10^19728（崩塌律在计算器里同样成立）",
+                engine.execute("cmp 2^^4 2^65536").contains("LESS"));
+        check("cmp：2^^6 > 2^65536 由 10 底对数距离判开",
+                engine.execute("cmp 2^^6 2^65536").contains("GREATER"));
+        check("cmp：10^^10 > 10^100000（递归下降证明）",
+                engine.execute("cmp 10^^10 10^100000").contains("GREATER"));
+
+        check("log_10(10^1233) = 1233", engine.execute("log 10 10^1233").contains("1233"));
+        check("slog_10(10^^10) = 10", engine.execute("slog 10 10^^10").contains("10"));
+        check("(10^4000)^(1/3) = 10^1333（结构形开方按指数相除）",
+                engine.execute("root 3 10^4000").contains("10^1333"));
+        check("精确值的根算成精确数字：(10^99)^(1/3) 是 33 位的一",
+                engine.execute("root 3 10^99").contains("100000000000000000000000000000000"));
+        check("hyperInverse(2, 3) 对 65536 给 3", engine.execute("hyperinv 3 2 65536").contains("3"));
+
+        String hyp = engine.execute("hyp 2 (0)(1) 3");
+        check("hyp：2{ω}3 = 16，级别显示为 ω", hyp.contains("16") && hyp.contains("级别：ω"));
+        check("hyp：10{ω}10 折叠成 9 个箭头",
+                engine.execute("hyp 10 (0)(1) 10").contains("10^^^^^^^^^10"));
+        check("hyp：2{ε₀}2 被退化规则判为 4", engine.execute("hyp 2 (0)(1,1) 2").contains("4"));
+        check("hyp：级别矩阵不可解析时给错误信息", engine.execute("hyp 2 x 3").startsWith("错误："));
+        check("rank：9 箭头塔的经典级别是 11", engine.execute("rank 10^^^^^^^^^10").contains("11"));
+
+        String ordinal = engine.execute("ord (0)(1)(2)");
+        check("ord：矩阵文本与序数名一起给出", ordinal.contains("(0)(1)(2)") && ordinal.contains("ω^ω"));
+        check("ordcmp：ω < ω²", engine.execute("ordcmp (0)(1) (0)(1)(1)").contains("<"));
+        String sequence = engine.execute("ordseq (0)(1) 3");
+        check("ordseq：ω 的基本列按 ω[m]=m+1 给 1、2、3",
+                sequence.contains("[0] 1") && sequence.contains("[1] 2") && sequence.contains("[2] 3"));
+        check("ordseq：ε₀ 的基本列错开一位（ε₀[0] = 1、ε₀[2] = ω^ω）",
+                engine.execute("ordseq (0)(1,1) 4").contains("ω^ω^ω"));
+
+        check("format latex 切换后，幂用 LaTeX 上标输出",
+                engine.execute("format latex").contains("latex")
+                        && engine.execute("10^5000").contains("10^{5000}"));
+        check("format plain 切回 toString（上箭头原样）",
+                engine.execute("format plain").contains("plain")
+                        && engine.execute("10^5000").contains("10↑5000"));
     }
 
     private static boolean strictlyIncreasing(List<Ordinal> values) {

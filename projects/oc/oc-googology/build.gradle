@@ -55,3 +55,13 @@ tasks.register('selfcheck', JavaExec) {
     classpath = sourceSets.selfCheck.runtimeClasspath
     mainClass = 'io.github.sob1234509876.oc.googology.check.GoogologyCheck'
 }
+
+// The owner's debugging calculator: an interactive REPL over the googology layer. stdin is inherited, so
+// piping a command in works for scripted use; ./gradlew :projects:oc:oc-googology:calc starts it.
+tasks.register('calc', JavaExec) {
+    group = 'verification'
+    description = 'Starts the interactive big-number calculator REPL.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.googology.calc.Calc'
+    standardInput = System.in
+}
