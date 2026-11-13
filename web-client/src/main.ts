@@ -135,6 +135,12 @@ import {
   registerCatalogueNames,
 } from "./content";
 import {
+  fetchWorldBootstrap,
+  getWorldBootstrap,
+  setWorldBootstrap,
+  withBootstrapData,
+} from "./bootstrap";
+import {
   transferAnswerLabel,
   transferFormModel,
   transferTargetLabel,
@@ -1365,6 +1371,9 @@ async function applyLoginSuccess(user: string, answer: string): Promise<void> {
   updateHud(true);
   setStatus(t("auth.loginOk", { detail: answer.slice(2).trim() }), "ok");
   await fetchWhoAmI();
+  // A successful login is a world join: fetch the static per-world data once (re-joins re-fetch it),
+  // in parallel with the snapshot flow. A failure is retried at the next join, not per poll.
+  void ensureWorldBootstrap();
 }
 
 async function doLogin(): Promise<void> {
@@ -4925,6 +4934,43 @@ function emitSnapshotEvents(previous: WorldView, current: WorldView): void {
   }
 }
 
+/** One bootstrap fetch at a time; a join event racing an in-flight fetch is a no-op. */
+let bootstrapFetchInFlight = false;
+
+/**
+ * Fetches the server's static per-world data once and stores it in the session bootstrap holder.
+ *
+ * Fired at the world-join lifecycle moments — every successful `LOGIN` answer (including the
+ * automatic one) and every demo-to-server takeover of the view — so a re-join or a server restart
+ * re-pulls the payload, while the 500 ms snapshot poll never does. A failure (offline demo world, an
+ * old server without the endpoint, a transient 503) logs once and is retried at the next join event,
+ * not per poll; the stored payload from a previous join stays in place, and snapshots keep their
+ * own-field fallback until the next success.
+ */
+async function ensureWorldBootstrap(): Promise<void> {
+  if (bootstrapFetchInFlight) {
+    return;
+  }
+  bootstrapFetchInFlight = true;
+  try {
+    const data = await fetchWorldBootstrap("");
+    if (data === null) {
+      log("info", t("log.bootstrapFail"));
+      return;
+    }
+    setWorldBootstrap(data);
+    // Register the names immediately so display labels resolve even before the next snapshot merges
+    // the catalogue into the view (the registration also re-runs on every snapshot that follows).
+    registerCatalogueNames(data.content);
+    log("info", t("log.bootstrapOk"));
+    // Pull one snapshot now so the BUILD rail and the dimension switcher fill immediately instead of
+    // waiting up to 500 ms; the poll skips itself while another request is still in flight.
+    void pollWorldSnapshot();
+  } finally {
+    bootstrapFetchInFlight = false;
+  }
+}
+
 /**
  * Adopts one valid snapshot.
  *
@@ -4932,7 +4978,12 @@ function emitSnapshotEvents(previous: WorldView, current: WorldView): void {
  * different window swaps the whole terrain, so it is adopted as received; interpolation resumes when
  * the next refresh of that same window arrives.
  */
-function applySnapshot(snapshot: ServerWorldView): void {
+function applySnapshot(rawSnapshot: ServerWorldView): void {
+  // Static per-world data (content catalogue, buildable array, dimension roster) rides the one-time
+  // bootstrap fetch instead of every snapshot. A snapshot field that is still present (old server)
+  // wins as before; a snapshot without it is topped up from the session bootstrap holder. No holder
+  // (demo world, old server, failed fetch) changes nothing, so degradation matches today exactly.
+  const snapshot = withBootstrapData(rawSnapshot, getWorldBootstrap());
   // The server echoes the drawn dimension back; adopting it keeps the view state and the fetch
   // parameter in step even when the first snapshot arrived without an explicit dim.
   if (snapshot.dimension !== undefined && snapshot.dimension !== viewDimension) {
@@ -4944,6 +4995,11 @@ function applySnapshot(snapshot: ServerWorldView): void {
   registerCatalogueNames(snapshot.content);
   refreshDimensionButtons(snapshot);
   const wasDemo = worldSource === "demo";
+  if (wasDemo) {
+    // Joining the server world: the static per-world data is fetched here once (and again on every
+    // re-join), not per poll. A failed fetch is retried at the next join event, never per snapshot.
+    void ensureWorldBootstrap();
+  }
   const previous = currentFrame;
   // Events compare the two consecutive received snapshots before either frame is replaced. On the
   // very first snapshot there is nothing to compare against, so nothing is derived.

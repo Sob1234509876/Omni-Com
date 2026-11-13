@@ -54,13 +54,16 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Self check for the server side world and its HTTP snapshot route.
+ * Self check for the server side world and its HTTP snapshot and bootstrap routes.
  *
  * <p>The check covers the whole chain a browser depends on: the host builds and starts, its tick counter
  * advances on the daemon thread, its JSON document is well formed and complete, the same seed reproduces
  * the same world, a different seed does not, and a real {@link HttpWebServer} on loopback answers
  * {@code 200 application/json} while the host ticks and {@code 503} when it is stopped or absent (the
- * {@code --world off} case). The endpoint assertions go over a real socket, not a mocked dispatcher.
+ * {@code --world off} case). The snapshot carries the dynamic data only; the static per-world blocks
+ * (content catalogue, BUILD array, dimension roster, tilePixels) are asserted on the one-time
+ * {@code /world/bootstrap} route instead, byte-stable across calls. The endpoint assertions go over a
+ * real socket, not a mocked dispatcher.
  *
  * <p>The JSON validator is deliberately hand written and tiny: this module has no test framework and no
  * JSON library, and a snapshot is a small, known document. It rejects unbalanced braces, unterminated
@@ -1110,10 +1113,48 @@ public final class WorldHostCheck {
                     "超范围半径的 HTTP 请求仍返回 200，超大半径被夹到 64（窗口 128），原点请求的 origin 是 -64 "
                             + "（只夹半径、不夹地图），夹紧后的窗口恰好有 16384 个条目");
 
+            check.section("世界引导路由：一次性静态数据，快照不再逐轮重复");
+            Response bootstrap = request(port, "GET", "/world/bootstrap");
+            String bootstrapBody = bootstrap.text();
+            check.that(bootstrap.status() == 200
+                            && "application/json; charset=utf-8".equals(bootstrap.header("content-type"))
+                            && bootstrap.header("cache-control") != null
+                                    && bootstrap.header("cache-control").contains("immutable")
+                            && bootstrap.header("etag") != null
+                            && bootstrapBody.startsWith("{") && bootstrapBody.endsWith("}"),
+                    "GET /world/bootstrap 返回 200，Content-Type 是 JSON、Cache-Control 带 immutable 并带"
+                            + " ETag，正文以 { 开头、以 } 结尾");
+            check.that(bootstrapBody.contains("\"tilePixels\":16")
+                            && bootstrapBody.contains("\"dimensions\":[{\"key\":")
+                            && bootstrapBody.contains("\"buildable\":[")
+                            && bootstrapBody.contains("\"content\":{\"dimensions\":{")
+                            && bootstrapBody.contains("\"buildings\":{")
+                            && bootstrapBody.contains("\"recipes\":{"),
+                    "引导文档带 tilePixels、dimensions 花名册、buildable 数组与完整 content 目录"
+                            + "（维度、建筑、单位、配方）");
+            check.equal(host.bootstrapJson(), bootstrapBody, "路由返回的正是宿主缓存的引导文档字节");
+            Response bootstrapAgain = request(port, "GET", "/world/bootstrap");
+            check.that(bootstrapAgain.text().equals(bootstrapBody)
+                            && bootstrapAgain.header("etag").equals(bootstrap.header("etag")),
+                    "两次 GET /world/bootstrap 逐字节相同且 ETag 相同（静态文档只构建一次）");
+            Response conditional = request(port, "GET", "/world/bootstrap",
+                    Map.of("If-None-Match", bootstrap.header("etag")));
+            check.that(conditional.status() == 304 && conditional.body().length == 0,
+                    "带匹配 If-None-Match 的引导请求得到 304（缓存仍有效，不再发送正文）");
+            Response bootstrapPost = request(port, "POST", "/world/bootstrap");
+            check.that(bootstrapPost.status() == 405 && "GET, HEAD".equals(bootstrapPost.header("allow")),
+                    "POST /world/bootstrap 返回 405，说明只允许 GET 与 HEAD");
+
             host.stop();
             Response unavailable = request(port, "GET", "/world/snapshot");
             check.that(unavailable.status() == 503 && unavailable.text().contains("world is not running"),
                     "世界停止后 GET /world/snapshot 返回 503，正文说明世界没有运行: " + unavailable.text());
+
+            Response bootstrapDown = request(port, "GET", "/world/bootstrap");
+            check.that(bootstrapDown.status() == 503
+                            && bootstrapDown.text().contains("world is not running"),
+                    "世界停止后 GET /world/bootstrap 同样返回 503，正文说明世界没有运行: "
+                            + bootstrapDown.text());
 
             Response post = request(port, "POST", "/world/snapshot");
             check.that(post.status() == 405 && "GET, HEAD".equals(post.header("allow")),
@@ -1133,6 +1174,8 @@ public final class WorldHostCheck {
             check.equal(503, off.status(), "--world off 时 GET /world/snapshot 返回 503");
             check.that(off.header("content-type").startsWith("text/plain"),
                     "--world off 的 503 是短文本");
+            Response bootstrapOff = request(noWorld.port(), "GET", "/world/bootstrap");
+            check.equal(503, bootstrapOff.status(), "--world off 时 GET /world/bootstrap 也返回 503");
         } finally {
             noWorld.stop();
         }
@@ -1208,11 +1251,15 @@ public final class WorldHostCheck {
             check.that(false, label + "：可由手写解析器读取（" + failure.getMessage() + "）");
             return;
         }
-        check.that(List.of("tick", "originX", "originY", "width", "height", "tilePixels", "tiles",
+        check.that(List.of("tick", "originX", "originY", "width", "height", "tiles",
                         "entities", "players").stream().allMatch(document::containsKey)
                         && !document.containsKey("mapWidth") && !document.containsKey("mapHeight")
-                        && !document.containsKey("mapSize"),
-                label + "：包含全部顶层字段且没有地图宽高字段（世界无界，originX/originY 可以是负数或很大）");
+                        && !document.containsKey("mapSize")
+                        && !document.containsKey("tilePixels") && !document.containsKey("content")
+                        && !document.containsKey("buildable") && !document.containsKey("dimensions"),
+                label + "：包含全部顶层字段且没有地图宽高字段（世界无界，originX/originY 可以是负数或很大）；"
+                        + "静态的 tilePixels/content/buildable/dimensions 已移到 /world/bootstrap 引导文档，"
+                        + "快照不再逐轮重复（每次轮询只序列化动态数据）");
         long tick = number(document, "tick");
         int originX = (int) number(document, "originX");
         int originY = (int) number(document, "originY");
@@ -1445,16 +1492,25 @@ public final class WorldHostCheck {
     // ---------------------------------------------------------------------------------------------
 
     private static Response request(int port, String method, String target) throws IOException {
+        return request(port, method, target, Map.of());
+    }
+
+    /** Sends one request with extra headers (for example a conditional {@code If-None-Match}). */
+    private static Response request(int port, String method, String target,
+            Map<String, String> extraHeaders) throws IOException {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 5_000);
             socket.setSoTimeout(5_000);
             socket.setTcpNoDelay(true);
-            String head = method + " " + target + " HTTP/1.1\r\n"
+            StringBuilder head = new StringBuilder(method + " " + target + " HTTP/1.1\r\n"
                     + "Host: 127.0.0.1\r\n"
-                    + "Connection: close\r\n"
-                    + "\r\n";
+                    + "Connection: close\r\n");
+            for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
+                head.append(header.getKey()).append(": ").append(header.getValue()).append("\r\n");
+            }
+            head.append("\r\n");
             OutputStream out = socket.getOutputStream();
-            out.write(head.getBytes(StandardCharsets.US_ASCII));
+            out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
             out.flush();
             InputStream in = socket.getInputStream();
             String statusLine = readLine(in);

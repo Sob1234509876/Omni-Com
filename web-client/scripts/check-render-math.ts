@@ -249,6 +249,7 @@ import {
   initI18n,
   registerServerKeyValues,
   resolveLanguage,
+  serverKeyValues,
   t,
 } from "../src/i18n.ts";
 import {
@@ -258,6 +259,15 @@ import {
   producerDeficit,
   registerCatalogueNames,
 } from "../src/content.ts";
+import {
+  WORLD_BOOTSTRAP_PATH,
+  bootstrapUrl,
+  clearWorldBootstrap,
+  getWorldBootstrap,
+  parseWorldBootstrap,
+  setWorldBootstrap,
+  withBootstrapData,
+} from "../src/bootstrap.ts";
 import { ATTACK_PATH_COLOR } from "../src/render/paths.ts";
 import {
   RASTER_BUCKET_MAX_PX,
@@ -7097,6 +7107,132 @@ check(
         formatDeficit(inputDeficit, (path) => path) === "gold 15 · ore 5"
       );
     })(),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Bootstrap fetch-once (static per-world data): parse → session store → snapshot merge → consumers
+// ---------------------------------------------------------------------------------------------
+
+const bootstrapPayload = {
+  tilePixels: 32,
+  buildable: ["building.mine.t1", "  ", "building.hell_gate", 42],
+  dimensions: [{ key: "overworld", name: "主世界" }, { key: "", name: "x" }, { key: "hell", name: "地狱" }],
+  content: {
+    dimensions: { overworld: "主世界", hell: "地狱" },
+    buildings: { "building.mine.t1": { name: "矿井", cost: { gold: 50, wood: 10 }, size: [3, 3] } },
+    units: { "unit.melee.t1": { name: "普通", cost: { gold: 30, wood: 0 } } },
+  },
+};
+
+check(
+  "bootstrap 一次性数据接入：防御解析 → 会话存储 → 快照补齐 content/buildable/dimensions；老服务器快照自带字段优先；deficit 数学照常走目录",
+  (() => {
+    const parsed = parseWorldBootstrap(bootstrapPayload);
+    const stored =
+      parsed !== undefined &&
+      parsed.tilePixels === 32 &&
+      parsed.buildable?.join(",") === "building.mine.t1,building.hell_gate" &&
+      parsed.dimensions?.length === 2 &&
+      parsed.content?.buildings.get("building.mine.t1")?.cost?.gold === 50;
+    if (!stored) {
+      return false;
+    }
+    setWorldBootstrap(parsed);
+    const roundTripped = getWorldBootstrap() === parsed;
+    const snap = worldViewFromSnapshot({
+      tick: 1,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+    });
+    if (snap === null) {
+      return false;
+    }
+    // A snapshot without the three fields (new server) is topped up from the store.
+    const merged = withBootstrapData(snap, getWorldBootstrap());
+    const toppedUp =
+      merged.buildable?.join(",") === "building.mine.t1,building.hell_gate" &&
+      merged.dimensions?.length === 2 &&
+      merged.dimensions?.[0]?.key === "overworld" &&
+      merged.dimensions?.[1]?.name === "地狱" &&
+      merged.content?.buildings.get("building.mine.t1")?.cost?.wood === 10 &&
+      merged.tick === 1;
+    // The deficit math keeps reading the same catalogue fields, whatever delivered them.
+    const deficit = constructionDeficit(merged.content, {
+      kind: "building.mine.t1",
+      progress: 0.5,
+    });
+    // An old server still ships the fields per snapshot: they win over the bootstrap store.
+    const oldSnap = worldViewFromSnapshot({
+      tick: 2,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+      buildable: ["building.warehouse"],
+      dimensions: [{ key: "overworld", name: "老名单" }],
+      content: {
+        buildings: { "building.mine.t1": { cost: { gold: 99, wood: 99 } } },
+      },
+    });
+    const oldServerKept =
+      oldSnap !== null &&
+      withBootstrapData(oldSnap, getWorldBootstrap()) === oldSnap &&
+      oldSnap.buildable?.join(",") === "building.warehouse" &&
+      oldSnap.dimensions?.[0]?.name === "老名单" &&
+      oldSnap.content?.buildings.get("building.mine.t1")?.cost?.gold === 99;
+    // The registry wiring: bootstrap names land in the i18n server namespace, then the fixture
+    // catalogue is re-registered so the checks above keep their expected registry state.
+    registerCatalogueNames(parsed.content);
+    const registered =
+      serverKeyValues().get("dim.hell") === "地狱" &&
+      serverKeyValues().get("content.building.mine.t1") === "矿井";
+    registerCatalogueNames(contentCatalogue);
+    return stored && roundTripped && toppedUp && deficit !== undefined && oldServerKept && registered;
+  })(),
+);
+
+check(
+  "bootstrap 缺席时行为不变：空存储返回同一快照对象、字段保持 undefined；部分 bootstrap 只补缺失字段；URL 与坏文档拒绝",
+  (() => {
+    const snap = worldViewFromSnapshot({
+      tick: 3,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [],
+    });
+    if (snap === null) {
+      return false;
+    }
+    const noStore = withBootstrapData(snap, undefined) === snap;
+    const partial = parseWorldBootstrap({ buildable: ["building.warehouse"] });
+    const partiallyTopped =
+      partial !== undefined &&
+      (() => {
+        const merged = withBootstrapData(snap, partial);
+        return (
+          merged.buildable?.join(",") === "building.warehouse" &&
+          merged.dimensions === undefined &&
+          merged.content === undefined
+        );
+      })();
+    clearWorldBootstrap();
+    const cleared = getWorldBootstrap() === undefined;
+    return (
+      noStore &&
+      partiallyTopped &&
+      cleared &&
+      WORLD_BOOTSTRAP_PATH === "/world/bootstrap" &&
+      bootstrapUrl() === "/world/bootstrap" &&
+      bootstrapUrl("http://127.0.0.1:25567/") === "http://127.0.0.1:25567/world/bootstrap" &&
+      parseWorldBootstrap(null) === undefined &&
+      parseWorldBootstrap([]) === undefined &&
+      parseWorldBootstrap({}) === undefined &&
+      parseWorldBootstrap({ buildable: ["  ", 42] }) === undefined
+    );
+  })(),
 );
 
 check(

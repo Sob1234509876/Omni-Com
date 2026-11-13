@@ -1586,7 +1586,7 @@ public final class WorldHost {
      *
      * <p>The shape is intentionally small and stable:
      * <pre>{@code
-     * {"tick":42,"originX":-40,"originY":-40,"width":80,"height":80,"tilePixels":16,
+     * {"tick":42,"originX":-40,"originY":-40,"width":80,"height":80,
      *  "tiles":[["grass","grass", ...], ...],
      *  "entities":[{"id":1,"kind":"worker","x":-3.5,"y":4.5,"player":1,"health":1.0,
      *               "w":1,"h":1,"progress":1.00,"queue":0},
@@ -1749,6 +1749,15 @@ public final class WorldHost {
      * rather than cached, because a cached document could disagree with the tick the browser reports in its
      * HUD.
      *
+     * <p><strong>What the snapshot no longer carries.</strong> The static per-world blocks the snapshot
+     * used to re-emit per poll - the raw {@code content} catalogue, the top-level {@code buildable}
+     * BUILD array, the {@code dimensions} roster and {@code tilePixels} - moved to the one-time
+     * {@link #bootstrapJson()} document served at {@code GET /world/bootstrap}, so a poll now serialises
+     * dynamic data only. {@code dimensionName} stayed: it is static per dimension but a few bytes, and
+     * keeping it lets the drawn dimension's display name travel with the window it describes. Clients
+     * that fetched the catalogue from every snapshot must fetch the bootstrap document once instead;
+     * the field shapes are unchanged.
+     *
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson() {
@@ -1784,9 +1793,9 @@ public final class WorldHost {
     /**
      * The snapshot of one dimension: the terrain, the streamed chunks and the entities all belong to that
      * dimension, so two units standing on the same coordinates in different worlds never bleed into each
-     * other's documents. The document additionally carries {@code dimension}, {@code dimensionName}, the
-     * {@code dimensions} roster and the dimension's {@code loadedChunks}, which a client turns into the
-     * shadow over the tiles the streamer has not loaded yet.
+     * other's documents. The document additionally carries {@code dimension}, {@code dimensionName} and
+     * the dimension's {@code loadedChunks}, which a client turns into the shadow over the tiles the
+     * streamer has not loaded yet.
      *
      * @param dimension the dimension to draw; it has to be one of {@link #dimensions()}
      * @param centreX   window centre tile x, unbounded
@@ -1829,15 +1838,26 @@ public final class WorldHost {
     /**
      * The cached JSON of the served content catalogue; built on first use under the state lock.
      *
-     * <p>The registry is immutable for the life of the host, so the document never changes and every
-     * snapshot after the first reuses the same bytes.
+     * <p>The registry is immutable for the life of the host, so the document never changes and the
+     * bootstrap document after the first build reuses the same bytes.
      */
     private String contentCatalogueJson;
 
     /**
-     * Serialises the served catalogue as the snapshot's raw {@code content} object: the display names,
-     * costs, footprints and times a client needs to compute HUD values itself, plus every recipe's
-     * inputs and outputs.
+     * The cached JSON of the one-time bootstrap document; built on first use under the state lock.
+     *
+     * <p>Everything the document carries is static for the life of the host - the catalogue, the
+     * BUILD catalogue and the dimension roster are all read from the immutable registry and the
+     * immutable dimension set - so the document is built exactly once and every later request is
+     * answered with the same characters. The snapshot deliberately carries none of it any more; see
+     * {@link #bootstrapJson()}.
+     */
+    private String bootstrapJson;
+
+    /**
+     * Serialises the served catalogue as the bootstrap document's raw {@code content} object: the
+     * display names, costs, footprints and times a client needs to compute HUD values itself, plus
+     * every recipe's inputs and outputs.
      *
      * <p>The shape is compact and stable:
      * <pre>{@code
@@ -1868,6 +1888,86 @@ public final class WorldHost {
             contentCatalogueJson = buildContentCatalogueJson();
         }
         return contentCatalogueJson;
+    }
+
+    /**
+     * The one-time bootstrap document: every static per-world datum the client needs exactly once
+     * when it first joins, instead of once per snapshot poll.
+     *
+     * <p>The shape is stable and compact:
+     * <pre>{@code
+     * {"tilePixels":16,
+     *  "dimensions":[{"key":"overworld","name":"Earth"},{"key":"hell","name":"地狱"}],
+     *  "buildable":["building.armory.t1","building.mine.t1","building.lumbercamp.t1",
+     *               "building.warehouse","building.turret.t1","building.hell_gate"],
+     *  "content":{"dimensions":{"overworld":{"name":"Earth"},"hell":{"name":"地狱"}},
+     *             "items":{"gold":{"name":"金币"},"wood":{"name":"木材"}},
+     *             "buildings":{...},"units":{...},"recipes":{...}}}
+     * }</pre>
+     *
+     * <p>Each field is exactly what the snapshot used to re-emit per poll, unchanged in shape:
+     * {@code tilePixels} is the pixel size of one tile, {@code dimensions} is the roster the client
+     * renders as its dimension switcher (the same objects the snapshot's roster carried),
+     * {@code buildable} is the top-level BUILD catalogue - the content paths a builder may place
+     * directly with {@code BUILD <engineerId> <path> <x> <y>}, in the server's declared button order,
+     * upgrade-only tiers excluded - and {@code content} is the raw content catalogue described on
+     * {@link #contentCatalogueJson()}. Everything that changes while the world runs (tick, window,
+     * tiles, entities, players, projectiles, loadedChunks) stays in the snapshot; nothing dynamic is
+     * duplicated here.
+     *
+     * <p>The document is built once per host and then reused byte for byte: the catalogue is cached
+     * by {@link #contentCatalogueJson()}, the dimension roster comes from the engine's immutable
+     * dimension set and the BUILD catalogue from the immutable registry, so the build is deterministic
+     * and the cache cannot go stale. The served route is {@code GET /world/bootstrap}, which marks the
+     * answer immutable and answers a matching {@code If-None-Match} with {@code 304}; a client fetches
+     * it once per page load and falls back to its own static demo catalogue when the world is not
+     * running.
+     *
+     * @return the bootstrap document as UTF-8 JSON text, never {@code null}
+     */
+    public String bootstrapJson() {
+        synchronized (stateLock) {
+            if (bootstrapJson == null) {
+                bootstrapJson = buildBootstrapJson();
+            }
+            return bootstrapJson;
+        }
+    }
+
+    /** Builds the bootstrap document; see {@link #bootstrapJson()} for the shape. */
+    private String buildBootstrapJson() {
+        StringBuilder json = new StringBuilder(4096 + content.buildings().size() * 192
+                + content.units().size() * 128 + content.recipes().size() * 96);
+        json.append("{\"tilePixels\":").append(TILE_PIXELS);
+        json.append(",\"dimensions\":[");
+        boolean first = true;
+        for (Dimension dimension : dimensions()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            json.append("{\"key\":");
+            appendJsonString(json, dimension.id().key());
+            json.append(",\"name\":");
+            appendJsonString(json, dimension.profile().displayName());
+            json.append('}');
+        }
+        json.append("],\"buildable\":[");
+        boolean firstBuildable = true;
+        for (BuildingType type : content.buildings()) {
+            if (!type.isBuildable()) {
+                continue;
+            }
+            if (!firstBuildable) {
+                json.append(',');
+            }
+            firstBuildable = false;
+            appendJsonString(json, type.key().path());
+        }
+        json.append("],\"content\":");
+        json.append(contentCatalogueJson());
+        json.append('}');
+        return json.toString();
     }
 
     /** Builds the catalogue document; see {@link #contentCatalogueJson()} for the shape. */
@@ -2185,25 +2285,11 @@ public final class WorldHost {
                 .append(",\"originY\":").append(originY)
                 .append(",\"width\":").append(size)
                 .append(",\"height\":").append(size)
-                .append(",\"tilePixels\":").append(TILE_PIXELS)
                 .append(",\"dimension\":");
         appendJsonString(json, dimension.key());
         json.append(",\"dimensionName\":");
         appendJsonString(json, world.dimension(dimension).profile().displayName());
-        json.append(",\"dimensions\":[");
-        boolean firstDimension = true;
-        for (Dimension candidate : dimensions()) {
-            if (!firstDimension) {
-                json.append(',');
-            }
-            firstDimension = false;
-            json.append("{\"key\":");
-            appendJsonString(json, candidate.id().key());
-            json.append(",\"name\":");
-            appendJsonString(json, candidate.profile().displayName());
-            json.append('}');
-        }
-        json.append("],\"loadedChunks\":[");
+        json.append(",\"loadedChunks\":[");
         // The streamed-chunk set is what the client shades: a tile whose chunk is absent sits under the
         // shadow, and one whose chunk just loaded watches the shade disperse as the camera keeps moving.
         // The cap keeps a pathological chunk budget from growing the document without bound; a normal
@@ -2276,23 +2362,7 @@ public final class WorldHost {
                     .append(",\"ty\":").append(oneDecimal((float) shot.ty()))
                     .append('}');
         }
-        json.append("],\"buildable\":[");
-        boolean firstBuildable = true;
-        for (BuildingType type : content.buildings()) {
-            if (!type.isBuildable()) {
-                continue;
-            }
-            if (!firstBuildable) {
-                json.append(',');
-            }
-            firstBuildable = false;
-            appendJsonString(json, type.key().path());
-        }
-        json.append("],\"content\":");
-        // The catalogue is immutable for the life of the host, so the document is built once and then
-        // reused byte for byte; only the first snapshot of a server pays for it.
-        json.append(contentCatalogueJson());
-        json.append(",\"players\":[");
+        json.append("],\"players\":[");
         List<Player> players = new ArrayList<>(engine.world().players());
         players.sort(Comparator.comparingInt((Player worldPlayer) -> worldPlayer.id().value()));
         boolean firstPlayer = true;

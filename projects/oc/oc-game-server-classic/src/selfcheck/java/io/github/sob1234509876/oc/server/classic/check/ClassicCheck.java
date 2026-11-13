@@ -1184,8 +1184,9 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
      * The buildable hell gate as the only passage: the {@link HellGates} hook opens a route when a gate
      * stands, pairs two gates gate-to-gate, closes the passage when a gate falls, and the
      * {@link HellDenizens} hook only raises creatures once a gate exists. Also proves the dimension
-     * fields of the snapshot document: the roster, the drawn dimension and the per-dimension entity
-     * filter that keeps an overworld gate out of a hell window.
+     * fields of the bootstrap document and the snapshot: the roster now lives in the one-time bootstrap
+     * document, while the snapshot keeps the drawn dimension and the per-dimension entity filter that
+     * keeps an overworld gate out of a hell window.
      */
     private static void hellPassage(Check check, ClassicContent classic) {
         check.section("地狱门：唯一的通道、动态门户与地狱魔物");
@@ -1206,9 +1207,9 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             String initial = host.snapshotJson();
             check.that(initial.contains("\"dimension\":\"overworld\""),
                     "默认快照标注自己的维度 overworld");
-            check.that(initial.contains("\"key\":\"overworld\"")
-                            && initial.contains("\"key\":\"hell\""),
-                    "快照带两个维度的名册（overworld 与 hell）");
+            check.that(host.bootstrapJson().contains("\"dimensions\":[{\"key\":\"hell\"")
+                            && host.bootstrapJson().contains("\"key\":\"overworld\""),
+                    "引导文档带两个维度的名册（overworld 与 hell），快照不再逐轮重复");
             check.that(initial.contains("\"loadedChunks\":["),
                     "快照带已流送区块集合（阴影数据源）");
             check.that(!initial.contains("\"gateway\":"),
@@ -1262,27 +1263,30 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
     }
 
     /**
-     * The content-driven snapshot fields the browser HUD reads: the top level {@code buildable} array
-     * (the BUILD menu's catalogue - the hell gate must be in it, because it is the only passage and
-     * every other upgrade-only tier must stay out), the per-row {@code upgrade} options (exactly the
-     * successors the row's own dimension allows), the {@code contents} object (every non-empty
-     * inventory, and the warehouse's capacity), and the {@code builder} capability flag that lets a
-     * BUILD menu accept any engineer tier, not just the base content path.
+     * The content-driven fields the browser HUD reads: the top level {@code buildable} array (the BUILD
+     * menu's catalogue, delivered once by the bootstrap document rather than repeated per snapshot -
+     * the hell gate must be in it, because it is the only passage and every other upgrade-only tier
+     * must stay out), the per-row {@code upgrade} options (exactly the successors the row's own
+     * dimension allows), the {@code contents} object (every non-empty inventory, and the warehouse's
+     * capacity), and the {@code builder} capability flag that lets a BUILD menu accept any engineer
+     * tier, not just the base content path.
      */
     private static void contentDrivenSnapshot(Check check, ClassicContent classic,
             ContentRegistry registry) {
-        check.section("内容驱动的快照：buildable、升级入口、携带与建造能力");
+        check.section("内容驱动的引导文档与快照：buildable、升级入口、携带与建造能力");
         WorldHost host = new WorldHost(1L, classic);
         try {
             World world = host.engine().world();
             Player owner = host.player();
             String snapshot = host.snapshotJson();
 
-            // 1) the buildable catalogue: the gate is directly buildable, every upgrade-only tier is not.
-            int buildableStart = snapshot.indexOf("\"buildable\":[");
-            int buildableEnd = snapshot.indexOf("],\"content\":");
+            // 1) the buildable catalogue, delivered once by the bootstrap document (the snapshot no
+            //    longer repeats it per poll): the gate is directly buildable, every upgrade-only tier is not.
+            String bootstrap = host.bootstrapJson();
+            int buildableStart = bootstrap.indexOf("\"buildable\":[");
+            int buildableEnd = bootstrap.indexOf("],\"content\":");
             String buildable = buildableStart >= 0 && buildableEnd > buildableStart
-                    ? snapshot.substring(buildableStart, buildableEnd + 1)
+                    ? bootstrap.substring(buildableStart, buildableEnd + 1)
                     : "";
             check.that(buildable.contains("\"building.hell_gate\"")
                             && buildable.contains("\"building.armory.t1\"")

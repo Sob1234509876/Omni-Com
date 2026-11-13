@@ -337,19 +337,21 @@ public final class PlayerCommandCheck {
                         + "，维度受限的炼狱变体不在主世界兵营的 upgrade.options 里（发出来的升级命令都能成功），"
                         + "未完工的工地没有 upgrade 对象（引擎只升级完工建筑）");
 
-        // Dimension metadata of the document and the streamed-chunk set for the shadow overlay.
+        // Dimension metadata of the document and the streamed-chunk set for the shadow overlay. The
+        // static dimensions roster moved to the one-time /world/bootstrap document (see WorldHostCheck),
+        // so the snapshot no longer repeats it per poll.
         String withMeta = host.snapshotJson();
         check.that(withMeta.contains("\"dimension\":\"overworld\"")
-                        && withMeta.contains("\"dimensions\":[{\"key\":\"hell\"")
-                        && withMeta.contains("\"key\":\"overworld\"")
+                        && withMeta.contains("\"dimensionName\":")
+                        && !withMeta.contains("\"dimensions\":")
                         && withMeta.contains("\"loadedChunks\":[")
                         && withMeta.contains("\"projectiles\":[]")
                         && host.dimensionByKey("moon").isEmpty()
                         && host.dimensionByKey("overworld").isPresent()
                         && host.dimensionByKey("hell").isPresent(),
-                "快照带 dimension 与 dimensions 花名册（本内容声明 overworld 与 hell）、loadedChunks（阴影数据源）"
-                        + "与 projectiles 通道（本内容全是近战，暂为空数组）；dimensionByKey 解析已声明的维度、"
-                        + "拒绝未声明的键");
+                "快照带 dimension 与 dimensionName、loadedChunks（阴影数据源）与 projectiles 通道"
+                        + "（本内容全是近战，暂为空数组）；静态的 dimensions 花名册已移到 /world/bootstrap，"
+                        + "快照不再逐轮重复；dimensionByKey 解析已声明的维度、拒绝未声明的键");
         String overworldSnapshot = host.snapshotJson(
                 host.dimensionByKey("overworld").orElseThrow(), 22, 16, 40);
         check.that(overworldSnapshot.startsWith("{")
@@ -912,14 +914,13 @@ public final class PlayerCommandCheck {
                                 "TRAVEL " + traveller.id().value()).startsWith("ERR bad arguments"),
                 "别人的单位 ERR not yours，未知的门 ERR unknown entity，参数不足 ERR bad arguments");
 
-        check.section("快照：content 内容目录（客户端自算 HUD 的原始键值）");
+        check.section("引导文档：content 内容目录（客户端自算 HUD 的原始键值，只下发一次）");
         Building investedSite = world.placeBuilding(host.content().building(PORTAL), human,
                 new GridPos(50, 56));
-        String catalogue = host.snapshotJson();
-        int catalogueStart = catalogue.indexOf("\"content\":{");
-        int catalogueEnd = catalogue.indexOf(",\"players\":");
-        String contentJson = catalogueStart > 0 && catalogueEnd > catalogueStart
-                ? catalogue.substring(catalogueStart, catalogueEnd)
+        String bootstrap = host.bootstrapJson();
+        int catalogueStart = bootstrap.indexOf("\"content\":{");
+        String contentJson = catalogueStart > 0
+                ? bootstrap.substring(catalogueStart, bootstrap.length() - 1)
                 : "";
         check.that(contentJson.contains("\"dimensions\":{\"hell\":{\"name\":\"Hell\"}")
                         && contentJson.contains("\"building.armory.t1\":{\"name\":\"Armory T1\",\"size\":[3,3]")
@@ -927,8 +928,9 @@ public final class PlayerCommandCheck {
                         && contentJson.contains("\"recipe.train.melee.t1\":{\"producers\":[\"armory\"],"
                                 + "\"inputs\":{\"gold\":20},\"output\":\"unit.melee.t1\",\"duration\":60,\"level\":1}")
                         && contentJson.contains("\"unit.worker\""),
-                "content 目录带维度、建筑（名称/脚印/造价/工时）、配方（生产标签/输入/产出/时长/等级）与单位");
-        check.that(entityRow(catalogue, investedSite.id().value()).contains("\"invested\":{"),
+                "引导文档的 content 目录带维度、建筑（名称/脚印/造价/工时）、配方（生产标签/输入/产出/时长/等级）"
+                        + "与单位");
+        check.that(entityRow(host.snapshotJson(), investedSite.id().value()).contains("\"invested\":{"),
                 "未完工工地行带 invested 原始字段（配合目录造价即可自算建造进度）");
 
         check.section("玩家命令：运行中的世界也会经由同一队列作答");

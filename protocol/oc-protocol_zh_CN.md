@@ -20,7 +20,7 @@
 - 快照里的单位路径，以及客户端的路径点交互（`Shift`+右键，`路径` 开关）。
 - `oc-debug` 的第二层信封：字节布局、密钥、60 秒防重放窗口。
 - 插件资源：`/plugin-assets` 上的普通 HTTP 内容，不属于命令协议。
-- 世界快照：`/world/snapshot` 上的普通 HTTP 内容，同样不属于命令协议。
+- 世界快照：`/world/snapshot` 上的普通 HTTP 内容，同样不属于命令协议；另有一次性下发的世界引导文档 `/world/bootstrap`，承载静态的世界数据。
 - 版本兼容规则，以及怎么用 pnpm 起浏览器客户端。
 
 ## 传输
@@ -28,7 +28,7 @@
 | 项 | 约定 |
 | --- | --- |
 | WebSocket 地址 | `ws://<host>:25567/ws` |
-| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件、`/plugin-assets` 下的插件资源，以及 `/world/snapshot` 的世界快照 |
+| HTTP 地址 | `http://<host>:25567/`，提供同一个 `web-client/dist/` 的静态文件、`/plugin-assets` 下的插件资源、`/world/snapshot` 的世界快照，以及 `/world/bootstrap` 的一次性世界引导文档 |
 | 帧类型 | 只使用 **TEXT** 帧；二进制帧不是命令，服务端回 ERR 并保持连接，客户端忽略并提示 |
 | 帧内容 | 每个 TEXT 帧**恰好一条命令行**，UTF-8，不含 CR/LF |
 | 回答 | 每条命令**恰好一行**回答；客户端不得把多条命令塞进一个帧 |
@@ -272,8 +272,9 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   `ERR ... N variants: ...` 拒绝，因此客户端应当始终回发自己选中的 `to` 令牌。变体还可以被内容限定维度
   （`dimensionsOnly`）——classic 的炼狱工厂只能立在地狱——在别处选中它会在任何扣费之前被拒绝。
 - 快照文档标注它画的是哪个世界：`dimension` 是内容键，`dimensionName` 是 profile 的显示名，
-  `dimensions` 是供客户端渲染切换器的名册，`loadedChunks` 是该维度已流送的区块集合——客户端给区块
-  缺席的瓦片画一层阴影，并随相机持续移动、区块陆续加载让阴影散开。带 `gateway` 标签的建筑行携带
+  `loadedChunks` 是该维度已流送的区块集合——客户端给区块
+  缺席的瓦片画一层阴影，并随相机持续移动、区块陆续加载让阴影散开。静态的 `dimensions` 名册（切换器
+  的条目）已移到一次性的引导文档，见世界快照一节。带 `gateway` 标签的建筑行携带
   `gateway:{"to":"<维度键>","arrival":[x,y]}`（与 `TRAVEL` 会走的同一跳），客户端把它变成一次快速的
   视角切换；路由未打开时省略该字段。
 - `UPGRADEUNIT <unitId> [tierPath]` 是 `UPGRADE` 的单位版本：把一座属于自己的单位替换成其内容阶梯的
@@ -469,6 +470,7 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 | --- | --- |
 | `GET /world/snapshot` | 服务器世界某个窗口在当前 tick 的 JSON 快照 |
 | `GET /world/snapshot?cx=<tileX>&cy=<tileY>&r=<radiusInTiles>` | 指定窗口的同一份文档 |
+| `GET /world/bootstrap` | 一次性的静态世界文档：内容目录、BUILD 数组、维度花名册与瓦片尺寸 |
 
 | 参数 | 默认 | 允许范围 | 含义 |
 | --- | --- | --- | --- |
@@ -485,7 +487,6 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   "originY": -32,
   "width": 64,
   "height": 64,
-  "tilePixels": 16,
   "tiles": [["grass", "sand", "..."], ["...", "...", "..."]],
   "entities": [
     {"id": 1, "kind": "warehouse", "x": -12.5, "y": -3.5, "player": 1, "health": 1.00,
@@ -515,11 +516,8 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   ],
   "dimension": "overworld",
   "dimensionName": "Earth",
-  "dimensions": [{"key": "overworld", "name": "Earth"}, {"key": "hell", "name": "地狱"}],
   "loadedChunks": [[0, 0], [1, 0]],
   "projectiles": [{"id": 1, "x": 10.2, "y": 9.1, "tx": 12.5, "ty": 8.3}],
-  "buildable": ["building.armory.t1", "building.mine.t1", "building.lumbercamp.t1",
-                "building.warehouse", "building.turret.t1", "building.hell_gate"],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140,
      "anchor": [3, 2]},
@@ -544,28 +542,61 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 - `role` 出现在每一条单位行上（`combat`、`worker` 或 `support`），客户端的框选优先级靠它区分士兵与带小攻击的工程师。内容类型带 `builder` 标签的单位还会带 `"builder": true`：这是 BUILD 菜单应当依据的**能力标记**，所以升级后的工程师梯（内容路径不再是基础 `unit.engineer`）不需要客户端按类型名匹配也算建造者。`attackDamage` 与 `attackRange` 出现在内容声明了武器的单位或建筑行上；没有武器的建筑（仓库、矿场）与旧服务器省略。两个数字与战斗层实际开火用的是同一份引擎数据，选中面板与实际炮弹不会互相矛盾。
 - `trains` 出现在**已完工**的生产建筑行上：内容驱动的 TRAIN 菜单，该建筑自身等级允许的每个配方一项，形状 `{"path": "<单位内容路径>", "name": "<显示名>", "gold": <整数>, "level": <整数>}`。`path` 是 `TRAIN <buildingId> <unitPath>` 的令牌，`name` 是受训单位的显示名，`gold` 是配方以货币物品（`gold`）计的输入成本，`level` 是配方要求的建筑等级——选中建筑低于它时客户端把该入口禁用。未完工工地或不能生产的建筑省略数组；不训练任何东西的生产建筑可以发空数组。
 - `projectiles` 是自上一份快照以来射出的箭矢通道：每支在飞的箭一项 `{"id": <整数>, "x": <数字>, "y": <数字>, "tx": <数字>, "ty": <数字>}`——出发点与目标点。伤害已经在 tick 内结算完毕；箭矢纯属表现层。列表最多保留 128 支，超过 4 tick 的条目被丢弃，安静的世界发空数组。不认识它的客户端忽略。
-- `buildable` 是**顶层的 BUILD 目录**：建造者可以用 `BUILD <engineerId> <path> <x> <y>` 直接放置的内容路径数组，顺序就是服务器声明的按钮顺序。只能通过升级到达的等级（经典哨塔 t2/t3/t4、矿井与伐木场 t2/t3、兵营 t2、炼狱工厂）**不在**数组里，因为命令会拒绝直接放置；可建造的地狱门**在**数组里，因为它是通往地狱的唯一通道。客户端为每个路径渲染一个 BUILD 条目；旧服务器省略该字段，客户端回落到自己的目录。
-- `content` 是客户端自行计算 HUD 数值所需的**原始内容目录**（i18n 方案里“服务端提供的键值对”）：按内容路径逐个列出世界声明的维度、物品、建筑类型、单位类型与配方。不认识该字段的客户端照常忽略它，旧服务器省略它。形状：
-  - `"dimensions": {"<key>": {"name": "<显示名>"}}` —— 世界声明的每个维度，与 `dimensions` 花名册一致。
-  - `"items": {"<path>": {"name": "<显示名>"}}`。
-  - `"buildings": {"<path>": {"name", "size": [w, h], "health", "cost": {<物品>: <数量>}, "buildTime", "level", "storage", "warehouse": true, "buildable": false, "income", "woodIncome", "damage", "range", "upgrades": [{"to": "<路径>", "gold", "wood"}]}}`。默认无信息的字段一律省略：空 `cost`、没有仓储的建筑、非仓库、可直接建造的类型、无收入标签、无武器与阶梯顶端都不写。`cost` 可以是任何已注册物品；`income` / `woodIncome` 是 `players` 行求和的 `income_<n>` / `wood_income_<n>` 标签速率；`upgrades` 列出 `UPGRADE` 的每个变体及其收费。
-  - `"units": {"<path>": {"name", "role", "health", "speed", "cost", "buildTime", "damage", "range", "attackCooldown", "armour", "cargo", "builder": true, "upgradeTo", "upgradeCost"}}` —— 同样只写类型真正拥有的字段。
-  - `"recipes": {"<path>": {"producers": ["<生产标签>"], "inputs": {<物品>: <数量>}, "output": "<单位路径>", "items": {<物品>: <数量>}, "duration", "level"}}` —— 单位配方带 `output`，物品配方带 `items`；`level` 是需求建筑等级，`producers` 是配方被选择所依据的生产标签。配合生产者行的 `queueItems` 种类与 `contents`，客户端即可自行计算任意生产者的输入缺口。
-  目录对每个宿主只构建一次（目录不可变），之后每份快照逐字节复用。
+- `tilePixels`、`dimensions` 花名册、`buildable` 数组与 `content` 目录已从快照中移出：它们在世界运行期间**永不改变**，每轮轮询都重新发送它们是在为不变的数据反复消耗带宽与序列化时间。它们现在位于一次性的引导文档（`GET /world/bootstrap`，形状与规则见下一节）里，字段形状与原先完全一致。快照轮询现在只携带动态数据（`tick`、窗口几何、`tiles`、`entities`、`dimension` / `dimensionName`、`loadedChunks`、`projectiles`、`players`）；仍然期待被移字段的旧客户端应改为一次性拉取引导文档，客户端团队会防御性地解析引导载荷并容忍其缺失（离线演示世界）。
 - `contents` 出现在**每一个库存非空的行**上，并且只列出数量非零的物品；空仓库与空货舱省略该对象。键是物品内容路径（`gold`、`wood`），值是非负整数，和 `players` 的金额一样会饱和。对仓库而言它是建筑自己的库存，与玩家行求和的是同一个来源，因此客户端可以在选中 HUD 里显示 `库存：金 120 · 木 40`；对载货单位而言它是 HUD `携带` 行背后的货舱；从内容驱动 HUD 起**生产建筑的缓冲**也会上报，选中的兵营能显示里面暂存的材料。生产缓冲仍然*不属于*物流网络——可花费的总量只在 `players` 行里——所以客户端不得把生产建筑的 `contents` 加进资源读数。
 - `storage` 出现在**每一个**仓库行上（空仓库也有）：`{"slots": <整数>, "used": <整数>, "free": <整数>}`。`slots` 是内容的槽位容量（经典仓库是 `24`），`used` 是当前库存占用的槽位数——每 `ItemType.maxStack()` 个单位占一个槽，所以同一种物品超过一叠就会占多个槽——`free` 是剩余量。无上限库存按 `Long.MAX_VALUE` 饱和报告。数字来自引擎的 `Inventory`，因为只有服务器知道每种物品的最大堆叠；客户端不得自己推算容量。浏览器单仓库表头显示 `容量 24 · 已用 2 · 空闲 22`。
 - `inbound` 在至少一个**未完成**搬运任务把它当作目标时出现在仓库行上：一个非负整数，表示在途任务数（手动 `TRANSFER` 是常见来源）。数量为零时省略，所以客户端把缺失读作“没有在途”；浏览器单仓库表头追加 `· 在途 N`。
 - `upgrade` 只出现在**已完工**、且内容类型指定了至少一个*适用*后继的建筑行上，表示这座建筑可以用 `UPGRADE <id> <variantPath>` 升级。形状是 `{"options": [{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}, ...]}`——每个变体一项。只有命令真正会接受的选项才会被列出：目标存在于服务目录、**占地相同**，并且**允许立在建筑所在的维度**。主世界的兵营因此只列出更高的兵营，而立在地狱的同一座兵营会同时列出两个变体——客户端永远不会画出一条会被命令以维度为由拒绝的升级入口。未完工工地、阶梯顶端、没有后继的类型和悬空的后继引用都省略整个对象。`gold` / `wood` 是该变体命令会扣的价格（源类型选项自己的成本）。可负担性**故意不编码**：客户端拿自己的 `players` 行比较成本，资源不足时把入口显示为禁用，而不是隐藏。旧客户端会忽略这个字段。
 - `repair` 只出现在**已完工**、受损、且内容声明了维修价的建筑行上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是把**当前缺失血量**全部修满的总价（内容每点血量价 × 缺失血量，`Building.repairCost()`）。满血建筑、未完工工地和 `repairCostPerHealth()` 为空的内容都不带它，所以客户端不会显示命令必然拒绝的维修。可负担性不编码，客户端自己拿 `players` 行比较。旧客户端忽略。
 - `reclaim` 只出现在**未完工**工地上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是 `RECLAIM <id>` 会存入仓库的返还：放置时记录成本的一半（向下取整，`CommandService.reclaimRefund`）。即使两项都是 `0` 也存在，因为动作仍然会移除工地；已完工建筑不带它。旧客户端忽略。
-- `invested` 出现在同一批**未完工**工地行上，紧跟 `reclaim`：已支付的原材料束，形如 `{"gold": <整数>, "wood": <整数>}`（键是物品路径，与 `contents` 相同）。配合下方 `content` 目录里该类型的造价，客户端可以用原始数字自算建造进度，而不必信任四舍五入的 `progress`。已完工建筑不带它。旧客户端忽略。
+- `invested` 出现在同一批**未完工**工地行上，紧跟 `reclaim`：已支付的原材料束，形如 `{"gold": <整数>, "wood": <整数>}`（键是物品路径，与 `contents` 相同）。配合引导文档 `content` 目录里该类型的造价，客户端可以用原始数字自算建造进度，而不必信任四舍五入的 `progress`。已完工建筑不带它。旧客户端忽略。
 - `path` / `target` 只出现在**移动中且已经有路线**的单位行上。`path` 是 `[x, y]` 绝对世界瓦片对数组，表示**剩余**折线（已经走过的点不发送），最多 **64 个点**；`target` 是当前移动命令的目标瓦片 `[x, y]`。空闲或停下的单位、还在等待第一条路线的单位、以及旧服务器都省略这两个字段。坐标与实体的 `x` / `y` 一样是绝对瓦片索引，可以为负，并且不按快照窗口裁剪。路线超过上限时，`path` 只带前 64 个点，`target` 仍然指向真正的目标，客户端据此画线并画目标小圆点。字段纯属表现层、可增量；旧客户端忽略。
-- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不显示角色与建造者标记、不播搬运弹跳、不显示库存行、不显示容量与在途数、不显示升级/维修/回收入口、不画路径、不显示 TRAIN 菜单、不显示箭矢通道、不显示 BUILD 目录）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`role`、`builder`、`pop`、`contents`、`storage`、`inbound`、`trains`、`upgrade`、`repairCost`、`reclaim`、`path`、`pathTarget`、`projectiles`、`buildable` 与 `gateway`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
+- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不显示角色与建造者标记、不播搬运弹跳、不显示库存行、不显示容量与在途数、不显示升级/维修/回收入口、不画路径、不显示 TRAIN 菜单、不显示箭矢通道）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`role`、`builder`、`pop`、`contents`、`storage`、`inbound`、`trains`、`upgrade`、`repairCost`、`reclaim`、`path`、`pathTarget`、`projectiles` 与 `gateway`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名、两种开局资源与两种收入速率，全部是非负整数。每行还可以带 `anchor`：可选的 `[x, y]` **绝对整数瓦片**对，表示该阵营的出生位置。玩家 1 报告样例场景铺开的出生锚点，加入的真人报告确定的基地槽位锚点（不是最终仓库原点），经典机器人报告它开局基地搜索的确定性锚点。值来自 `Player.anchor()`，没人发布时省略；它是**已知的出生位置**，不是实时单位位置，也不是战争迷雾揭示，所以客户端可以用它画方向/距离读数和地图边缘箭头，而不揭示地形或实体。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。`goldPerMinute` / `woodPerMinute` 是该玩家**存活且已完工**的建筑上内容标签 `income_<n>` / `wood_income_<n>` 之和，与 `ClassicEconomy` 发放时用的是同一套约定：在建工地、被摧毁的建筑和没有匹配标签的类型都不计入，所以不发布任何标签的内容两项都报 `0`。每座建筑第一枚匹配标签生效，与发放钩子一致。这些字段也是增量的：旧服务器可以不带，客户端必须在没有它们时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币、木材与收入速率；还没有这一行时显示破折号。它把每个敌对行的 `anchor` 读进顶部敌方行和小地图边缘箭头，畸形对直接忽略。
-- 默认 80×80 窗口的 JSON 约 50 KB（不含路径叠加），最大 128×128 窗口约 130 KB；每个移动中的单位最多增加 64 个瓦片对加一个目标点（约 0.7 KB）。读取窗口也会把引擎焦点移到窗口中心（同一把锁内），让区块流式加载只保留相机附近的区块。
+- 默认 80×80 窗口的 JSON 约 50 KB（不含路径叠加），最大 128×128 窗口约 130 KB；每个移动中的单位最多增加 64 个瓦片对加一个目标点（约 0.7 KB）。过去每轮轮询都要随带的静态块（目录、BUILD 数组、花名册、瓦片尺寸，样例场景世界约 3 KB，经典目录约 9.5 KB）已完全不在这份文档里。读取窗口也会把引擎焦点移到窗口中心（同一把锁内），让区块流式加载只保留相机附近的区块。
 - 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
 - `--world` 默认 `on`，`--seed` 默认 `1`，`--chunks` 默认 `4096`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
-- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `storage` / `inbound` 画仓库面板的单仓库表头（容量、已用/空闲槽位与在途调拨数），用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用建筑行的 `trains` 与顶层的 `buildable` 数组渲染内容驱动的 TRAIN / BUILD 菜单，用 `builder` 判定 BUILD 菜单的能力，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
+- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `storage` / `inbound` 画仓库面板的单仓库表头（容量、已用/空闲槽位与在途调拨数），用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用建筑行的 `trains` 渲染内容驱动的 TRAIN 菜单、用引导文档的 `buildable` 数组渲染 BUILD 菜单，用 `builder` 判定 BUILD 菜单的能力，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
+
+## 世界引导
+
+引导文档是客户端**首次加入**一个服务器世界时恰好拉取一次的**静态世界载荷**，而不是在每次快照轮询里重复读取那些静态块。它是**普通 HTTP 内容**，与快照完全一样：客户端用 `fetch` 读取，与 WebSocket 无关，也不需要登录。动机是所有者的规则：键值对（内容目录）在第一次加入服务器时下发，凡是可以在刚加入时就下发的数据，就不要反复拉取。
+
+| 路由 | 内容 |
+| --- | --- |
+| `GET /world/bootstrap` | 静态世界文档：瓦片尺寸、维度花名册、BUILD 数组、内容目录 |
+
+文档**对每个宿主只构建一次**（目录、BUILD 数组与维度花名册在世界运行期间都不可变），之后逐字节地从宿主缓存中应答。确切的形状（以经典目录为例）：
+
+```json
+{
+  "tilePixels": 16,
+  "dimensions": [{"key": "overworld", "name": "地球"}, {"key": "hell", "name": "地狱"}],
+  "buildable": ["building.armory.t1", "building.mine.t1", "building.lumbercamp.t1",
+                "building.warehouse", "building.turret.t1", "building.hell_gate"],
+  "content": {
+    "dimensions": {"overworld": {"name": "地球"}, "hell": {"name": "地狱"}},
+    "items": {"gold": {"name": "金币"}, "wood": {"name": "木材"}},
+    "buildings": {"building.armory.t1": {"name": "兵营·普通", "size": [3, 3], "health": 600,
+                 "cost": {"gold": 100, "wood": 20}, "buildTime": 150, "level": 1,
+                 "upgrades": [{"to": "building.armory.t2", "gold": 140, "wood": 40}]}},
+    "units": {"unit.melee.t1": {"name": "普通", "role": "combat", "health": 100, "speed": 2.2,
+              "cost": {"gold": 20}, "buildTime": 60, "damage": 10, "range": 0.9}},
+    "recipes": {"recipe.train.melee.t1": {"producers": ["armory"], "inputs": {"gold": 20},
+                "output": "unit.melee.t1", "duration": 60, "level": 1}}
+  }
+}
+```
+
+- 四个字段正是快照过去每轮重复发送的块，形状不变：
+  - `tilePixels` 是一个 tile 的像素尺寸（16）——客户端的缩放系数。
+  - `dimensions` 是 `[{key, name}]` 花名册，按服务器声明的键序排列，就是客户端渲染成维度切换器的条目。
+  - `buildable` 是**顶层的 BUILD 目录**：建造者可以用 `BUILD <engineerId> <path> <x> <y>` 直接放置的内容路径数组，顺序就是服务器声明的按钮顺序。只能通过升级到达的等级**不在**数组里，因为命令会拒绝直接放置；可建造的地狱门**在**数组里，因为它是通往地狱的唯一通道。
+  - `content` 是**原始内容目录**（i18n 方案里"服务端提供的键值对"）：`"dimensions"`（各键的显示名）、`"items"`、`"buildings"`、`"units"` 与 `"recipes"`，各按内容路径为键，字段与"默认无信息的字段一律省略"的规则与迁移前快照所记载的完全一致。
+- 成功回答是 `200`，`Content-Type: application/json; charset=utf-8`，`Cache-Control: public, max-age=31536000, immutable`，并带对所发送字节计算的 `ETag`。文档在世界运行期间不可能变化，浏览器可以缓存一年而不再询问；`If-None-Match` 命中当前 ETag 的请求会得到没有正文的 `304 Not Modified`。只允许 `GET` 与 `HEAD`，其它方法回 `405` 并带 `Allow: GET, HEAD`。
+- 没有世界在运行时——`--world off`，或 host 尚未启动或已停止——路由与快照一样回 `503 Service Unavailable`，短文本 `the world is not running`，并且绝不掉进静态路由的 SPA 回退。
+- **何时拉取**：每次页面加载一次，在首次成功加入时（客户端可以在快照路由开始回答 `200` 时立即拉取——那证明世界在运行）。请求失败或世界不在线时，客户端用自己的静态演示数据继续工作——仓库客户端的离线演示世界自带目录，不得依赖这条路由存在。客户端应防御性解析载荷：把每个字段当成可选、容忍未知形状、回落到内置目录。
+- 引导路由**不改变本文的任何命令、回答、帧规则或版本号**。把被移字段从快照中去掉属于同一次协同变更：快照是普通 HTTP 内容，仓库客户端同步更新，每个字段形状都在引导文档中原样保留。Vite dev proxy 把 `/world` 转发到 Java 服务器，开发时无需额外配置即可访问这条路由。
 
 ## 版本兼容
 

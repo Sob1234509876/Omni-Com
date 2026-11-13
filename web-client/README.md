@@ -568,7 +568,7 @@ footprint lookup with the unknown-kind 3x3 default, row-major footprint tiles, o
 pnpm check:render
 ```
 
-It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 586 passing checks.
+It type-checks first, then runs [`scripts/check-render-math.ts`](scripts/check-render-math.ts) directly with Node 24's TypeScript type stripping, printing `ok` / `fail` line by line. The script currently prints 403 passing checks.
 
 ## hello plugin demo
 

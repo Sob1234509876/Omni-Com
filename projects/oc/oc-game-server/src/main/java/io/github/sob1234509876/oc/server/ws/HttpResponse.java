@@ -113,6 +113,7 @@ final class HttpResponse {
     static String reasonFor(int status) {
         return switch (status) {
             case 200 -> "OK";
+            case 304 -> "Not Modified";
             case 400 -> "Bad Request";
             case 403 -> "Forbidden";
             case 404 -> "Not Found";

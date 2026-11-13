@@ -56,7 +56,7 @@
    - `spawnScene(...)`：按目录摆样本场景（跳过 `denizen` 标记与 `gateway` 标记类型），并把前两个样本单位下移动令；
    - `depositStartingResources(...)`：起始资源必须全部被某仓库接收，否则构造失败。
 5. **开 socket**：`server.start()`（加密 TCP），`host.start()`（启动 `oc-world` 守护线程），
-   `HttpWebServer`（静态客户端 + `/plugin-assets/` + `/world/snapshot` + WebSocket 升级）。
+   `HttpWebServer`（静态客户端 + `/plugin-assets/` + `/world/snapshot` + `/world/bootstrap` + WebSocket 升级）。
    任何一步失败都会回滚已启动的部分（见 `start()` 中的 undo 分支）。
 6. **关停顺序**（`stop()`）：自动存盘定时器 → 插件 `onDisable` → TCP socket → HTTP 端点 → 世界线程 → 最终存盘。
    注意世界线程停在 HTTP 端点**之后**，保证没有请求看到半停的世界。
@@ -162,7 +162,9 @@ LRU 预算兜底 → 客户端对未加载区块画阴影。
 ### 4.2 客户端如何请求窗口（`cx/cy/r`）
 
 - HTTP 路由 `GET /world/snapshot[?cx=&cy=&r=]`（`ws/HttpWebServer.java`，`WORLD_SNAPSHOT_PATH`；
-  `Cache-Control: no-store`；世界停用/停止时 503）。
+  `Cache-Control: no-store`；世界停用/停止时 503）。同文件另有一次性引导路由 `GET /world/bootstrap`
+  （`WORLD_BOOTSTRAP_PATH`，见 §5.0），从宿主缓存直接应答静态世界数据，带
+  `Cache-Control: public, max-age=31536000, immutable` 与 ETag（命中 `If-None-Match` 回 304）。
 - 参数解析 → `WorldHost.dimensionByKey()`（可带 `dimension` 维度键，未知则 400）→ `clampSnapshotRadius()`：
   **只有 `r` 被钳制**到 `[MIN_SNAPSHOT_RADIUS=16, MAX_SNAPSHOT_RADIUS=64]`，缺省
   `DEFAULT_SNAPSHOT_RADIUS = 40`（80×80 窗口 = 五个 16 瓦片区块宽；协议文档 `protocol/oc-protocol.md`
@@ -207,21 +209,46 @@ LRU 预算兜底 → 客户端对未加载区块画阴影。
 实现：`WorldHost.buildSnapshotJson()`（在 `stateLock` 内，逐请求重建、无缓存——缓存会与 HUD 显示的
 tick 矛盾）。手写 StringBuilder JSON，零依赖。
 
+### 5.0 一次性引导文档（已从快照移出的静态数据）
+
+所有者要求：键值对在第一次加入服务器时下发，可以在刚加入时就下发的数据不要反复拉取。因此快照不再
+携带任何静态世界数据；它们全部移到 `WorldHost.bootstrapJson()`（`GET /world/bootstrap`，
+`HttpWebServer.WORLD_BOOTSTRAP_PATH`）：
+
+| 字段 | 内容 | 原快照来源 |
+| --- | --- | --- |
+| `tilePixels` | 16（客户端缩放系数）。 | 快照顶层 `tilePixels`。 |
+| `dimensions` | 维度花名册 `[{key,name}]`（切换器数据源，按键序）。 | 快照顶层 `dimensions` 数组。 |
+| `buildable` | `isBuildable()` 建筑路径数组（BUILD 菜单数据源，升级专属等级不在内）。 | 快照顶层 `buildable` 数组。 |
+| `content` | 原始内容目录（dimensions/items/buildings/units/recipes），形状不变。 | 快照顶层 `content` 对象（缓存复用逻辑也移了过来）。 |
+
+实现要点：
+
+- 文档对每个宿主**只构建一次**（`bootstrapJson` 缓存字段，`stateLock` 内惰性构建；目录不可变、
+  维度集合不可变，缓存不会失效），路由直接复制缓存字节应答，不再参与每次轮询的序列化。
+- 应答带 `Cache-Control: public, max-age=31536000, immutable` 与对字节哈希的 `ETag`；
+  `If-None-Match` 命中回 304。世界未运行时与快照同样回 503（不落入 SPA 回退），仅 GET/HEAD。
+- `dimensionName` 保留在快照里：静态但只有几个字节，且它随所画窗口同行，客户端不必跨文档查表。
+- 实测收益（默认场景世界，80×80 窗口）：移出的静态块约 3.0 KB / 旧快照约 53 KB（≈5.7%）；
+  经典目录更大（15 建筑 + 22 单位 + 20 配方），约 9.5 KB（≈14.6%）。这是每轮轮询省下的
+  字节数与缓存字符串的重复拼接；快照主体（tiles/entities）本来就是动态的，仍逐请求重建。
+- 客户端契约：首次加入（快照路由 200）时拉取一次，失败容忍（离线 demo 自带目录）；
+  字段全部按可选解析。协议文档"世界引导"一节是权威形状定义。
+
 ### 5.1 顶层字段
 
 | 字段 | 内容 |
 | --- | --- |
 | `tick` | 当前引擎 tick。 |
 | `originX`/`originY`/`width`/`height` | 窗口左上瓦片与尺寸（`2r×2r`）；文档**没有** mapWidth/mapHeight——世界无界。 |
-| `tilePixels` | 16（客户端自行缩放）。 |
-| `dimension` / `dimensionName` | 所画维度键与显示名。 |
-| `dimensions` | 全部维度花名册 `[{key,name}]`（渲染成切换器）。 |
+| `dimension` / `dimensionName` | 所画维度键与显示名（静态但极小，随窗口同行）。 |
 | `loadedChunks` | 所画维度内存中的区块坐标 `[[cx,cy],...]`，**上限 1024 项**（防病态预算撑爆文档）。客户端据此画未加载阴影。 |
 | `tiles` | 行主序的窗口地形内容路径（`width*height` 个字符串）；每瓦片一次 `terrainAt`。 |
 | `entities` | **全部**存活实体（本维度内），按 id 排序，不裁剪到窗口。 |
 | `projectiles` | 最近 4 tick 内发射的箭矢 `[{id,x,y,tx,ty}]`（上限 128，服务器侧呈现状态）。 |
-| `buildable` | 目录中 `isBuildable()` 的建筑路径数组（BUILD 菜单数据源）。 |
 | `players` | 全部玩家行（含 bot）。 |
+
+原表中的 `tilePixels`、`dimensions`（花名册）、`buildable` 与 `content` 目录已移到 §5.0 的一次性引导文档，快照不再逐轮重复。
 
 ### 5.2 实体行字段
 
@@ -266,6 +293,9 @@ tick 矛盾）。手写 StringBuilder JSON，零依赖。
 | `orderQueue` 标签 / `task` | 引擎 `OrderLabels`/`UnitTask`（已经是引擎侧共享实现，每实体行调用） | 中文本地化标签，属呈现层。 |
 
 **注意**：以上是候选清单，今天的代码确实都在服务器端逐请求计算；迁移前不要假设客户端会自行推导。
+§5.3 的候选没有随引导文档移动——本节列出的字段仍是逐请求计算的动态派生值；移动到引导文档的是
+§5.0 表中的纯静态块（`content`/`buildable`/`dimensions`/`tilePixels`），它们本是候选字段的自算输入，
+现在客户端首次加入时即可拿到，之后不必再从任何轮询中获取。
 
 ## 6. 命令管线
 
@@ -357,6 +387,8 @@ socket 线程: dispatcher.execute(line, session)
 
 - **消费快照**：`web-client/src/main.ts` 每 500 ms（`WORLD_POLL_MS`）`fetch /world/snapshot`（带当前维度键）；
   请求失败回退内置确定性 demo 世界，HUD 显示 `server|demo + tick`。Vite 开发代理把 `/world` 转发到 Java 服务器。
+  静态世界数据（目录、BUILD 数组、维度花名册、tilePixels）改为首次加入时 `fetch /world/bootstrap` 一次
+  （§5.0）；快照轮询不再携带它们，客户端要防御性解析引导文档并容忍其缺失。
 - **防御性解析**：每个字段容错——`loadedChunks` 缺失（旧服务器）不画阴影；数值非有限即回退默认；
   未知 `kind` 回退程序化形状绘制（`render/fallback.ts`）。客户端把世界当作无界：没有地图尺寸概念。
 - **图集**：`render/atlas.ts` 解析合并清单，每材质一图（PNG 或 SVG，SVG 需自带 width/height；
@@ -379,7 +411,9 @@ socket 线程: dispatcher.execute(line, session)
    （默认 80×80 窗口约 50 KB，128×128 上限约 130 KB + 每移动单位 ≤64 路点）。500 ms 轮询 × 每玩家一条连接时，
    这是 O(窗口瓦片数 + 实体数 × 行字段数) 的字符串工作，且 `entities()`、`units()`、`buildingsOf(player)`、
    `incomePerMinute()`（×2 资源）、`inbound` 作业扫描都在其中。`appendTask`/`appendOrderQueue`
-   对每个单位行构造标签。**待优化方向**：HUD 派生字段迁移（§5.3 计划中）、差异更新、缓存不变部分。
+   对每个单位行构造标签。**已做**：静态不变部分（`content` 目录、`buildable`、维度花名册、tilePixels）
+   已移到一次性的 `/world/bootstrap` 引导文档（§5.0），不再随每轮轮询序列化。
+   **待优化方向**：HUD 派生字段迁移（§5.3 计划中）、差异更新。
 2. **窗口读取触发同步区块生成（热，取决于相机移动）** —— `snapshotJson` 读取 `width*height` 个瓦片，
    每个未加载瓦片经 `terrainAt` → `loadedChunk` 同步生成整个 16×16 区块（每区块约 4600 次格点哈希）；
    相机每跳 80 瓦片最多新引入约 25 个区块的同步生成（焦点半径 3 区块流送只摊每 tick 4 个）。

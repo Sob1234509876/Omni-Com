@@ -15,6 +15,7 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
@@ -81,9 +82,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * the world's {@linkplain WorldHost#spawnAnchor() spawn anchor}. The route answers {@code 503} while the
  * host is stopped or absent (including a server started with {@code --world off}), and it is never a static
  * file route. This is the one endpoint that reads live simulation state; the host serialises it against its
- * own tick thread, so a request can never observe a half applied tick.
- *
- * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
+     * own tick thread, so a request can never observe a half applied tick.
+     *
+     * <p><strong>World bootstrap.</strong> {@code GET /world/bootstrap} serves the one-time static
+     * document a client fetches when it first joins: the content catalogue, the top-level BUILD array,
+     * the dimension roster and {@code tilePixels}. Those blocks used to ride on every snapshot poll;
+     * they are static for the life of the host, so they moved here and are served straight from the
+     * host's cache with an immutable cache policy and an {@code ETag} (a matching {@code If-None-Match}
+     * is answered {@code 304}). The route follows the snapshot's rules elsewhere: unauthenticated, only
+     * {@code GET} and {@code HEAD}, and the same short {@code 503} when the host is stopped or absent
+     * ({@code --world off}).
+     *
+     * <p>Port {@code 0} asks the operating system for a free port, which is what every check in this module
  * uses; callers that want to know the port read {@link #port()} after {@link #start()}.
  */
 public final class HttpWebServer implements AutoCloseable {
@@ -105,10 +115,24 @@ public final class HttpWebServer implements AutoCloseable {
     /** The exact path of the world snapshot route, without a query string. */
     private static final String WORLD_SNAPSHOT_PATH = "/world/snapshot";
 
+    /** The exact path of the one-time world bootstrap route, without a query string. */
+    private static final String WORLD_BOOTSTRAP_PATH = "/world/bootstrap";
+
     /** The content type and cache policy of a world snapshot. */
     private static final String WORLD_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
     private static final String WORLD_CACHE_CONTROL = "no-store";
+
+    /**
+     * The cache policy of the world bootstrap document.
+     *
+     * <p>The document is static for the life of the host - the served catalogue, the BUILD array and
+     * the dimension roster cannot change while the world runs - so a browser may cache it for a year
+     * and never ask again; a client that rejoins another world simply fetches that world's document.
+     * The route also sends an {@code ETag} and answers a matching {@code If-None-Match} with
+     * {@code 304}, which keeps a non-caching client honest without re-sending the bytes.
+     */
+    private static final String WORLD_BOOTSTRAP_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
     private final WebSocketConfig config;
     private final WebSocketHandler handler;
@@ -401,6 +425,9 @@ public final class HttpWebServer implements AutoCloseable {
             } else if (WORLD_SNAPSHOT_PATH.equals(request.path())) {
                 // Always routed, even without a host, so --world off cannot fall through to the SPA fallback.
                 serveWorldSnapshot(socket, request);
+            } else if (WORLD_BOOTSTRAP_PATH.equals(request.path())) {
+                // Same rule: the route exists whenever the endpoint does, and a missing world is a 503.
+                serveWorldBootstrap(socket, request);
             } else if (pluginAssets != null && PluginAssets.isRoute(request.path())) {
                 servePluginAssets(socket, request);
             } else {
@@ -487,6 +514,57 @@ public final class HttpWebServer implements AutoCloseable {
                 ? hosted.snapshotJson(centreX, centreY, radius)
                 : hosted.snapshotJson(dimension, centreX, centreY, radius)).getBytes(StandardCharsets.UTF_8);
         HttpResponse.file(200, "OK", body, WORLD_JSON_CONTENT_TYPE, WORLD_CACHE_CONTROL)
+                .writeTo(out, "HEAD".equals(request.method()));
+    }
+
+    /**
+     * Serves the one-time world bootstrap document: the static per-world data a client fetches exactly
+     * once when it first joins.
+     *
+     * <p>The body is {@link WorldHost#bootstrapJson()} - the content catalogue, the top-level BUILD
+     * array, the dimension roster and {@code tilePixels}, everything the snapshot used to re-emit per
+     * poll and that cannot change while the world runs. Because the host caches those bytes, serving
+     * this route is a copy of an existing array, not a serialisation pass; that is the whole point of
+     * splitting it out of the snapshot.
+     *
+     * <p>The method rule is the same one the snapshot route applies (only {@code GET} and {@code HEAD},
+     * other methods answer {@code 405} with {@code Allow: GET, HEAD}), and an absent or stopped world
+     * answers the same short {@code 503} the snapshot answers, never a fall through to the SPA fallback.
+     * Unlike the snapshot the document is immutable for the life of the host, so the answer is marked
+     * {@code Cache-Control: public, max-age=31536000, immutable} and carries an {@code ETag} over the
+     * cached bytes; a request whose {@code If-None-Match} names that ETag is answered {@code 304} with
+     * no body. The ETag is a hash of the exact bytes served, so it changes only when the document
+     * changes, which in practice means never while this endpoint holds the same world.
+     */
+    private void serveWorldBootstrap(Socket socket, HttpRequest request) throws IOException {
+        OutputStream out = socket.getOutputStream();
+        if (!"GET".equals(request.method()) && !"HEAD".equals(request.method())) {
+            HttpResponse.text(405, HttpResponse.reasonFor(405), "only GET and HEAD are served by the world"
+                    + " bootstrap route")
+                    .withHeader("Allow", "GET, HEAD")
+                    .writeTo(out, false);
+            return;
+        }
+        WorldHost hosted = world;
+        if (hosted == null || !hosted.running()) {
+            HttpResponse.text(503, HttpResponse.reasonFor(503), "the world is not running")
+                    .withHeader("Cache-Control", WORLD_CACHE_CONTROL)
+                    .writeTo(out, false);
+            return;
+        }
+        byte[] body = hosted.bootstrapJson().getBytes(StandardCharsets.UTF_8);
+        String etag = "\"" + Integer.toHexString(Arrays.hashCode(body)) + "\"";
+        String ifNoneMatch = request.header("if-none-match");
+        if (ifNoneMatch != null && etag.equals(ifNoneMatch.strip())) {
+            HttpResponse.file(304, HttpResponse.reasonFor(304), new byte[0],
+                    WORLD_JSON_CONTENT_TYPE, WORLD_BOOTSTRAP_CACHE_CONTROL)
+                    .withHeader("ETag", etag)
+                    .writeTo(out, "HEAD".equals(request.method()));
+            return;
+        }
+        HttpResponse.file(200, HttpResponse.reasonFor(200), body, WORLD_JSON_CONTENT_TYPE,
+                WORLD_BOOTSTRAP_CACHE_CONTROL)
+                .withHeader("ETag", etag)
                 .writeTo(out, "HEAD".equals(request.method()));
     }
 

@@ -174,6 +174,8 @@ export const EN: Dictionary = {
   "log.snapshotFailed": "The server snapshot request failed; keeping the current window",
   "log.logLine": "[{stamp}] {marker} {message}",
   "log.ready": "OC/1 browser client ready (page {origin}).",
+  "log.bootstrapOk": "World bootstrap fetched: static content catalogue, BUILD catalogue and dimension roster now come from the one-time /world/bootstrap fetch.",
+  "log.bootstrapFail": "World bootstrap fetch failed (no server, an old server without /world/bootstrap, or world off); falling back to snapshot fields and the demo world data until the next join.",
   "log.boot":
     "Game view enabled: showing the deterministic {width}×{height} placeholder map first, polling the server /world/snapshot every 500 ms to take over, interpolating between the two most recent snapshots; the world is unbounded, a new window is requested around the camera centre when it nears the loaded window's edge, and procedural drawing is used when no plugin atlas exists.",
   "log.filters": "Settings: {command} command & answer popups, {error} error popups; filters affect popups only, the log stays complete.",
@@ -684,6 +686,8 @@ export const ZH_CN: Dictionary = {
   "log.snapshotFailed": "服务器快照请求失败，保留当前窗口",
   "log.logLine": "[{stamp}] {marker} {message}",
   "log.ready": "OC/1 浏览器客户端已就绪（页面 {origin}）。",
+  "log.bootstrapOk": "世界引导数据已取回：静态内容目录、BUILD 目录与维度名单改由一次性的 /world/bootstrap 请求提供。",
+  "log.bootstrapFail": "世界引导数据取回失败（服务器未开、旧服务器没有 /world/bootstrap 或世界已关闭）；在下次加入前回退到快照自带字段与演示世界数据。",
   "log.boot":
     "游戏画面已启用：先显示 {width}×{height} 的确定性占位地图，每 500ms 尝试用服务器 /world/snapshot 接管，并在最近两帧快照之间插值；世界无界，镜头靠近快照窗口边缘时按相机中心请求新窗口，插件没有提供图集时使用程序化绘制。",
   "log.filters":
