@@ -11,14 +11,12 @@ import io.github.sob1234509876.oc.googology.OrdinalNotation;
 import io.github.sob1234509876.oc.googology.TransfiniteHyperoperation;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
+import java.util.*;
 
 /**
  * Self check of the googology library: the exact range, the switch to structural values, ordering,
- * arithmetic closure, the hyperoperation levels, formatting, parsing, the semantics the engine relies on,
+ * arithmetic closure, division and remainder, exact integer logarithms, the super-logarithm and the higher
+ * hyperoperation inverses, integer roots, the hyperoperation levels, formatting, parsing, the semantics the engine relies on,
  * the ordinal layer that extends the hyperoperation to transfinite levels, the Bashicu matrix
  * standard forms with their lexicographic order, the register of abstract ordinals above the BMS
  * limit, and the ordinal ladder (stage one: BMS, TBMS/TTBMS and the named placeholders; stage two: the
@@ -143,6 +141,33 @@ public final class GoogologyCheck {
         Optional<BigInteger> digits = Natural.arrow(ten, 1, Natural.of(5000)).decimalDigits();
         check("幂形式的十进位数可算", digits.isPresent() && digits.get().compareTo(BigInteger.valueOf(5001)) >= 0);
         check("幂塔的十进位数本身超出可展示范围", tower.decimalDigits().isEmpty());
+        equal("ASCII 形式把箭头写成脱字符", "10^5000",
+                NaturalFormat.ascii(Natural.arrow(Natural.TEN, 1, Natural.of(5000))));
+        equal("ASCII 形式的幂塔与五级运算", "10^^10",
+                NaturalFormat.ascii(tower));
+        equal("ASCII 形式的三箭头", "10^^^3",
+                NaturalFormat.ascii(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
+        equal("ASCII 形式的超限级别把 ω 写成 w", "10{w}10",
+                NaturalFormat.ascii(Natural.tower(Natural.TEN, CantorNormalForm.standard().omega(), Natural.TEN)));
+        equal("BEYOND 的 ASCII 形式", "BEYOND", NaturalFormat.ascii(Natural.BEYOND));
+        check("ASCII 形式经 parse 往返（有限级塔）",
+                Natural.parse(NaturalFormat.ascii(Natural.arrow(Natural.TEN, 1, Natural.of(1233)))).orElseThrow()
+                        .equals(Natural.power(Natural.TEN, Natural.of(1233)))
+                        && Natural.parse(NaturalFormat.ascii(tower)).orElseThrow().equals(tower)
+                        && Natural.parse(NaturalFormat.ascii(Natural.arrow(Natural.TEN, 3, Natural.of(3))))
+                                .orElseThrow().equals(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
+        equal("LaTeX 形式的单箭头是上标", "10^{1233}",
+                NaturalFormat.latex(Natural.arrow(Natural.TEN, 1, Natural.of(1233))));
+        equal("LaTeX 形式的幂塔与五级运算", "10\\uparrow\\uparrow10",
+                NaturalFormat.latex(tower));
+        equal("LaTeX 形式的三箭头", "10\\uparrow\\uparrow\\uparrow3",
+                NaturalFormat.latex(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
+        equal("过长的箭头串写成 \\uparrow^{k}", "10\\uparrow^{12}10",
+                NaturalFormat.latex(Natural.arrow(Natural.TEN, 12, Natural.TEN)));
+        equal("LaTeX 形式的超限级别映射 ω 并转义花括号", "10\\{\\omega\\}10",
+                NaturalFormat.latex(Natural.tower(Natural.TEN, CantorNormalForm.standard().omega(), Natural.TEN)));
+        equal("BEYOND 的 LaTeX 形式", "\\text{BEYOND}", NaturalFormat.latex(Natural.BEYOND));
+        equal("精确值的 LaTeX 形式就是数字", "42", NaturalFormat.latex(Natural.of(42)));
 
         section("8) 解析与往返");
         equal("十进制解析", Natural.of(12345), Natural.parse("12345").orElseThrow());
@@ -168,9 +193,8 @@ public final class GoogologyCheck {
         close("空血比例", 0f, zero.fractionOf(maxHealth), 1.0e-6f);
         close("无法比较量级时比例为零", 0f, one.fractionOf(Natural.power(ten, Natural.of(500))), 1.0e-6f);
         close("BEYOND 作为上限时比例为一", 1f, Natural.of(5).fractionOf(beyond), 1.0e-6f);
-        Natural unitLimit = beyond;
         Natural used = Natural.of(120);
-        Natural headroom = unitLimit.subtractClamped(used);
+        Natural headroom = beyond.subtractClamped(used);
         check("无限容量的余量仍是 BEYOND（min 会取实际需求）", headroom.isBeyond() && headroom.min(Natural.of(50)).equals(Natural.of(50)));
         Natural stock = Natural.of(400);
         Natural slotsAvailable = Natural.of(24);
@@ -217,6 +241,9 @@ public final class GoogologyCheck {
         long millis = (System.nanoTime() - start) / 1_000_000L;
         check("高度一百万的幂塔只保留记号且立刻返回（" + millis + " ms）", tall.isStructural() && tall.arrows() == 2);
 
+        division();
+        integerLogarithms();
+        hyperoperationInverses();
         ordinals();
         transfiniteHyperoperation();
         customOrdinalNotation();
@@ -298,8 +325,7 @@ public final class GoogologyCheck {
         check("同一个值的两种写法得到 EQUAL",
                 walkedOmega.compareMagnitude(symbolicOmega) == ComparisonResult.EQUAL);
         check("UNKNOWN 与 EQUAL 是不同结果，且只有后者是证明",
-                ComparisonResult.UNKNOWN != ComparisonResult.EQUAL
-                        && !ComparisonResult.UNKNOWN.isDecided() && ComparisonResult.EQUAL.isDecided());
+                !ComparisonResult.UNKNOWN.isDecided() && ComparisonResult.EQUAL.isDecided());
 
         Natural cached = Natural.tower(Natural.TEN, notation.omegaPower(omega), Natural.of(10));
         ComparisonResult first = cached.compareMagnitude(Natural.of(7));
@@ -540,6 +566,7 @@ public final class GoogologyCheck {
                 for (Natural c : values) {
                     if (a.compareTo(b) <= 0 && b.compareTo(c) <= 0 && a.compareTo(c) > 0) {
                         transitive = false;
+                        break;
                     }
                 }
             }
@@ -767,6 +794,221 @@ public final class GoogologyCheck {
         }
     }
 
+    // ------------------------------------------------------------------ 16) division and remainder
+
+    /**
+     * {@link Natural#divide(Natural)} and {@link Natural#remainder(Natural)}: exact where both sides are
+     * exact, height arithmetic for the single-arrow towers, the documented collapses above that, and no
+     * remainder where the notation cannot know one.
+     */
+    private static void division() {
+        section("16) 除法与余数");
+        check("7 / 2 = 3（向下取整）", Natural.of(7).divide(Natural.of(2)).equals(Natural.of(3)));
+        check("7 mod 2 = 1", Natural.of(7).remainder(Natural.of(2)).orElseThrow().equals(Natural.of(1)));
+        check("6 / 3 = 2 且余数为零", Natural.of(6).divide(Natural.of(3)).equals(Natural.of(2))
+                && Natural.of(6).remainder(Natural.of(3)).orElseThrow().isZero());
+        check("2 / 5 = 0，余数是被除数", Natural.of(2).divide(Natural.of(5)).isZero()
+                && Natural.of(2).remainder(Natural.of(5)).orElseThrow().equals(Natural.of(2)));
+        check("x / 1 = x 且 x mod 1 = 0", Natural.of(9).divide(Natural.ONE).equals(Natural.of(9))
+                && Natural.of(9).remainder(Natural.ONE).orElseThrow().isZero());
+        check("除以零被拒绝", throwsIllegalArgument(() -> Natural.of(1).divide(Natural.ZERO))
+                && throwsIllegalArgument(() -> Natural.of(1).remainder(Natural.ZERO)));
+        check("被除数与除数相等时商为一、余数为零", Natural.of(7).divide(Natural.of(7)).isOne()
+                && Natural.of(7).remainder(Natural.of(7)).orElseThrow().isZero());
+        BigInteger bigA = BigInteger.TWO.pow(4000);
+        check("2^4000 / 2^2000 = 2^2000，余数为零", Natural.of(bigA)
+                .divide(Natural.of(BigInteger.TWO.pow(2000))).equals(Natural.of(BigInteger.TWO.pow(2000)))
+                && Natural.of(bigA).remainder(Natural.of(BigInteger.TWO.pow(2000))).orElseThrow().isZero());
+        Random random = new Random(20261107L);
+        int pairs = 0;
+        boolean identityHolds = true;
+        for (int round = 0; round < 500; round++) {
+            BigInteger a = new BigInteger(1 + random.nextInt(300), random);
+            BigInteger b = BigInteger.ONE.add(new BigInteger(1 + random.nextInt(300), random));
+            Natural na = Natural.of(a);
+            Natural nb = Natural.of(b);
+            Natural quotient = na.divide(nb);
+            Natural remainder = na.remainder(nb).orElseThrow();
+            if (!quotient.toBigInteger().equals(a.divide(b))
+                    || !remainder.toBigInteger().equals(a.remainder(b))
+                    || !quotient.multiply(nb).add(remainder).equals(na)) {
+                identityHolds = false;
+                equal("第 " + round + " 轮随机除法（" + a + " 与 " + b + "）", "与 BigInteger 一致", "不一致");
+                break;
+            }
+            pairs++;
+        }
+        check("500 对随机数的除法与余数和 BigInteger 完全一致，且 商·除数+余数=被除数（" + pairs + "/500）",
+                identityHolds && pairs == 500);
+        Natural tower = Natural.tetration(Natural.TEN, Natural.TEN);
+        check("10↑↑10 / 7 仍是 10↑↑10（双箭头及以上：塔分辨率下的坍缩，同 subtractClamped）",
+                tower.divide(Natural.of(7)).equals(tower));
+        check("单箭头同底相除按指数相减（恒等式）：10^5000 / 10^3000 = 10^2000",
+                Natural.power(Natural.TEN, Natural.of(5000)).divide(Natural.power(Natural.TEN, Natural.of(3000)))
+                        .equals(Natural.power(Natural.TEN, Natural.of(2000))));
+        check("单箭头除以小的精确数按数量级四舍五入：10^5000 / 7 → 10^4999（真值 10^4999.15）",
+                Natural.power(Natural.TEN, Natural.of(5000)).divide(Natural.of(7))
+                        .equals(Natural.power(Natural.TEN, Natural.of(4999))));
+        check("跨底单箭头相除走换底数量级：10^5000 / 2^5000（= 5^5000 ≈ 10^3494.9）→ 10^3495",
+                Natural.power(Natural.TEN, Natural.of(5000)).divide(Natural.power(Natural.TWO, Natural.of(5000)))
+                        .equals(Natural.power(Natural.TEN, Natural.of(3495))));
+        check("同底单箭头的余数恒为零（整除）",
+                Natural.power(Natural.TEN, Natural.of(5000)).remainder(Natural.power(Natural.TEN, Natural.of(4000)))
+                        .orElseThrow().isZero());
+        check("10↑↑10 mod 7 不可知，给空而不是猜（余数藏在被丢掉的低位里）",
+                tower.remainder(Natural.of(7)).isEmpty());
+        check("小除以大给零，余数是被除数", Natural.of(7).divide(tower).isZero()
+                && Natural.of(7).remainder(tower).orElseThrow().equals(Natural.of(7)));
+        check("相等结构形的商为一、余数为零", tower.divide(Natural.arrow(Natural.TEN, 2, Natural.TEN)).isOne()
+                && tower.remainder(Natural.arrow(Natural.TEN, 2, Natural.TEN)).orElseThrow().isZero());
+        check("塔除以更大的塔给零", tower.divide(Natural.tetration(Natural.TEN, Natural.of(11))).isZero());
+        check("BEYOND 饱和：BEYOND 除以任何数仍是 BEYOND，任何数除以 BEYOND 是零",
+                Natural.BEYOND.divide(Natural.of(7)).isBeyond() && Natural.of(7).divide(Natural.BEYOND).isZero());
+        check("BEYOND 的余数不可知；除数更大的余数是被除数",
+                Natural.BEYOND.remainder(Natural.of(7)).isEmpty()
+                        && Natural.of(7).remainder(Natural.BEYOND).orElseThrow().equals(Natural.of(7)));
+    }
+
+    // ------------------------------------------------------------------ 17) integer logarithms
+
+    /**
+     * {@link Natural#log(Natural)}: exact floors for exact values, and level-resolved answers above -
+     * the height at one arrow, one peeled level at two arrows, the value itself from three arrows up,
+     * with the change of base folded into a constant.
+     */
+    private static void integerLogarithms() {
+        section("17) 整数对数：可证的给精确 floor，判不了的给空");
+        check("log_2(1024) = 10", Natural.of(1024).log(Natural.TWO).orElseThrow().equals(Natural.of(10)));
+        check("log_2(1023) = 9（floor 而非四舍五入）", Natural.of(1023).log(Natural.TWO).orElseThrow().equals(Natural.of(9)));
+        check("log_10(1) = 0", Natural.ONE.log(Natural.TEN).orElseThrow().isZero());
+        check("log(0)、底为 0、底为 1 被拒绝", throwsIllegalArgument(() -> Natural.ZERO.log(Natural.TEN))
+                && throwsIllegalArgument(() -> Natural.of(5).log(Natural.ZERO))
+                && throwsIllegalArgument(() -> Natural.of(5).log(Natural.ONE)));
+        check("10^100 的 log_10 是 100", Natural.power(Natural.TEN, Natural.of(100)).log(Natural.TEN).orElseThrow()
+                .equals(Natural.of(100)));
+        check("log_2(2^4095) = 4095（精确区间的上沿）", Natural.power(Natural.TWO, Natural.of(4095)).log(Natural.TWO)
+                .orElseThrow().equals(Natural.of(4095)));
+        check("结构形底超过一切精确值：精确值的 floor 恰为零",
+                Natural.of(1000).log(Natural.tetration(Natural.TEN, Natural.TEN)).orElseThrow().isZero());
+        check("log_10(10↑1233) = 1233（结构形指数塔也精确）", Natural.power(Natural.TEN, Natural.of(1233)).log(Natural.TEN)
+                .orElseThrow().equals(Natural.of(1233)));
+        equal("log_10(10↑↑10) = 10↑↑9（恒等式逐箭头剥落）", Natural.tetration(Natural.TEN, Natural.of(9)),
+                Natural.tetration(Natural.TEN, Natural.TEN).log(Natural.TEN).orElseThrow());
+        equal("log_10(10↑↑3) = 10^10（剥落后落回精确区间）", Natural.power(Natural.TEN, Natural.of(10)),
+                Natural.tetration(Natural.TEN, Natural.of(3)).log(Natural.TEN).orElseThrow());
+        equal("log_2(2↑↑5) = 2↑↑4", Natural.tetration(Natural.TWO, Natural.of(4)),
+                Natural.tetration(Natural.TWO, Natural.of(5)).log(Natural.TWO).orElseThrow());
+        check("精确值跨底对数仍然精确：log_2(10^100) = 332",
+                Natural.power(Natural.TEN, Natural.of(100)).log(Natural.TWO).orElseThrow()
+                        .equals(Natural.of(332)));
+        equal("双箭头恒等式对任何精确底成立（换底只差常数因子，塔分辨率下折叠）：log_2(10↑↑10) = 10↑↑9",
+                Natural.tetration(Natural.TEN, Natural.of(9)),
+                Natural.tetration(Natural.TEN, Natural.TEN).log(Natural.TWO).orElseThrow());
+        check("单箭头跨底按换底公式给 floor：log_2(10^5000) = 16609",
+                Natural.power(Natural.TEN, Natural.of(5000)).log(Natural.TWO).orElseThrow()
+                        .equals(Natural.of(16609)));
+        check("三箭头起对数是自身（四舍五入不变）：log_10(10↑↑↑3) = 10↑↑↑3",
+                Natural.arrow(Natural.TEN, 3, Natural.of(3)).log(Natural.TEN).orElseThrow()
+                        .equals(Natural.arrow(Natural.TEN, 3, Natural.of(3))));
+        CantorNormalForm notation = CantorNormalForm.standard();
+        equal("log_2(2{ω}2) = 2（级别先按自身高度归一化）", Natural.of(2),
+                Natural.tower(Natural.TWO, notation.omega(), Natural.TWO).log(Natural.TWO).orElseThrow());
+        check("log_10(10{ω}10)：先归一化成 9 箭头塔，再按三箭头规则返回自身",
+                Natural.tower(Natural.TEN, notation.omega(), Natural.TEN).log(Natural.TEN).orElseThrow()
+                        .compareTo(Natural.tower(Natural.TEN, notation.omega(), Natural.TEN)) == 0);
+        check("归一化走不完的 transfinite 级别（ε₀）诚实地给空",
+                Natural.tower(Natural.TEN, notation.limit(), Natural.TEN).log(Natural.TEN).isEmpty());
+        check("结构形底的对数给空",
+                Natural.tetration(Natural.TEN, Natural.TEN).log(Natural.tetration(Natural.TEN, Natural.TEN))
+                        .isEmpty());
+        Random random = new Random(20261108L);
+        int logPairs = 0;
+        boolean logHolds = true;
+        for (int round = 0; round < 500; round++) {
+            // Small base and exponent, so that the value stays inside the exact range and the offset
+            // stays below base^e·(base-1), which is what pins the floor at exactly e.
+            BigInteger base = BigInteger.TWO.add(BigInteger.valueOf(random.nextInt(62)));
+            BigInteger exponent = new BigInteger(1 + random.nextInt(8), random);
+            BigInteger modulus = base.pow(exponent.intValue()).multiply(base.subtract(BigInteger.ONE));
+            BigInteger value = base.pow(exponent.intValue())
+                    .add(BigInteger.valueOf(random.nextInt(1 << 20)).mod(modulus));
+            Natural computed = Natural.of(value).log(Natural.of(base)).orElseThrow();
+            if (!computed.toBigInteger().equals(exponent)
+                    || Natural.power(Natural.of(base), computed).compareTo(Natural.of(value)) > 0
+                    || Natural.power(Natural.of(base), computed.add(Natural.ONE)).compareTo(Natural.of(value)) <= 0) {
+                logHolds = false;
+                equal("第 " + round + " 轮随机对数（底 " + base + "，值 " + value + "）",
+                        "floor 恰为 " + exponent, computed.toString());
+                break;
+            }
+            logPairs++;
+        }
+        check("500 个随机 floor 对数满足 b^e ≤ x < b^(e+1) 且恰好等于 e（" + logPairs + "/500）",
+                logHolds && logPairs == 500);
+    }
+
+    // ------------------------------------------------------------------ 18) hyperoperation inverses
+
+    /**
+     * {@link Natural#superLog(Natural)}, {@link Natural#hyperInverse(Natural, int)} and
+     * {@link Natural#root(Natural)}: the inverses above exponentiation, answered by the arrow level -
+     * exact identities where they hold, level-resolved approximations where the notation rounds.
+     */
+    private static void hyperoperationInverses() {
+        section("18) 超对数、更高超运算的高度逆与整数开方");
+        check("superLog_2(65536) = 4（2↑↑4 = 65536）", Natural.of(65536).superLog(Natural.TWO).orElseThrow()
+                .equals(Natural.of(4)));
+        check("superLog_2(65535) = 3（floor 边界）", Natural.of(65535).superLog(Natural.TWO).orElseThrow()
+                .equals(Natural.of(3)));
+        check("superLog_10(9) = 0（低于底数）", Natural.of(9).superLog(Natural.TEN).orElseThrow().isZero());
+        equal("superLog_10(10↑↑10) = 10", Natural.of(10),
+                Natural.tetration(Natural.TEN, Natural.TEN).superLog(Natural.TEN).orElseThrow());
+        equal("superLog_10(10^100) = 1 + superLog_10(100) = 2", Natural.of(2),
+                Natural.power(Natural.TEN, Natural.of(100)).superLog(Natural.TEN).orElseThrow());
+        equal("superLog_10(10↑↑↑3) = 10↑↑↑2 = 10↑↑10", Natural.tetration(Natural.TEN, Natural.TEN),
+                Natural.arrow(Natural.TEN, 3, Natural.of(3)).superLog(Natural.TEN).orElseThrow());
+        check("四箭头也有恒等式：slog_10(10↑↑↑↑3) = 10↑↑↑↑2",
+                Natural.arrow(Natural.TEN, 4, Natural.of(3)).superLog(Natural.TEN).orElseThrow()
+                        .equals(Natural.arrow(Natural.TEN, 4, Natural.of(2))));
+        check("跨底超对数按同一恒等式给近似（迭代次数对每步常数因子不敏感）：slog_2(10↑↑10) = 10",
+                Natural.tetration(Natural.TEN, Natural.TEN).superLog(Natural.TWO).orElseThrow()
+                        .equals(Natural.of(10)));
+        equal("hyperInverse(2,3)(65536) = 3（2↑↑↑3 = 65536）", Natural.of(3),
+                Natural.of(65536).hyperInverse(Natural.TWO, 3).orElseThrow());
+        equal("hyperInverse(10,7)(10↑^7 12) = 12（同级别匹配塔给高度）", Natural.of(12),
+                Natural.arrow(Natural.TEN, 7, Natural.of(12)).hyperInverse(Natural.TEN, 7).orElseThrow());
+        equal("hyperInverse(10,3)(10↑↑↑↑3) = 10↑↑↑↑2（高一箭头、精确高度的恒等式）",
+                Natural.arrow(Natural.TEN, 4, Natural.of(2)),
+                Natural.arrow(Natural.TEN, 4, Natural.of(3)).hyperInverse(Natural.TEN, 3).orElseThrow());
+        check("hyperInverse(10,3) 对 10↑^7 10 不可证，给空",
+                Natural.arrow(Natural.TEN, 7, Natural.TEN).hyperInverse(Natural.TEN, 3).isEmpty());
+        check("hyperInverse 拒绝零箭头，且 log 与 superLog 是它的 1、2 箭头情形",
+                throwsIllegalArgument(() -> Natural.of(5).hyperInverse(Natural.TWO, 0))
+                        && Natural.of(1024).hyperInverse(Natural.TWO, 1).equals(Natural.of(1024).log(Natural.TWO))
+                        && Natural.of(65536).hyperInverse(Natural.TWO, 2).equals(Natural.of(65536).superLog(Natural.TWO)));
+        equal("√(10^100) = 10^50", Natural.power(Natural.TEN, Natural.of(50)),
+                Natural.power(Natural.TEN, Natural.of(100)).root(Natural.TWO).orElseThrow());
+        equal("10^99 的三次方根是 10^33（floor）", Natural.power(Natural.TEN, Natural.of(33)),
+                Natural.power(Natural.TEN, Natural.of(99)).root(Natural.of(3)).orElseThrow());
+        equal("2^4000 的平方根是 2^2000（4096 位上限附近的牛顿迭代）", Natural.power(Natural.TWO, Natural.of(2000)),
+                Natural.power(Natural.TWO, Natural.of(4000)).root(Natural.TWO).orElseThrow());
+        check("2 的平方根向下取整为一", Natural.TWO.root(Natural.TWO).orElseThrow().isOne());
+        equal("一次根就是自身", Natural.of(42), Natural.of(42).root(Natural.ONE).orElseThrow());
+        check("双箭头及以上的开方是自身（数量级分辨率下开方不改塔）：√(10↑↑10) = 10↑↑10",
+                Natural.tetration(Natural.TEN, Natural.TEN).root(Natural.TWO).orElseThrow()
+                        .equals(Natural.tetration(Natural.TEN, Natural.TEN)));
+        check("单箭头 10 的幂开方按指数相除（精确）：(10^5000)^(1/3) = 10^1666",
+                Natural.power(Natural.TEN, Natural.of(5000)).root(Natural.of(3)).orElseThrow()
+                        .equals(Natural.power(Natural.TEN, Natural.of(1666))));
+        check("被超大的次数开方：10^5000 的 (10↑↑10) 次根是一",
+                Natural.power(Natural.TEN, Natural.of(5000)).root(Natural.tetration(Natural.TEN, Natural.TEN))
+                        .orElseThrow().isOne());
+        check("次数大到无法存储时，精确值的根恰为一",
+                Natural.power(Natural.TWO, Natural.of(100)).root(Natural.tetration(Natural.TEN, Natural.TEN))
+                        .orElseThrow().isOne());
+        check("零次根被拒绝", throwsIllegalArgument(() -> Natural.of(5).root(Natural.ZERO)));
+    }
+
     private static void section(String title) {
         System.out.println();
         System.out.println("== " + title + " ==");
@@ -828,10 +1070,11 @@ public final class GoogologyCheck {
     }
 
     private static void equal(String description, Object expected, Object actual) {
-        boolean same = expected == null ? actual == null : expected.equals(actual);
+        boolean same = Objects.equals(expected, actual);
         check(description + "（期望 " + expected + "，实际 " + actual + "）", same);
     }
 
+    @SuppressWarnings("SameParameterValue")
     private static void close(String description, float expected, float actual, float tolerance) {
         check(description + "（期望 " + expected + " ± " + tolerance + "，实际 " + actual + "）",
                 Math.abs(expected - actual) <= tolerance);

@@ -44,7 +44,7 @@ public final class BmsCheck {
 
         section("16) BMS 标准式与规范形（Bashicu 矩阵序数）");
         matrixShape();
-        canonicalisation();
+        canonicalization();
         standardFormDetection();
         theThreeExamples();
         ordering();
@@ -80,14 +80,14 @@ public final class BmsCheck {
                         && throwsUnsupported(() -> matrix.columns().get(0).add(1)));
         check("空矩阵合法：长度 0、行数 0、渲染 ()",
                 BmsMatrix.canonical(new int[0][]).isEmpty()
-                        && BmsMatrix.canonical(new int[0][]).length() == 0
+                        && BmsMatrix.canonical(new int[0][]).isEmpty()
                         && BmsMatrix.canonical(new int[0][]).rows() == 0
                         && BmsMatrix.canonical(new int[0][]).toString().equals("()"));
     }
 
-    // ------------------------------------------------------------------ canonicalisation
+    // ------------------------------------------------------------------ canonicalization
 
-    private static void canonicalisation() {
+    private static void canonicalization() {
         BmsMatrix oneRow = BmsMatrix.of(new int[][]{{0}, {1}, {2}});
         BmsMatrix twoRows = BmsMatrix.canonical(new int[][]{{0, 0}, {1, 0}, {2, 0}});
         BmsMatrix threeRows = BmsMatrix.canonical(new int[][]{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}});
@@ -544,13 +544,13 @@ public final class BmsCheck {
 
     private static boolean antisymmetric(List<BmsOrdinal> values) {
         for (int left = 0; left < values.size(); left++) {
-            for (int right = 0; right < values.size(); right++) {
-                int forward = values.get(left).compareTo(values.get(right));
-                int backward = values.get(right).compareTo(values.get(left));
+            for (BmsOrdinal value : values) {
+                int forward = values.get(left).compareTo(value);
+                int backward = value.compareTo(values.get(left));
                 if (Integer.signum(forward) != -Integer.signum(backward)) {
                     return false;
                 }
-                if ((forward == 0) != values.get(left).equals(values.get(right))) {
+                if ((forward == 0) != values.get(left).equals(value)) {
                     return false;
                 }
             }
@@ -595,6 +595,7 @@ public final class BmsCheck {
      * small rows. The values are not checked for deep standardness - transitivity is a property of the
      * lexicographic order itself - but they exercise mixed heights and lengths.
      */
+    @SuppressWarnings("SameParameterValue")
     private static List<BmsOrdinal> randomOrdinals(Random random, int count) {
         List<BmsOrdinal> values = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {

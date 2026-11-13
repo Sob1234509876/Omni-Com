@@ -29,9 +29,10 @@ Notes for whoever writes the expander:
 - The files are UTF-8 without a byte order mark; read them as UTF-8, not as the platform default.
 - The formulas are the original `<math>` blocks, so the superscripts and subscripts survive, unlike
   the rendered text a page fetch returns.
-- The wiki does not state a licence on these pages; check the wiki's terms before redistributing the
-  articles outside this repository. The files are kept here as private references. The attribution and
-  licence status of both articles is recorded in `NOTICE.md`.
+- The pages carry no separate licence statements of their own; they fall under the wiki's site-wide
+  licence (footer: 除非另有声明，本网站内容采用知识共享署名-相同方式共享授权, i.e. CC BY-SA 4.0),
+  confirmed on 2026-11-07. Redistribution is permitted under CC BY-SA 4.0 with attribution. The
+  attribution and licence status of both articles is recorded in `NOTICE.md`.
 - The three worked examples are the natural acceptance tests for an expander, and the strength table
   gives the expected ordinal for the expressions in it.
 - The non-recursive article's two non-recursive expansions are infinite columns

@@ -54,7 +54,7 @@ object to attach it to.
 ## 3. What the joke teaches
 
 - Both "ordinals" above fail for the same reason: they are defined by a property of the whole class
-  rather than by comprehension from below. Real large cardinals (see `Cardinals.md`) never do this.
+  rather than by comprehension from below. Real large cardinals (see `Big Cardinals.md`) never do this.
   Each of them is a set, and its strength is measured by what it reflects, not by how big it claims to
   be.
 - The two wishes differ by exactly the difference between $|\mathrm{Ord}|$ and $|V|$, which is the

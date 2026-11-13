@@ -32,7 +32,7 @@ import java.util.Objects;
  * <p><b>Why there is no {@code PSI_OMEGA_OMEGA}-style constant.</b> The BMS reference's own last nodes
  * below the limit - {@code ψ(Ω^Ω) = FSO = Γ₀} written {@code (0)(1,1)(2,1)(3,1)}, {@code ψ(M_ω) = SMO}
  * written {@code (0)(1,1,1)(2,1,1)(3,1,1)(3,1,1)} and {@code ψ(ω-Projection) = TSSO} written
- * {@code (0,0,0,0)(1,1,1,1)} - are BMS-representable matrices. A register whose every entry is
+ * {@code (0,0,0,0)(1,1,1,1)} - are BMS-representable matrices. A register who's every entry is
  * <em>above every BMS value</em> cannot contain them: the "greater than BMS" axiom below would be false
  * for them. They are listed as the rungs just below the limit in
  * {@code help/abstract-ordinals.md}, where their matrix forms make the boundary concrete. The enum begins
@@ -41,7 +41,7 @@ import java.util.Objects;
  *
  * <p><b>The declared rank.</b> {@link #rank()} is the position of the constant in this enum, counting from
  * zero, and the {@code compareTo} inherited from {@link Enum} compares exactly those positions, which a
- * static initialiser keeps equal to the declared ranks. That makes the order total, transitive,
+ * static initializer keeps equal to the declared ranks. That makes the order total, transitive,
  * antisymmetric and consistent with {@code equals} by construction, which is what a {@link Comparable} needs
  * (the method is {@code final} in {@link Enum}, so this type cannot override it; the self check asserts that
  * the enum positions and the declared ranks agree). It is a <em>declaration of this register</em>, not a
@@ -212,7 +212,7 @@ public enum AbstractOrdinal implements Comparable<AbstractOrdinal> {
      * notion of a probable answer.
      *
      * <p>The direction is the one the inherited {@code compareTo} gives - the constants' positions, which
-     * the static initialiser keeps equal to {@link #rank()} - so the two never disagree on the pairs that
+     * the static initializer keeps equal to {@link #rank()} - so the two never disagree on the pairs that
      * are established.
      *
      * @throws NullPointerException if {@code other} is {@code null}
@@ -283,7 +283,7 @@ public enum AbstractOrdinal implements Comparable<AbstractOrdinal> {
         return text;
     }
 
-    /** Whether this name comes before {@code other} in the declared rank; private, for the static initialiser. */
+    /** Whether this name comes before {@code other} in the declared rank; private, for the static initializer. */
     private boolean isBefore(AbstractOrdinal other) {
         return rank < other.rank;
     }

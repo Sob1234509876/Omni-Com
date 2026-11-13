@@ -16,7 +16,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (698 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (774 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
@@ -587,6 +587,12 @@ rung that quotes it is labelled as such in both the enum and this document. See
 | `add` | exact sum (promoted if it passes the threshold) | the larger operand |
 | `subtractClamped` | exact difference, clamped at zero | the larger operand, or zero when equal |
 | `multiply` | exact product (promoted if needed) | the larger operand, zero when one is zero |
+| `divide` | exact quotient, floored | one arrow: same base subtracts heights (`10^a / 10^b = 10^(a-b)`), another base rounds the magnitude; two arrows and up: the dividend (or one, or zero) |
+| `remainder` | exact remainder | zero for same-base one-arrow powers (exact division); empty otherwise - the remainder lives in the dropped digits |
+| `log` | exact floor, by guarded binary search | one arrow: the height; two arrows: one peeled level (`log_10(10↑↑(n+1)) = 10↑↑n`); three arrows and up: the value itself; change of base folds into a constant |
+| `superLog` | exact, by iterating the exact log | one arrow: `1 + slog(height)`; two arrows: the height; three arrows and up: `c↑^a(h-1)`, or the value when the height is structural |
+| `hyperInverse` | exact iteration of the operation | delegates to `log`/`superLog` at one and two arrows; three and up answers the matching tower |
+| `root` | exact Newton root | one arrow: `10^(n/m)` (exact for base ten); two arrows and up: the value itself; a structural degree only leaves `c^(h/D)` writable |
 | `min`, `max`, `compareTo` | integer comparison | both sides are reduced by value first (budget `COMPARISON_REDUCTION_BUDGET = 32`), then rank, base, height |
 | `toString` | decimal digits | arrow notation (`10↑↑10`), or `base{level}height` for a transfinite level |
 | capacity checks (`isFull` style) | ordinary comparisons | an unlimited limit stays unlimited, a finite one saturates to full |
@@ -636,7 +642,7 @@ help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
 help/inaccessible-extension.md    the Chinese guide to the stage-five inaccessible extension
-src/selfcheck/java/.../check/GoogologyCheck.java    the 698 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 774 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)

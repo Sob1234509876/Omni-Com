@@ -76,7 +76,7 @@ public final class Natural implements Comparable<Natural> {
      */
     private static final int EVALUATION_ARROW_LIMIT = 64;
 
-    /** log10(2), used to turn a bit length into a decimal magnitude. */
+    /** log10(2), used to turn a bit of length into a decimal magnitude. */
     private static final double LOG10_OF_TWO = 0.3010299956639812d;
 
     /** A run of two or more carets in ASCII arrow notation. */
@@ -107,7 +107,7 @@ public final class Natural implements Comparable<Natural> {
     public static final int COMPARISON_REDUCTION_BUDGET = 32;
 
     /**
-     * How deep the logarithmic descent of a comparison may go. One step turns
+     * How deep the logarithmic descent of a comparison may go. One-step turns
      * "compare {@code b↑^a h} with {@code b↑^k h'}" into "compare {@code b↑^a (h-1)} with {@code h'}",
      * so the depth is the number of levels of height it may peel; reaching it means the pair stays
      * undetermined rather than costing unbounded work.
@@ -708,7 +708,7 @@ public final class Natural implements Comparable<Natural> {
             // either side. For a fixed base and height the hierarchy is monotone in the level, and the
             // fundamental sequences are monotone in their ordinal, so the level order decides the values.
             // This is the one rule here that rests on the notation's own well-behavedness rather than on
-            // arithmetic alone; the self check cross checks it against a much larger budget.
+            // arithmetic alone; the self check cross-checks it against a much larger budget.
             return ComparisonResult.of(left.level.compareTo(right.level));
         }
         return ComparisonResult.UNKNOWN;
@@ -804,7 +804,7 @@ public final class Natural implements Comparable<Natural> {
      * {@code X = b{ω}b}. So the lower bound is an ordinary finite level tower whose level and height are both
      * astronomical, and the finite level certificates decide it against an ordinary opponent. The two steps
      * being used are height monotonicity at a fixed level and successor level monotonicity, the same
-     * well-behavedness assumption the "two unreducible levels" rule documents.
+     * well-behavedness assumption the "two irreducible levels" rule documents.
      *
      * <p>This is what decides {@code 10{ω+1}3 > 10{100}10}, {@code 10{ω+2}2 > 10{100}10}, and - through the
      * fundamental sequence walk that turns {@code ω·2}, {@code ω²} and {@code ω^ω} into successors - the
@@ -877,7 +877,7 @@ public final class Natural implements Comparable<Natural> {
         if (depth <= 0 || higher.height.compareTo(ONE) <= 0) {
             return ComparisonResult.UNKNOWN;
         }
-        Natural inner = arrow(higher.base, leftArrows > rightArrows ? leftArrows : rightArrows,
+        Natural inner = arrow(higher.base, Math.max(leftArrows, rightArrows),
                 higher.height.subtractClamped(ONE));
         if (inner.compareMagnitude(lower.height, budget, depth - 1) == ComparisonResult.GREATER) {
             return leftArrows > rightArrows ? ComparisonResult.GREATER : ComparisonResult.LESS;
@@ -947,9 +947,21 @@ public final class Natural implements Comparable<Natural> {
         }
     }
 
-    /** {@code log10(base)}, which is a small positive number because 0 and 1 are canonicalised away. */
+    /** {@code log10(base)}, which is a small positive number because 0 and 1 are canonical away. */
     private double log10OfBase() {
         return Math.max(1.0e-300, base.log10Approx());
+    }
+
+    /**
+     * {@code log10} of a small exact value as an accurate double, falling back to the bit-length
+     * estimate for an exact value too large for a double. Used by the single-arrow division and root
+     * rules, whose results are rounded magnitudes and therefore tolerate the fallback's coarser scale.
+     */
+    private static double exactLog10(Natural value) {
+        if (value.kind == Kind.EXACT && value.value.bitLength() <= 53) {
+            return Math.log10(value.value.doubleValue());
+        }
+        return value.log10Approx();
     }
 
     private static double clamp(double value) {
@@ -1083,6 +1095,378 @@ public final class Natural implements Comparable<Natural> {
         return multiply(of(other));
     }
 
+    /**
+     * Divides this value by the other, rounding down: the quotient of the natural-number division, so
+     * {@code of(7).divide(of(2))} is {@code 3}. Division by zero is rejected.
+     *
+     * <p>The exact range divides exactly. Above it the quotient is resolved at the dividend's arrow
+     * level:
+     *
+     * <ul>
+     *   <li>a <b>single-arrow</b> dividend is divided by height arithmetic: the same base subtracts the
+     *       heights exactly ({@code 10^a / 10^b = 10^(a-b)} is an identity), and another base or a small
+     *       exact divisor rounds the quotient's base ten magnitude ({@code 10^5000 / 7} is {@code 10^4999},
+     *       the true magnitude being {@code 10^4999.15});</li>
+     *   <li>a dividend of <b>two arrows and up</b> follows the resolution rule of
+     *       {@link #subtractClamped(Natural)}: dividing by anything smaller leaves the magnitude
+     *       unchanged, because the difference sits in the digits the notation does not keep.</li>
+     * </ul>
+     *
+     * <p>Dividing something smaller by something larger gives zero, and equal magnitudes give exactly
+     * one. {@link Natural#BEYOND} saturates: it divided by anything stays itself, and anything divided
+     * by it is zero. The remainder of a structural division is a different matter - see
+     * {@link #remainder(Natural)}.
+     *
+     * @throws IllegalArgumentException when the divisor is zero
+     */
+    public Natural divide(Natural other) {
+        Objects.requireNonNull(other, "other");
+        if (other.isZero()) {
+            throw new IllegalArgumentException("division by zero: " + this + " / " + other);
+        }
+        if (kind == Kind.BEYOND) {
+            return BEYOND;
+        }
+        if (other.kind == Kind.BEYOND) {
+            return ZERO;
+        }
+        int comparison = compareTo(other);
+        if (comparison < 0) {
+            return ZERO;
+        }
+        if (comparison == 0) {
+            return ONE;
+        }
+        if (kind == Kind.EXACT && other.kind == Kind.EXACT) {
+            return canonicalExact(value.divide(other.value));
+        }
+        if (kind == Kind.TOWER && finiteLevel != null && finiteLevel.isOne()) {
+            if (other.kind == Kind.TOWER && other.finiteLevel != null && other.finiteLevel.isOne()
+                    && base.equals(other.base)) {
+                // c^a / c^b = c^(a-b) exactly, and comparison > 0 made sure a > b.
+                return arrow(base, 1, height.subtractClamped(other.height));
+            }
+            Optional<Natural> byMagnitude = quotientByMagnitude(other);
+            if (byMagnitude.isPresent()) {
+                return byMagnitude.get();
+            }
+        }
+        // At tower resolution the quotient stays at the dividend's magnitude, the same collapse
+        // subtractClamped uses: the missing low-order part cannot show up at this resolution.
+        return this;
+    }
+
+    /**
+     * The single-arrow quotient as a rounded base ten magnitude, when both sides of the division are
+     * small enough for the doubles to decide: {@code 10^round(log10(dividend) - log10(divisor))}. Empty
+     * when either magnitude is out of double reach, which means the divisor vanishes into the dividend
+     * and the caller keeps the dividend.
+     */
+    private Optional<Natural> quotientByMagnitude(Natural divisor) {
+        double divisorLog10;
+        if (divisor.kind == Kind.EXACT) {
+            divisorLog10 = exactLog10(divisor);
+        } else if (divisor.kind == Kind.TOWER && divisor.finiteLevel != null && divisor.finiteLevel.isOne()
+                && divisor.height.isExact() && divisor.height.value.bitLength() <= 53) {
+            divisorLog10 = divisor.height.toDoubleApprox() * exactLog10(divisor.base);
+        } else {
+            return Optional.empty();
+        }
+        if (!height.isExact() || height.value.bitLength() > 53) {
+            return Optional.empty();
+        }
+        double difference = height.toDoubleApprox() * exactLog10(base) - divisorLog10;
+        if (Double.isNaN(difference) || difference > 9.0e15d) {
+            return Optional.empty();
+        }
+        long exponent = Math.round(difference);
+        if (exponent <= -1L) {
+            return Optional.of(ZERO);
+        }
+        if (exponent == 0L) {
+            return Optional.of(ONE);
+        }
+        return Optional.of(arrow(TEN, 1, of(exponent)));
+    }
+
+    /**
+     * The remainder of the division by the other value, when the division determines one.
+     *
+     * <p>Two exact values have an exact remainder. A divisor at least as large as the dividend makes the
+     * remainder the dividend itself (or zero, when the two are equal), whatever the representations;
+     * dividing by one never leaves a remainder. Everything else that involves a structural value is empty,
+     * and deliberately so: the remainder of {@code 10↑↑10 / 7} lives in the low-order digits, which are
+     * exactly the part of the value the structural notation throws away. A guess here would be a lie
+     * about, say, the parity of a tower.
+     *
+     * @throws IllegalArgumentException when the divisor is zero
+     */
+    public Optional<Natural> remainder(Natural other) {
+        Objects.requireNonNull(other, "other");
+        if (other.isZero()) {
+            throw new IllegalArgumentException("division by zero: " + this + " mod " + other);
+        }
+        if (kind == Kind.BEYOND) {
+            return Optional.empty();
+        }
+        if (other.kind == Kind.BEYOND) {
+            return Optional.of(this);
+        }
+        if (other.isOne()) {
+            return Optional.of(ZERO);
+        }
+        int comparison = compareTo(other);
+        if (comparison == 0) {
+            return Optional.of(ZERO);
+        }
+        if (comparison < 0) {
+            return Optional.of(this);
+        }
+        if (kind == Kind.EXACT && other.kind == Kind.EXACT) {
+            return Optional.of(canonicalExact(value.remainder(other.value)));
+        }
+        if (kind == Kind.TOWER && finiteLevel != null && finiteLevel.isOne()
+                && other.kind == Kind.TOWER && other.finiteLevel != null && other.finiteLevel.isOne()
+                && base.equals(other.base)) {
+            return Optional.of(ZERO);   // c^a is a multiple of c^b whenever a >= b, which the guard proved
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The floor of the base {@code base} logarithm of this value: the largest {@code e} with
+     * {@code base^e <= this}. Two exact values always have an exact floor, computed from bit lengths and
+     * a guarded binary search.
+     *
+     * <p>A structural value is logarithmised by first changing the base to ten (the logarithm rules move
+     * every base onto the one scale) and then applying the rule of the value's own arrow count:
+     *
+     * <ul>
+     *   <li><b>one arrow</b>: {@code log_10(10^n) = n} - the height itself. Same base exact; another
+     *       exact base gives {@code floor(n·log_base(10))} from doubles, off by at most one near the
+     *       double precision limit;</li>
+     *   <li><b>two arrows</b>: {@code log_10(10↑↑(n+1)) = 10↑↑n} - one level of the tower peeled. The
+     *       change of base contributes only a constant factor, which folds at tower resolution, so the
+     *       rule holds for any exact base;</li>
+     *   <li><b>three arrows and up</b>: the answer is the value itself. The true logarithm is the tower
+     *       with one stripped from a height the notation cannot decrement ({@code log_10(10↑↑↑3)} is
+     *       {@code 10↑↑(10↑↑10 - 1)}), and rounding at this resolution leaves the value unchanged;</li>
+     *   <li>a structural height under a one-arrow value answers the height (a constant factor folds), a
+     *       transfinite level is reduced at its own height first, and a level that does not reduce - or a
+     *       structural base - is empty.</li>
+     * </ul>
+     *
+     * <p>So {@code log_10(10↑1233)} is exactly {@code 1233}, {@code log_10(10↑↑10)} exactly
+     * {@code 10↑↑9}, {@code log_2(10↑↑10)} approximately {@code 10↑↑9}, and {@code log_10(10↑↑↑3)} the
+     * tower itself. See also {@link #log10Approx()} for the double-scale estimate that always answers.
+     *
+     * @throws IllegalArgumentException when this value is zero (the logarithm of zero is undefined) or the
+     *     base is zero or one
+     */
+    public Optional<Natural> log(Natural base) {
+        Objects.requireNonNull(base, "base");
+        if (isZero()) {
+            throw new IllegalArgumentException("the logarithm of zero is undefined");
+        }
+        if (base.isZero() || base.isOne()) {
+            throw new IllegalArgumentException("the logarithm base must be at least two, was " + base);
+        }
+        if (isBeyond()) {
+            return Optional.empty();
+        }
+        if (isExact()) {
+            if (!base.isExact()) {
+                return Optional.of(ZERO);   // a structural base exceeds every exact value
+            }
+            return Optional.of(canonicalExact(BigInteger.valueOf(exactFloorLog(value, base.value))));
+        }
+        return logStructural(base);
+    }
+
+    /**
+     * The super-logarithm to the base {@code base}: the largest height {@code h} with
+     * {@code base ↑↑ h <= this}, the inverse of tetration with respect to its height. It counts how often
+     * the logarithm must be applied before the value drops below the base: zero for a value below the
+     * base, one up to {@code base ↑↑ 2}, and so on.
+     *
+     * <p>The exact range iterates the exact floor logarithm, which terminates after a handful of steps.
+     * A structural value answers by the same level rules as {@link #log(Natural)}, and they hold for any
+     * exact base - the iteration count is insensitive to a constant factor per step, so a foreign base
+     * costs at most an additive constant:
+     *
+     * <ul>
+     *   <li>one arrow: {@code slog_b(c^h) = 1 + slog_b(h)}, recursing on the height;</li>
+     *   <li>two arrows: {@code slog_b(c↑↑h) = h}, the height itself;</li>
+     *   <li>three arrows and up with an exact height: {@code c ↑^k (h-1)}, the tower one height lower;</li>
+     *   <li>three arrows and up with a structural height: the value itself, because {@code h-1} is not
+     *       writable and subtracting one changes nothing at this resolution.</li>
+     * </ul>
+     *
+     * <p>A transfinite level is reduced first, as in {@link #log(Natural)}; a structural base has no
+     * rule and is empty.
+     *
+     * @throws IllegalArgumentException when this value is zero or the base is zero or one
+     */
+    public Optional<Natural> superLog(Natural base) {
+        Objects.requireNonNull(base, "base");
+        if (isZero()) {
+            throw new IllegalArgumentException("the super-logarithm of zero is undefined");
+        }
+        if (base.isZero() || base.isOne()) {
+            throw new IllegalArgumentException("the super-logarithm base must be at least two, was " + base);
+        }
+        if (isBeyond()) {
+            return Optional.empty();
+        }
+        if (isExact()) {
+            if (!base.isExact()) {
+                return Optional.of(ZERO);   // base ↑↑ 1 = base already exceeds every exact value
+            }
+            return Optional.of(canonicalExact(BigInteger.valueOf(exactSuperLog(value, base.value))));
+        }
+        return superLogStructural(base);
+    }
+
+    /**
+     * The inverse of the hyperoperation with respect to its height: the largest {@code h} with
+     * {@code base ↑^arrows h <= this}. One arrow is {@link #log(Natural)} (the floor logarithm), two are
+     * {@link #superLog(Natural)} (the super-logarithm), and three and above generalize them - the largest
+     * pentation height not exceeding the value, and so on.
+     *
+     * <p>The exact range iterates the operation while it evaluates exactly, which for three arrows and up
+     * terminates after a step or two. Structural values answer the matching tower exactly (the largest
+     * height of {@code base ↑^arrows} not exceeding {@code base ↑^arrows h} is {@code h}), one arrow above
+     * the asked level through {@code inv_a(b↑^(a+1) h) = b↑^(a+1) (h-1)} for an exact height, and are
+     * empty otherwise; a transfinite level is reduced first, as in {@link #log(Natural)}.
+     *
+     * @throws IllegalArgumentException when the arrow count is below one, this value is zero, or the base
+     *     is zero or one
+     */
+    public Optional<Natural> hyperInverse(Natural base, int arrows) {
+        if (arrows < 1) {
+            throw new IllegalArgumentException("at least one arrow is required, was " + arrows);
+        }
+        if (arrows == 1) {
+            return log(base);
+        }
+        if (arrows == 2) {
+            return superLog(base);
+        }
+        Objects.requireNonNull(base, "base");
+        if (isZero()) {
+            throw new IllegalArgumentException("the hyperoperation inverse of zero is undefined");
+        }
+        if (base.isZero() || base.isOne()) {
+            throw new IllegalArgumentException("the hyperoperation base must be at least two, was " + base);
+        }
+        if (isBeyond()) {
+            return Optional.empty();
+        }
+        if (isExact()) {
+            if (!base.isExact()) {
+                return Optional.of(ZERO);   // base ↑^arrows 1 = base already exceeds every exact value
+            }
+            return exactHyperInverse(base, arrows);
+        }
+        if (kind == Kind.TOWER) {
+            Natural current = this;
+            while (current.kind == Kind.TOWER && current.level != null) {
+                Natural reduced = TransfiniteHyperoperation.apply(current.base, current.level, current.height,
+                        COMPARISON_REDUCTION_BUDGET);
+                if (reduced.equals(current)) {
+                    return Optional.empty();   // the level walk did not finish, so no identity applies
+                }
+                current = reduced;
+            }
+            if (current.isExact()) {
+                return base.isExact() ? exactHyperInverse(base, arrows) : Optional.of(ZERO);
+            }
+            if (current.base.equals(base)) {
+                if (current.finiteLevel.equals(of(arrows))) {
+                    return Optional.of(current.height);
+                }
+                if (current.finiteLevel.equals(of(arrows + 1)) && current.height.isExact()) {
+                    return Optional.of(arrow(base, arrows + 1, current.height.subtractClamped(ONE)));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The floor of the {@code degree}-th root of this value: the largest {@code r} with
+     * {@code r^degree <= this}. Two exact values get the exact Newton root.
+     *
+     * <p>A structural value answers at its arrow level, the same resolution the other inverses use:
+     *
+     * <ul>
+     *   <li><b>one arrow, base ten</b>: {@code (10^n)^(1/m) = 10^(n/m)}, exact, because
+     *       {@code (10^k)^m <= 10^n < (10^(k+1))^m} holds exactly when {@code k = floor(n/m)};</li>
+     *   <li><b>one arrow, another base</b>: the height {@code n·log10(base)/m} rounded to a power of ten
+     *       when doubles decide it, the value itself when the height is structural (a constant factor and
+     *       a division by {@code m} both fold), and empty when the height is exact but too tall for
+     *       doubles;</li>
+     *   <li><b>two arrows and up</b>: the value itself - the root divides the value's own logarithm,
+     *       which at that level is the value again, so the root of the tower is the tower;</li>
+     *   <li>a structural degree only leaves the one-arrow form {@code c^(h/D)} writable (the division
+     *       collapses or zeroes the height); everything else - a transfinite level that does not reduce,
+     *       {@link #BEYOND} - is empty.</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException when the degree is zero
+     */
+    public Optional<Natural> root(Natural degree) {
+        Objects.requireNonNull(degree, "degree");
+        if (degree.isZero()) {
+            throw new IllegalArgumentException("the zeroth root is undefined");
+        }
+        if (degree.isOne()) {
+            return Optional.of(this);
+        }
+        if (isExact()) {
+            if (!degree.isExact()) {
+                return Optional.of(ONE);   // 2^degree exceeds every exact value, so no r >= 2 fits
+            }
+            if (isZero()) {
+                return Optional.of(ZERO);
+            }
+            if (isOne()) {
+                return Optional.of(ONE);
+            }
+            return Optional.of(canonicalExact(exactRoot(value, degree.value)));
+        }
+        if (kind != Kind.TOWER || level != null) {
+            return Optional.empty();   // BEYOND, or a transfinite level that does not reduce here
+        }
+        if (!degree.isExact()) {
+            if (finiteLevel.isOne()) {
+                return Optional.of(arrow(base, 1, height.divide(degree)));   // c^(h/D)
+            }
+            return Optional.empty();
+        }
+        if (finiteLevel.isOne()) {
+            if (base.equals(TEN)) {
+                // Exact: (10^k)^m <= 10^h < (10^(k+1))^m holds exactly when k = floor(h/m).
+                return Optional.of(arrow(TEN, 1, height.divide(degree)));
+            }
+            if (!height.isExact()) {
+                return Optional.of(this);   // h·const/m ≈ h·const: the value itself
+            }
+            if (height.value.bitLength() <= 45) {
+                double scaled = Math.floor(height.toDoubleApprox() * exactLog10(base) / degree.toDoubleApprox());
+                if (scaled < 1d) {
+                    return Optional.of(ONE);
+                }
+                if (scaled <= 9.0e15d) {
+                    return Optional.of(arrow(TEN, 1, of((long) scaled)));
+                }
+                return Optional.empty();   // the height's digits are not derivable from a double
+            }
+            return Optional.empty();
+        }
+        return Optional.of(this);   // two arrows and up: the root of the tower is the tower
+    }
+
     public Natural min(Natural other) {
         return compareTo(other) <= 0 ? this : other;
     }
@@ -1110,7 +1494,7 @@ public final class Natural implements Comparable<Natural> {
      * towers that denote the same value compare equal even when {@link #equals(Object)} is false - a
      * {@code TreeSet} therefore keeps one of them, and callers who need identity of form should use
      * {@code equals}. Second, it stays a total order (both the reduced value and the comparison rank are
-     * functions of the value alone), so {@code Collections.sort} is well defined.
+     * functions of the value alone), so {@code Collections.sort} is well-defined.
      */
     @Override
     public int compareTo(Natural other) {
@@ -1157,27 +1541,21 @@ public final class Natural implements Comparable<Natural> {
         if (kind != natural.kind) {
             return false;
         }
-        switch (kind) {
-            case EXACT:
-                return value.equals(natural.value);
-            case TOWER:
-                return Objects.equals(finiteLevel, natural.finiteLevel) && Objects.equals(level, natural.level)
-                        && base.equals(natural.base) && height.equals(natural.height);
-            default:
-                return true;
-        }
+        return switch (kind) {
+            case EXACT -> value.equals(natural.value);
+            case TOWER -> Objects.equals(finiteLevel, natural.finiteLevel) && Objects.equals(level, natural.level)
+                    && base.equals(natural.base) && height.equals(natural.height);
+            default -> true;
+        };
     }
 
     @Override
     public int hashCode() {
-        switch (kind) {
-            case EXACT:
-                return value.hashCode();
-            case TOWER:
-                return Objects.hash(finiteLevel, level, base, height);
-            default:
-                return 31;
-        }
+        return switch (kind) {
+            case EXACT -> value.hashCode();
+            case TOWER -> Objects.hash(finiteLevel, level, base, height);
+            default -> 31;
+        };
     }
 
     /**
@@ -1208,6 +1586,61 @@ public final class Natural implements Comparable<Natural> {
     /** {@code base{level}height}, the hyperoperation form the level index is written in. */
     private String hyperoperationForm(String levelText) {
         return base + "{" + levelText + "}" + height;
+    }
+
+    /**
+     * The {@link #toString()} form restricted to ASCII: up arrows become carets ({@code 10^^10}, a form
+     * {@link #parse(String)} reads back), the ordinal multiplication dot becomes a star, and the ordinal
+     * omega becomes {@code w} - the one lossy mapping, since the hyperoperation form of a transfinite
+     * level has no ASCII spelling and is not parseable anyway. Exact digits and {@code BEYOND} are
+     * unchanged, and every finite-level tower round-trips through {@link #parse(String)}.
+     */
+    public String toAsciiString() {
+        return toString().replace('↑', '^').replace('ω', 'w').replace('·', '*');
+    }
+
+    /**
+     * The value as LaTeX source for math rendering. A single arrow becomes a superscript
+     * ({@code 10^{1233}}), a short run of arrows prints as repeated {@code \u005cuparrow} commands
+     * ({@code 10\u005cuparrow\u005cuparrow10}), a run too long to read prints as
+     * {@code 10\u005cuparrow^{k}10}, and a transfinite level prints in escaped braces with the ordinal's
+     * own symbols mapped to their LaTeX names ({@code 10\{\omega\}10}). The ordinal part rides along in
+     * its own notation, so an exotic plugged-in notation keeps whatever symbols it defines; only the
+     * common Cantor normal form symbols (omega, the multiplication dot, up arrows) are mapped. Exact
+     * values print as decimal digits, and {@link #BEYOND} prints as {@code \text{BEYOND}}.
+     */
+    public String toLaTeX() {
+        switch (kind) {
+            case EXACT:
+                return value.toString();
+            case TOWER:
+                if (level != null) {
+                    return hyperoperationFormLatex(latexSymbols(level.toString()));
+                }
+                long count = finiteLevel.toLongSaturated();
+                if (count > MAX_ARROW_RUN) {
+                    return hyperoperationFormLatex(finiteLevel.add(TWO).toString());
+                }
+                if (count == 1) {
+                    return base + "^{" + height + "}";
+                }
+                if (count <= 10) {
+                    return base + "\\uparrow".repeat((int) count) + height;
+                }
+                return base + "\\uparrow^{" + count + "}" + height;
+            default:
+                return "\\text{BEYOND}";
+        }
+    }
+
+    /** {@code base\{level\}height}, the hyperoperation form with the braces escaped for LaTeX. */
+    private String hyperoperationFormLatex(String levelText) {
+        return base + "\\{" + levelText + "\\}" + height;
+    }
+
+    /** Maps the ordinal notation's own symbols to their LaTeX names; other symbols ride along. */
+    private static String latexSymbols(String levelText) {
+        return levelText.replace("ω", "\\omega").replace("·", "\\cdot").replace("↑", "\\uparrow");
     }
 
     /** A sentence describing the value, its representation and, when possible, its decimal size. */
@@ -1313,5 +1746,187 @@ public final class Natural implements Comparable<Natural> {
             level = next.get();
         }
         return Optional.of(level);
+    }
+
+    /**
+     * {@link #log(Natural)} on a structural value. A transfinite level is reduced at its own height
+     * first; a level that does not reduce has no rule here. What remains is a finite tower
+     * {@code c ↑^a h} over an exact base, answered by the arrow count: the height at one arrow, one
+     * peeled level at two arrows, and the value itself from three arrows up.
+     */
+    private Optional<Natural> logStructural(Natural base) {
+        Natural current = this;
+        while (current.kind == Kind.TOWER && current.level != null) {
+            Natural reduced = TransfiniteHyperoperation.apply(current.base, current.level, current.height,
+                    COMPARISON_REDUCTION_BUDGET);
+            if (reduced.equals(current)) {
+                return Optional.empty();   // the level walk did not finish, so no rule applies
+            }
+            current = reduced;
+        }
+        if (current.isExact()) {
+            return base.isExact()
+                    ? Optional.of(canonicalExact(BigInteger.valueOf(exactFloorLog(current.value, base.value))))
+                    : Optional.of(ZERO);
+        }
+        if (!base.isExact() || current.finiteLevel == null) {
+            return Optional.empty();
+        }
+        if (current.finiteLevel.isOne()) {
+            if (current.base.equals(base)) {
+                return Optional.of(current.height);           // log_b(b^h) = h, exact
+            }
+            if (!current.height.isExact()) {
+                return Optional.of(current.height);           // h·const ≈ h at tower resolution
+            }
+            if (current.height.value.bitLength() <= 45) {
+                // Change of base into doubles: floor(h·log_base(c)), off by at most one for tall heights.
+                double scaled = current.height.toDoubleApprox() * exactLog10(current.base) / exactLog10(base);
+                return Optional.of(of(Math.max(0L, (long) Math.floor(scaled))));
+            }
+            return Optional.empty();   // the floor lies in the exact range but its digits are not derivable
+        }
+        if (current.finiteLevel.equals(TWO)) {
+            // log_b(c↑↑h) = c↑↑(h-1)·log_b(c): the constant factor folds, and subtractClamped keeps a
+            // structural height unchanged, which is the three-arrow rule applied one level early.
+            return Optional.of(arrow(current.base, 2, current.height.subtractClamped(ONE)));
+        }
+        return Optional.of(current);   // from three arrows up the logarithm is the value itself
+    }
+
+    /**
+     * {@link #superLog(Natural)} on a structural value, by the same level rules; {@code extra} carries
+     * the {@code 1 +}s of the one-arrow recursion.
+     */
+    private Optional<Natural> superLogStructural(Natural base) {
+        Natural extra = ZERO;   // the "1 +"s accumulated from slog_b(c^h) = 1 + slog_b(h)
+        Natural current = this;
+        while (true) {
+            if (current.isExact()) {
+                if (!base.isExact()) {
+                    return Optional.of(extra);   // base ↑↑ 1 already exceeds every exact value
+                }
+                return Optional.of(canonicalExact(BigInteger.valueOf(exactSuperLog(current.value, base.value)))
+                        .add(extra));
+            }
+            if (current.kind != Kind.TOWER) {
+                return Optional.empty();
+            }
+            if (current.level != null) {
+                Natural reduced = TransfiniteHyperoperation.apply(current.base, current.level, current.height,
+                        COMPARISON_REDUCTION_BUDGET);
+                if (reduced.equals(current)) {
+                    return Optional.empty();
+                }
+                current = reduced;
+                continue;
+            }
+            if (!base.isExact()) {
+                return Optional.empty();   // no rule relates a structural value to a structural base
+            }
+            if (current.finiteLevel.equals(TWO)) {
+                return Optional.of(current.height.add(extra));   // slog_b(c↑↑h) = h, any exact base
+            }
+            if (current.finiteLevel.isOne()) {
+                extra = extra.add(ONE);                          // slog_b(c^h) = 1 + slog_b(h·const) ≈ 1 + slog_b(h)
+                current = current.height;
+                continue;
+            }
+            if (current.height.isExact()) {
+                return Optional.of(towerWithArrowCount(current.base, current.finiteLevel,
+                        current.height.subtractClamped(ONE), true).add(extra));   // c ↑^a (h-1)
+            }
+            return Optional.of(current.add(extra));   // h-1 is not writable, and h-1 ≈ h: the value itself
+        }
+    }
+
+    /** The largest {@code h} with {@code base ↑^arrows h <= this}, for an exact value and exact base. */
+    private Optional<Natural> exactHyperInverse(Natural base, int arrows) {
+        Natural height = ZERO;
+        while (true) {
+            Natural next = arrow(base, arrows, height.add(ONE));
+            if (!next.isExact() || next.compareTo(this) > 0) {
+                return Optional.of(height);
+            }
+            height = height.add(ONE);
+        }
+    }
+
+    /**
+     * The floor of {@code log_base(value)} for exact values, decided by a binary search whose probes are
+     * guarded by bit lengths: a power is materialised only when it stays within a small multiple of the
+     * exact limit, and the bit-length bounds decide the rest, so nothing here can allocate unboundedly.
+     */
+    private static long exactFloorLog(BigInteger value, BigInteger base) {
+        if (value.equals(BigInteger.ONE)) {
+            return 0L;
+        }
+        int low = 0;
+        int high = value.bitLength();   // base^high >= 2^high > value, so the answer is below high
+        while (low + 1 < high) {
+            int mid = (low + high) >>> 1;
+            if (powerAtMost(base, mid, value)) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        return low;
+    }
+
+    /** Whether {@code base^exponent <= bound}, decided from bit lengths where materialising is unsafe. */
+    private static boolean powerAtMost(BigInteger base, int exponent, BigInteger bound) {
+        if (exponent == 0) {
+            return true;
+        }
+        long bits = (long) exponent * base.bitLength();
+        if (bits <= 4L * EXACT_BIT_LIMIT) {
+            return base.pow(exponent).compareTo(bound) <= 0;
+        }
+        // Too large to materialise: the lower bit-length bound of the power decides. The guard above
+        // ensures this bound is unambiguous - the two windows cannot both straddle the bound's length.
+        return (long) exponent * (base.bitLength() - 1) > bound.bitLength();
+    }
+
+    /** The super-logarithm of an exact value: how often the exact floor logarithm drops it below the base. */
+    private static long exactSuperLog(BigInteger value, BigInteger base) {
+        long height = 0;
+        BigInteger current = value;
+        while (current.compareTo(base) >= 0) {
+            current = BigInteger.valueOf(exactFloorLog(current, base));
+            height++;
+        }
+        return height;
+    }
+
+    /**
+     * The floor of the {@code degree}-th root of an exact value by Newton iteration, descending from an
+     * upper bound taken off the bit length. The iterate stays above the real root (AM-GM), the fix-ups at
+     * the end materialise their powers, and every power involved stays within a small multiple of the
+     * exact limit.
+     */
+    private static BigInteger exactRoot(BigInteger value, BigInteger degree) {
+        if (degree.bitLength() > 13) {
+            return BigInteger.ONE;   // degree >= 8192: 2^degree already exceeds the exact range
+        }
+        int n = degree.intValue();
+        BigInteger x = BigInteger.ONE.shiftLeft((value.bitLength() + n - 1) / n + 1);
+        while (true) {
+            BigInteger step = value.divide(x.pow(n - 1));
+            BigInteger next = x.multiply(BigInteger.valueOf(n - 1L)).add(step).divide(BigInteger.valueOf(n));
+            if (next.compareTo(x) >= 0) {
+                break;
+            }
+            x = next;
+        }
+        while (x.pow(n).compareTo(value) > 0) {
+            x = x.subtract(BigInteger.ONE);
+        }
+        BigInteger up = x.add(BigInteger.ONE);
+        while (up.pow(n).compareTo(value) <= 0) {
+            x = up;
+            up = up.add(BigInteger.ONE);
+        }
+        return x;
     }
 }

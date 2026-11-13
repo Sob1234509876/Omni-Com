@@ -8,9 +8,12 @@
   (https://wiki.googology.top/index.php?title=BMS&action=history). The page is collaboratively
   edited, so no single author is named here; see the history for the individual contributions.
 - **License:** CC BY-SA 4.0 - https://creativecommons.org/licenses/by-sa/4.0/
-  STATUS: **pending written confirmation from the page's contributors** (and from the wiki, whose
-  own license statement was not visible on the fetched page). Until that confirmation arrives this
-  file is kept as a private reference only and must not be redistributed outside this repository.
+  STATUS: **confirmed, 2026-11-07.** The page itself displays no separate license statement, so it
+  falls under the wiki's site-wide license: the footer of the wiki states 除非另有声明，本网站内容采用
+  知识共享署名-相同方式共享授权, linking to https://creativecommons.org/licenses/by-sa/4.0/ (verified
+  by fetching https://wiki.googology.top/index.php/BMS on 2026-11-07, and confirmed by the owner).
+  The earlier "pending written confirmation" status is withdrawn; redistribution is permitted under
+  CC BY-SA 4.0 with the attribution block below.
 - **Changes:** none. The wikitext is copied verbatim; the HTML page chrome was not kept.
 - **Scope:** this license covers the text in this directory. The code in the rest of the repository
   is independent work and is not a derivative of this text; an implementation written from the
@@ -54,9 +57,12 @@ rendered page).
   (https://wiki.googology.top/index.php?title=非递归BMS&action=history). The page is collaboratively
   edited, so no single author is named here; see the history for the individual contributions.
 - **License:** CC BY-SA 4.0 - https://creativecommons.org/licenses/by-sa/4.0/
-  STATUS: **pending written confirmation from the page's contributors** (and from the wiki, whose own
-  license statement was not visible on the fetched page). Until that confirmation arrives these two files
-  are kept as private references only and must not be redistributed outside this repository.
+  STATUS: **confirmed, 2026-11-07.** The page itself displays no separate license statement, so it
+  falls under the wiki's site-wide license: the footer of the wiki states 除非另有声明，本网站内容采用
+  知识共享署名-相同方式共享授权, linking to https://creativecommons.org/licenses/by-sa/4.0/ (verified
+  by fetching the wiki on 2026-11-07, and confirmed by the owner). The earlier "pending written
+  confirmation" status is withdrawn; redistribution is permitted under CC BY-SA 4.0 with the
+  attribution block below.
 - **Changes:** none. The wikitext is copied verbatim; the HTML page is the browser's rendering of the
   same text, with the page chrome kept because that is what was saved.
 - **Scope:** this license covers the text in this directory. The code in the rest of the repository is

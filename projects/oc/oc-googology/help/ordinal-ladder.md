@@ -827,7 +827,7 @@ LadderOrdinal.omegaAlpha(LadderArgument.omegaOne()).toString(); // "ω_ω₁"，
 
 ## 九、自校验
 
-`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **698 项**，其中第 21–31 节是阶梯
+`./gradlew :projects:oc:oc-googology:selfcheck` 现在有 **774 项**，其中第 21–31 节是阶梯
 （`LadderCheck`，183 项），第 32–36 节是阶段四的基数寄存器（`CardinalRegisterCheck`，50 项，见
 [`cardinal-register.md`](cardinal-register.md)），第 37–43 节是阶段五的不可达扩展
 （`InaccessibleCheck`，87 项，见 [`inaccessible-extension.md`](inaccessible-extension.md)）：

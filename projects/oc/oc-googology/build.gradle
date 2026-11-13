@@ -28,6 +28,15 @@ dependencies {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
+javadoc {
+    options {
+        encoding = "UTF-8"
+        charSet = "UTF-8"
+        docEncoding = "UTF-8"
+    }
+    options.addBooleanOption('Xdoclint:all,-missing', true)
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
 
 // The self check is a runnable program rather than a framework based test suite, so it lives in its own
 // source set and the standard test task stays source free (Gradle 9 fails a test task that discovers

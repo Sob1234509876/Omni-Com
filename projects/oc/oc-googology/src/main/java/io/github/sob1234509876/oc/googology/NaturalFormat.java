@@ -58,6 +58,27 @@ public final class NaturalFormat {
     }
 
     /**
+     * The ASCII form of the value: carets instead of up arrows ({@code 10^100}, {@code 10^^10}), star
+     * instead of the ordinal dot, {@code w} instead of omega. Finite-level towers round-trip through
+     * {@link Natural#parse(String)}; the hyperoperation form of a transfinite level has no parseable ASCII
+     * spelling, so there the {@code w} is the one lossy mapping. See {@link Natural#toAsciiString()}.
+     */
+    public static String ascii(Natural value) {
+        Objects.requireNonNull(value, "value");
+        return value.toAsciiString();
+    }
+
+    /**
+     * The value as LaTeX source for math rendering: {@code 10^{1233}},
+     * {@code 10\u005cuparrow\u005cuparrow10}, {@code 10\{\omega\}10}, {@code \text{BEYOND}}. See
+     * {@link Natural#toLaTeX()}.
+     */
+    public static String latex(Natural value) {
+        Objects.requireNonNull(value, "value");
+        return value.toLaTeX();
+    }
+
+    /**
      * A one line description: the value, the representation behind it and, when it can be computed, how
      * many decimal digits it has.
      */
