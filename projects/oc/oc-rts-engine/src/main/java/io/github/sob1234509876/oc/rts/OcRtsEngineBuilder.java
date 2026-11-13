@@ -15,6 +15,7 @@ import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.InMemoryChunkStore;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.map.NoiseChunkGenerator;
+import io.github.sob1234509876.oc.rts.map.NoiseSettings;
 import io.github.sob1234509876.oc.rts.map.StreamingTerrainMap;
 import io.github.sob1234509876.oc.rts.movement.MovementSystem;
 import io.github.sob1234509876.oc.rts.movement.PathService;
@@ -202,6 +203,17 @@ public final class OcRtsEngineBuilder {
     /** Registers another dimension with an explicit terrain generator. */
     public OcRtsEngineBuilder dimension(DimensionId id, DimensionProfile profile, ChunkGenerator generator) {
         return dimension(id, profile, generator, null);
+    }
+
+    /**
+     * Registers another dimension whose terrain is the noise generator tuned by the given settings, with
+     * the content paths pointing at whatever terrain this catalogue registered - lava as the water of a
+     * hell, for example. The generator derives its own seed from the world seed and the dimension key,
+     * exactly like the default dimensions do, so the same world seed always produces the same map.
+     */
+    public OcRtsEngineBuilder dimension(DimensionId id, DimensionProfile profile, NoiseSettings settings) {
+        return dimension(id, profile,
+                new NoiseChunkGenerator(seed, content, settings), null);
     }
 
     /** Registers another dimension with its own generator and chunk storage. */

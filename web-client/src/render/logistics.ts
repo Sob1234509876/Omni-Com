@@ -21,8 +21,9 @@
  */
 
 import { transfer } from "../commands.ts";
+import { t } from "../i18n.ts";
 import {
-  isWarehouseKind,
+  isWarehouseRow,
   sumContents,
   warehouseResourceTotals,
   type WarehouseResource,
@@ -47,24 +48,36 @@ export type WarehousePanelScope = "none" | "single" | "total";
  * Label of the scope toggle in single mode: it returns to the sum over every own warehouse.
  *
  * Both words the requirement names are in the label so a player can find either; the title explains what
- * a click does.
+ * a click does. These labels are functions, not constants, so a language switch re-renders them.
  */
-export const WAREHOUSE_SCOPE_TOGGLE_SINGLE = "全部/总计";
+export function warehouseScopeToggleSingleLabel(): string {
+  return t("logistics.scopeSingle");
+}
 
 /** Label of the scope toggle in total mode: it returns to the selected warehouse's own contents. */
-export const WAREHOUSE_SCOPE_TOGGLE_TOTAL = "单个仓库";
+export function warehouseScopeToggleTotalLabel(): string {
+  return t("logistics.scopeTotal");
+}
 
 /** Title of the scope toggle while the panel shows one warehouse. */
-export const WAREHOUSE_SCOPE_TITLE_TO_TOTAL = "显示全部仓库的合计";
+export function warehouseScopeTitleToTotal(): string {
+  return t("logistics.scopeTitleToTotal");
+}
 
 /** Title of the scope toggle while the panel shows the sum. */
-export const WAREHOUSE_SCOPE_TITLE_TO_SINGLE = "只看选中的这一座仓库";
+export function warehouseScopeTitleToSingle(): string {
+  return t("logistics.scopeTitleToSingle");
+}
 
 /** What a checkbox means in single mode; shown under the rows so the totals line is unambiguous. */
-export const WAREHOUSE_MARK_NOTE = "标记按物品记在本页：已标记行显示全部仓库的合计";
+export function warehouseMarkNote(): string {
+  return t("logistics.markNote");
+}
 
 /** Label of the form's "fill the source amount" shortcut. */
-export const WAREHOUSE_TRANSFER_ALL_LABEL = "全部";
+export function warehouseTransferAllLabel(): string {
+  return t("logistics.transferAll");
+}
 
 /** One rendered view of the warehouse panel. */
 export interface WarehousePanelModel {
@@ -103,7 +116,7 @@ export function ownWarehouses(world: WorldView, myPlayerId: number | null): Enti
   }
   const found: EntityView[] = [];
   for (const entity of world.entities) {
-    if (!isBuildingEntityKind(entity.kind) || !isWarehouseKind(entity.kind)) {
+    if (!isBuildingEntityKind(entity.kind) || !isWarehouseRow(entity)) {
       continue;
     }
     if (ownershipOf(entity.playerId, myPlayerId) === "mine") {
@@ -128,7 +141,7 @@ export function selectedOwnWarehouse(
     return null;
   }
   const only = selection[0];
-  if (only === undefined || !isBuildingEntityKind(only.kind) || !isWarehouseKind(only.kind)) {
+  if (only === undefined || !isBuildingEntityKind(only.kind) || !isWarehouseRow(only)) {
     return null;
   }
   return ownershipOf(only.playerId, myPlayerId) === "mine" ? only : null;
@@ -144,15 +157,21 @@ export function selectedOwnWarehouse(
 export function warehouseStorageLabel(entity: EntityView): string {
   const storage = entity.storage;
   if (storage === undefined) {
-    return "容量未知（旧快照）";
+    return t("logistics.capacityUnknown");
   }
-  return `容量 ${storage.slots} · 已用 ${storage.used} · 空闲 ${storage.free}`;
+  return t("logistics.capacityLabel", {
+    slots: storage.slots,
+    used: storage.used,
+    free: storage.free,
+  });
 }
 
 /** The inbound-transfers fragment of the header: `在途 1`, or `在途 0` when nothing is on its way. */
 export function warehouseInboundLabel(entity: EntityView): string {
   const inbound = entity.inbound;
-  return `在途 ${inbound === undefined || !Number.isSafeInteger(inbound) ? 0 : inbound}`;
+  return t("logistics.inboundLabel", {
+    count: inbound === undefined || !Number.isSafeInteger(inbound) ? 0 : inbound,
+  });
 }
 
 /**
@@ -185,16 +204,18 @@ export function warehousePanelModel(
 
   let summary: string;
   if (panelScope === "none") {
-    summary = "未发现自己的仓库";
+    summary = t("logistics.summaryNone");
   } else if (panelScope === "single" && single !== null) {
-    const stock = rows.length === 0 ? " · 暂无库存" : "";
+    const stock = rows.length === 0 ? t("logistics.summaryNoStock") : "";
     summary = `仓库 #${single.id} · ${warehouseStorageLabel(single)} · ${warehouseInboundLabel(single)}${stock}`;
   } else if (total.items.length === 0) {
-    summary = `${total.warehouseCount} 个仓库：暂无库存`;
+    summary = t("logistics.summaryCountNoStock", { count: total.warehouseCount });
   } else if (total.warehouseCount === 0) {
-    summary = "未发现自己的仓库 · 库存合计";
+    summary = t("logistics.summaryAllTotal");
   } else {
-    summary = single === null ? `${total.warehouseCount} 个仓库` : `${total.warehouseCount} 个仓库 · 总计`;
+    summary = single === null
+      ? t("logistics.summaryCount", { count: total.warehouseCount })
+      : `${t("logistics.summaryCount", { count: total.warehouseCount })}${t("logistics.summaryTotalSuffix")}`;
   }
 
   const transferReason = transferBlockReason(single, singleView, sourceItems, targets);
@@ -206,14 +227,18 @@ export function warehousePanelModel(
     rows,
     summary,
     toggleLabel:
-      single === null ? null : singleView ? WAREHOUSE_SCOPE_TOGGLE_SINGLE : WAREHOUSE_SCOPE_TOGGLE_TOTAL,
+      single === null
+        ? null
+        : singleView
+          ? warehouseScopeToggleSingleLabel()
+          : warehouseScopeToggleTotalLabel(),
     toggleTitle:
       single === null
         ? ""
         : singleView
-          ? WAREHOUSE_SCOPE_TITLE_TO_TOTAL
-          : WAREHOUSE_SCOPE_TITLE_TO_SINGLE,
-    note: panelScope === "single" ? WAREHOUSE_MARK_NOTE : "",
+          ? warehouseScopeTitleToTotal()
+          : warehouseScopeTitleToSingle(),
+    note: panelScope === "single" ? warehouseMarkNote() : "",
     targets,
     sourceItems,
     transferVisible,
@@ -233,13 +258,13 @@ function transferBlockReason(
     return "";
   }
   if (underConstruction(single)) {
-    return "来源仓库尚未完工：调拨暂不可用";
+    return t("transfer.sourceUnfinished");
   }
   if (sourceItems.length === 0) {
-    return "来源仓库没有库存：没有可调拨的物品";
+    return t("transfer.noStock");
   }
   if (targets.length === 0) {
-    return "没有其他自己的仓库：调拨需要至少两座仓库";
+    return t("transfer.noTargets");
   }
   return "";
 }
@@ -283,48 +308,48 @@ export function transferFormModel(
     amount: null,
     targetId: null,
   };
-  if (source === null || !isBuildingEntityKind(source.kind) || !isWarehouseKind(source.kind)) {
-    return { ...empty, refusal: "先选中一座自己的仓库" };
+  if (source === null || !isBuildingEntityKind(source.kind) || !isWarehouseRow(source)) {
+    return { ...empty, refusal: t("transfer.needOwn") };
   }
   if (underConstruction(source)) {
-    return { ...empty, refusal: "来源仓库尚未完工，不能调拨" };
+    return { ...empty, refusal: t("transfer.sourceUnfinished") };
   }
   const path = itemPath.trim();
   if (path === "") {
-    return { ...empty, refusal: "请选择要调拨的物品" };
+    return { ...empty, refusal: t("transfer.pickItem") };
   }
   const held = source.contents?.[path];
   if (held === undefined || !Number.isSafeInteger(held) || held <= 0) {
-    return { ...empty, itemPath: path, refusal: "来源仓库没有这件物品" };
+    return { ...empty, itemPath: path, refusal: t("transfer.noItem") };
   }
   const text = amountText.trim();
   if (text === "") {
-    return { ...empty, itemPath: path, refusal: "请填写调拨数量" };
+    return { ...empty, itemPath: path, refusal: t("transfer.enterAmount") };
   }
   const all = text.toLowerCase() === "all";
   let amount: number | null = null;
   if (!all) {
     if (!/^\d+$/u.test(text)) {
-      return { ...empty, itemPath: path, refusal: "调拨数量必须是正整数" };
+      return { ...empty, itemPath: path, refusal: t("transfer.amountInteger") };
     }
     const parsed = Number(text);
     if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-      return { ...empty, itemPath: path, refusal: "调拨数量必须是正整数" };
+      return { ...empty, itemPath: path, refusal: t("transfer.amountInteger") };
     }
     amount = parsed;
   }
   const target = targetId === null ? undefined : targets.find((candidate) => candidate.id === targetId);
   if (targetId === null) {
-    return { ...empty, itemPath: path, amount, refusal: "请选择目标仓库" };
+    return { ...empty, itemPath: path, amount, refusal: t("transfer.pickTarget") };
   }
   if (targetId === source.id) {
-    return { ...empty, itemPath: path, amount, refusal: "目标仓库不能是来源仓库（同一建筑）" };
+    return { ...empty, itemPath: path, amount, refusal: t("transfer.sameTarget") };
   }
   if (target === undefined) {
-    return { ...empty, itemPath: path, amount, refusal: "目标仓库不可达（不在自己的其他仓库列表里）" };
+    return { ...empty, itemPath: path, amount, refusal: t("transfer.unreachable") };
   }
   if (underConstruction(target)) {
-    return { ...empty, itemPath: path, amount, refusal: "目标仓库尚未完工，无法接收" };
+    return { ...empty, itemPath: path, amount, refusal: t("transfer.targetUnfinished") };
   }
   let line: string;
   try {
@@ -358,18 +383,24 @@ export function transferAnswerLabel(
     const amount = Number(moved[1]);
     const path = moved[2] ?? "";
     const name = labelFor(path).trim();
-    return { ok: true, text: `已调拨：${amount} ${name === "" ? path : name}` };
+    return {
+      ok: true,
+      text: t("transfer.done", { amount, item: name === "" ? path : name }),
+    };
   }
   if (trimmed === "OK") {
-    return { ok: true, text: "已调拨" };
+    return { ok: true, text: t("transfer.ok") };
   }
   if (trimmed === "ERR") {
-    return { ok: false, text: "调拨失败" };
+    return { ok: false, text: t("transfer.failed") };
   }
   if (trimmed.startsWith("ERR ")) {
-    return { ok: false, text: `调拨失败：${trimmed.slice(4)}` };
+    return { ok: false, text: t("transfer.failedReason", { reason: trimmed.slice(4) }) };
   }
-  return { ok: false, text: `调拨回答：${trimmed === "" ? "（空）" : trimmed}` };
+  return {
+    ok: false,
+    text: t("transfer.answer", { answer: trimmed === "" ? "（空）" : trimmed }),
+  };
 }
 
 /**

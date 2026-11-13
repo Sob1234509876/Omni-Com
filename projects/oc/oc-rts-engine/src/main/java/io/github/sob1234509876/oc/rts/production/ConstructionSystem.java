@@ -11,6 +11,8 @@ import io.github.sob1234509876.oc.rts.order.OrderContext;
 import io.github.sob1234509876.oc.rts.order.OrderState;
 import io.github.sob1234509876.oc.rts.sim.SimulationSystem;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -73,15 +75,34 @@ public final class ConstructionSystem implements SimulationSystem {
     }
 
     /**
-     * Construction points one site gains per tick with the given number of <em>standing</em> builders.
+     * Construction points one site gains per tick from the given <em>standing</em> builders' work rates.
      *
-     * <p>The documented formula is {@code min(standingBuilders, MAX_BUILDERS_PER_SITE)} for a positive
-     * count and {@code 0} for none. It reads only the count, so both the result and the tick a site
-     * completes on are independent of the order in which builders attached.
+     * <p>The documented formula is: sum each standing builder's {@link UnitType#buildRate()}, counting at
+     * most {@code MAX_BUILDERS_PER_SITE} workers, and {@code 0} for none. Every unit the content did not
+     * give an explicit rate carries rate {@code 1}, so the sum over such builders equals the historical
+     * {@code min(count, MAX_BUILDERS_PER_SITE)} exactly.
      *
-     * @param standingBuilders number of attached builders that have reached their standing tile
+     * @param standingRates work rates of the attached builders that have reached their standing tile, in
+     *     any order
      * @return construction points to subtract from {@link Building#constructionRemaining()} this tick
      */
+    public static int progressPerTick(List<Integer> standingRates) {
+        if (standingRates == null || standingRates.isEmpty()) {
+            return 0;
+        }
+        int counted = 0;
+        int total = 0;
+        for (int rate : standingRates) {
+            if (counted >= MAX_BUILDERS_PER_SITE) {
+                break;
+            }
+            counted++;
+            total += Math.max(1, rate);
+        }
+        return total;
+    }
+
+    /** Count convenience retained for callers that only know how many builders stand at the site. */
     public static int progressPerTick(int standingBuilders) {
         if (standingBuilders <= 0) {
             return 0;
@@ -119,7 +140,7 @@ public final class ConstructionSystem implements SimulationSystem {
                 continue;
             }
             building.pruneDeadBuilders();
-            int advance = progressPerTick(standingBuilderCount(building));
+            int advance = progressPerTick(standingBuilderRates(building));
             if (advance == 0) {
                 continue;
             }
@@ -147,6 +168,20 @@ public final class ConstructionSystem implements SimulationSystem {
             }
         }
         return standing;
+    }
+
+    /**
+     * Work rates of the attached builders that have actually arrived at their own claimed tile, the
+     * per-unit counterpart of {@link #standingBuilderCount(Building)}.
+     */
+    private static List<Integer> standingBuilderRates(Building building) {
+        List<Integer> rates = new ArrayList<>();
+        for (Unit builder : building.builders()) {
+            if (BuildOrder.isAtStandTile(builder, building.builderStandTile(builder))) {
+                rates.add(builder.type().buildRate());
+            }
+        }
+        return rates;
     }
 
     /**

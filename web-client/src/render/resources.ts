@@ -24,6 +24,7 @@
  * `main.ts`.
  */
 
+import { t } from "../i18n.ts";
 import { compareItemPaths, itemDisplayName } from "./status.ts";
 import {
   isBuildingEntityKind,
@@ -83,8 +84,10 @@ export interface FullResourceRow {
 /** The two currency paths every world has, even when the player's balance is zero. */
 export const CURRENCY_PATHS: readonly string[] = ["gold", "wood"];
 
-/** The compact HUD line shown before anything is marked. */
-export const MARKED_EMPTY_LABEL = "已标记：—";
+/** The compact HUD line shown before anything is marked (`已标记：—` / `Marked: —`). */
+export function markedEmptyLabel(): string {
+  return t("resources.markedEmpty");
+}
 
 /** Client-side marks keyed by item content path. Never sent to the server. */
 export type ResourceMarks = ReadonlySet<string>;
@@ -96,11 +99,24 @@ export const EMPTY_RESOURCE_MARKS: ResourceMarks = new Set<string>();
  * Whether a kind is a warehouse.
  *
  * The demo and legacy snapshots use `warehouse`; the server's content path is `building.warehouse`.
- * The namespace prefix is stripped first so a namespaced plugin path matches too.
+ * The namespace prefix is stripped first so a namespaced plugin path matches too. This is the name
+ * half of the warehouse rule only; the capability the row declares wins (see {@link isWarehouseRow}).
  */
 export function isWarehouseKind(kind: string): boolean {
   const name = kindName(kind);
   return name === "warehouse" || name === "building.warehouse" || name.startsWith("building.warehouse.");
+}
+
+/**
+ * Whether an entity row is a warehouse, by the capability the snapshot declares.
+ *
+ * The server writes a `storage` object on every warehouse row — including an empty one — so the slot
+ * accounting is the capability, and a plugin storage building whose path this client has never seen
+ * still qualifies. A row without `storage` falls back to the classic {@link isWarehouseKind} name
+ * rule, which is what the demo world and older snapshots rely on.
+ */
+export function isWarehouseRow(entity: EntityView): boolean {
+  return entity.storage !== undefined || isWarehouseKind(entity.kind);
 }
 
 function compareResources(left: WarehouseResource, right: WarehouseResource): number {
@@ -190,7 +206,7 @@ export function warehouseResourceTotals(
       continue;
     }
     ownBuildings.push(entity);
-    if (isWarehouseKind(entity.kind)) {
+    if (isWarehouseRow(entity)) {
       warehouseCount += 1;
     }
   }
@@ -285,7 +301,7 @@ export function markedResourceItems(
 }
 
 /**
- * The compact top-chrome line: `已标记：金 120 · 木 40`, or {@link MARKED_EMPTY_LABEL} with no marks.
+ * The compact top-chrome line: `已标记：金 120 · 木 40`, or {@link markedEmptyLabel} with no marks.
  *
  * The amounts are the warehouse totals, so this line and the panel's rows cannot disagree; a marked
  * item with no stock keeps an explicit `0`.
@@ -297,9 +313,11 @@ export function markedSummaryLabel(
 ): string {
   const rows = markedResourceItems(marks, totals, labelFor);
   if (rows.length === 0) {
-    return MARKED_EMPTY_LABEL;
+    return markedEmptyLabel();
   }
-  return `已标记：${rows.map((row) => `${row.name} ${row.amount}`).join(" · ")}`;
+  return t("resources.markedLine", {
+    items: rows.map((row) => `${row.name} ${row.amount}`).join(" · "),
+  });
 }
 
 /** A player balance that is a non-negative safe integer, or `0` for a missing/malformed value. */

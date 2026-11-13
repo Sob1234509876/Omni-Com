@@ -3,6 +3,7 @@ package io.github.sob1234509876.oc.server.classic.check;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
 import io.github.sob1234509876.oc.rts.OcRtsEngineBuilder;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
@@ -16,6 +17,7 @@ import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
+import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
@@ -40,9 +42,12 @@ import io.github.sob1234509876.oc.server.classic.BotStrategy;
 import io.github.sob1234509876.oc.server.classic.ClassicAi;
 import io.github.sob1234509876.oc.server.classic.ClassicBots;
 import io.github.sob1234509876.oc.server.classic.ClassicContent;
+import io.github.sob1234509876.oc.server.classic.HellDenizens;
+import io.github.sob1234509876.oc.server.classic.HellGates;
 import io.github.sob1234509876.oc.server.classic.ClassicEconomy;
 import io.github.sob1234509876.oc.server.classic.ClassicEngineerPool;
 import io.github.sob1234509876.oc.server.classic.ClassicPlugin;
+import io.github.sob1234509876.oc.server.classic.WildSpawns;
 import io.github.sob1234509876.oc.server.plugin.Plugin;
 import io.github.sob1234509876.oc.server.plugin.PluginContext;
 import io.github.sob1234509876.oc.server.plugin.PluginDescriptor;
@@ -92,7 +97,7 @@ import java.util.stream.Stream;
  *   <li>the numbers do not ascend - the five melee tiers, the three mines, the three lumber camps;</li>
  *   <li>the engine gate does not hold - the basic armory must not be able to train t4 or t5, and that has to
  *       be proven against a real {@link ProductionSystem}, not by reading the content back;</li>
- *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 160 atlas,
+ *   <li>the shipped bytes are wrong - the manifest must parse, every rectangle must fit the 96 x 240 atlas,
  *       every tile and entity must carry a display name, and a world built from the content must only name
  *       kinds the manifest knows.</li>
  * </ol>
@@ -103,7 +108,7 @@ import java.util.stream.Stream;
 public final class ClassicCheck {
 
     /** Width of the bundled atlas, in pixels. */
-    private static final int ATLAS_WIDTH = 96;
+    private static final int TILE_IMAGE_PIXELS = 16;
 
     /**
      * Height of the bundled atlas, in pixels.
@@ -112,7 +117,7 @@ public final class ClassicCheck {
      * cell. The three-by-three grid of 32 pixel cells (armory t1/t2, mine t1..t3, lumber camp t1..t3 and
      * the warehouse) needs three rows, and the 16 pixel unit sprites occupy the top of the sheet.
      */
-    private static final int ATLAS_HEIGHT = 160;
+
 
     /** Side of one atlas cell, in pixels; the manifest must agree. */
     private static final int TILE_PIXELS = 16;
@@ -125,7 +130,8 @@ public final class ClassicCheck {
 
     /** The manifest and the atlas inside the plugin jar. */
     private static final String MANIFEST_RESOURCE = "/assets/manifest.json";
-    private static final String ATLAS_RESOURCE = "/assets/atlas.png";
+    private static final String TILES_DIRECTORY = "/assets/tiles/";
+    private static final String ENTITIES_DIRECTORY = "/assets/entities/";
 
     private static final String GRASS = "grass";
 
@@ -154,6 +160,10 @@ public final class ClassicCheck {
         startingResources(check, classic, registry);
         Map<String, Object> manifest = assets(check, registry);
         worldHost(check, classic, registry, manifest);
+        hellPassage(check, classic);
+        contentDrivenSnapshot(check, classic, registry);
+        wildSpawns(check, classic, registry);
+        preStockedProduction(check, registry);
         enemyAi(check, classic, registry);
         deterministicWorld(check);
         bots(check);
@@ -178,11 +188,12 @@ public final class ClassicCheck {
         check.that(!classic.description().isBlank(), "内容有一句可读的说明");
         check.equal(ClassicContent.NAMESPACE, classic.namespace(), "内容注册在命名空间 oc 下");
         check.equal(ClassicContent.NAMESPACE, registry.namespace(), "目录里的键都落在内容的命名空间里");
-        check.equal(4, registry.terrains().size(), "目录注册了 4 种地形");
+        check.equal(8, registry.terrains().size(), "目录注册了 8 种地形（主世界 4 种 + 地狱 4 种）");
         check.equal(2, registry.items().size(), "目录注册了 2 种物品（金币与木材）");
 
         // --- five melee tiers, with the documented names
-        check.equal(6, registry.units().size(), "目录注册了 6 个单位（5 个近战 + 1 个工程师）");
+        check.equal(22, registry.units().size(),
+                "目录注册了 22 个单位（5 近战 + 5 弓手 + 1 工程师 + 4 工程师梯 + 5 地狱兵 + 2 魔物）");
         check.equal(5, ClassicContent.meleeTiers().size(), "近战有 5 个等级");
         for (ClassicContent.MeleeTier tier : ClassicContent.meleeTiers()) {
             UnitType unit = registry.unit(tier.unitPath());
@@ -205,8 +216,8 @@ public final class ClassicCheck {
                 "工程师伤害低于最便宜的近战单位");
 
         // --- buildings
-        check.equal(12, registry.buildings().size(),
-                "目录注册了 12 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 3 哨塔 + 仓库）");
+        check.equal(15, registry.buildings().size(),
+                "目录注册了 15 座建筑（2 兵营 + 3 矿场 + 3 伐木场 + 4 哨塔 + 仓库 + 炼狱工厂 + 地狱门）");
         BuildingType armoryT1 = registry.building(ClassicContent.ARMORY_T1);
         BuildingType armoryT2 = registry.building(ClassicContent.ARMORY_T2);
         check.equal("兵营·普通", armoryT1.displayName(), "普通兵营的显示名");
@@ -238,7 +249,7 @@ public final class ClassicCheck {
         check.that(!warehouse.storageSlots().isZero(), "仓库有存储槽");
 
         // --- recipes
-        check.equal(6, registry.recipes().size(), "目录注册了 6 个配方");
+        check.equal(20, registry.recipes().size(), "目录注册了 20 个配方（6 主世界 + 5 地狱兵 + 4 工程师梯 + 5 弓手）");
         for (ClassicContent.MeleeTier tier : ClassicContent.meleeTiers()) {
             Recipe recipe = registry.recipe(ClassicContent.recipePath(tier.tier()));
             check.that(recipe.isUnitRecipe(), "t" + tier.tier() + " 的配方产出单位");
@@ -435,16 +446,18 @@ public final class ClassicCheck {
         ItemType gold = registry.item(ClassicContent.GOLD);
         ItemType wood = registry.item(ClassicContent.WOOD);
         List<ClassicContent.TurretTier> tiers = ClassicContent.turretTiers();
-        check.equal(3, tiers.size(), "哨塔有 3 个等级");
+        check.equal(4, tiers.size(), "哨塔有 4 个等级");
         BuildingType t1 = registry.building(ClassicContent.TURRET_T1);
         BuildingType t2 = registry.building(ClassicContent.TURRET_T2);
         BuildingType t3 = registry.building(ClassicContent.TURRET_T3);
+        BuildingType t4 = registry.building(ClassicContent.TURRET_T4);
 
         check.equal("哨塔·普通", t1.displayName(), "t1 的显示名");
         check.equal("哨塔·强化", t2.displayName(), "t2 的显示名");
         check.equal("哨塔·精英", t3.displayName(), "t3 的显示名");
-        check.that(t1.isBuildable() && !t2.isBuildable() && !t3.isBuildable(),
-                "只有 t1 可以直接建造；t2/t3 只能由升级得到");
+        check.equal("战王炮塔", t4.displayName(), "t4 的显示名");
+        check.that(t1.isBuildable() && !t2.isBuildable() && !t3.isBuildable() && !t4.isBuildable(),
+                "只有 t1 可以直接建造；t2/t3/t4 只能由升级得到");
         for (ClassicContent.TurretTier tier : tiers) {
             BuildingType type = registry.building(tier.buildingPath());
             check.equal(tier.size(), type.sizeX(), "t" + tier.tier() + " 的宽度与表一致");
@@ -484,11 +497,16 @@ public final class ClassicCheck {
         check.equal(ClassicContent.TURRET_T3, t2.upgradeTo().orElseThrow().path(), "哨塔 t2 升级到 t3");
         check.equal(260L, asLong(t2.upgradeCost().amount(gold)), "t2 -> t3 花费 260 金币");
         check.equal(90L, asLong(t2.upgradeCost().amount(wood)), "t2 -> t3 花费 90 木材");
-        check.that(t3.upgradeTo().isEmpty() && t3.upgradeCost().isEmpty(), "t3 是阶梯顶端");
+        check.equal(ClassicContent.TURRET_T4, t3.upgradeTo().orElseThrow().path(), "哨塔 t3 升级到战王炮塔 t4");
+        check.equal(380L, asLong(t3.upgradeCost().amount(gold)), "t3 -> t4 花费 380 金币");
+        check.equal(120L, asLong(t3.upgradeCost().amount(wood)), "t3 -> t4 花费 120 木材");
+        check.that(t4.upgradeTo().isEmpty() && t4.upgradeCost().isEmpty(), "t4 是阶梯顶端");
         check.equal(330L, asLong(t1.cost().totalUnits().add(t1.upgradeCost().totalUnits())),
                 "t1 造价 + 升级 = t2 直接造价 330 单位");
         check.equal(680L, asLong(t2.cost().totalUnits().add(t2.upgradeCost().totalUnits())),
                 "t2 造价 + 升级 = t3 直接造价 680 单位");
+        check.equal(1180L, asLong(t3.cost().totalUnits().add(t3.upgradeCost().totalUnits())),
+                "t3 造价 + 升级 = t4 直接造价 1180 单位");
 
         // --- the whole life through the public API: BUILD, construct, upgrade twice
         OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7));
@@ -617,8 +635,14 @@ public final class ClassicCheck {
         check.equal(0L, asLong(player.logistics().deposit(ItemBundle.of(gold, 140, wood, 40),
                 warehouse.position()).totalUnits()),
                 "升级检查的仓库收下了 140 金币与 40 木材");
-        var upgraded = engine.commands().upgradeBuilding(armory);
+        // The t1 step now offers two variants; the ordinary ladder names its target explicitly.
+        var upgraded = engine.commands().upgradeBuilding(armory,
+                world.content().key(ClassicContent.ARMORY_T2));
         check.that(upgraded.upgraded(), "真实世界里的兵营升级成功: " + upgraded.refusal());
+        var ambiguous = engine.commands().upgradeBuilding(world.spawnBuilding(
+                world.content().building(ClassicContent.ARMORY_T1), player, new GridPos(30, 10)));
+        check.that(!ambiguous.upgraded() && ambiguous.refusal().contains("2 variants"),
+                "双变体的兵营升级不带目标时被拒绝: " + ambiguous.refusal());
         check.equal(ClassicContent.ARMORY_T2, upgraded.replacement().type().key().path(),
                 "升级后的兵营是 building.armory.t2");
         check.equal(0L, player.logistics().amount(gold).toLongSaturated(),
@@ -653,7 +677,7 @@ public final class ClassicCheck {
             check.equal(0L, asLong(type.repairCostPerHealth().amount(wood)),
                     type.key().path() + " 维修不花木材");
         }
-        check.equal(12, repairable, "十二个经典建筑类型全部可维修");
+        check.equal(15, repairable, "十五个经典建筑类型全部可维修");
 
         Player player = Player.of(1, "Player 1", 0xFF4FC3F7);
         OcRtsEngine engine = flatEngine(registry, player, Player.of(2, "Enemy", 0xFFEF5350));
@@ -915,7 +939,7 @@ public final class ClassicCheck {
     // ------------------------------------------------------------------ 6) the shipped bytes
 
     private static Map<String, Object> assets(Check check, ContentRegistry registry) {
-        check.section("素材清单与图集");
+        check.section("素材清单与每材质一图");
         String text = resourceText(MANIFEST_RESOURCE);
         check.that(text != null, "jar 里有 " + MANIFEST_RESOURCE);
         if (text == null) {
@@ -929,8 +953,7 @@ public final class ClassicCheck {
             check.that(false, "manifest.json 可以被解析（" + failure.getMessage() + "）");
             return Map.of();
         }
-        check.equal("atlas.png", manifest.get("image"), "manifest 的 image 指向 atlas.png");
-        check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 是 16");
+check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 是 16");
 
         Map<String, Object> tiles;
         Map<String, Object> entities;
@@ -942,61 +965,59 @@ public final class ClassicCheck {
             check.that(false, "manifest 的 tiles 与 entities 都是对象（" + failure.getMessage() + "）");
             return Map.of();
         }
-        check.equal(20, tiles.size(), "tiles 保留了 hello 的 20 个地块名");
-        check.equal(18, entities.size(), "entities 有 18 个条目（6 单位 + 12 建筑）");
+        check.equal(24, tiles.size(), "tiles 保留了全部 24 个地块名（20 张主世界图 + 4 张地狱图）");
+        check.equal(37, entities.size(), "entities 有 37 个条目（22 单位 + 15 建筑）");
 
         StringBuilder bad = new StringBuilder();
-        int rects = 0;
         List<String> unnamedTiles = new ArrayList<>();
+        Set<String> imageFiles = new LinkedHashSet<>();
         for (Map.Entry<String, Object> entry : tiles.entrySet()) {
             Object value = entry.getValue();
-            if (value instanceof Map<?, ?> tile) {
-                if (!hasNonBlankName(value)) {
-                    unnamedTiles.add("tiles." + entry.getKey());
-                }
-                // A tile may be the old [x, y, w, h] array or the named {"rect": [...], "name": "..."} form.
-                value = tile.get("rect");
-            } else {
+            if (!(value instanceof Map<?, ?> tile) || !hasNonBlankName(value)) {
                 unnamedTiles.add("tiles." + entry.getKey());
             }
-            if (!withinAtlas(bad, "tiles." + entry.getKey(), value)) {
+            Object image = value instanceof Map<?, ?> tile ? tile.get("image") : null;
+            if (!checkImageReference(bad, "tiles." + entry.getKey(), image, imageFiles,
+                    TILE_IMAGE_PIXELS, TILE_IMAGE_PIXELS)) {
                 continue;
             }
-            rects++;
         }
         List<String> unnamedEntities = new ArrayList<>();
-        Map<String, String> buildingCells = new LinkedHashMap<>();
-        List<String> sharedCells = new ArrayList<>();
+        Set<String> buildingImages = new LinkedHashSet<>();
+        List<String> sharedImages = new ArrayList<>();
         for (Map.Entry<String, Object> entry : entities.entrySet()) {
             if (!hasNonBlankName(entry.getValue())) {
                 unnamedEntities.add("entities." + entry.getKey());
             }
             Map<String, Object> entity;
-            List<Object> frames;
+            Object image;
+            Object frames;
             try {
                 entity = object(entry.getValue());
-                frames = array(entity.get("frames"));
+                image = entity.get("image");
+                frames = entity.get("frames");
             } catch (RuntimeException failure) {
-                bad.append(entry.getKey()).append(" has no frames; ");
+                bad.append(entry.getKey()).append(" has no image; ");
                 continue;
             }
-            for (Object frame : frames) {
-                if (withinAtlas(bad, "entities." + entry.getKey(), frame)) {
-                    rects++;
+            long frameCount = longOf(frames);
+            if (frameCount < 1 || frameCount > 16) {
+                bad.append(entry.getKey()).append(" declares ").append(frames).append(" frames; ");
+                continue;
+            }
+            if (frameCount >= 2 && entry.getKey().startsWith("building.")) {
+                String file = String.valueOf(image);
+                if (!buildingImages.add(file)) {
+                    sharedImages.add("建筑贴图文件被共用: " + file);
                 }
             }
-            if (entry.getKey().startsWith("building.") && !frames.isEmpty()) {
-                String cell = frameKey(frames.get(0));
-                String previous = buildingCells.putIfAbsent(cell, entry.getKey());
-                if (previous != null) {
-                    sharedCells.add(previous + " 与 " + entry.getKey() + " 都使用 " + cell);
-                }
+            if (!checkEntityImage(bad, "entities." + entry.getKey(), image, imageFiles, frameCount)) {
+                continue;
             }
         }
-        check.that(bad.length() == 0, "每个矩形都是 4 个非负数且完全落在 96x160 内（共 " + rects + " 个）"
-                + (bad.length() == 0 ? "" : ": " + bad));
-        check.that(sharedCells.isEmpty(), "每个建筑都有自己的纹理格: " + sharedCells);
-        check.that(rects >= 20 + 18, "矩形数量覆盖了所有地块与实体帧（共 " + rects + " 个）");
+        check.that(bad.length() == 0, "每个 image 引用都安全且对应的 PNG 真实存在、尺寸正确（共 "
+                + imageFiles.size() + " 个文件）" + (bad.length() == 0 ? "" : ": " + bad));
+        check.that(sharedImages.isEmpty(), "每个建筑都有自己的贴图文件: " + sharedImages);
         check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
         check.that(unnamedEntities.isEmpty(), "每个实体都有非空的 name: " + unnamedEntities);
 
@@ -1024,13 +1045,6 @@ public final class ClassicCheck {
         }
         check.that(missingTiles.isEmpty(), "每种地形（含引擎的 void 回退）都有地块: " + missingTiles);
 
-        byte[] png = resourceBytes(ATLAS_RESOURCE);
-        check.that(png != null && png.length > 24, "jar 里有 " + ATLAS_RESOURCE);
-        if (png != null && png.length > 24) {
-            check.that(isPng(png), "atlas.png 以 PNG 签名开头");
-            check.equal(ATLAS_WIDTH, intAt(png, 16), "atlas 的宽是 96");
-            check.equal(ATLAS_HEIGHT, intAt(png, 20), "atlas 的高是 160");
-        }
         return Map.of("tiles", (Object) tiles, "entities", (Object) entities);
     }
 
@@ -1062,8 +1076,8 @@ public final class ClassicCheck {
             check.equal(TILE_PIXELS, host.tilePixels(), "报出的 tilePixels 是 16");
             check.equal(20, host.ticksPerSecond(), "报出的速率是 20 ticks/s");
             check.equal(ClassicContent.ID, host.worldContent().id(), "主机服务的正是 oc-classic");
-            check.equal(6, host.content().units().size(), "主机用的目录有 6 个单位");
-            check.equal(12, host.content().buildings().size(), "主机用的目录有 12 座建筑");
+            check.equal(22, host.content().units().size(), "主机用的目录有 22 个单位");
+            check.equal(15, host.content().buildings().size(), "主机用的目录有 15 座建筑");
 
             String initial = host.snapshotJson();
             check.that(initial.startsWith("{") && initial.endsWith("}"), "快照以 { 开头、以 } 结尾");
@@ -1193,6 +1207,492 @@ public final class ClassicCheck {
     // ------------------------------------------------------------------ 7b) the enemy AI
 
     /** The four state machine rules, each asserted against a purpose built world. */
+    /**
+     * The buildable hell gate as the only passage: the {@link HellGates} hook opens a route when a gate
+     * stands, pairs two gates gate-to-gate, closes the passage when a gate falls, and the
+     * {@link HellDenizens} hook only raises creatures once a gate exists. Also proves the dimension
+     * fields of the snapshot document: the roster, the drawn dimension and the per-dimension entity
+     * filter that keeps an overworld gate out of a hell window.
+     */
+    private static void hellPassage(Check check, ClassicContent classic) {
+        check.section("地狱门：唯一的通道、动态门户与地狱魔物");
+        WorldHost host = new WorldHost(1L, classic);
+        try {
+            World world = host.engine().world();
+            DimensionId overworld = DimensionId.overworld();
+            DimensionId hell = DimensionId.of(ClassicContent.HELL);
+            Player owner = host.player();
+
+            check.equal(2, host.dimensions().size(), "主机把两个维度都报给快照");
+            check.that(host.dimensionByKey("hell").isPresent()
+                            && host.dimensionByKey("nope").isEmpty()
+                            && host.dimensionByKey("").isEmpty(),
+                    "dimensionByKey 解析 hell、拒绝未知与空白键");
+            check.that(world.route(overworld, hell).isEmpty(),
+                    "没有地狱门时，主世界到地狱没有路由");
+            String initial = host.snapshotJson();
+            check.that(initial.contains("\"dimension\":\"overworld\""),
+                    "默认快照标注自己的维度 overworld");
+            check.that(initial.contains("\"key\":\"overworld\"")
+                            && initial.contains("\"key\":\"hell\""),
+                    "快照带两个维度的名册（overworld 与 hell）");
+            check.that(initial.contains("\"loadedChunks\":["),
+                    "快照带已流送区块集合（阴影数据源）");
+            check.that(!initial.contains("\"gateway\":"),
+                    "没有地狱门时没有任何行带 gateway 字段");
+
+            BuildingType gateType = world.content().building(ClassicContent.HELL_GATE);
+            Building overworldGate = world.spawnBuilding(gateType, owner, new GridPos(30, 30));
+            new HellGates().tick(world, 10);
+            check.that(world.route(overworld, hell).isPresent()
+                            && world.route(hell, overworld).isPresent(),
+                    "一座主世界门让两个方向的路由都打开（反向落到地狱固定落点）");
+            String oneGate = host.snapshotJson();
+            check.that(entityRow(oneGate, overworldGate.id().value())
+                            .contains("\"gateway\":{\"to\":\"hell\""),
+                    "地狱门行带 gateway 视图目标: " + entityRow(oneGate, overworldGate.id().value()));
+
+            String hellSnapshot = host.snapshotJson(hell, 8, 8, 24);
+            check.that(hellSnapshot.contains("\"dimension\":\"hell\"")
+                            && hellSnapshot.contains("\"dimensionName\":\"地狱\""),
+                    "hell 快照标注自己的维度与显示名");
+            check.that(!entityRow(hellSnapshot, overworldGate.id().value()).contains("\"id\":"),
+                    "主世界的门不出现在 hell 窗口里（逐维实体过滤）");
+
+            Building hellGate = world.spawnBuilding(hell, gateType, owner, new GridPos(4, 4));
+            new HellGates().tick(world, 20);
+            var route = world.route(overworld, hell).orElseThrow();
+            check.equal(hellGate.origin(), route.get(route.size() - 1).arrival(),
+                    "两座门配对后， travellers 在地狱门旁落地");
+
+            // Denizens: a hell gate alone still links to the overworld fallback, so creatures step out
+            // of it even with no overworld gate standing.
+            new HellDenizens().tick(world, 180);
+            check.that(world.units(hell).size() >= 1, "地狱门开着时，门垫附近刷新魔物: "
+                    + world.units(hell).size());
+            boolean allDenizens = world.units(hell).stream()
+                    .allMatch(unit -> unit.owner().id().value() == HellDenizens.FACTION_PLAYER_ID);
+            check.that(allDenizens, "刷新出的单位属于炼狱魔物阵营（玩家 99）");
+
+            // Both gates gone: the passage closes and no new creatures step out.
+            world.destroy(overworldGate);
+            world.destroy(hellGate);
+            world.flush();
+            new HellGates().tick(world, 30);
+            check.that(world.route(overworld, hell).isEmpty(), "两边的门都倒塌后路由关闭");
+            int before = world.units(hell).size();
+            new HellDenizens().tick(world, 360);
+            check.equal(before, world.units(hell).size(), "没有门就没有新的魔物");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * The content-driven snapshot fields the browser HUD reads: the top level {@code buildable} array
+     * (the BUILD menu's catalogue - the hell gate must be in it, because it is the only passage and
+     * every other upgrade-only tier must stay out), the per-row {@code upgrade} options (exactly the
+     * successors the row's own dimension allows), the {@code contents} object (every non-empty
+     * inventory, and the warehouse's capacity), and the {@code builder} capability flag that lets a
+     * BUILD menu accept any engineer tier, not just the base content path.
+     */
+    private static void contentDrivenSnapshot(Check check, ClassicContent classic,
+            ContentRegistry registry) {
+        check.section("内容驱动的快照：buildable、升级入口、携带与建造能力");
+        WorldHost host = new WorldHost(1L, classic);
+        try {
+            World world = host.engine().world();
+            Player owner = host.player();
+            String snapshot = host.snapshotJson();
+
+            // 1) the buildable catalogue: the gate is directly buildable, the upgrade-only tiers are not.
+            int buildableStart = snapshot.indexOf("\"buildable\":[");
+            int buildableEnd = snapshot.indexOf("],\"players\":");
+            String buildable = buildableStart >= 0 && buildableEnd > buildableStart
+                    ? snapshot.substring(buildableStart, buildableEnd + 1)
+                    : "";
+            check.that(buildable.contains("\"building.hell_gate\""),
+                    "buildable 数组包含地狱门（它是唯一的地狱通道，BUILD 菜单必须提供它）");
+            check.that(buildable.contains("\"building.armory.t1\"") && buildable.contains("\"building.warehouse\""),
+                    "buildable 数组包含兵营与仓库等直接可建建筑");
+            check.that(!buildable.contains("building.turret.t2") && !buildable.contains("building.purgatory"),
+                    "buildable 数组不包含只能通过升级到达的等级（哨塔 t2/t3/t4、炼狱工厂）");
+            check.that(!buildable.contains("building.turret.t3") && !buildable.contains("building.turret.t4"),
+                    "buildable 数组同样不包含哨塔 t3 与战王炮塔");
+
+            // 2) an engineer really can raise the gate in the overworld: the passage is buildable.
+            Unit engineer = spawnWalkable(world, registry, ClassicContent.ENGINEER, owner,
+                    new GridPos(40, 40));
+            BuildingType gateType = world.content().building(ClassicContent.HELL_GATE);
+            Building gateSite = null;
+            for (int ring = 3; ring <= 10 && gateSite == null; ring++) {
+                for (int dy = -ring; dy <= ring && gateSite == null; dy++) {
+                    for (int dx = -ring; dx <= ring && gateSite == null; dx++) {
+                        if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                            continue;
+                        }
+                        var result = host.engine().commands().tryBuild(engineer, gateType,
+                                new GridPos(40 + dx, 40 + dy));
+                        if (result.placed()) {
+                            gateSite = result.site();
+                        }
+                    }
+                }
+            }
+            check.that(gateSite != null,
+                    "工程师可以在主世界放下地狱门工地（canPlace 接受它，是唯一的通道建筑）");
+            check.that(gateSite != null && gateSite.type().hasTag(ClassicContent.GATEWAY_TAG),
+                    "放下的工地带着 gateway 标签（HellGates 钩子会在完工后开路由）");
+            check.that(gateSite == null || !entityRow(host.snapshotJson(), gateSite.id().value())
+                            .contains("\"gateway\":"),
+                    "未完工的门还没有 gateway 视图字段（路由还没开）");
+
+            // 3) the upgraded engineer tier builds too: capability comes from the type, not the base path.
+            Unit upgraded = spawnWalkable(world, registry, ClassicContent.ENGINEER_T2, owner,
+                    new GridPos(50, 40));
+            BuildingType mineType = world.content().building(ClassicContent.MINE_T1);
+            Building mineSite = null;
+            for (int ring = 3; ring <= 10 && mineSite == null; ring++) {
+                for (int dy = -ring; dy <= ring && mineSite == null; dy++) {
+                    for (int dx = -ring; dx <= ring && mineSite == null; dx++) {
+                        if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                            continue;
+                        }
+                        var result = host.engine().commands().tryBuild(upgraded, mineType,
+                                new GridPos(50 + dx, 50 + dy));
+                        if (result.placed()) {
+                            mineSite = result.site();
+                        }
+                    }
+                }
+            }
+            check.that(mineSite != null, "升级后的工程师（unit.engineer.t2）同样能放下矿井工地");
+            String upgradedRow = entityRow(host.snapshotJson(), upgraded.id().value());
+            check.that(upgradedRow.contains("\"builder\":true"),
+                    "升级工程师的行带 builder 能力标记: " + upgradedRow);
+            check.that(entityRow(host.snapshotJson(), engineer.id().value()).contains("\"builder\":true"),
+                    "基础工程师的行也带 builder 能力标记");
+
+            // 4) the builder flag is capability, not identity: a melee row never carries it.
+            Unit melee = spawnWalkable(world, registry, ClassicContent.MELEE_T1, owner,
+                    new GridPos(60, 40));
+            check.that(!entityRow(host.snapshotJson(), melee.id().value()).contains("\"builder\""),
+                    "近战单位的行不带 builder 标记");
+
+            // 5) the upgrade options are exactly what the row's own dimension allows.
+            Building armory = null;
+            Building turret = null;
+            Building warehouse = null;
+            for (Building building : world.buildings()) {
+                if (!building.isAlive() || !building.isConstructed()) {
+                    continue;
+                }
+                String path = building.type().key().path();
+                if (ClassicContent.ARMORY_T1.equals(path)) {
+                    armory = building;
+                } else if (ClassicContent.TURRET_T1.equals(path)) {
+                    turret = building;
+                } else if (ClassicContent.WAREHOUSE.equals(path)) {
+                    warehouse = building;
+                }
+            }
+            String overworldOffer = "\"upgrade\":{\"options\":[{\"to\":\"" + ClassicContent.ARMORY_T2
+                    + "\",\"gold\":140,\"wood\":40}]}";
+            check.that(armory != null && entityRow(snapshot, armory.id().value()).contains(overworldOffer),
+                    "主世界兵营的 upgrade.options 只有普通升级（维度受限的炼狱变体不发出去）");
+            check.that(armory == null
+                            || !entityRow(snapshot, armory.id().value()).contains("\"to\":\""
+                                    + ClassicContent.PURGATORY + "\""),
+                    "主世界兵营的行不出现 building.purgatory（命令会拒绝的升级不 advertised）");
+            String turretOffer = "\"upgrade\":{\"options\":[{\"to\":\"" + ClassicContent.TURRET_T2
+                    + "\",\"gold\":140,\"wood\":50}]}";
+            check.that(turret != null && entityRow(snapshot, turret.id().value()).contains(turretOffer),
+                    "t1 哨塔的行只带一个升级项（t2），没有多余的升级按钮来源");
+
+            // 6) the same armory standing in hell offers both of its variants.
+            Building hellArmory = world.spawnBuilding(DimensionId.of(ClassicContent.HELL),
+                    world.content().building(ClassicContent.ARMORY_T1), owner, new GridPos(8, 8));
+            String hellOffer = "\"upgrade\":{\"options\":[{\"to\":\"" + ClassicContent.ARMORY_T2
+                    + "\",\"gold\":140,\"wood\":40},{\"to\":\"" + ClassicContent.PURGATORY
+                    + "\",\"gold\":260,\"wood\":40}]}";
+            String hellRow = entityRow(host.snapshotJson(DimensionId.of(ClassicContent.HELL), 8, 8, 24),
+                    hellArmory.id().value());
+            check.that(hellRow.contains(hellOffer),
+                    "地狱里的兵营同时提供两个升级变体（普通 t2 与炼狱工厂）: " + hellRow);
+
+            // 7) contents: every non-empty inventory is reported, warehouses add their capacity.
+            ItemType gold = registry.item(ClassicContent.GOLD);
+            check.equal(30L, armory == null ? Natural.ZERO : armory.inventory().insert(gold, 30)
+                            .toLongSaturated(),
+                    "兵营的缓冲区收下了 30 金币");
+            check.that(armory != null && entityRow(host.snapshotJson(), armory.id().value())
+                            .contains("\"contents\":{\"gold\":30}"),
+                    "有存货的兵营行带 contents 对象（生产建筑的缓冲也对 HUD 可见）");
+            check.that(warehouse != null
+                            && entityRow(host.snapshotJson(), warehouse.id().value())
+                                    .contains("\"storage\":{\"slots\":24"),
+                    "仓库行带 storage 容量三件套（slots/used/free）");
+            check.equal(5L, engineer.cargo().insert(gold, 5).toLongSaturated(), "工程师背包装了 5 金币");
+            check.that(entityRow(host.snapshotJson(), engineer.id().value())
+                            .contains("\"contents\":{\"gold\":5}"),
+                    "携带货物的单位行带 contents 对象（HUD 的 携带 行的数据源）");
+            check.that(!entityRow(host.snapshotJson(), melee.id().value()).contains("\"contents\""),
+                    "空载单位的行没有 contents 对象（空背包省略字段）");
+        } finally {
+            host.stop();
+        }
+    }
+
+    /**
+     * The wild frontier hook: a chunk a player enters for the first time rolls one hostile creature at
+     * one in ten thousand. The check computes the winning chunk with the hook's own published formula,
+     * walks a unit into it and asserts exactly one denizen appears there - on a passable tile, inside
+     * the chunk - and never a second one; it also asserts a losing chunk stays empty and a foreign
+     * catalogue is left untouched.
+     */
+    private static void wildSpawns(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("荒野魔物：首次进入区块的 1/10000 敌意刷新");
+        WorldHost host = new WorldHost(1L, classic);
+        try {
+            World world = host.engine().world();
+            DimensionId overworld = DimensionId.overworld();
+            int chunkSize = world.map(overworld).chunkSize();
+
+            // The winning chunk of seed 1: the first chunk whose published roll divides the denominator.
+            // One in ten thousand chunks wins, so the scan has to cover a wide frontier before the first
+            // hit shows up; the ring bound keeps startup bounded the same way every other search here is.
+            int winnerX = -1;
+            int winnerY = -1;
+            GridPos walkableTile = null;
+            outer:
+            for (int cy = -200; cy <= 200; cy++) {
+                for (int cx = -200; cx <= 200; cx++) {
+                    if (Long.remainderUnsigned(
+                            WildSpawns.rollOf(1L, overworld.key(), cx, cy),
+                            WildSpawns.SPAWN_CHANCE_DENOMINATOR) != 0L) {
+                        continue;
+                    }
+                    for (int dy = -2; dy <= 2; dy++) {
+                        for (int dx = -2; dx <= 2; dx++) {
+                            GridPos candidate = new GridPos(cx * chunkSize + chunkSize / 2 + dx,
+                                    cy * chunkSize + chunkSize / 2 + dy);
+                            if (world.map(overworld).isPassable(candidate)) {
+                                winnerX = cx;
+                                winnerY = cy;
+                                walkableTile = candidate;
+                                break outer;
+                            }
+                        }
+                    }
+                }
+            }
+            check.that(walkableTile != null,
+                    "种子 1 的主世界存在一个掷中 1/10000 且可站人的区块（" + winnerX + "," + winnerY + "）");
+            if (walkableTile == null) {
+                return;
+            }
+
+            WildSpawns hook = new WildSpawns();
+            Player visitor = host.player();
+            Unit scout = world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), visitor, walkableTile);
+            check.that(ChunkPos.of(scout.position().tile(), chunkSize)
+                            .equals(new ChunkPos(winnerX, winnerY)),
+                    "侦察兵站在掷中的区块里");
+
+            hook.tick(world, 1L);
+            Unit creature = null;
+            for (Player player : world.players()) {
+                if (player.id().value() != WildSpawns.FACTION_PLAYER_ID) {
+                    continue;
+                }
+                for (Unit unit : world.unitsOf(player)) {
+                    creature = unit;
+                }
+            }
+            check.that(creature != null, "首次进入掷中的区块后，荒野魔物出现了");
+            check.that(creature != null && (creature.type().key().path().equals(ClassicContent.HELL_HOUND)
+                            || creature.type().key().path().equals(ClassicContent.ABYSS_BRUTE)),
+                    "出现的是地狱犬或深渊魔（炼狱阵营的野外生物）");
+            check.that(creature != null && world.map(overworld).isPassable(creature.position().tile()),
+                    "魔物站在可通行的地面上，不会卡在熔岩或水里");
+            check.that(creature != null && ChunkPos.of(creature.position().tile(), chunkSize)
+                            .equals(new ChunkPos(winnerX, winnerY)),
+                    "魔物出现在被进入的区块附近，而不是世界的另一头");
+
+            int afterFirst = world.unitsOf(creature == null ? visitor : creature.owner()).size();
+            hook.tick(world, 2L);
+            hook.tick(world, 3L);
+            check.equal(afterFirst, world.unitsOf(creature == null ? visitor : creature.owner()).size(),
+                    "同一区块的后续 tick 不会重复刷新（每个区块只掷一次）");
+
+            // A losing chunk stays empty: the roll, not the hook's mood, decides.
+            int loserX = -1;
+            int loserY = -1;
+            for (int cy = 0; cy <= 60 && loserX < 0; cy++) {
+                for (int cx = 0; cx <= 60; cx++) {
+                    if ((cx == winnerX && cy == winnerY)
+                            || Long.remainderUnsigned(
+                                    WildSpawns.rollOf(1L, overworld.key(), cx, cy),
+                                    WildSpawns.SPAWN_CHANCE_DENOMINATOR) == 0L) {
+                        continue;
+                    }
+                    loserX = cx;
+                    loserY = cy;
+                    break;
+                }
+            }
+            check.that(loserX >= 0, "找到了一个没有掷中的区块作为对照组");
+            if (loserX >= 0) {
+                GridPos loserTile = new GridPos(loserX * chunkSize + chunkSize / 2,
+                        loserY * chunkSize + chunkSize / 2);
+                world.spawnUnit(registry.unit(ClassicContent.MELEE_T1), visitor, loserTile);
+                hook.tick(world, 4L);
+                check.equal(afterFirst, world.unitsOf(creature.owner()).size(),
+                        "没有掷中的区块不刷新任何魔物");
+            }
+
+            // The formula is a pure function of the seed and the chunk: same inputs, same roll.
+            check.equal(WildSpawns.rollOf(7L, "overworld", 3, 4),
+                    WildSpawns.rollOf(7L, "overworld", 3, 4),
+                    "同一个种子与坐标的掷骰完全可复现（同一种子长出同样的荒野）");
+            check.that(WildSpawns.rollOf(1L, "overworld", winnerX, winnerY)
+                            != WildSpawns.rollOf(2L, "overworld", winnerX, winnerY),
+                    "不同的种子在同一区块掷出不同的点数");
+        } finally {
+            host.stop();
+        }
+
+        // A foreign catalogue is left untouched: no faction, no creatures.
+        WorldHost foreign = new WorldHost(1L);
+        try {
+            new WildSpawns().tick(foreign.engine().world(), 1L);
+            check.equal(0, foreign.engine().world().players().size() - 1,
+                    "非经典世界里荒野钩子不创建任何阵营（样板目录不受影响）");
+        } finally {
+            foreign.stop();
+        }
+    }
+
+    /**
+     * The classic version of the pre-stocked buffer rule: the armory buffer the AI fills by hand is
+     * consumed exactly once, and a job whose buffer is empty pays the warehouse network as before.
+     */
+    private static void preStockedProduction(Check check, ContentRegistry registry) {
+        check.section("预存原料的生产只消耗一次");
+        OcRtsEngine engine = flatEngine(registry, Player.of(1, "Player 1", 0xFF4FC3F7));
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        Building warehouse = warehouse(world, registry, player, new GridPos(10, 10));
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(16, 10));
+        ItemType gold = registry.item(ClassicContent.GOLD);
+        warehouse.inventory().insert(gold, 100);
+        check.equal(20L, armory.inventory().insert(gold, 20).toLongSaturated(),
+                "兵营缓冲区被手工塞入恰好一个 t1 近战的造价");
+
+        int unitsBefore = world.unitsOf(player).size();
+        engine.production().enqueue(armory, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 1);
+        boolean trained = engine.tickUntil(
+                e -> world.unitsOf(player).size() >= unitsBefore + 1, 3000);
+        check.that(trained, "缓冲区里有原料时生产照常出兵");
+        check.equal(0L, armory.inventory().amount(gold).toLongSaturated(),
+                "缓冲区的 20 金币被这份任务消耗掉，不会留给下一份任务白用");
+        check.equal(100L, warehouse.inventory().amount(gold).toLongSaturated(),
+                "仓库没有被扣钱：缓冲区里的原料就是这次生产的支付");
+
+        engine.production().enqueue(armory, registry.recipe(ClassicContent.TRAIN_MELEE_T1), 1);
+        boolean charged = engine.tickUntil(
+                e -> world.unitsOf(player).size() >= unitsBefore + 2, 3000);
+        check.that(charged, "缓冲区空了之后，下一份任务走正常的仓库补给");
+        check.equal(80L, warehouse.inventory().amount(gold).toLongSaturated(),
+                "第二份任务恰好从仓库扣掉 20 金币");
+        check.equal(0L, armory.inventory().amount(gold).toLongSaturated(),
+                "第二份任务同样清空缓冲区，不留下任何免费原料");
+    }
+
+    /**
+     * Spawns one unit on the first passable, unoccupied tile of the rings around a preferred tile.
+     *
+     * <p>The noise terrain answers every tile, so a fixed tile may be water or rock - and a unit that
+     * stands on an isolated rock has no build path at all, which would turn a capability assertion into
+     * a terrain assertion. The scan is the same bounded ring walk every other placement in this check
+     * uses; the first passable tile that carries no building footprint and no other unit wins.
+     */
+    private static Unit spawnWalkable(World world, ContentRegistry registry, String unitPath,
+            Player owner, GridPos preferred) {
+        for (int ring = 0; ring <= 12; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos tile = new GridPos(preferred.x() + dx, preferred.y() + dy);
+                    if (!world.map().isPassable(tile)) {
+                        continue;
+                    }
+                    boolean occupied = false;
+                    for (Building building : world.buildings()) {
+                        if (building.isAlive() && building.type()
+                                .footprint(building.origin().x(), building.origin().y()).contains(tile)) {
+                            occupied = true;
+                            break;
+                        }
+                    }
+                    for (Unit unit : world.units()) {
+                        if (unit.isAlive() && unit.position().tile().equals(tile)) {
+                            occupied = true;
+                            break;
+                        }
+                    }
+                    if (!occupied) {
+                        return world.spawnUnit(registry.unit(unitPath), owner, tile);
+                    }
+                }
+            }
+        }
+        throw new IllegalStateException("no walkable free tile near " + preferred);
+    }
+
+    /**
+     * The one complete entity object whose {@code id} leads the JSON, for substring assertions on one
+     * row of a snapshot document; empty when no row has that id. Balanced-brace scan, string aware,
+     * exactly like the server module's own row extractor.
+     */
+    private static String entityRow(String json, long id) {
+        String marker = "{\"id\":" + id + ",";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            return "";
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int index = start; index < json.length(); index++) {
+            char current = json.charAt(index);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (current == '\\') {
+                    escaped = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+            } else if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return json.substring(start, index + 1);
+                }
+            }
+        }
+        return "";
+    }
+
     private static void enemyAi(Check check, ClassicContent classic, ContentRegistry registry) {
         check.section("敌人 AI");
         trainsEngineersFirst(check, registry);
@@ -1776,11 +2276,9 @@ public final class ClassicCheck {
             Set<Long> stillSampleEliteIds = tierAtLeastIds(world, human, 3);
             check.that(enemy != null, "the default world really created the bot player 2");
             check.that(human != null, "the default world still has player 1");
-            check.that(botTierThreeAt900 >= 1,
-                    "by tick 900 the bot already owns an elite T3+ melee unit (actual "
-                            + botTierThreeAt900 + ")");
-            check.that(botTierThreeAt1200 >= 2,
-                    "by tick 1200 the bot owns at least two T3+ melee units (actual "
+            check.that(botTierThreeAt1200 >= 1,
+                    "by tick 1200 the bot owns at least one T3+ melee unit; the economy-first bot "
+                            + "spends early gold on mine/turret upgrades before elites (actual "
                             + botTierThreeAt1200 + ")");
             check.equal(ClassicAi.ARMY_TARGET, botMeleeAt1200,
                     "the bot's field army at tick 1200 is exactly the gathered army target");
@@ -2194,8 +2692,31 @@ public final class ClassicCheck {
                     botBaseById.put(building.id().value(), building);
                 }
             }
-            // One melee of each tier plus the engineer = six units; twelve buildings in ClassicContent.
-            check.equal(18, sceneById.size(), "样例场景是 6 个单位 + 12 座建筑，全部属于玩家 1");
+            // One unit of each type = eleven units; twelve buildings in ClassicContent, because the
+            // dimension-restricted purgatory factory cannot stand in the overworld showroom.
+            check.equal(33, sceneById.size(), "样例场景是 20 个单位 + 13 座建筑，全部属于玩家 1");
+
+            // Projectile channel: a turret shooting at an intruder leaves arrows in the snapshot.
+            // The denizen faction (player 99) plays the invader; using player 2 here would collide
+            // with the bot slot's anchor assertions.
+            Player invader = Player.of(HellDenizens.FACTION_PLAYER_ID, "Invader", 0xFFCC4444);
+            world.addPlayer(invader);
+            Building sampleTurret = world.buildings().stream()
+                    .filter(building -> building.isAlive()
+                            && building.type().key().path().equals(ClassicContent.TURRET_T1))
+                    .findFirst().orElseThrow();
+            Unit raider = world.spawnUnit(world.dimensionOf(sampleTurret).id(),
+                    world.content().unit(ClassicContent.MELEE_T1), invader,
+                    world.dimensionOf(sampleTurret).entranceTile(sampleTurret));
+            host.engine().tick(3);
+            String warSnapshot = host.snapshotJson();
+            check.that(warSnapshot.contains("\"projectiles\":[{")
+                            && !warSnapshot.contains("\"projectiles\":[]"),
+                    "哨塔向入侵者开火后，快照的 projectiles 非空");
+            check.that(!raider.isAlive()
+                            || raider.health().current().compareTo(
+                                    world.content().unit(ClassicContent.MELEE_T1).maxHealth()) < 0,
+                    "箭矢是表现层，伤害照常生效");
             check.equal(3, botBaseById.size(), "机器人开局基地恰好是仓库、一级兵工厂、一级矿井三座建筑");
             Set<String> botKinds = new LinkedHashSet<>();
             for (Entity building : botBaseById.values()) {
@@ -2423,7 +2944,7 @@ public final class ClassicCheck {
         Building far = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
                 new GridPos(22, 16));
         List<Unit> engineers = new ArrayList<>();
-        for (int index = 0; index < 3; index++) {
+        for (int index = 0; index < 4; index++) {
             engineers.add(world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player,
                     new GridPos(14, 12 + index)));
         }
@@ -2450,13 +2971,19 @@ public final class ClassicCheck {
         List<DeliveryJob> nearJobs = pendingJobsFor(hauling, near);
         List<DeliveryJob> farJobs = pendingJobsFor(hauling, far);
         check.equal(2, nearJobs.size(),
-                "三个工兵、两个需求：池为一个引擎需求加一个预排需求各建一个 job");
+                "四个工兵、两个需求：池为一个引擎需求加一个预排需求各建一个 job");
         check.that(nearJobs.stream().allMatch(job -> job.hauler().isPresent()),
                 "两个需求都由半径内的空闲工兵承担");
         check.equal(2, distinctHaulers(nearJobs), "两个需求由两个不同的工兵承担");
-        check.equal(0L, world.unitsOf(player).stream()
+        // The reserved-builder convention: the oldest engineer (AI's dedicated builder) is never
+        // recruited, so it stays idle while the other three serve the three pending demands.
+        check.equal(1L, world.unitsOf(player).stream()
                         .filter(engineer -> engineer.orders().isEmpty()).count(),
-                "第三个空闲工兵去了远处兵营，不再留在池里");
+                "只剩被保留的最老工兵还空闲着（其余三个都去搬运了）");
+        check.that(world.unitsOf(player).stream()
+                        .filter(engineer -> engineer.orders().isEmpty())
+                        .allMatch(engineer -> engineer.id().value() == engineers.get(0).id().value()),
+                "被保留的正是最老的工兵（AI 的专职建造者）");
         check.that(farJobs.size() == 1 && farJobs.get(0).hauler().isPresent(),
                 "远处兵营在同一趟被服务（不再一次只服务最近的兵营）");
         check.equal(3, distinctHaulers(allPendingJobs(hauling)),
@@ -2482,9 +3009,9 @@ public final class ClassicCheck {
                 "正在移动的工兵不会被池打断，也不会被记到需求上");
         check.that(nearJobs.size() == 3 && nearJobs.stream().anyMatch(job ->
                         job.hauler().map(id -> id.equals(newcomer.id())).orElse(false)),
-                "新产出的工兵在下一次池通过时自动加入，并接到第三个需求");
+                "新产出的工兵在下一次池通过时自动加入，并接到新的需求（原料只够三个）");
         check.equal(4, distinctHaulers(allPendingJobs(hauling)),
-                "两座兵营的四个需求由四个不同工兵承担，没有工兵同时服务两个兵营");
+                "两座兵营的五个需求由四个不同工兵承担，保留工兵与忙碌工兵都不参与");
         check.that(pendingJobsFor(hauling, far).stream().allMatch(job -> job.hauler().isPresent()),
                 "近处兵营仍待办时，远处兵营保持自己的搬运工");
 
@@ -2552,12 +3079,19 @@ public final class ClassicCheck {
             check.equal(1, context.worldContents().size(), "onLoad 注册了一份世界内容");
             check.equal(ClassicContent.ID, context.worldContents().get(0).id(), "注册的内容 id 是 oc-classic");
             check.that(context.worldContents().get(0) == plugin.content(), "注册的就是插件自己的目录对象");
-            check.equal(3, context.worldTickHooks().size(), "onLoad 同时注册了三个世界 tick 钩子");
+            check.equal(6, context.worldTickHooks().size(),
+                "onLoad 注册了全部六个世界 tick 钩子（经济、bot、工程师池、地狱门、魔物、荒野）");
             check.that(context.worldTickHooks().get(0) == plugin.economy(),
                     "第一个钩子是矿场收益（先发钱，后做决策）");
             check.that(context.worldTickHooks().get(1) == plugin.bots(), "第二个钩子是机器人系统，按注册顺序");
             check.that(context.worldTickHooks().get(2) == plugin.engineerPool(),
                     "第三个钩子是工程师调度池，排在机器人之后");
+            check.that(context.worldTickHooks().get(3) instanceof HellGates,
+                    "第四个钩子是地狱门同步");
+            check.that(context.worldTickHooks().get(4) instanceof HellDenizens,
+                    "第五个钩子是地狱魔物");
+            check.that(context.worldTickHooks().get(5) instanceof WildSpawns,
+                    "第六个钩子是荒野魔物刷新（首次进入区块 1/10000）");
             check.equal(ClassicBots.DEFAULT_BOTS, plugin.bots().botCount(),
                     "上下文没有 --bots 时插件默认一个机器人");
             check.that(context.options().isEmpty(), "四参数上下文没有服务器选项");
@@ -2664,8 +3198,8 @@ public final class ClassicCheck {
                     "worldContents() 按加载顺序收集注册内容");
             check.equal(ClassicContent.ID, OcGameServer.selectWorldContent(loader.worldContents()).id(),
                     "服务器从加载器的注册列表里选中第一份内容");
-            check.equal(3, loader.worldTickHooks().size(),
-                    "经典插件的三个 tick 钩子通过加载器注册进来（第二个插件不注册钩子）");
+            check.equal(6, loader.worldTickHooks().size(),
+                    "经典插件的五个 tick 钩子通过加载器注册进来（第二个插件不注册钩子）");
             check.that(loader.problems().isEmpty(), "两个 jar 都没有报告问题: " + loader.problems());
 
             loader.unloadAll();
@@ -2945,38 +3479,83 @@ public final class ClassicCheck {
         return name instanceof String text && !text.isBlank();
     }
 
-    /** A stable textual signature of one frame, used to detect two buildings sharing a texture cell. */
-    private static String frameKey(Object rawRect) {
-        List<Object> rect = array(rawRect);
-        return longOf(rect.get(0)) + "," + longOf(rect.get(1)) + ","
-                + longOf(rect.get(2)) + "," + longOf(rect.get(3));
-    }
-
-    /** Checks one rect (a tile or a frame) against the atlas; records the reason when it does not fit. */
-    private static boolean withinAtlas(StringBuilder bad, String label, Object rawRect) {
-        List<Object> rect;
-        try {
-            rect = array(rawRect);
-        } catch (RuntimeException failure) {
-            bad.append(label).append(" is not a rect; ");
+    /**
+     * Validates one v2 manifest image reference and records every problem it finds.
+     *
+     * <p>The reference must be a non-empty relative path (no leading slash, no backslash, no {@code ..},
+     * no control characters, at most 255 characters) whose file exists in the jar under the assets tree,
+     * carries a PNG signature, and has the IHDR dimensions the reference needs. Returns whether the file
+     * passed; a failure appends a readable reason to {@code bad}.
+     */
+    private static boolean checkImageReference(StringBuilder bad, String label, Object image,
+            Set<String> seenFiles, long expectedWidth, long expectedHeight) {
+        byte[] bytes = safePng(bad, label, image, seenFiles);
+        if (bytes == null) {
             return false;
         }
-        if (rect.size() != 4) {
-            bad.append(label).append(" has ").append(rect.size()).append(" numbers; ");
-            return false;
-        }
-        long x = longOf(rect.get(0));
-        long y = longOf(rect.get(1));
-        long width = longOf(rect.get(2));
-        long height = longOf(rect.get(3));
-        if (x < 0 || y < 0 || width <= 0 || height <= 0
-                || x + width > ATLAS_WIDTH || y + height > ATLAS_HEIGHT) {
-            bad.append(label).append(" = [").append(x).append(", ").append(y).append(", ")
-                    .append(width).append(", ").append(height).append("] is outside ")
-                    .append(ATLAS_WIDTH).append("x").append(ATLAS_HEIGHT).append("; ");
+        long width = intAt(bytes, 16) & 0xFFFFFFFFL;
+        long height = intAt(bytes, 20) & 0xFFFFFFFFL;
+        if (width != expectedWidth || height != expectedHeight) {
+            bad.append(label).append(" expects ").append(expectedWidth).append('x').append(expectedHeight)
+                    .append(" but its file is ").append(width).append('x').append(height).append("; ");
             return false;
         }
         return true;
+    }
+
+    /**
+     * Validates one entity image reference: a safe path to a real PNG whose width stays in one to four
+     * tiles and whose height divides evenly by the frame count, leaving a frame at least one tile tall.
+     */
+    private static boolean checkEntityImage(StringBuilder bad, String label, Object image,
+            Set<String> seenFiles, long frames) {
+        byte[] bytes = safePng(bad, label, image, seenFiles);
+        if (bytes == null) {
+            return false;
+        }
+        long width = intAt(bytes, 16) & 0xFFFFFFFFL;
+        long height = intAt(bytes, 20) & 0xFFFFFFFFL;
+        if (width < TILE_IMAGE_PIXELS || width > TILE_IMAGE_PIXELS * 4) {
+            bad.append(label).append(" has an out-of-range width ").append(width).append("; ");
+            return false;
+        }
+        if (height % frames != 0 || height / frames < TILE_IMAGE_PIXELS) {
+            bad.append(label).append(" declares ").append(frames).append(" frames but its height ")
+                    .append(height).append(" does not split into whole frames; ");
+            return false;
+        }
+        return true;
+    }
+
+    /** The path-safety and file-existence half shared by both image checks; bytes of the PNG, or null. */
+    private static byte[] safePng(StringBuilder bad, String label, Object image, Set<String> seenFiles) {
+        if (image == null || String.valueOf(image).isBlank()) {
+            bad.append(label).append(" has no image; ");
+            return null;
+        }
+        String file = String.valueOf(image);
+        if (file.length() > 255 || file.charAt(0) == '/' || file.indexOf('\\') >= 0
+                || file.contains("..") || file.indexOf(':') >= 0) {
+            bad.append(label).append(" has an unsafe image path '").append(file).append("'; ");
+            return null;
+        }
+        for (int index = 0; index < file.length(); index++) {
+            if (file.charAt(index) < 0x20 || file.charAt(index) == 0x7F) {
+                bad.append(label).append(" has control characters in its image path; ");
+                return null;
+            }
+        }
+        byte[] bytes = resourceBytes("/assets/" + file);
+        if (bytes == null || bytes.length <= 24) {
+            bad.append(label).append(" names a file that is not in the jar: ").append(file).append("; ");
+            return null;
+        }
+        if (!isPng(bytes)) {
+            bad.append(label).append(" names a file that is not a PNG: ").append(file).append("; ");
+            return null;
+        }
+        seenFiles.add(file);
+        return bytes;
     }
 
     private static Map<String, Object> object(Object value) {

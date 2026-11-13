@@ -42,6 +42,10 @@ export const TERRAIN_COLORS: Readonly<Record<string, string>> = {
   ice: "#cfe6ef",
   road: "#9a8f7a",
   bridge: "#8c6a45",
+  hell_ground: "#5a1e1e",
+  hell_ash: "#6e5a66",
+  hell_lava: "#e25822",
+  hell_rock: "#2c2c34",
   void: "#0b1016",
 };
 
@@ -755,6 +759,48 @@ export function drawSelectionRing(
   context.stroke();
   context.strokeStyle = SELECTION_COLOR;
   context.lineWidth = Math.max(1.5, tilePixels * 0.05);
+  context.beginPath();
+  context.ellipse(screenX, screenY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+/**
+ * Pulsing ground ring under the camera-followed unit (the 跟随 lock).
+ *
+ * The shape is the selection ring's ellipse pair - a wide soft pass plus a crisp inner outline - but
+ * white and animated: `scale` breathes the radii and `alpha` the stroke, both from the pure clock in
+ * `follow.ts`, so a followed unit stays findable in a crowd without borrowing the gold selection
+ * colour or an ownership hue. It is drawn on the ground before the ownership rings and sprites, so
+ * every other mark stays on top of it.
+ */
+export function drawFollowRing(
+  context: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  tilePixels: number,
+  building: boolean,
+  color: string,
+  scale: number,
+  alpha: number,
+): void {
+  const safeScale = Number.isFinite(scale) ? Math.max(0.1, scale) : 1;
+  const safeAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 0;
+  if (safeAlpha <= 0) {
+    return;
+  }
+  const radiusX = tilePixels * (building ? 0.85 : 0.42) * safeScale;
+  const radiusY = radiusX * 0.42;
+  context.save();
+  context.strokeStyle = color;
+  // The same two-pass pair as the selection ring: a wide translucent halo first, then a crisp outline.
+  context.globalAlpha = safeAlpha * 0.35;
+  context.lineWidth = Math.max(4, tilePixels * 0.14);
+  context.beginPath();
+  context.ellipse(screenX, screenY, radiusX * 1.16, radiusY * 1.16, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.globalAlpha = safeAlpha;
+  context.lineWidth = Math.max(1.5, tilePixels * 0.055);
   context.beginPath();
   context.ellipse(screenX, screenY, radiusX, radiusY, 0, 0, Math.PI * 2);
   context.stroke();

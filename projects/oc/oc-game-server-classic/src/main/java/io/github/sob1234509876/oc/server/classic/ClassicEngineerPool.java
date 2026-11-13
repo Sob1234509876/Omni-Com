@@ -326,9 +326,15 @@ public final class ClassicEngineerPool implements WorldTickHook {
                 assigned.add(entity);
             }
         }
+        long reservedBuilder = ClassicAi.oldestBuilderId(world, player);
         List<Unit> crew = new ArrayList<>();
         for (Unit unit : world.unitsOf(player)) {
             if (!unit.isAlive() || !unit.type().canHaul() || !unit.orders().isEmpty()) {
+                continue;
+            }
+            // The AI's own builder convention: the oldest engineer stays at the base to build, so the
+            // hauling policy never strips the faction of its construction capacity.
+            if (unit.id().value() == reservedBuilder) {
                 continue;
             }
             if (!unit.dimensionId().equals(arsenal.dimensionId()) || assigned.contains(unit)) {

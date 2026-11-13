@@ -48,3 +48,6 @@ web-client/.vite/
 
 ### Server runtime state ###
 data/
+
+### ZCode session state ###
+.zcode/

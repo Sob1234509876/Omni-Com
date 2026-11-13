@@ -1,19 +1,34 @@
 /**
- * The texture atlas contract, now published by plugins.
+ * The per-material texture contract, published by plugins.
  *
- * Textures are no longer a folder the page ships. Every loaded plugin may put `assets/manifest.json` and
- * its image inside its own jar; the server merges those manifests into `GET /plugin-assets/manifest.json`
- * and serves the images under `/plugin-assets/<plugin>/<file>`. The client fetches that array on start,
- * loads each entry's image, and composes the per-plugin atlases into one `Atlas`.
+ * Textures are no longer a folder the page ships, and they no longer share one packed atlas page. Every
+ * loaded plugin may put `assets/manifest.json` inside its own jar listing **one PNG per material**: one
+ * single-frame file per terrain tile (`tilePixels × tilePixels`) and one vertical frame strip per entity
+ * kind (its height is `frames` times the frame height). The server merges those manifests into
+ * `GET /plugin-assets/manifest.json` - a JSON array of `{ plugin, baseUrl, tilePixels, tiles, entities }`
+ * - and serves every file under the entry's `baseUrl` (`/plugin-assets/<plugin>/...`). The client fetches
+ * that array on start, downloads each referenced PNG exactly once, and turns every file into its own
+ * `AtlasSource`: a tile's rect is the whole image, an entity's frames are equal vertical slices of it.
+ * Nothing else changes for the renderer - every tile and entity still resolves to a `SpriteRect` plus the
+ * image it must be drawn from, so a frame can mix art from several plugins without any of them sharing a
+ * texture page.
  *
  * The merge rule is **last wins**: entries are applied in the order the server sent them, which is plugin
  * load order, so a later plugin overrides an earlier one for the same tile path or entity kind. Every tile
- * and every entity keeps a reference to the image it came from, so the renderer always draws from the plugin
- * that won that name.
+ * and every entity keeps a reference to the file it came from, so the renderer always draws from the
+ * plugin that won that name.
  *
- * The document is parsed defensively: a malformed entry, an image that does not decode, a server that
+ * One file serves as a tile OR as an entity material, never both. Within one manifest entry the
+ * `entities.*.image` paths are collected first; a `tiles.*.image` that duplicates one is dropped with a
+ * warning, so the violating tile falls back to procedural drawing instead of an entity frame strip being
+ * stretched over the terrain. For the same reason an `entities.*.image` that duplicates another entity's
+ * image in the same manifest is refused: the earlier entry keeps the file and the later entry is dropped.
+ *
+ * The document is parsed defensively: a malformed entry, a file that does not decode, a server that
  * publishes nothing or a failed fetch all resolve to "no atlas" and the procedural renderer takes over. A
- * broken plugin must never stop the page, and one broken entry is skipped without discarding the others.
+ * broken plugin must never stop the page: an entry whose schema fails is skipped whole, while a single
+ * file that fails to load drops exactly the tiles and entities that reference it and the rest of the
+ * plugin still loads.
  *
  * The parsing and merging half is free of DOM calls so `scripts/check-render-math.ts` can exercise it
  * directly; only `loadPluginAtlas` touches `fetch`, `Image` and `document`.
@@ -34,7 +49,7 @@ export interface TileFrame {
 }
 
 export interface EntitySprite {
-  /** Animation frames, laid out however the artist likes. */
+  /** Animation frames as vertical slices of the entity's own strip file. */
   readonly frames: readonly SpriteRect[];
   /** Frames per second; defaults to 4. */
   readonly fps: number;
@@ -46,18 +61,40 @@ export interface EntitySprite {
   readonly name: string;
 }
 
-/** Everything parsed out of one manifest entry, before its image is attached. */
+/** One tile parsed out of a manifest: the file it lives in plus its label. */
+export interface TileEntry {
+  /** Image path relative to the entry's `baseUrl`, for example `tiles/grass.png`. */
+  readonly image: string;
+  /** Display name written in the manifest; empty when the entry has none. */
+  readonly name: string;
+}
+
+/** One entity parsed out of a manifest, before its strip file is sliced into frames. */
+export interface EntityEntry {
+  /** Image path relative to the entry's `baseUrl`; the file's height is `frames` frame heights. */
+  readonly image: string;
+  /** How many vertical slices the strip file holds; 1..16. */
+  readonly frames: number;
+  /** Frames per second; defaults to 4. */
+  readonly fps: number;
+  /** Point inside the sprite that sits on the entity's feet; defaults to [0.5, 0.75]. */
+  readonly anchor: readonly [number, number];
+  /** Extra multiplier on top of the camera zoom; defaults to 1. */
+  readonly scale: number;
+  /** Display name written in the manifest; empty when the entry has none. */
+  readonly name: string;
+}
+
+/** Everything parsed out of one manifest entry, before its files are downloaded. */
 export interface AtlasData {
-  /** The plugin that published the entry; empty only for a legacy document without one. */
+  /** The plugin that published the entry. */
   readonly plugin: string;
-  /** The URL the entry named; empty when the document only had an `image` file name. */
-  readonly atlasUrl: string;
-  /** The image file name, for example `atlas.png`. */
-  readonly imageName: string;
+  /** The same-origin base path every image path resolves against, always ending in `/`. */
+  readonly baseUrl: string;
   /** Recommended source tile size in pixels (metadata; tiles are stretched to the camera). */
   readonly tilePixels: number;
-  readonly tiles: ReadonlyMap<string, TileFrame>;
-  readonly entities: ReadonlyMap<string, EntitySprite>;
+  readonly tiles: ReadonlyMap<string, TileEntry>;
+  readonly entities: ReadonlyMap<string, EntityEntry>;
   /**
    * Optional item definitions published by the plugin: item content path to display name.
    *
@@ -69,12 +106,23 @@ export interface AtlasData {
   readonly items: ReadonlyMap<string, string>;
 }
 
-/** One plugin's parsed atlas with its decoded image. */
-export interface AtlasSource extends AtlasData {
+/** One material file, decoded, with the tiles and entities it hosts. */
+export interface AtlasSource {
+  /** The PNG this source draws from; one file per material, never a shared page. */
   readonly image: HTMLImageElement;
+  /** The plugin's recommended tile size, used to normalise art scale to the camera. */
+  readonly tilePixels: number;
+  /** The plugin that published the file. */
+  readonly plugin: string;
+  /** The tiles whose file this is, keyed by tile path. */
+  readonly tiles: ReadonlyMap<string, TileFrame>;
+  /** The entities whose strip file this is, keyed by entity kind. */
+  readonly entities: ReadonlyMap<string, EntitySprite>;
+  /** The publishing plugin's item definitions; shared by every file of the plugin. */
+  readonly items: ReadonlyMap<string, string>;
 }
 
-/** A tile frame together with the plugin image it must be drawn from. */
+/** A tile frame together with the plugin file it must be drawn from. */
 export interface AtlasTile {
   readonly rect: SpriteRect;
   /** Display name from the winning entry; empty when that entry had none. */
@@ -82,7 +130,7 @@ export interface AtlasTile {
   readonly source: AtlasSource;
 }
 
-/** An entity animation together with the plugin image it must be drawn from. */
+/** An entity animation together with the plugin file it must be drawn from. */
 export interface AtlasEntity {
   readonly sprite: EntitySprite;
   readonly source: AtlasSource;
@@ -104,18 +152,24 @@ export interface Atlas {
   readonly entities: ReadonlyMap<string, AtlasEntity>;
   /** Display labels, already resolved against the winning entries, with the id as fallback. */
   readonly names: AtlasNames;
-  /** The entries that contributed, in the order the server sent them. */
+  /** The material files that contributed, in the order the server sent them. */
   readonly sources: readonly AtlasSource[];
 }
 
 export type AtlasParseResult =
-  | { readonly ok: true; readonly data: AtlasData; readonly warnings: readonly string[] }
+  | {
+      readonly ok: true;
+      readonly data: AtlasData;
+      /** Every image path the entry needs, relative to `baseUrl`, unique, in first-seen order. */
+      readonly images: readonly string[];
+      readonly warnings: readonly string[];
+    }
   | { readonly ok: false; readonly reason: string; readonly warnings: readonly string[] };
 
-/** One entry of the server's manifest array, before its image is loaded. */
+/** One entry of the server's manifest array, before its files are loaded. */
 export interface ManifestEntry {
   readonly plugin: string;
-  readonly atlasUrl: string;
+  readonly baseUrl: string;
 }
 
 /** The result of reading one manifest array entry; a refusal explains what was wrong with it. */
@@ -124,19 +178,19 @@ export type ManifestEntryResult =
   | { readonly ok: false; readonly warning: string };
 
 /**
- * The pure result of applying every entry in order.
+ * The pure result of applying every source in order.
  *
- * The maps hold the index of the entry that won each name, which is what lets the image be attached later
- * without holding two copies of the frame data.
+ * The maps hold the index of the source that won each name, which is what lets the composite resolve a
+ * name to its winning file without holding two copies of the frame data.
  */
 export interface MergedLayers {
-  /** Tile path to the index of the entry that owns it; the last entry that defines it wins. */
+  /** Tile path to the index of the source that owns it; the last source that defines it wins. */
   readonly tiles: ReadonlyMap<string, number>;
-  /** Entity kind to the index of the entry that owns it; the last entry that defines it wins. */
+  /** Entity kind to the index of the source that owns it; the last source that defines it wins. */
   readonly entities: ReadonlyMap<string, number>;
-  /** Item path to the index of the entry that owns it; the last entry that defines it wins. */
+  /** Item path to the index of the source that owns it; the last source that defines it wins. */
   readonly items: ReadonlyMap<string, number>;
-  /** The contributing plugin ids, in entry order, without duplicates or blank ids. */
+  /** The contributing plugin ids, in source order, without duplicates or blank ids. */
   readonly plugins: readonly string[];
 }
 
@@ -147,6 +201,8 @@ const DEFAULT_TILE_PIXELS = 32;
 const DEFAULT_FPS = 4;
 const DEFAULT_ANCHOR: readonly [number, number] = [0.5, 0.75];
 const DEFAULT_SCALE = 1;
+const MAX_FRAMES = 16;
+const MAX_IMAGE_PATH_LENGTH = 255;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -156,108 +212,100 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readRect(
-  value: unknown,
-  imageWidth: number,
-  imageHeight: number,
-  label: string,
-  warnings: string[],
-): SpriteRect | null {
-  if (!Array.isArray(value) || value.length !== 4) {
-    warnings.push(`${label}：帧必须是 [x, y, w, h] 四元数组`);
-    return null;
-  }
-  const values: readonly unknown[] = value;
-  const x = readNumber(values[0]);
-  const y = readNumber(values[1]);
-  const width = readNumber(values[2]);
-  const height = readNumber(values[3]);
-  if (x === null || y === null || width === null || height === null) {
-    warnings.push(`${label}：帧的四个值必须都是有限数字`);
-    return null;
-  }
-  if (width <= 0 || height <= 0) {
-    warnings.push(`${label}：帧宽高必须大于 0（当前 ${width}×${height}）`);
-    return null;
-  }
-  if (x < 0 || y < 0 || x + width > imageWidth + 1e-6 || y + height > imageHeight + 1e-6) {
-    warnings.push(
-      `${label}：帧 [${x}, ${y}, ${width}, ${height}] 超出图片 ${imageWidth}×${imageHeight}，已忽略`,
-    );
-    return null;
-  }
-  return { x, y, width, height };
-}
-
 /** Reads an optional display name; a missing, blank or non-string value means "no name". */
 function readName(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
 /**
- * Reads one tile entry. Both schemas are accepted: the legacy `[x, y, w, h]` array, and the named
- * `{"rect": [x, y, w, h], "name": "..."}` object. The label is optional in either form.
+ * Validates one manifest image path.
+ *
+ * Paths are relative to the entry's `baseUrl` and are joined onto it verbatim, so a path that escapes
+ * the plugin directory (`..`), one that is absolute (`/`) or protocol relative (`//`), a backslash
+ * (Windows separator: the server only ever publishes `/`), a control character or an over-long path is
+ * refused. `null` with a warning means "drop the entry that named it".
  */
-function readTileFrame(
-  value: unknown,
-  imageWidth: number,
-  imageHeight: number,
-  label: string,
-  warnings: string[],
-): TileFrame | null {
-  if (Array.isArray(value)) {
-    const rect = readRect(value, imageWidth, imageHeight, label, warnings);
-    return rect === null ? null : { rect, name: "" };
-  }
-  if (!isRecord(value)) {
-    warnings.push(`${label}：地块必须是 [x, y, w, h] 数组或 { rect, name } 对象`);
+function readImagePath(value: unknown, label: string, warnings: string[]): string | null {
+  if (typeof value !== "string") {
+    warnings.push(`${label}.image 必须是字符串`);
     return null;
   }
-  const rect = readRect(
-    value["rect"],
-    imageWidth,
-    imageHeight,
-    `${label}.rect`,
-    warnings,
-  );
-  if (rect === null) {
+  const path = value.trim();
+  if (path === "") {
+    warnings.push(`${label}.image 不能为空`);
     return null;
   }
-  return { rect, name: readName(value["name"]) };
+  if (path.length > MAX_IMAGE_PATH_LENGTH) {
+    warnings.push(`${label}.image 超过 ${MAX_IMAGE_PATH_LENGTH} 个字符`);
+    return null;
+  }
+  if (path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f\u007f]/.test(path)) {
+    warnings.push(`${label}.image 必须是不带盘符、反斜杠和控制字符的相对路径，当前是 '${path}'`);
+    return null;
+  }
+  const segments = path.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    warnings.push(`${label}.image 不能包含空段、'.' 或 '..' 路径段，当前是 '${path}'`);
+    return null;
+  }
+  return path;
+}
+
+/** The rect of one tile file: the whole image. */
+export function tileRect(width: number, height: number): SpriteRect {
+  return { x: 0, y: 0, width, height };
 }
 
 /**
- * Validates one parsed manifest entry against the size of its image.
+ * The animation frames of one entity strip file: `frames` equal vertical slices.
  *
- * Never throws. Out-of-bounds and malformed entries are collected in `warnings` and skipped; the caller
- * decides whether to log them. A result with no usable tile and no usable entity is a failure. The entry
- * either names its image with `image` (the schema an artist writes) or with `atlasUrl` (what the server
- * publishes); the file name is derived from whichever is present.
+ * The file's height must divide evenly into the frame count; `null` means it does not (or a slice would
+ * be empty) and the caller drops the entity instead of drawing torn frames.
+ */
+export function entityFrameRects(
+  width: number,
+  height: number,
+  frames: number,
+): SpriteRect[] | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  if (!Number.isInteger(frames) || frames < 1) {
+    return null;
+  }
+  const sliceHeight = height / frames;
+  if (!Number.isInteger(sliceHeight) || sliceHeight <= 0) {
+    return null;
+  }
+  return Array.from({ length: frames }, (_unused, index) => ({
+    x: 0,
+    y: index * sliceHeight,
+    width,
+    height: sliceHeight,
+  }));
+}
+
+/**
+ * Validates one parsed manifest entry against the per-material schema.
+ *
+ * Never throws. Malformed tiles and entities are collected in `warnings` and skipped; a manifest with no
+ * usable tile, entity or item is a failure and is skipped whole. Entities are validated before tiles so
+ * their image paths are known first: a tile whose image duplicates an entity's strip file is dropped, and
+ * so is a later entity whose image duplicates an earlier one's — one file is one material. Pure schema
+ * work: image dimensions are unknown here and are only needed when the files decode, because a tile's
+ * rect is its whole file and an entity's frames are vertical slices of it.
  */
 export function parseAtlas(
   source: unknown,
-  imageWidth: number,
-  imageHeight: number,
+  plugin: string,
+  baseUrl: string,
 ): AtlasParseResult {
   const warnings: string[] = [];
   if (!isRecord(source)) {
-    return { ok: false, reason: "图集清单的顶层必须是 JSON 对象", warnings };
-  }
-  if (!Number.isFinite(imageWidth) || !Number.isFinite(imageHeight) || imageWidth <= 0 || imageHeight <= 0) {
-    return { ok: false, reason: `图集图片尺寸无效：${imageWidth}×${imageHeight}`, warnings };
+    return { ok: false, reason: "材质清单的顶层必须是 JSON 对象", warnings };
   }
 
-  const pluginValue = source["plugin"];
-  const plugin = typeof pluginValue === "string" ? pluginValue.trim() : "";
-  const atlasValue = source["atlasUrl"];
-  const atlasUrl = typeof atlasValue === "string" ? atlasValue.trim() : "";
-  const imageValue = source["image"];
-  const declaredImage = typeof imageValue === "string" ? imageValue.trim() : "";
-  const slash = atlasUrl.lastIndexOf("/");
-  const imageName = declaredImage !== "" ? declaredImage : atlasUrl.slice(slash + 1);
-  if (imageName === "") {
-    return { ok: false, reason: "图集清单缺少非空的 image 字段或 atlasUrl 字段", warnings };
-  }
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 
   const tilePixelsValue = readNumber(source["tilePixels"]);
   let tilePixels = DEFAULT_TILE_PIXELS;
@@ -267,27 +315,10 @@ export function parseAtlas(
     warnings.push(`tilePixels 无效，按 ${DEFAULT_TILE_PIXELS} 处理`);
   }
 
-  const tiles = new Map<string, TileFrame>();
-  const tilesValue = source["tiles"];
-  if (isRecord(tilesValue)) {
-    for (const [rawName, rawEntry] of Object.entries(tilesValue)) {
-      const name = rawName.trim();
-      if (name === "") {
-        warnings.push("tiles 里有空名字，已忽略");
-        continue;
-      }
-      const frame = readTileFrame(rawEntry, imageWidth, imageHeight, `tiles.${name}`, warnings);
-      if (frame !== null) {
-        tiles.set(name, frame);
-      }
-    }
-  } else if (tilesValue === undefined) {
-    warnings.push("图集清单没有 tiles 对象，所有地形都会使用程序化绘制");
-  } else {
-    warnings.push("tiles 必须是对象，已忽略整个 tiles 字段");
-  }
-
-  const entities = new Map<string, EntitySprite>();
+  // Entities are parsed first and their images collected before any tile is accepted: one file may
+  // serve as a tile OR as an entity strip, never both, and the entity owns the file when they clash.
+  const entities = new Map<string, EntityEntry>();
+  const entityImages = new Set<string>();
   const entitiesValue = source["entities"];
   if (isRecord(entitiesValue)) {
     for (const [rawKind, rawEntry] of Object.entries(entitiesValue)) {
@@ -300,20 +331,19 @@ export function parseAtlas(
         warnings.push(`entities.${kind} 必须是对象`);
         continue;
       }
-      const framesValue = rawEntry["frames"];
-      if (!Array.isArray(framesValue)) {
-        warnings.push(`entities.${kind}.frames 必须是数组`);
+      const image = readImagePath(rawEntry["image"], `entities.${kind}`, warnings);
+      if (image === null) {
         continue;
       }
-      const frames: SpriteRect[] = [];
-      for (const rawFrame of framesValue) {
-        const frame = readRect(rawFrame, imageWidth, imageHeight, `entities.${kind}.frames`, warnings);
-        if (frame !== null) {
-          frames.push(frame);
-        }
+      const framesValue = readNumber(rawEntry["frames"]);
+      if (framesValue === null || !Number.isInteger(framesValue) || framesValue < 1 || framesValue > MAX_FRAMES) {
+        warnings.push(`entities.${kind}.frames 必须是 1..${MAX_FRAMES} 的整数，已忽略该实体`);
+        continue;
       }
-      if (frames.length === 0) {
-        warnings.push(`entities.${kind} 没有可用的动画帧，已忽略`);
+      // Within one manifest a strip file belongs to exactly one entity kind; a later entry naming
+      // the same image is dropped so the frames of two kinds can never be sliced from one file.
+      if (entityImages.has(image)) {
+        warnings.push(`entities.${kind} 的 image '${image}' 与先出现的实体贴图重复，已忽略该实体`);
         continue;
       }
 
@@ -344,10 +374,50 @@ export function parseAtlas(
         warnings.push(`entities.${kind}.scale 必须大于 0，按 1 处理`);
       }
 
-      entities.set(kind, { frames, fps, anchor, scale, name: readName(rawEntry["name"]) });
+      entityImages.add(image);
+      entities.set(kind, {
+        image,
+        frames: framesValue,
+        fps,
+        anchor,
+        scale,
+        name: readName(rawEntry["name"]),
+      });
     }
   } else if (entitiesValue !== undefined) {
     warnings.push("entities 必须是对象，已忽略整个 entities 字段");
+  }
+
+  const tiles = new Map<string, TileEntry>();
+  const tilesValue = source["tiles"];
+  if (isRecord(tilesValue)) {
+    for (const [rawName, rawEntry] of Object.entries(tilesValue)) {
+      const name = rawName.trim();
+      if (name === "") {
+        warnings.push("tiles 里有空名字，已忽略");
+        continue;
+      }
+      if (!isRecord(rawEntry)) {
+        warnings.push(`tiles.${name} 必须是 { image, name } 对象`);
+        continue;
+      }
+      const image = readImagePath(rawEntry["image"], `tiles.${name}`, warnings);
+      if (image === null) {
+        continue;
+      }
+      // A tile may not reuse an entity's strip file: drawing an entity frame strip as whole-image
+      // terrain would paint torn frames over the map, so the tile is dropped and that terrain falls
+      // back to procedural drawing instead.
+      if (entityImages.has(image)) {
+        warnings.push(`tiles.${name} 的 image '${image}' 与实体贴图重复，已忽略该地块`);
+        continue;
+      }
+      tiles.set(name, { image, name: readName(rawEntry["name"]) });
+    }
+  } else if (tilesValue === undefined) {
+    warnings.push("材质清单没有 tiles 对象，所有地形都会使用程序化绘制");
+  } else {
+    warnings.push("tiles 必须是对象，已忽略整个 tiles 字段");
   }
 
   // Optional item definitions (`items: { "<path>": "<name>" | { "name": "..." } }`, or an array of
@@ -385,58 +455,64 @@ export function parseAtlas(
   }
 
   if (tiles.size === 0 && entities.size === 0 && items.size === 0) {
-    return { ok: false, reason: "图集清单里没有任何可用的地形帧、实体帧或物品定义", warnings };
+    return { ok: false, reason: "材质清单里没有任何可用的地块、实体或物品定义", warnings };
+  }
+
+  const images: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...tiles.values(), ...entities.values()]) {
+    if (!seen.has(entry.image)) {
+      seen.add(entry.image);
+      images.push(entry.image);
+    }
   }
 
   return {
     ok: true,
-    data: {
-      plugin,
-      atlasUrl,
-      imageName,
-      tilePixels,
-      tiles,
-      entities,
-      items,
-    },
+    data: { plugin, baseUrl: base, tilePixels, tiles, entities, items },
+    images,
     warnings,
   };
 }
 
 /**
- * Reads one entry of the server's manifest array, before its image is loaded.
+ * Reads one entry of the server's manifest array, before its files are loaded.
  *
- * The URL rule is deliberately strict: only an absolute path on this origin is accepted. The server
- * rewrites the plugin's `image` into such a path, so an entry with a scheme or a protocol relative URL is
- * either not from this server or not something the client should fetch, and it is skipped with a warning
- * rather than being followed. A missing `plugin` is tolerated - the image can still be drawn - while a
- * missing URL cannot.
+ * The URL rule is deliberately strict: `baseUrl` must be an absolute path on this origin. The server
+ * derives it from the plugin id, so an entry with a scheme or a protocol relative URL is either not from
+ * this server or not something the client should fetch, and it is skipped with a warning rather than
+ * being followed. Both `plugin` and `baseUrl` are required: without a plugin id the HUD cannot attribute
+ * the art, and without a base the image paths have nothing to resolve against.
  */
 export function readManifestEntry(value: unknown): ManifestEntryResult {
   if (!isRecord(value)) {
     return { ok: false, warning: "条目必须是 JSON 对象" };
   }
-  const urlValue = value["atlasUrl"];
-  const atlasUrl = typeof urlValue === "string" ? urlValue.trim() : "";
-  if (atlasUrl === "") {
-    return { ok: false, warning: "条目缺少非空的 atlasUrl 字段" };
-  }
-  if (!atlasUrl.startsWith("/") || atlasUrl.startsWith("//") || atlasUrl.includes("://")) {
-    return { ok: false, warning: `atlasUrl 必须是同源的绝对路径，当前是 '${atlasUrl}'` };
-  }
   const pluginValue = value["plugin"];
   const plugin = typeof pluginValue === "string" ? pluginValue.trim() : "";
-  return { ok: true, entry: { plugin, atlasUrl } };
+  if (plugin === "") {
+    return { ok: false, warning: "条目缺少非空的 plugin 字段" };
+  }
+  const baseValue = value["baseUrl"];
+  const baseUrl = typeof baseValue === "string" ? baseValue.trim() : "";
+  if (baseUrl === "") {
+    return { ok: false, warning: "条目缺少非空的 baseUrl 字段" };
+  }
+  if (!baseUrl.startsWith("/") || baseUrl.startsWith("//") || baseUrl.includes("://")) {
+    return { ok: false, warning: `baseUrl 必须是同源的绝对路径，当前是 '${baseUrl}'` };
+  }
+  return { ok: true, entry: { plugin, baseUrl } };
 }
 
 /**
- * Applies every entry in order and reports which entry won each name.
+ * Applies every source in order and reports which source won each name.
  *
- * This is the whole merge rule of the feature: a later entry overrides an earlier one for the same tile
- * path or entity kind, and names an entry does not define are left to the earlier ones. Entries are the
- * same array the server sent, so plugin load order is the only ordering that matters.
+ * This is the whole merge rule of the feature: a later source overrides an earlier one for the same tile
+ * path or entity kind, and names a source does not define are left to the earlier ones. Sources are
+ * grouped per file in the order the server sent the plugins, so plugin load order is the only ordering
+ * that matters.
  */
-export function mergeLayers(entries: readonly AtlasData[]): MergedLayers {
+export function mergeLayers(entries: readonly AtlasSource[]): MergedLayers {
   const tiles = new Map<string, number>();
   const entities = new Map<string, number>();
   const items = new Map<string, number>();
@@ -463,11 +539,11 @@ export function mergeLayers(entries: readonly AtlasData[]): MergedLayers {
 }
 
 /**
- * Builds the composite atlas from the entries whose images loaded.
+ * Builds the composite atlas from the material files whose images loaded.
  *
- * Returns `null` when no entry contributed anything, which is the case for an empty manifest array and for
+ * Returns `null` when no file contributed anything, which is the case for an empty manifest array and for
  * a run in which every entry failed; the caller then keeps the procedural renderer. Each name is resolved
- * to the entry that won it, so a tile or an entity can never be drawn with another plugin's image.
+ * to the source that won it, so a tile or an entity can never be drawn with another plugin's file.
  */
 export function compositeAtlas(sources: readonly AtlasSource[]): Atlas | null {
   if (sources.length === 0) {
@@ -620,21 +696,117 @@ function reportWarnings(warnings: readonly string[]): void {
   if (warnings.length === 0) {
     return;
   }
-  console.warn(`插件图集：忽略了 ${warnings.length} 个条目：\n${warnings.join("\n")}`);
+  console.warn(`插件材质清单：忽略了 ${warnings.length} 个条目：\n${warnings.join("\n")}`);
 }
 
-/** Resolves the server supplied path against the page, which keeps it on this origin. */
-function resolveAtlasUrl(atlasUrl: string): string {
-  return new URL(atlasUrl, document.baseURI).href;
+/** Resolves a manifest path against the page, which keeps it on this origin. */
+function resolveMaterialUrl(path: string): string {
+  return new URL(path, document.baseURI).href;
+}
+
+/** The tiles and entities of one manifest entry that share one file. */
+interface FileContents {
+  readonly tiles: Map<string, TileEntry>;
+  readonly entities: Map<string, EntityEntry>;
+}
+
+/** The per-file sources built from parsed entries, plus the problems found while slicing. */
+export interface BuiltAtlasSources {
+  /** One source per file that loaded, plugins in the order the server sent them. */
+  readonly sources: AtlasSource[];
+  /** One human readable line per entity whose strip file could not be sliced. */
+  readonly problems: readonly string[];
+}
+
+/**
+ * Turns parsed entries into per-file sources.
+ *
+ * Pure: the decoded images come in keyed by the same resolved URL `parseAtlas`'s `images` list produces
+ * through `resolveUrl`, and a file missing from the map drops exactly the tiles and entities that
+ * reference it - the loader's failure rule, testable without the DOM. A tile's rect is its whole image;
+ * an entity's frames are equal vertical slices, and a strip whose height does not divide into its frame
+ * count drops that entity with a collected problem instead of drawing torn frames.
+ */
+export function buildAtlasSources(
+  datas: readonly AtlasData[],
+  images: ReadonlyMap<string, HTMLImageElement>,
+  resolveUrl: (data: AtlasData, imagePath: string) => string,
+): BuiltAtlasSources {
+  const sources: AtlasSource[] = [];
+  const problems: string[] = [];
+  for (const data of datas) {
+    // A plugin's own url -> contents map, so a source only ever hosts its own plugin's tiles and
+    // entities even in the unlikely case two entries name the same file.
+    const groups = new Map<string, FileContents>();
+    const groupOf = (url: string): FileContents => {
+      let contents = groups.get(url);
+      if (contents === undefined) {
+        contents = { tiles: new Map(), entities: new Map() };
+        groups.set(url, contents);
+      }
+      return contents;
+    };
+    for (const [tileName, tile] of data.tiles) {
+      groupOf(resolveUrl(data, tile.image)).tiles.set(tileName, tile);
+    }
+    for (const [kind, entity] of data.entities) {
+      groupOf(resolveUrl(data, entity.image)).entities.set(kind, entity);
+    }
+    for (const [url, contents] of groups) {
+      const image = images.get(url);
+      if (image === undefined) {
+        continue;
+      }
+      const tiles = new Map<string, TileFrame>();
+      for (const [name, tile] of contents.tiles) {
+        tiles.set(name, {
+          rect: tileRect(image.naturalWidth, image.naturalHeight),
+          name: tile.name,
+        });
+      }
+      const entities = new Map<string, EntitySprite>();
+      for (const [kind, entity] of contents.entities) {
+        const frames = entityFrameRects(image.naturalWidth, image.naturalHeight, entity.frames);
+        if (frames === null) {
+          problems.push(
+            `${data.plugin} ${url}：entities.${kind} 的图片高度 ${image.naturalHeight} 不能整除 ${entity.frames} 帧，已忽略该实体`,
+          );
+          continue;
+        }
+        entities.set(kind, {
+          frames,
+          fps: entity.fps,
+          anchor: entity.anchor,
+          scale: entity.scale,
+          name: entity.name,
+        });
+      }
+      if (tiles.size === 0 && entities.size === 0) {
+        continue;
+      }
+      sources.push({
+        image,
+        tilePixels: data.tilePixels,
+        plugin: data.plugin,
+        tiles,
+        entities,
+        items: data.items,
+      });
+    }
+  }
+  return { sources, problems };
 }
 
 /**
  * Fetches the merged plugin manifest and builds the composite atlas.
  *
  * Resolves to `null` for every failure - an unreachable server, a non-200 answer, a body that is not an
- * array, an empty array, an entry that is malformed, an image that does not decode, or an entry with no
- * usable frames. A single bad entry is logged and skipped, and the remaining entries still load. The
- * promise never rejects, so the caller can always fall back to the procedural renderer.
+ * array, an empty array, an entry that is malformed, or one whose schema fails outright. A broken entry
+ * is logged and skipped whole; a single file that fails to decode drops exactly the tiles and entities
+ * that reference it while the rest of its plugin still loads. Each unique file is downloaded once and
+ * becomes its own source: a tile's rect is the whole image, an entity's frames are equal vertical slices
+ * (a strip whose height does not divide into its frame count is dropped with a warning). The promise
+ * never rejects, so the caller can always fall back to the procedural renderer.
  */
 export async function loadPluginAtlas(
   manifestUrl: string = PLUGIN_MANIFEST_URL,
@@ -642,53 +814,80 @@ export async function loadPluginAtlas(
   try {
     const response = await fetch(manifestUrl, { headers: { Accept: "application/json" } });
     if (!response.ok) {
-      console.info(`没有取到插件图集清单 ${manifestUrl}（HTTP ${response.status}），使用程序化绘制`);
+      console.info(`没有取到插件材质清单 ${manifestUrl}（HTTP ${response.status}），使用程序化绘制`);
       return null;
     }
     const payload: unknown = await response.json();
     if (!Array.isArray(payload)) {
-      console.warn("插件图集清单不是 JSON 数组，使用程序化绘制");
+      console.warn("插件材质清单不是 JSON 数组，使用程序化绘制");
       return null;
     }
     const entries: readonly unknown[] = payload;
     if (entries.length === 0) {
-      console.info("服务器没有发布任何插件图集，使用程序化绘制");
+      console.info("服务器没有发布任何插件材质清单，使用程序化绘制");
       return null;
     }
 
-    const sources: AtlasSource[] = [];
+    const parsedEntries: { readonly data: AtlasData; readonly images: readonly string[] }[] = [];
     for (let index = 0; index < entries.length; index += 1) {
       const raw = entries[index];
       const read = readManifestEntry(raw);
       if (!read.ok) {
-        console.warn(`插件图集第 ${index + 1} 条已跳过：${read.warning}`);
+        console.warn(`插件材质清单第 ${index + 1} 条已跳过：${read.warning}`);
         continue;
       }
-      const url = resolveAtlasUrl(read.entry.atlasUrl);
-      const image = await loadImage(url);
-      if (image === null) {
-        console.warn(`插件图集图片 ${url} 载入失败，已跳过该插件`);
-        continue;
-      }
-      const parsed = parseAtlas(raw, image.naturalWidth, image.naturalHeight);
+      const parsed = parseAtlas(raw, read.entry.plugin, read.entry.baseUrl);
       reportWarnings(parsed.warnings);
       if (!parsed.ok) {
-        const name = read.entry.plugin === "" ? url : read.entry.plugin;
-        console.warn(`插件图集 ${name} 不可用：${parsed.reason}，已跳过该插件`);
+        console.warn(`插件材质 ${read.entry.plugin} 不可用：${parsed.reason}，已跳过该插件`);
         continue;
       }
-      sources.push({ ...parsed.data, image });
+      parsedEntries.push({ data: parsed.data, images: parsed.images });
     }
 
-    const atlas = compositeAtlas(sources);
+    // Every unique file the surviving entries reference, in first-seen order, downloaded exactly once.
+    const urls: string[] = [];
+    const seenUrls = new Set<string>();
+    for (const entry of parsedEntries) {
+      for (const imagePath of entry.images) {
+        const url = resolveMaterialUrl(entry.data.baseUrl + imagePath);
+        if (!seenUrls.has(url)) {
+          seenUrls.add(url);
+          urls.push(url);
+        }
+      }
+    }
+
+    const loaded = new Map<string, HTMLImageElement>();
+    await Promise.all(
+      urls.map(async (url) => {
+        const image = await loadImage(url);
+        if (image === null) {
+          console.warn(`插件材质文件 ${url} 载入失败，引用它的地块与实体已跳过`);
+          return;
+        }
+        loaded.set(url, image);
+      }),
+    );
+
+    const built = buildAtlasSources(
+      parsedEntries.map((entry) => entry.data),
+      loaded,
+      (data, imagePath) => resolveMaterialUrl(data.baseUrl + imagePath),
+    );
+    if (built.problems.length > 0) {
+      console.warn(`插件材质清单：\n${built.problems.join("\n")}`);
+    }
+
+    const atlas = compositeAtlas(built.sources);
     if (atlas === null) {
-      console.warn("所有插件图集条目都不可用，使用程序化绘制");
+      console.warn("所有插件材质条目都不可用，使用程序化绘制");
       return null;
     }
     return atlas;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`载入插件图集失败（${message}），使用程序化绘制`);
+    console.warn(`载入插件材质失败（${message}），使用程序化绘制`);
     return null;
   }
 }

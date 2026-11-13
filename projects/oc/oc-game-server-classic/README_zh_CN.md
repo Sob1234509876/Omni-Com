@@ -14,9 +14,9 @@
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS |
 | 依赖 | `oc-game-server`（插件 API）与 `oc-rts-engine`（目录类型）；引擎会带上 `oc-googology` |
-| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（651 项检查） |
+| 自检 | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck`（739 项检查） |
 | 世界内容 | `oc-classic` |
-| 素材 | `assets/manifest.json` 与 96x160 的 `assets/atlas.png` |
+| 素材 | `assets/manifest.json` 加 **每个材质一个 PNG**（`assets/tiles/` 与 `assets/entities/`，动画实体为竖排帧条） |
 | 帮助 | [03 插件](../oc-game-server/help/03-plugins.md) 与 [05 浏览器端点](../oc-game-server/help/05-browser-endpoint.md)，中文 |
 
 ## 五级近战
@@ -240,10 +240,10 @@ projects/oc/oc-googology/build/libs/oc-googology-2.0a.jar
 自检末尾打印一行：
 
 ```text
-classic plugin self check: all 651 checks passed.
+classic plugin self check: all 739 checks passed.
 ```
 
-651 条来自原来的十六节，加上 item 28 的哨塔内容/攻击/升级检查，以及按 owner 报告补的回归：默认单机器人世界必须在 600 tick 内至少训练出六个战斗单位并下达攻击命令，STOP 之后对真实 `CommandService` 下达的移动与建造都必须生效，十二个经典建筑必须各自拥有不同的图集纹理格，三档哨塔必须可建造、可原地升级并带文档里的武器数值，工程师调度池必须在 24 格半径内一趟服务**所有**兵营、让新工兵自动入池并且不把一名工兵派给两个兵营。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级，机器人那一节则证明默认单机器人世界与旧版逐字节相同，而两个机器人彼此不同、换种子会移动基地。
+739 条来自原来的十六节，加上 item 28 的哨塔内容/攻击/升级检查，以及按 owner 报告补的回归：默认单机器人世界必须在 600 tick 内至少训练出六个战斗单位并下达攻击命令，STOP 之后对真实 `CommandService` 下达的移动与建造都必须生效，十二个经典建筑必须各自拥有不同的图集纹理格，三档哨塔必须可建造、可原地升级并带文档里的武器数值，工程师调度池必须在 24 格半径内一趟服务**所有**兵营、让新工兵自动入池并且不把一名工兵派给两个兵营。门槛那一节是最严的部分：它对着真实的 `ProductionSystem` 证明一级兵营训不出 `t4` 与 `t5`，而不只是证明目录里这么写；升级那一节证明同一批阶梯在真实引擎里可执行，AI 那一节证明敌人确实通过命令到达二级，机器人那一节则证明默认单机器人世界与旧版逐字节相同，而两个机器人彼此不同、换种子会移动基地。
 
 归属那一节把上报的缺陷按实体 id 与快照 `player` 字段同时钉住：样例场景（六个单位、十二座建筑）属于玩家 1，机器人开局基地（仓库、一级兵营、一级矿场）属于玩家 2，绝不会反过来。它还钉住公开的阵营锚点：玩家 1 报告世界的出生锚点，玩家 2 报告 `ClassicBots` 的锚点（默认种子是 `(192,192)`），浏览器的敌方行与小地图边缘箭头因此有真实来源。锚点是已知出生位置，不是战争迷雾揭示。
 
@@ -261,8 +261,8 @@ classic plugin self check: all 651 checks passed.
 | `src/main/java/.../classic/ClassicPlugin.java` | 插件本体：注册目录与三个钩子，从插件选项读取 `--bots` |
 | `src/main/resources/omnicom-plugin.properties` | 描述文件：`id=oc-classic`、`version=1.0`、`main`、`description` |
 | `src/main/resources/assets/manifest.json` | 服务器要合并的图集清单 |
-| `src/main/resources/assets/atlas.png` | 96x160 的单位与建筑图集（每种建筑一个 32x32 格，新增一行三格哨塔） |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 651 条检查的自检程序 |
+| `src/main/resources/assets/tiles/*.png`、`assets/entities/*.png` | 每种地形、每个单位与建筑一张图（动画帧在同一文件内竖排） |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | 739 条检查的自检程序 |
 | `build.gradle` | `selfcheck` 任务，以及挂在它类路径上的服务器检查报告器 |
 
 ## 相关

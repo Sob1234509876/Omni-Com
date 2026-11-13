@@ -30,13 +30,10 @@ import {
   type ControlGroups,
 } from "./controlGroups";
 import {
-  BUILDING_PATHS,
-  UNIT_PATHS,
   MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
   batchCommands,
   build,
-  buildButtonLabel,
   buildPlacementBatch,
   haul,
   orderAttack,
@@ -49,6 +46,7 @@ import {
   sequenceLine,
   trainBatch,
   upgrade,
+  upgradeUnit,
   whoAmI,
 } from "./commands";
 import {
@@ -114,17 +112,21 @@ import {
   type PlannedSite,
 } from "./render/placement";
 import { WorldRenderer } from "./render/renderer";
+import { chunkKey } from "./render/shadow";
 import {
+  FALLBACK_BUILD_PATHS,
   commandBarModel,
+  trainMenu,
   selectionChipList,
   type CommandBarModel,
+  type TrainMenuEntry,
 } from "./render/commandbar";
 import {
   EMPTY_RESOURCE_MARKS,
   clearResourceMarks,
   fullResourceList,
   inventoryTotals,
-  isWarehouseKind,
+  isWarehouseRow,
   markAllResources,
   markedSummaryLabel,
   toggleResourceMark,
@@ -132,11 +134,17 @@ import {
   type WarehouseTotals,
 } from "./render/resources";
 import {
-  WAREHOUSE_TRANSFER_ALL_LABEL,
+  initI18n,
+  resolveLanguage,
+  t,
+} from "./i18n";
+import {
   transferAnswerLabel,
   transferFormModel,
   transferTargetLabel,
   warehousePanelModel,
+  warehouseStorageLabel,
+  warehouseTransferAllLabel,
   type WarehousePanelModel,
   type WarehouseScope,
 } from "./render/logistics";
@@ -145,7 +153,7 @@ import {
   engineerForPlacement,
   engineerSelection,
   engineersForPlacement,
-  isEngineerKind,
+  isBuilderUnit,
 } from "./render/selection";
 import {
   demandIcon,
@@ -171,6 +179,10 @@ import {
   type PopRecord,
 } from "./render/pop";
 import {
+  trackProjectiles,
+  type TrackedProjectile,
+} from "./render/projectile";
+import {
   SNAPSHOT_EDGE_MARGIN_TILES,
   SNAPSHOT_RADIUS_TILES,
   SnapshotRequestTracker,
@@ -184,11 +196,12 @@ import {
   tooltipThumbnail,
 } from "./render/tooltip";
 import {
-  UPGRADE_ALL_ACTION_LABEL,
+  upgradeBatchLabel,
   upgradeBatchPlan,
   upgradeBatchSummary,
-  upgradeEntry,
+  upgradeEntries,
   upgradeSkipText,
+  unitUpgradeEntry,
   type UpgradeBatchPlan,
 } from "./render/upgrade";
 import { buildingActionModel } from "./render/buildingActions";
@@ -218,6 +231,7 @@ import {
   SETTINGS_STORAGE_KEY,
   clampInventoryRadius,
   defaultSettings,
+  isLanguageSetting,
   isMessageCategory,
   parseSettings,
   presetFilters,
@@ -313,6 +327,17 @@ const tooltipElement = required<HTMLDivElement>("#entity-tooltip");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const connectionToggle = required<HTMLButtonElement>("#connection-toggle");
 const connectionOverlay = required<HTMLDivElement>("#connection-overlay");
+/** The protocol console: raw commands, the engine-info key and the message filters, docked left. */
+const openConsoleButton = required<HTMLButtonElement>("#open-console");
+const consoleOverlay = required<HTMLDivElement>("#console-overlay");
+const consolePanel = required<HTMLElement>("#console-panel");
+const consoleCloseButton = required<HTMLButtonElement>("#console-close");
+/** The help view: the connection walkthrough and the operation instructions, in one dialog. */
+const openHelpButton = required<HTMLButtonElement>("#open-help");
+const helpOverlay = required<HTMLDivElement>("#help-overlay");
+const helpPanel = required<HTMLElement>("#help-panel");
+const helpCloseButton = required<HTMLButtonElement>("#help-close");
+const connectionHelpLink = required<HTMLButtonElement>("#connection-help-link");
 const orderStopButton = required<HTMLButtonElement>("#order-stop");
 const attackMoveButton = required<HTMLButtonElement>("#order-attack-move");
 const commandActions = required<HTMLDivElement>("#command-actions");
@@ -329,6 +354,17 @@ const buildButtonHost = required<HTMLDivElement>("#build-buttons");
 const upgradeSection = required<HTMLDivElement>("#upgrade-section");
 const upgradeTarget = required<HTMLSpanElement>("#upgrade-target");
 const upgradeButton = required<HTMLButtonElement>("#upgrade-button");
+/** Host of the generated upgrade buttons for every option beyond the first. */
+const upgradeBatchButtonHost = required<HTMLDivElement>("#upgrade-batch-buttons");
+const unitUpgradeSection = required<HTMLDivElement>("#unit-upgrade-section");
+const unitUpgradeTarget = required<HTMLSpanElement>("#unit-upgrade-target");
+const unitUpgradeButton = required<HTMLButtonElement>("#unit-upgrade-button");
+const dimensionButtons = required<HTMLSpanElement>("#dimension-buttons");
+const jumpX = required<HTMLInputElement>("#jump-x");
+const jumpY = required<HTMLInputElement>("#jump-y");
+const jumpButton = required<HTMLButtonElement>("#jump-button");
+const gatewaySection = required<HTMLDivElement>("#gateway-section");
+const gatewayButton = required<HTMLButtonElement>("#gateway-button");
 const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
 const sequenceButton = required<HTMLButtonElement>("#sequence-button");
 const followButton = required<HTMLButtonElement>("#follow-button");
@@ -362,6 +398,7 @@ const settingsConnectionPanel = required<HTMLButtonElement>("#settings-connectio
 const settingPathsInput = required<HTMLInputElement>("#setting-paths");
 const settingViewInput = required<HTMLInputElement>("#setting-view");
 const settingInventoryRadiusInput = required<HTMLInputElement>("#setting-inventory-radius");
+const settingLanguageSelect = required<HTMLSelectElement>("#setting-language");
 const filterInputs: readonly HTMLInputElement[] = Array.from(
   document.querySelectorAll<HTMLInputElement>("[data-filter-category]"),
 );
@@ -398,9 +435,65 @@ function persistSettings(): void {
   }
 }
 
+/**
+ * Applies the current language to every static `data-i18n` element in the page.
+ *
+ * The attribute decides the target: `data-i18n` writes `textContent`, `data-i18n-placeholder`,
+ * `data-i18n-title` and `data-i18n-aria-label` write the matching attribute. Elements whose text is
+ * owned by a per-tick renderer (the HUD chips, the command-bar note, the gameplay buttons) carry no
+ * attribute; they are repainted through `t()` by their own update functions.
+ */
+function applyI18n(): void {
+  for (const element of document.querySelectorAll<Element>("[data-i18n]")) {
+    const key = element.getAttribute("data-i18n");
+    if (key !== null && key !== "") {
+      element.textContent = t(key);
+    }
+  }
+  const attributeKeys: readonly (readonly [string, string])[] = [
+    ["data-i18n-placeholder", "placeholder"],
+    ["data-i18n-title", "title"],
+    ["data-i18n-aria-label", "aria-label"],
+  ];
+  for (const [attribute, target] of attributeKeys) {
+    for (const element of document.querySelectorAll<Element>(`[${attribute}]`)) {
+      const key = element.getAttribute(attribute);
+      if (key !== null && key !== "") {
+        element.setAttribute(target, t(key));
+      }
+    }
+  }
+}
+
+/** Resolves the language setting, repaints the static labels and every state-derived label. */
+function applyLanguage(): void {
+  initI18n(resolveLanguage(settings.language, navigator.language));
+  // The status line is live state (the last command answer), not a label: applyI18n would overwrite it
+  // with the static boot text, so its current wording is kept across the repaint.
+  const liveStatus = statusLine.textContent ?? "";
+  applyI18n();
+  statusLine.textContent = liveStatus;
+  settingLanguageSelect.value = settings.language;
+  updateViewToggleButton();
+  updatePathsButton();
+  updateSequenceButton();
+  updateFollowButton();
+  updateSettingsView();
+  updateHud(true);
+  updateGameplayPanel();
+}
+
+// The UI language resolves once at boot from the stored setting (default `auto`) and the browser; the
+// static index.html labels are translated in place before the chrome is first used.
+initI18n(resolveLanguage(settings.language, navigator.language));
+applyI18n();
+
 /** The saved server address is restored into the fields that moved to the settings panel. */
 hostInput.value = settings.connection.host;
 portInput.value = settings.connection.port;
+/** The remembered account is restored into the login fields; see `settings.ts` for the storage rule. */
+userInput.value = settings.accountName;
+passwordInput.value = settings.accountPassword;
 
 /** A copy of `filters` with one category changed; typed so the computed key stays a known category. */
 function withFilter(
@@ -419,6 +512,7 @@ function updateSettingsView(): void {
   settingPathsInput.checked = showPaths;
   settingViewInput.checked = viewHidden;
   settingInventoryRadiusInput.value = String(settings.inventoryRadiusTiles);
+  settingLanguageSelect.value = settings.language;
   for (const input of filterInputs) {
     const category = input.dataset["filterCategory"];
     if (category !== undefined && isMessageCategory(category)) {
@@ -452,6 +546,8 @@ openSettingsButton.addEventListener("click", () => {
   if (opening) {
     setConnectionOpen(false, false);
     setResourcesOpen(false, false);
+    setConsoleOpen(false, false);
+    setHelpOpen(false, false);
     if (musicPlayer.isOpen) {
       musicPlayer.close();
     }
@@ -502,7 +598,7 @@ for (const button of presetButtons) {
     settings = { ...settings, filters: presetFilters(preset.id) };
     persistSettings();
     updateSettingsView();
-    setStatus(`消息筛选：${preset.label}`, "idle");
+    setStatus(`${t("console.filters")}：${t(`preset.${preset.id}`)}`, "idle");
   });
 }
 
@@ -538,20 +634,36 @@ settingInventoryRadiusInput.addEventListener("change", () => {
   setStatus(`补给标签半径：${radius} 格`, "ok");
 });
 
-/** Restores every saved default and clears the saved server address. */
+/** Applies the chosen language, saves it and repaints every label the page owns. */
+settingLanguageSelect.addEventListener("change", () => {
+  const value = settingLanguageSelect.value;
+  settings = { ...settings, language: isLanguageSetting(value) ? value : "auto" };
+  persistSettings();
+  applyLanguage();
+  const chosen =
+    settings.language === "auto"
+      ? t("settings.langAuto")
+      : settings.language === "en"
+        ? t("settings.langEn")
+        : t("settings.langZh");
+  setStatus(`${t("settings.language")}：${chosen}`, "ok");
+});
+
+/** Restores every saved default and clears the saved server address and remembered account. */
 settingsResetButton.addEventListener("click", () => {
   settings = defaultSettings();
   hostInput.value = "";
   portInput.value = "";
+  userInput.value = "";
+  passwordInput.value = "";
   showPaths = settings.showPaths;
   if (viewHidden) {
     setViewVisible(true);
   }
   updateSettingsView();
   persistSettings();
-  updatePathsButton();
-  updateHud(true);
-  setStatus("设置已重置：服务器地址已清空，消息筛选与界面开关恢复默认。", "ok");
+  applyLanguage();
+  setStatus(t("settings.resetDone"), "ok");
 });
 
 // Capture phase so Escape closes this panel before the canvas or another overlay consumes the key.
@@ -589,6 +701,16 @@ portInput.addEventListener("input", () => {
     ...settings,
     connection: { ...settings.connection, port: portInput.value },
   };
+  persistSettings();
+});
+// The remembered account: every keystroke is saved under the same settings key. The password is
+// stored as plain text by explicit user request; see `Settings.accountPassword`.
+userInput.addEventListener("input", () => {
+  settings = { ...settings, accountName: userInput.value };
+  persistSettings();
+});
+passwordInput.addEventListener("input", () => {
+  settings = { ...settings, accountPassword: passwordInput.value };
   persistSettings();
 });
 
@@ -658,6 +780,8 @@ connectionToggle.addEventListener("click", () => {
   if (opening) {
     setSettingsOpen(false, false);
     setResourcesOpen(false, false);
+    setConsoleOpen(false, false);
+    setHelpOpen(false, false);
     if (musicPlayer.isOpen) {
       musicPlayer.close();
     }
@@ -674,6 +798,119 @@ document.addEventListener(
       event.preventDefault();
       event.stopImmediatePropagation();
       setConnectionOpen(false);
+    }
+  },
+  true,
+);
+
+/**
+ * Opens or closes the protocol console docked on the left edge.
+ *
+ * The panel carries the raw commands, the engine-info debug key and the message filters; opening it
+ * closes the other dialogs so only one owns the keyboard, and Escape parks focus back on the 控制台
+ * button. The container is pointer-transparent, so the world beside the panel stays clickable.
+ */
+function setConsoleOpen(open: boolean, moveFocus = true): void {
+  consoleOverlay.hidden = !open;
+  openConsoleButton.setAttribute("aria-expanded", open ? "true" : "false");
+  openConsoleButton.classList.toggle("armed", open);
+  if (!moveFocus) {
+    return;
+  }
+  if (open) {
+    consolePanel.focus({ preventScroll: true });
+  } else {
+    openConsoleButton.focus({ preventScroll: true });
+  }
+}
+
+openConsoleButton.addEventListener("click", () => {
+  const opening = consoleOverlay.hidden === true;
+  if (opening) {
+    if (!viewHidden) {
+      setConnectionOpen(false, false);
+    }
+    setSettingsOpen(false, false);
+    setResourcesOpen(false, false);
+    setHelpOpen(false, false);
+    if (musicPlayer.isOpen) {
+      musicPlayer.close();
+    }
+  }
+  setConsoleOpen(opening);
+});
+
+consoleCloseButton.addEventListener("click", () => {
+  setConsoleOpen(false);
+});
+
+// Capture phase, same rule as the other dialogs: Escape closes the console before the canvas sees it.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Escape" && logOverlay.hidden && !consoleOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setConsoleOpen(false);
+    }
+  },
+  true,
+);
+
+/**
+ * Opens or closes the help view with the connection walkthrough and the operation instructions.
+ *
+ * The instructions left the connection panel for their own dialog, so a returning player reads them
+ * without opening the account form; the 帮助 button and the connection panel's 操作说明… link are the
+ * two entrances, Escape and the panel's 关闭 button are the two exits.
+ */
+function setHelpOpen(open: boolean, moveFocus = true): void {
+  helpOverlay.hidden = !open;
+  openHelpButton.setAttribute("aria-expanded", open ? "true" : "false");
+  openHelpButton.classList.toggle("armed", open);
+  if (!moveFocus) {
+    return;
+  }
+  if (open) {
+    helpPanel.focus({ preventScroll: true });
+  } else {
+    openHelpButton.focus({ preventScroll: true });
+  }
+}
+
+openHelpButton.addEventListener("click", () => {
+  const opening = helpOverlay.hidden === true;
+  if (opening) {
+    if (!viewHidden) {
+      setConnectionOpen(false, false);
+    }
+    setSettingsOpen(false, false);
+    setResourcesOpen(false, false);
+    setConsoleOpen(false, false);
+    if (musicPlayer.isOpen) {
+      musicPlayer.close();
+    }
+  }
+  setHelpOpen(opening);
+});
+
+helpCloseButton.addEventListener("click", () => {
+  setHelpOpen(false);
+});
+
+connectionHelpLink.addEventListener("click", () => {
+  setConnectionOpen(false, false);
+  setHelpOpen(true);
+});
+
+// Capture phase: the help view answers Escape like every other dialog, ahead of the canvas.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Escape" && logOverlay.hidden && !helpOverlay.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setHelpOpen(false);
     }
   },
   true,
@@ -730,6 +967,13 @@ let lockedEntityId: number | null = null;
 let attackMoveArmed = false;
 /** True only between a successful HELLO/OK handshake and the matching close event. */
 let connected = false;
+/**
+ * Whether this connection already tried the automatic LOGIN from the saved account fields.
+ *
+ * One attempt per connection: a failed auto-login must not loop, so the flag is reset only when a
+ * new connection is opened, never on an ERR answer.
+ */
+let autoLoginAttempted = false;
 /** Automatic PING timer; null while it is not running. */
 let heartbeatTimer: number | null = null;
 /** Guards the queue: never send a second PING while the previous one waits for PONG. */
@@ -899,6 +1143,8 @@ async function handshake(seq: number): Promise<void> {
     setStatus(`已连接 · 协议 ${PROTOCOL_NAME}`, "ok");
     // The heartbeat starts only now: the handshake proved the command queue is usable.
     startHeartbeat();
+    // The saved account logs in by itself once the socket is usable; see `autoLogin`.
+    void autoLogin();
   } catch (error) {
     if (seq !== connectionSeq) {
       return;
@@ -915,6 +1161,8 @@ function openConnection(): void {
   // A reconnect replaces the connection wholesale; the old timer must never survive it.
   stopHeartbeat();
   connected = false;
+  // Every new connection gets exactly one automatic LOGIN attempt from the saved account.
+  autoLoginAttempted = false;
   let url: string;
   try {
     url = buildSocketUrl();
@@ -1120,6 +1368,18 @@ async function doCount(): Promise<void> {
   }
 }
 
+/** Applies a successful `LOGIN` answer; shared verbatim by the manual and the automatic login. */
+async function applyLoginSuccess(user: string, answer: string): Promise<void> {
+  loggedIn = true;
+  loginName = user;
+  myPlayerId = null;
+  placementPath = null;
+  updateGameplayPanel();
+  updateHud(true);
+  setStatus(`已登录：${answer.slice(2).trim()}`, "ok");
+  await fetchWhoAmI();
+}
+
 async function doLogin(): Promise<void> {
   const user = userInput.value.trim();
   const password = passwordInput.value;
@@ -1144,18 +1404,60 @@ async function doLogin(): Promise<void> {
     return;
   }
   if (isOkAnswer(answer)) {
-    loggedIn = true;
-    loginName = user;
-    myPlayerId = null;
-    placementPath = null;
-    updateGameplayPanel();
-    updateHud(true);
-    setStatus(`已登录：${answer.slice(2).trim()}`, "ok");
-    await fetchWhoAmI();
+    await applyLoginSuccess(user, answer);
   } else {
     loggedIn = false;
     clearGameplayIdentity();
     setStatus(`登录失败：${answer}`, "error");
+  }
+}
+
+/**
+ * Logs in by itself from the remembered account fields, once per connection.
+ *
+ * Called by the successful handshake, so the command queue is proven usable. It fires only when both
+ * fields are filled and the page is not logged in yet; a failed attempt (an `ERR` answer, a rejected
+ * send) never toasts as an error and never retries — it is logged as info and the flag in
+ * {@link autoLoginAttempted} keeps quiet until the next connection. The exchange is deliberately not
+ * toasted either: an automatic background login should stay out of the popups, the log keeps the
+ * history.
+ */
+async function autoLogin(): Promise<void> {
+  const active = socket;
+  if (autoLoginAttempted || active === null || loggedIn) {
+    return;
+  }
+  const user = userInput.value.trim();
+  const password = passwordInput.value;
+  if (user === "" || password === "") {
+    return;
+  }
+  autoLoginAttempted = true;
+  let line: string;
+  try {
+    line = login(user, password);
+  } catch (error) {
+    log("info", `自动登录未发送：${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  log("send", `LOGIN ${user} <密码已隐藏>`);
+  try {
+    const answer = await active.send(line);
+    if (socket !== active) {
+      return;
+    }
+    log("recv", answer);
+    if (isOkAnswer(answer)) {
+      log("info", "已用保存的账号自动登录");
+      await applyLoginSuccess(user, answer);
+    } else {
+      loggedIn = false;
+      log("info", `自动登录失败：${answer}（保存的账号或密码可能已失效，可手动登录）`);
+    }
+  } catch (error) {
+    if (socket === active) {
+      log("info", `自动登录失败：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 
@@ -1457,6 +1759,12 @@ let hoverTile: TileCoord | null = null;
 let viewHidden = false;
 let worldSource: WorldSource = "demo";
 let worldTick = 0;
+/**
+ * The dimension the view looks at, as a content key; `undefined` is the server's default dimension.
+ * The snapshot fetch sends it as `dim`, and a dimension switch or a gateway jump rewrites it - the
+ * camera itself never crosses worlds, it only ever looks at whichever window the last fetch returned.
+ */
+let viewDimension: string | undefined;
 /** The hostile anchored players behind the current top-chrome line, nearest first. */
 let enemyLineEntries: EnemyAnchorEntry[] = [];
 /**
@@ -1476,6 +1784,14 @@ const snapshotRequests = new SnapshotRequestTracker();
 const snapshotEventDedupe = new EventDeduplicator();
 /** Per-unit haul pops remembered from snapshot `pop` fields; see `render/pop.ts`. */
 const popRecords = new Map<number, PopRecord>();
+/**
+ * In-flight shots remembered from the snapshot's top-level `projectiles` rows.
+ *
+ * The map is this module's persistent state: `trackProjectiles` registers new ids at the current
+ * frame's clock, ignores repeats of an id already flying and prunes finished flights (see
+ * `render/projectile.ts`). It survives snapshots so a 500 ms poll cannot restart a shot's flight.
+ */
+const projectileSeen = new Map<number, TrackedProjectile>();
 /** One log line when the server stops answering, instead of one per 500 ms poll. */
 let snapshotFailureLogged = false;
 /** Monotonic time of the last edge-triggered request, so a failing server is not retried per frame. */
@@ -1542,9 +1858,7 @@ function serviceEngineer(): EntityView | undefined {
   // Prefer an engineer the player explicitly selected alongside the building (Shift+click), so
   // `强制搬运` can name a specific unit; otherwise fall back to the first own engineer in the window,
   // which is the same rule the `工兵` button uses.
-  const selected = selectedEntities().find(
-    (entity) => !isBuildingEntityKind(entity.kind) && isMine(entity) && isEngineerKind(entity.kind),
-  );
+  const selected = selectedEntities().find((entity) => isMine(entity) && isBuilderUnit(entity));
   if (selected !== undefined) {
     return selected;
   }
@@ -1930,7 +2244,7 @@ function renderWarehouseTransfer(model: WarehousePanelModel): void {
     if (itemOptions.length === 0) {
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = "（来源仓库没有库存）";
+      none.textContent = t("warehouse.emptySource");
       itemOptions.push(none);
     }
     warehouseTransferItem.replaceChildren(...itemOptions);
@@ -1948,7 +2262,7 @@ function renderWarehouseTransfer(model: WarehousePanelModel): void {
     if (targetOptions.length === 0) {
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = "（没有其他自己的仓库）";
+      none.textContent = t("warehouse.noTargets");
       targetOptions.push(none);
     }
     warehouseTransferTarget.replaceChildren(...targetOptions);
@@ -1957,7 +2271,7 @@ function renderWarehouseTransfer(model: WarehousePanelModel): void {
     }
   }
   warehouseTransferAllButton.disabled = model.sourceItems.length === 0;
-  warehouseTransferAllButton.textContent = WAREHOUSE_TRANSFER_ALL_LABEL;
+  warehouseTransferAllButton.textContent = warehouseTransferAllLabel();
   refreshWarehouseTransferState(model);
 }
 
@@ -2067,14 +2381,14 @@ function updateInventoryPanel(): void {
 
   const units = selection.filter((entity) => !isBuildingEntity(entity));
   if (totals.unitCount === 0) {
-    inventorySummary.textContent = "未选中单位";
+    inventorySummary.textContent = t("inventory.none");
   } else if (totals.unitCount === 1) {
     const unit = units[0];
     inventorySummary.textContent =
-      unit === undefined ? "1 个单位" : `e${unit.id} ${contentLabel(unit.kind)}`;
+      unit === undefined ? t("inventory.units", { count: 1 }) : `e${unit.id} ${contentLabel(unit.kind)}`;
   } else {
     inventorySummary.textContent =
-      `${totals.unitCount} 个单位 · ${totals.carryingCount} 个携带货物`;
+      t("inventory.mixed", { count: totals.unitCount, carrying: totals.carryingCount });
   }
 
   const rows = totals.items.map((item) => {
@@ -2091,7 +2405,7 @@ function updateInventoryPanel(): void {
   });
   inventoryItems.replaceChildren(...rows);
   inventoryItems.hidden = rows.length === 0;
-  void renderLatexInto(inventoryTotal, `合计：${totals.total}`);
+  void renderLatexInto(inventoryTotal, t("inventory.totalLabel", { total: totals.total }));
   inventoryTotal.hidden = rows.length === 0;
   inventoryEmpty.hidden = !(totals.unitCount > 0 && rows.length === 0);
 }
@@ -2266,7 +2580,7 @@ warehouseTransferForm.addEventListener("submit", (event) => {
  */
 function focusWarehouseTransfer(): void {
   const single = singleSelectedEntity();
-  if (single === undefined || !isMine(single) || !isWarehouseKind(single.kind)) {
+  if (single === undefined || !isMine(single) || !isWarehouseRow(single)) {
     refuse("先选中自己的一座仓库，再从建筑面板调拨");
     return;
   }
@@ -2552,6 +2866,75 @@ function setMarkerPanelOpen(open: boolean, moveFocus = true): void {
   (first ?? markerCloseButton).focus({ preventScroll: true });
 }
 
+/** The display name of one dimension key, from the snapshot roster with the overworld default. */
+function dimensionDisplayName(world: WorldView, key: string): string {
+  const found = world.dimensions?.find((dimension) => dimension.key === key);
+  if (found !== undefined) {
+    return found.name;
+  }
+  return key === "overworld" ? "主世界" : key;
+}
+
+/**
+ * Rebuilds the dimension switcher from the snapshot's roster: one button per dimension, the drawn one
+ * armed. A roster without at least one entry (older server, demo world) hides the group entirely.
+ */
+function refreshDimensionButtons(snapshot: ServerWorldView): void {
+  const roster = snapshot.dimensions;
+  if (roster === undefined || roster.length === 0) {
+    dimensionButtons.hidden = true;
+    dimensionButtons.replaceChildren();
+    return;
+  }
+  dimensionButtons.hidden = false;
+  const buttons = roster.map((dimension) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = dimension.name;
+    button.title = `切换视角到${dimension.name}`;
+    const drawn = (viewDimension ?? snapshot.dimension ?? "overworld") === dimension.key;
+    button.classList.toggle("armed", drawn);
+    button.setAttribute("aria-pressed", drawn ? "true" : "false");
+    button.addEventListener("click", () => {
+      if (worldSource === "server") {
+        switchView(dimension.key, camera.centerTile());
+      } else {
+        setStatus("未连接服务器，没有可切换的维度", "idle");
+      }
+    });
+    return button;
+  });
+  dimensionButtons.replaceChildren(...buttons);
+}
+
+/** The coordinate jump: same dimension, new centre. Bad or empty input is refused with a status line. */
+function jumpToCoordinates(): void {
+  const x = Number.parseInt(jumpX.value, 10);
+  const y = Number.parseInt(jumpY.value, 10);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    setStatus("跳转需要两个整数坐标", "idle");
+    return;
+  }
+  if (worldSource !== "server") {
+    setStatus("未连接服务器，没有可跳转的世界", "idle");
+    return;
+  }
+  switchView(viewDimension, { x, y });
+  setStatus(`视角已跳转到 ${x},${y}`, "idle");
+}
+
+/** The snapshot's chunk list as the renderer's key set; `undefined` draws no shadow. */
+function loadedChunkKeys(world: WorldView): ReadonlySet<string> | undefined {
+  if (world.loadedChunks === undefined) {
+    return undefined;
+  }
+  const keys = new Set<string>();
+  for (const chunk of world.loadedChunks) {
+    keys.add(chunkKey(chunk.x, chunk.y));
+  }
+  return keys;
+}
+
 function updateHud(force = false, now = performance.now()): void {
   if (!force && now - lastHudUpdate < HUD_INTERVAL_MS) {
     return;
@@ -2564,22 +2947,26 @@ function updateHud(force = false, now = performance.now()): void {
   );
   void renderLatexInto(
     hudWorld,
-    worldSource === "server" ? `世界：server · tick ${worldTick}` : "世界：demo",
+    worldSource === "server"
+      ? `${t("hud.world")}：server · tick ${worldTick}`
+      : `${t("hud.world")}：demo`,
   );
   // The world is unbounded, so the HUD shows where the camera is and which window is loaded. Both
   // may be negative and keep counting as the owner pans in any direction.
   const focus = camera.centerTile();
+  const dimensionLabel = world.dimensionName ?? t("dim.default");
   void renderLatexInto(
     hudWindow,
-    `坐标：${focus.x},${focus.y} · 窗口：${world.originX},${world.originY}`,
+    `${dimensionLabel} · ` +
+      t("hud.windowLine", { x: focus.x, y: focus.y, wx: world.originX, wy: world.originY }),
   );
   void renderLatexInto(
     hudPlayer,
     !loggedIn
-      ? "玩家：未登录"
+      ? `${t("hud.player")}：${t("hud.off")}`
       : myPlayerId === null
-        ? "玩家：获取 id 中…"
-        : `玩家：${myPlayerId}`,
+        ? `${t("hud.player")}：${t("hud.pending")}`
+        : `${t("hud.player")}：${myPlayerId}`,
   );
   updateEnemyLine(focus);
   // The home line and the marker list are rebuilt from the same camera tile, so the distance they print
@@ -2590,30 +2977,30 @@ function updateHud(force = false, now = performance.now()): void {
     updateMarkerRows(focus);
   }
   const resources = myPlayerRow();
+  const goldLabel = t("item.gold");
+  const woodLabel = t("item.wood");
   void renderLatexInto(
     hudResources,
     resources === undefined
-      ? "资源：金 — · 木 —"
-      : `资源：${resources.name} · 金 ${resources.gold}${incomeSuffix(resources.goldPerMinute)}` +
-          ` · 木 ${resources.wood}${incomeSuffix(resources.woodPerMinute)}`,
+      ? `${t("hud.resources")}：${goldLabel} — · ${woodLabel} —`
+      : `${t("hud.resources")}：${resources.name} · ${goldLabel} ${resources.gold}` +
+          `${incomeSuffix(resources.goldPerMinute)} · ${woodLabel} ${resources.wood}` +
+          incomeSuffix(resources.woodPerMinute),
   );
   hudResources.classList.toggle("unavailable", resources === undefined);
   void renderLatexInto(
     hudTile,
-    hoverTile === null ? "瓦片：—" : `瓦片：${hoverTile.x}, ${hoverTile.y}`,
+    hoverTile === null ? `${t("hud.tile")}：—` : `${t("hud.tile")}：${hoverTile.x}, ${hoverTile.y}`,
   );
-  void renderLatexInto(hudZoom, `缩放：${camera.zoom.toFixed(2)}×`);
+  void renderLatexInto(hudZoom, `${t("hud.zoom")}：${camera.zoom.toFixed(2)}×`);
   void renderLatexInto(hudFps, fps > 0 ? `FPS：${Math.round(fps)}` : "FPS：—");
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
   const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
-  // A unit's cargo is part of its selection HUD row. Only an own unit has a meaningful cargo line:
-  // an enemy unit's hold is not something the local player commands, and a building reports 库存 on
-  // its own row instead (including warehouses).
-  const cargo =
-    only !== undefined && !isBuildingEntity(only) && isMine(only)
-      ? unitCargoLabel(only, itemLabel)
-      : null;
+  // A unit's cargo is part of its selection HUD row. Any selected unit that carries something shows
+  // what it holds, own or not: the inventory line describes the row, it does not imply the unit takes
+  // orders. A building reports 库存 on the building row below instead (including warehouses).
+  const cargo = only !== undefined && !isBuildingEntity(only) ? unitCargoLabel(only, itemLabel) : null;
   // The engineer's task line is part of the selection HUD. The server sends it only for engineers, so a
   // combat unit or a building simply has no task to append.
   const task = only !== undefined && !isBuildingEntity(only) ? unitTaskLabel(only.task) : null;
@@ -2624,10 +3011,10 @@ function updateHud(force = false, now = performance.now()): void {
     hudSelected,
     groupPrefix +
       (selection.length === 0
-        ? "选中：无"
+        ? t("hud.selectedNone")
         : only === undefined
-          ? `已选：${selection.length} 个实体`
-          : `选中：e${only.id} ${contentLabel(only.kind)} ` +
+          ? t("hud.selectedCount", { count: selection.length })
+          : `${t("hud.selected")}：e${only.id} ${contentLabel(only.kind)} ` +
             `[${ownershipTagFor(only.playerId, myPlayerId)}] ` +
             `(${only.x.toFixed(1)}, ${only.y.toFixed(1)})` +
             (cargo === null ? "" : ` · ${cargo}`) +
@@ -2636,19 +3023,25 @@ function updateHud(force = false, now = performance.now()): void {
   );
   let buildingText =
     only !== undefined && isBuildingEntity(only)
-      ? `建筑：${contentLabel(only.kind)} #${only.id}`
-      : "建筑：—";
+      ? `${t("hud.building")}：${contentLabel(only.kind)} #${only.id}`
+      : t("hud.buildingNone");
   const selectedBuilding = only !== undefined && isBuildingEntity(only) ? only : undefined;
   if (selectedBuilding !== undefined) {
     const footprint = sizeLabel(selectedBuilding);
     if (footprint !== null) {
       buildingText += ` · ${footprint}`;
     }
-    // A warehouse reports its stored items on the same row as its size; other buildings have no
-    // `contents`, so the label is simply absent.
+    // A building's stock is part of the same row as its size: every building with a non-empty
+    // `contents` (a warehouse's stored items, a producer's input/output buffer) shows it, and a row
+    // without one simply has no label. Only when the row also carries slot accounting (`storage`, the
+    // warehouses' `容量/已用/空闲`) is the capacity appended — an older snapshot omits it and the line
+    // is not invented.
     const stock = warehouseContentsLabel(selectedBuilding);
     if (stock !== null) {
       buildingText += ` · ${stock}`;
+    }
+    if (selectedBuilding.storage !== undefined) {
+      buildingText += ` · ${warehouseStorageLabel(selectedBuilding)}`;
     }
     const attack = combatLabel(selectedBuilding);
     if (attack !== null) {
@@ -2822,7 +3215,8 @@ function requireLoggedInForGameplay(): boolean {
 function updateSequenceButton(): void {
   sequenceButton.classList.toggle("armed", sequenceArmed);
   sequenceButton.setAttribute("aria-pressed", sequenceArmed ? "true" : "false");
-  sequenceButton.textContent = sequenceLines.length === 0 ? "顺序" : `顺序 ${sequenceLines.length}`;
+  sequenceButton.textContent =
+    sequenceLines.length === 0 ? t("chrome.sequence") : `${t("chrome.sequence")} ${sequenceLines.length}`;
   sequenceButton.title = sequenceArmed
     ? `顺序：已记录 ${sequenceLines.length} 条，点击执行（Enter），Esc 清空`
     : "顺序：把接下来的命令先记下来，按 Enter 合并成一条 BATCH 提交（Esc 清空）";
@@ -2887,7 +3281,7 @@ function updateFollowButton(): void {
   const following = lockedEntityId !== null;
   followButton.classList.toggle("armed", following);
   followButton.setAttribute("aria-pressed", following ? "true" : "false");
-  followButton.textContent = following ? "跟随中" : "跟随";
+  followButton.textContent = following ? t("chrome.following") : t("chrome.follow");
   followButton.title = following
     ? `跟随 e${lockedEntityId}：视角锁定中，再点一次取消`
     : "跟随：把视角锁定到选中的单位；再点一次取消，目标消失时自动取消";
@@ -3043,13 +3437,14 @@ function sendGameplayCommand(
 let commandBarSignature = "";
 
 /**
- * Shows the context column's panel background only while it has something in it (TRAIN, BUILD or the
- * building queue). An empty zone is then literally nothing, as the layout asks, instead of an empty
- * grey box.
+ * Shows the context column's panel background only while it has something in it (TRAIN, an upgrade or
+ * the building queue). An empty zone is then literally nothing, as the layout asks, instead of an
+ * empty grey box. BUILD is not part of this zone any more: an engineer selection opens the right-edge
+ * BUILD rail instead (see `updateGameplayPanel`), so it must not keep this panel alive.
  */
 function updateCommandContextVisibility(): void {
   const visible =
-    !trainSection.hidden || !buildSection.hidden || !upgradeSection.hidden
+    !trainSection.hidden || !upgradeSection.hidden
       || !buildingActionsSection.hidden || !hudQueue.hidden || !hudOrders.hidden;
   commandContext.classList.toggle("has-context", visible);
 }
@@ -3159,7 +3554,13 @@ function commandBarNote(model: CommandBarModel): string {
  */
 function updateGameplayPanel(): void {
   const resolved = selectedEntities();
-  const model = commandBarModel(resolved, myPlayerId, { labelForPath: contentLabel });
+  // The served `buildable` array is the BUILD catalogue; the classic five-entry list is only the
+  // fallback for a snapshot that predates the field (or the demo world). A missing field reads as
+  // `undefined` here, which is exactly what keeps the fallback active.
+  const model = commandBarModel(resolved, myPlayerId, {
+    labelForPath: contentLabel,
+    buildingPaths: world.buildable,
+  });
   const gameplayReady = loggedIn && socket !== null;
   const ownUnits = resolved.filter((entity) => isOwnUnit(entity, myPlayerId));
   const single = singleSelectedEntity();
@@ -3201,12 +3602,29 @@ function updateGameplayPanel(): void {
         : `· ${selectedOwnBuildings.length} 座 ${contentLabel(trainBuilding.kind)}（一次点击各排一个）`
       : "",
   );
+  // The train menu comes from the building row's `trains` (content-driven); rebuild the buttons when
+  // the menu itself changes, then refresh affordability per frame from the local player's row.
+  const menu = trainMenu(trainBuilding, myPlayerRow(), contentLabel);
+  rebuildTrainButtons(menu);
+  const trainAffordable = menu.every((entry) => entry.affordable);
   for (const button of trainButtons) {
-    button.disabled = !(gameplayReady && sameKindOwnBuildings);
+    button.disabled = !(gameplayReady && sameKindOwnBuildings && trainAffordable);
   }
 
   const showBuild = model.actions.some((action) => action.kind === "build");
   buildSection.hidden = !showBuild;
+  // The rail's buttons follow the catalogue the model carries: the served `buildable` array when the
+  // snapshot has one, the classic fallback otherwise. A same-catalogue rebuild is skipped inside.
+  rebuildBuildButtons(
+    model.actions
+      .filter((action) => action.kind === "build")
+      .map((action) => action.path ?? "")
+      .filter((path) => path !== ""),
+  );
+  // The BUILD rail: while the build section is visible the page reserves its right-edge column and
+  // shifts the chrome over (see .build-rail / body.build-rail-open in the stylesheet); closed, the
+  // canvas keeps the whole window and the bottom context zone behaves exactly as before.
+  document.body.classList.toggle("build-rail-open", showBuild);
   void renderLatexInto(
     buildTarget,
     showBuild && single !== undefined
@@ -3228,17 +3646,58 @@ function updateGameplayPanel(): void {
 
   // The upgrade entry is the visible fix for the reported bug: a selected own building with an
   // `upgrade` field always shows it, and it is only disabled when the local player cannot pay or is not
-  // connected. A same-kind group of two or more own buildings gets the `升级全部` batch instead: one
-  // click sends one UPGRADE line per building in selection order and reports skipped buildings with
-  // their reason. The pure rules live in upgrade.ts.
-  const batchUpgrade =
-    sameKindOwnBuildings && selectedOwnBuildings.length > 1
-      ? upgradeBatchPlan(selectedOwnBuildings, myPlayerId, myPlayerRow())
-      : null;
-  const upgradeOffer =
-    batchUpgrade === null ? upgradeEntry(single, myPlayerId, myPlayerRow(), contentLabel) : null;
-  upgradeSection.hidden = batchUpgrade === null && upgradeOffer === null;
-  if (batchUpgrade === null && upgradeOffer === null) {
+  // connected. A same-kind group of two or more own buildings gets the per-variant `升级全部` batch
+  // instead: one click sends one UPGRADE line per building in selection order and reports skipped
+  // buildings with their reason. The snapshot's `upgrade.options` array is the authority on how many
+  // routes exist, so exactly one 升级 button is painted per option — the first on the ordinary 升级
+  // button, every further one on a generated button below it. The pure rules live in upgrade.ts.
+  const batchMode = sameKindOwnBuildings && selectedOwnBuildings.length > 1;
+  const batchPlans = batchMode
+    ? Array.from({ length: selectedOwnBuildings[0]?.upgrade?.options.length ?? 0 }, (_, variant) =>
+        upgradeBatchPlan(selectedOwnBuildings, myPlayerId, myPlayerRow(), variant),
+      )
+    : [];
+  const batchUpgrade = batchPlans[0] ?? null;
+  const upgradeOffers =
+    batchMode ? [] : upgradeEntries(single, myPlayerId, myPlayerRow(), contentLabel);
+  const upgradeOffer = upgradeOffers[0];
+  // One generated button per upgrade route beyond the first, in both the single and the batch case.
+  rebuildVariantUpgradeButtons(batchMode ? batchPlans.length : upgradeOffers.length);
+  upgradeSection.hidden = batchUpgrade === null && upgradeOffer === undefined;
+  // The gateway jump: any selected building whose row carries a `gateway` target gets one button that
+  // flings the view (and only the view) to the arrival tile on the other side.
+  const gatewayOffer = single?.gateway;
+  const gatewayTarget = gatewayOffer === undefined || batchUpgrade !== null ? undefined : gatewayOffer;
+  gatewaySection.hidden = gatewayTarget === undefined;
+  if (gatewayTarget !== undefined) {
+    const label = dimensionDisplayName(world, gatewayTarget.to);
+    void renderLatexInto(
+      gatewayButton,
+      t("gateway.goTo", {
+        dimension: label,
+        x: gatewayTarget.arrival.x,
+        y: gatewayTarget.arrival.y,
+      }),
+    );
+    gatewayButton.title = `切换视角到${label}的 (${gatewayTarget.arrival.x},${gatewayTarget.arrival.y})；不移动任何单位`;
+    gatewayButton.disabled = worldSource !== "server";
+  }
+
+  // The unit upgrade: a selected own non-building whose row carries an `upgrade` offer gets the
+  // 升级 button (the row's first option; UPGRADEUNIT replaces the unit in the field).
+  const unitOffer = unitUpgradeEntry(single, myPlayerId, myPlayerRow(), contentLabel);
+  unitUpgradeSection.hidden = unitOffer === null;
+  if (unitOffer !== null) {
+    void renderLatexInto(unitUpgradeTarget, `· e${unitOffer.unitId} ${contentLabel(single?.kind ?? "")}`);
+    void renderLatexInto(unitUpgradeButton, unitOffer.label);
+    unitUpgradeButton.title = unitOffer.affordable
+      ? `UPGRADEUNIT ${unitOffer.unitId}：花费金 ${unitOffer.gold}、木 ${unitOffer.wood}`
+      : `UPGRADEUNIT ${unitOffer.unitId}：资源不足（需要金 ${unitOffer.gold}、木 ${unitOffer.wood}）`;
+    unitUpgradeButton.disabled = !(gameplayReady && unitOffer.affordable);
+  } else {
+    unitUpgradeButton.disabled = true;
+  }
+  if (batchUpgrade === null && upgradeOffer === undefined) {
     upgradeButton.disabled = true;
     void renderLatexInto(upgradeTarget, "");
   } else if (batchUpgrade !== null) {
@@ -3247,18 +3706,63 @@ function updateGameplayPanel(): void {
       .map((skip) => `e${skip.buildingId} ${upgradeSkipText(skip.reason)}`)
       .join("、");
     void renderLatexInto(upgradeTarget, `· ${selectedOwnBuildings.length} 座 ${kindLabel}`);
-    void renderLatexInto(upgradeButton, UPGRADE_ALL_ACTION_LABEL);
+    const firstKind = contentLabel(selectedOwnBuildings[0]?.kind ?? "");
+    const firstOffer = selectedOwnBuildings[0]?.upgrade?.options[batchUpgrade.variantIndex];
+    void renderLatexInto(
+      upgradeButton,
+      upgradeBatchLabel(firstKind, firstOffer?.gold ?? 0, firstOffer?.wood ?? 0),
+    );
     upgradeButton.title =
       `${batchUpgrade.summary}：${batchUpgrade.lines.join("、")}` +
       (skipDetail === "" ? "" : `；跳过 ${skipDetail}`);
     upgradeButton.disabled = !(gameplayReady && batchUpgrade.lines.length > 0);
-  } else if (upgradeOffer !== null) {
-    void renderLatexInto(upgradeTarget, `· e${upgradeOffer.buildingId} ${upgradeOffer.targetName}`);
+  } else if (upgradeOffer !== undefined) {
+    void renderLatexInto(
+      upgradeTarget,
+      `· e${upgradeOffer.buildingId} ${contentLabel(single?.kind ?? "")}`,
+    );
     void renderLatexInto(upgradeButton, upgradeOffer.label);
     upgradeButton.title = upgradeOffer.affordable
-      ? `UPGRADE ${upgradeOffer.buildingId}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
-      : `UPGRADE ${upgradeOffer.buildingId}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
+      ? `UPGRADE ${upgradeOffer.buildingId} ${upgradeOffer.target}：花费金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}`
+      : `UPGRADE ${upgradeOffer.buildingId} ${upgradeOffer.target}：资源不足（需要金 ${upgradeOffer.gold}、木 ${upgradeOffer.wood}）`;
     upgradeButton.disabled = !(gameplayReady && upgradeOffer.affordable);
+  }
+  // Every generated button paints exactly one upgrade route: the offer/plan at its own variant index,
+  // so each carries its own cost label and affordability. A route that vanished between snapshots (the
+  // options array shrank) simply stays disabled until the next rebuild.
+  for (const [index, button] of variantUpgradeButtons.entries()) {
+    const variantIndex = index + 1;
+    if (batchMode) {
+      const plan = batchPlans[variantIndex];
+      if (plan === undefined || plan === null) {
+        button.disabled = true;
+        continue;
+      }
+      const skipDetail = plan.skipped
+        .map((skip) => `e${skip.buildingId} ${upgradeSkipText(skip.reason)}`)
+        .join("、");
+      const variantKind = contentLabel(selectedOwnBuildings[0]?.kind ?? "");
+      const variantOffer = selectedOwnBuildings[0]?.upgrade?.options[plan.variantIndex];
+      void renderLatexInto(
+        button,
+        upgradeBatchLabel(variantKind, variantOffer?.gold ?? 0, variantOffer?.wood ?? 0),
+      );
+      button.title =
+        `${plan.summary}：${plan.lines.join("、")}` +
+        (skipDetail === "" ? "" : `；跳过 ${skipDetail}`);
+      button.disabled = !(gameplayReady && plan.lines.length > 0);
+    } else {
+      const offer = upgradeOffers[variantIndex];
+      if (offer === undefined) {
+        button.disabled = true;
+        continue;
+      }
+      void renderLatexInto(button, offer.label);
+      button.title = offer.affordable
+        ? `UPGRADE ${offer.buildingId} ${offer.target}：花费金 ${offer.gold}、木 ${offer.wood}`
+        : `UPGRADE ${offer.buildingId} ${offer.target}：资源不足（需要金 ${offer.gold}、木 ${offer.wood}）`;
+      button.disabled = !(gameplayReady && offer.affordable);
+    }
   }
 
   // Building services: 继续建造 / 修理 / 回收 / 调拨. The pure rule decides which entries exist and what
@@ -3266,7 +3770,7 @@ function updateGameplayPanel(): void {
   const buildingActions = selectedBuildingActions();
   const buildingTarget = selectedBuildingEntity();
   const ownWarehouseSelected =
-    single !== undefined && isMine(single) && isWarehouseKind(single.kind);
+    single !== undefined && isMine(single) && isWarehouseRow(single);
   const showBuildingActions =
     (buildingActions !== null
       && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim
@@ -3477,15 +3981,16 @@ function doTrain(unitPath: string): void {
  * (`OK <newBuildingId>` or `ERR <reason>`) goes through the ordinary batch path, so it appears in the log
  * and on the status line; the next snapshot replaces the old row with the new building.
  */
-function doUpgrade(): void {
+function doUpgrade(variantIndex = 0): void {
   const selected = singleSelectedEntity();
   if (selected === undefined || !isMine(selected) || !isBuildingEntity(selected)) {
     refuse("先选中自己的建筑，再升级");
     return;
   }
-  const offer = upgradeEntry(selected, myPlayerId, myPlayerRow(), contentLabel);
-  if (offer === null) {
-    refuse("选中的建筑没有可用的升级");
+  const offers = upgradeEntries(selected, myPlayerId, myPlayerRow(), contentLabel);
+  const offer = offers[variantIndex];
+  if (offer === undefined) {
+    refuse(variantIndex === 0 ? "选中的建筑没有可用的升级" : "选中的建筑没有这个升级变体");
     return;
   }
   if (!offer.affordable) {
@@ -3494,14 +3999,14 @@ function doUpgrade(): void {
   }
   void sendGameplayCommand(
     "UPGRADE",
-    upgrade(offer.buildingId),
+    upgrade(offer.buildingId, offer.target),
     `已升级 e${offer.buildingId} ${contentLabel(selected.kind)} → ${offer.targetName}`,
   );
 }
 
 /** `升级全部`: one UPGRADE line per eligible building of a same-kind own building selection. */
-function doUpgradeAll(): void {
-  const plan = upgradeBatchPlan(selectedEntities(), myPlayerId, myPlayerRow());
+function doUpgradeAll(variantIndex = 0): void {
+  const plan = upgradeBatchPlan(selectedEntities(), myPlayerId, myPlayerRow(), variantIndex);
   if (plan === null) {
     refuse("先选中自己的同类型建筑（可以多座），再升级全部");
     return;
@@ -3513,13 +4018,18 @@ function doUpgradeAll(): void {
   void sendUpgradeBatch(plan);
 }
 
-/** Dispatches the single and the batch upgrade entry from one button. */
-function doUpgradeAction(): void {
+/** Dispatches one upgrade entry: a batch plan for a group selection, the single upgrade otherwise. */
+function doUpgradeEntry(variantIndex: number): void {
   if (selectedEntities().length > 1) {
-    doUpgradeAll();
+    doUpgradeAll(variantIndex);
     return;
   }
-  doUpgrade();
+  doUpgrade(variantIndex);
+}
+
+/** Dispatches the first upgrade entry from the ordinary 升级 button. */
+function doUpgradeAction(): void {
+  doUpgradeEntry(0);
 }
 
 /** `e5 未完工、e6 资源不足`, or an empty string when nothing was skipped. */
@@ -4511,6 +5021,12 @@ function emitSnapshotEvents(previous: WorldView, current: WorldView): void {
  * the next refresh of that same window arrives.
  */
 function applySnapshot(snapshot: ServerWorldView): void {
+  // The server echoes the drawn dimension back; adopting it keeps the view state and the fetch
+  // parameter in step even when the first snapshot arrived without an explicit dim.
+  if (snapshot.dimension !== undefined && snapshot.dimension !== viewDimension) {
+    viewDimension = snapshot.dimension;
+  }
+  refreshDimensionButtons(snapshot);
   const wasDemo = worldSource === "demo";
   const previous = currentFrame;
   // Events compare the two consecutive received snapshots before either frame is replaced. On the
@@ -4582,6 +5098,7 @@ async function requestWorldSnapshot(centre: TileCoord): Promise<void> {
       cx: centre.x,
       cy: centre.y,
       r: SNAPSHOT_RADIUS_TILES,
+      ...(viewDimension === undefined ? {} : { dim: viewDimension }),
     });
     if (!snapshotRequests.accept(requestId)) {
       log("info", `丢弃乱序到达的 /world/snapshot 回答（请求 #${requestId}）`);
@@ -4602,6 +5119,23 @@ async function requestWorldSnapshot(centre: TileCoord): Promise<void> {
   } finally {
     worldRequestInFlight = false;
   }
+}
+
+/**
+ * Switches the view to a dimension and tile: releases the follow lock, remembers the dimension the
+ * next fetches ask for, recentres the camera and pulls one window immediately instead of waiting for
+ * the edge-margin streaming to notice. This is the one routine both the gateway jump button and the
+ * dimension switcher feed.
+ */
+function switchView(dimension: string | undefined, tile: TileCoord | null): void {
+  if (lockedEntityId !== null) {
+    lockedEntityId = null;
+    updateFollowButton();
+  }
+  viewDimension = dimension;
+  const centre = tile ?? nextSnapshotCentre();
+  camera.setCenter(centre.x * TILE_SIZE_PX + TILE_SIZE_PX / 2, centre.y * TILE_SIZE_PX + TILE_SIZE_PX / 2);
+  void requestWorldSnapshot(centre);
 }
 
 /** Fetches one snapshot: a refresh of the loaded window, or a camera-centred window near an edge. */
@@ -4706,6 +5240,7 @@ function animationFrame(now: number): void {
     prunePops(popRecords, now);
     renderer.render(world, camera, atlas, {
       clockSeconds: (now - animationStart) / 1000,
+      loadedChunks: loadedChunkKeys(world),
       hoverTile,
       selectedIds,
       placement: placementPreviewAt(hoverTile),
@@ -4721,7 +5256,9 @@ function animationFrame(now: number): void {
       pendingPath: pendingRoute,
       markers,
       pops: activePops(popRecords, now),
+      projectiles: trackProjectiles(projectileSeen, world.projectiles, now),
       inventoryRadiusTiles: settings.inventoryRadiusTiles,
+      followedId: lockedEntityId,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle
     // from the camera that just moved. Both canvases are independent, so neither covers the other.
@@ -4774,10 +5311,15 @@ function stopGameLoop(): void {
   }
 }
 
+/** Reflects the 隐藏游戏画面 toggle's label on its chrome button (language-aware). */
+function updateViewToggleButton(): void {
+  toggleViewButton.textContent = viewHidden ? t("chrome.showView") : t("chrome.hideView");
+}
+
 function setViewVisible(visible: boolean): void {
   viewHidden = !visible;
   document.body.classList.toggle("view-hidden", viewHidden);
-  toggleViewButton.textContent = viewHidden ? "显示游戏画面" : "隐藏游戏画面";
+  updateViewToggleButton();
   toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
   if (viewHidden) {
     hideTooltip();
@@ -4785,6 +5327,10 @@ function setViewVisible(visible: boolean): void {
     // The marker list is part of the game view chrome; hiding the view closes it without deleting a
     // single marker, exactly like Escape.
     setMarkerPanelOpen(false, false);
+    // The console and the help view follow the same rule: closed with the view, reopenable from the
+    // top-right buttons that stay reachable.
+    setConsoleOpen(false, false);
+    setHelpOpen(false, false);
     stopGameLoop();
     stopWorldPolling();
   } else {
@@ -4810,34 +5356,109 @@ toggleViewButton.addEventListener("click", () => {
 // building. The paths come from commands.ts, so the panel cannot drift from the builders.
 // ---------------------------------------------------------------------------------------------
 
-for (const unitPath of UNIT_PATHS) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = unitPath;
-  button.title = `TRAIN ${unitPath}`;
-  button.disabled = true;
-  button.dataset["path"] = unitPath;
-  button.addEventListener("click", () => {
-    doTrain(unitPath);
-  });
-  trainButtonHost.append(button);
-  trainButtons.push(button);
+/** Signature of the train menu the panel currently shows. */
+let trainSignature = "";
+
+/** Rebuilds the train buttons from a menu; a same-signature rebuild is skipped. */
+function rebuildTrainButtons(entries: TrainMenuEntry[]): void {
+  const signature = entries.map((entry) => entry.path).join(",");
+  if (signature === trainSignature) {
+    return;
+  }
+  trainSignature = signature;
+  trainButtons.length = 0;
+  trainButtonHost.replaceChildren();
+  for (const entry of entries) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = entry.label;
+    button.title = entry.title;
+    button.disabled = true;
+    button.dataset["path"] = entry.path;
+    button.addEventListener("click", () => {
+      doTrain(entry.path);
+    });
+    trainButtonHost.append(button);
+    trainButtons.push(button);
+  }
 }
 
-for (const buildingPath of BUILDING_PATHS) {
-  const button = document.createElement("button");
-  button.type = "button";
-  // Turrets carry their gold/wood cost and range in the catalogue label; other kinds stay bare.
-  button.textContent = buildButtonLabel(buildingPath);
-  button.title = `BUILD ${buildingPath}`;
-  button.disabled = true;
-  button.setAttribute("aria-pressed", "false");
-  button.dataset["path"] = buildingPath;
-  button.addEventListener("click", () => {
-    armBuild(buildingPath);
-  });
-  buildButtonHost.append(button);
-  buildButtons.push(button);
+/** Signature of the BUILD catalogue the rail currently shows. */
+let buildSignature = "";
+
+/**
+ * Rebuilds the BUILD buttons from one catalogue; a same-signature rebuild is skipped.
+ *
+ * The catalogue is the snapshot's top-level `buildable` array as it arrives with the model, so a server
+ * that ships the hell gate (or drops a building) changes the rail without a client update. The classic
+ * five-entry list is only the startup/fallback catalogue for the demo world and a snapshot that
+ * predates the field.
+ */
+function rebuildBuildButtons(paths: readonly string[]): void {
+  const signature = paths.join(",");
+  if (signature === buildSignature) {
+    return;
+  }
+  buildSignature = signature;
+  buildButtons.length = 0;
+  buildButtonHost.replaceChildren();
+  for (const buildingPath of paths) {
+    const button = document.createElement("button");
+    button.type = "button";
+    // The catalogue is content paths; the manifest display name is applied by refreshContentLabels
+    // once the atlas arrives, and no client-side price is invented (costs are the server's content).
+    button.textContent = buildingPath;
+    button.title = `BUILD ${buildingPath}`;
+    button.disabled = true;
+    button.setAttribute("aria-pressed", "false");
+    button.dataset["path"] = buildingPath;
+    button.addEventListener("click", () => {
+      armBuild(buildingPath);
+    });
+    buildButtonHost.append(button);
+    buildButtons.push(button);
+  }
+}
+
+// The demo world and the moment before the first snapshot have no `buildable` array yet; the classic
+// fallback catalogue stands in until a served catalogue replaces it.
+rebuildBuildButtons(FALLBACK_BUILD_PATHS);
+
+/** The generated upgrade buttons for every option beyond the first (`#upgrade-button`). */
+const variantUpgradeButtons: HTMLButtonElement[] = [];
+
+/** Signature of the variant-button row currently shown (its per-option count). */
+let upgradeVariantSignature = "";
+
+/**
+ * Rebuilds the further-upgrade buttons so there is exactly one per option beyond the first.
+ *
+ * The snapshot's `upgrade.options` array decides the count: a plain ladder keeps the host empty (the
+ * ordinary 升级 button is the only entry), the armory t1 variant step paints one extra button, and a
+ * plugin with three routes paints two. A same-count rebuild is skipped so focus and hover survive the
+ * 500 ms HUD tick; the button states are then repainted per tick from the current offers/plans.
+ */
+function rebuildVariantUpgradeButtons(count: number): void {
+  const total = Number.isSafeInteger(count) && count > 0 ? count : 0;
+  const signature = String(Math.max(0, total - 1));
+  if (signature === upgradeVariantSignature) {
+    return;
+  }
+  upgradeVariantSignature = signature;
+  upgradeBatchButtonHost.replaceChildren();
+  variantUpgradeButtons.length = 0;
+  for (let variantIndex = 1; variantIndex < total; variantIndex += 1) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.disabled = true;
+    button.dataset["variant"] = String(variantIndex);
+    button.addEventListener("click", () => {
+      doUpgradeEntry(variantIndex);
+    });
+    upgradeBatchButtonHost.append(button);
+    variantUpgradeButtons.push(button);
+  }
+  upgradeBatchButtonHost.hidden = variantUpgradeButtons.length === 0;
 }
 
 /**
@@ -4878,6 +5499,38 @@ attackMoveButton.addEventListener("click", () => {
   }
 });
 upgradeButton.addEventListener("click", doUpgradeAction);
+jumpButton.addEventListener("click", jumpToCoordinates);
+gatewayButton.addEventListener("click", () => {
+  const target = singleSelectedEntity()?.gateway;
+  if (target !== undefined) {
+    switchView(target.to, target.arrival);
+    setStatus(`视角已穿过传送门，到达 ${target.arrival.x},${target.arrival.y}`, "idle");
+  }
+});
+unitUpgradeButton.addEventListener("click", () => {
+  const selected = singleSelectedEntity();
+  if (selected === undefined || !isMine(selected) || isBuildingEntity(selected)) {
+    refuse("先选中自己的单位，再升级");
+    return;
+  }
+  // The unit rule, not the building one: `upgradeEntries` only reads building rows, so the click used
+  // to refuse every unit. The offer names the exact successor tier, and the wire accepts the path
+  // (`UPGRADEUNIT <unitId> [tierPath]`), so it is sent explicitly like a building variant.
+  const offer = unitUpgradeEntry(selected, myPlayerId, myPlayerRow(), contentLabel);
+  if (offer === null) {
+    refuse("选中的单位没有可用的升级");
+    return;
+  }
+  if (!offer.affordable) {
+    refuse(`资源不足：升级需要金 ${offer.gold}、木 ${offer.wood}`);
+    return;
+  }
+  void sendGameplayCommand(
+    "UPGRADEUNIT",
+    upgradeUnit(offer.unitId, offer.target),
+    `已升级 e${offer.unitId} ${contentLabel(selected.kind)} → ${offer.targetName}`,
+  );
+});
 continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);

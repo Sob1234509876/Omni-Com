@@ -9,8 +9,8 @@
 - 传输：WebSocket 路径、一个文本帧一条命令、`HELLO 1` 版本握手，以及空闲超时与服务端心跳。
 - 命令表，以及每条命令的确切回答。
 - `REQ` 的登录前提、base64 约定与错误词汇。
-- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`HAUL` 与 `BATCH`，
-  账号名身份规则、登录与所有权规则，以及世界步边界。
+- 游戏命令：`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`UPGRADEUNIT`、`REPAIR`、`RECLAIM`、`TRANSFER`、
+  `HAUL` 与 `BATCH`，账号名身份规则、登录与所有权规则，以及世界步边界。
 - `ORDER MOVE` / `ORDER ATTACK` / `ORDER ATTACKMOVE` / `BUILD` / `REPAIR` 的 `queue` 追加形式，以及
   `BATCH` 合并订单：客户端合成的一串订单按顺序应用，只回一条回答。
 - 维修、继续建造与回收：每点血量的费用、维修速率、一半返还，以及各种拒绝。
@@ -94,6 +94,7 @@ OK OC/1
 | `BUILD ...` | `OK <buildingId>` 或 `ERR <reason>` | 放置一个要付费的建筑工地；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `TRAIN ...` | `OK` 或 `ERR <reason>` | 在属于自己的生产建筑里排入一个单位；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `UPGRADE ...` | `OK <newBuildingId>` 或 `ERR <reason>` | 把属于自己的已完工建筑替换成下一级；需要 `LOGIN` 与所有权；见“游戏命令” |
+| `UPGRADEUNIT ...` | `OK <newUnitId>` 或 `ERR <reason>` | 把属于自己的单位替换成它阶梯的下一级；需要 `LOGIN` 与所有权；见“游戏命令” |
 | `REPAIR ...` | `OK` 或 `ERR <reason>` | 派自己的工程师修理自己的受损完工建筑；需要 `LOGIN` 与所有权 |
 | `RECLAIM ...` | `OK <refund>` 或 `ERR <reason>` | 取消自己的未完工工地并返还一半放置成本；需要 `LOGIN` 与所有权 |
 | `TRANSFER ...` | `OK <moved> <item>` 或 `ERR <reason>` | 在玩家自己的两座已完工仓库之间搬运库存；需要 `LOGIN` 与所有权；见“游戏命令” |
@@ -119,8 +120,10 @@ OK OC/1
 成功时回答 `OK <base64-payload>`。服务器只把请求载荷的 base64 解码成**不透明字节**交给处理器，
 再把处理器返回的字节 base64 编码回送；它不解析载荷、不记录载荷内容，也不认识 `oc-debug` 的信封。
 
-`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER`、`HAUL`、`BATCH`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
-
+`REQ` 和每一条游戏命令（`WHOAMI`、`ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`UPGRADEUNIT`、`REPAIR`、`RECLAIM`、`TRANSFER`、`HAUL`、`BATCH`）都要求同一条连接成功 `LOGIN` 过。`PING`、`COUNT`、`REGISTER`、`LOGIN`、`QUIT` 都不要求登录。
+- 快照路由多接受一个查询参数：`dim=<key>` 画该维度而不是默认维度，世界未声明的键回答
+  `400 unknown dimension: <key>`。窗口本身（`cx`/`cy`/`r`）是维度本地的，文档会标注画的是哪个维度——
+  见下面的快照字段。
 `hello` 是 `oc-hello` 插件提供的示例请求：载荷是普通 UTF-8 名字（不是 `oc-debug` 那样的信封），回答也是普通 UTF-8 文本。
 
 ## 游戏命令
@@ -138,7 +141,8 @@ ORDER ATTACKMOVE <entityId> <x> <y> [queue]  -> OK                        (需�
 ORDER STOP <entityId>                       -> OK                        (需要 LOGIN，实体必须属于该玩家)
 BUILD <engineerId> <buildingPath> <x> <y> [queue] -> OK <buildingId> | ERR ...  (需要 LOGIN，工程师必须属于该玩家)
 TRAIN <buildingId> <unitPath>               -> OK | ERR ...              (需要 LOGIN，建筑必须属于该玩家)
-UPGRADE <buildingId>                        -> OK <newBuildingId> | ERR ... (需要 LOGIN，建筑必须属于该玩家)
+UPGRADE <buildingId> [variantPath]          -> OK <newBuildingId> | ERR ... (需要 LOGIN，建筑必须属于该玩家)
+UPGRADEUNIT <unitId> [tierPath]             -> OK <newUnitId> | ERR ...   (需要 LOGIN，单位必须属于该玩家)
 REPAIR <engineerId> <buildingId> [queue]    -> OK | ERR ...              (需要 LOGIN，工程师与建筑都必须属于该玩家)
 RECLAIM <buildingId>                        -> OK <refund> | ERR ...     (需要 LOGIN，建筑必须属于该玩家)
 TRANSFER <sourceId> <targetId> <item> <amount|all> -> OK <moved> <item> | ERR ... (需要 LOGIN，两座建筑都必须属于该玩家)
@@ -146,16 +150,17 @@ HAUL <engineerId> <buildingId>             -> OK <amount> <item> | ERR ... (需�
 BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> <reason>  (需要 LOGIN，1..16 条子命令)
 ```
 
-- `<entityId>`、`<targetId>` 与 `<buildingId>` 是 `/world/snapshot` 里的十进制实体 id。`UPGRADE` 成功回答里的
-  id 是一个**新**实体——替换出来的建筑有新的 id，旧建筑已经消失。
+- `<entityId>`、`<targetId>` 与 `<buildingId>` 是 `/world/snapshot` 里的十进制实体 id。`UPGRADE` 与
+  `UPGRADEUNIT` 成功回答里的 id 都是一个**新**实体——替换出来的实体有新的 id，旧的已经消失。
 - `<x>` 与 `<y>` 是十进制地图格坐标。
 - 可选的 `queue` token（大小写不敏感，放在最后）是 `ORDER MOVE`、`ORDER ATTACK`、`ORDER ATTACKMOVE`、
   `BUILD` 与 `REPAIR` 的**追加**形式：命令的校验与普通形式完全相同，生成的订单被压到该单位已有订单的
   后面，而不是替换它们。三条 `BUILD ... queue` 会在同一个工程师的队列里留下三个工地与三个订单，按到达
   顺序执行。普通形式与历史命令逐字节相同，保持替换语义；任何其它多余 token 都是 `ERR bad arguments`。
 - `BATCH` 是**合并订单**（Q16）：客户端把一串命令合成一行，用 `;`（分号，前后可有空格）分隔，服务器按给定
-  顺序应用。它接受 `ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`REPAIR`、`RECLAIM`、`TRANSFER` 与 `HAUL` 子命令；其它
-  任何子命令——包括嵌套 `BATCH`、`WHOAMI` 或 `QUIT`——在应用任何东西之前就回 `ERR bad arguments`。
+  顺序应用。它接受 `ORDER`、`BUILD`、`TRAIN`、`UPGRADE`、`UPGRADEUNIT`、`REPAIR`、`RECLAIM`、`TRANSFER` 与
+  `HAUL` 子命令；其它任何子命令——包括嵌套 `BATCH`、`WHOAMI` 或 `QUIT`——在应用任何东西之前就回
+  `ERR bad arguments`。
   一条命令可带 1 到 16 条子命令；超过 16 条回 `ERR bad arguments`，不会截断。批次是**顺序，不是事务**：
   每条子命令按顺序应用，第一条失败以 `ERR <index>/<count> <reason>` 报告（index 从 1 开始），后面的
   子命令仍然按顺序应用。全部成功回答 `OK <count>`。解析失败的子命令只是少一条订单，不会中断其余命令，
@@ -216,9 +221,16 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
 | `TRAIN` 的单位在该建筑里没有任何配方 | `ERR no recipe for <unit> in <building>` |
 | `BUILD` 无法从玩家的仓库付款 | `ERR cannot afford <building> (needs <cost>)` |
 | `UPGRADE` 指向尚未完工的工地 | `ERR ... still under construction` |
-| `UPGRADE` 指向阶梯顶端、没有升级链接，或目标不在服务器内容里 | `ERR ... no upgrade / top of its ladder / does not exist in the content registry` |
+| `UPGRADE` 指向阶梯顶端，或目标不在服务器内容里 | `ERR ... top of its ladder / does not exist in the content registry` |
+| `UPGRADE` 在提供多个变体的升级步上不带 `variantPath` | `ERR ... without choosing one of its N variants: <a>, <b>` |
+| `UPGRADE` 指定源类型没有提供的变体 | `ERR ... does not offer '<path>' as an upgrade; it offers <a>, <b>` |
+| `UPGRADE` 的变体令牌根本不是内容路径 | `ERR <token> is not a content path` |
+| `UPGRADE` 选中的变体被内容限定在另一个维度（`dimensionsOnly`） | `ERR ... in the <dimension> dimension: the content restricts it to <allowed>` |
 | `UPGRADE` 无法从玩家的仓库付款 | `ERR cannot afford the upgrade of <building> to <target> (needs <cost>)` |
 | `UPGRADE` 的目标占地不同，或替换位置被占用 | `ERR ... footprint / site ... is not clear` |
+| `UPGRADEUNIT` 的阶梯令牌根本不是内容路径 | `ERR <token> is not a content path` |
+| `UPGRADEUNIT` 的单位类型没有后继，或目标不在阶梯上 | `ERR ... top of its ladder / does not offer '<path>' as an upgrade; it offers <a>` |
+| `UPGRADEUNIT` 无法从玩家的仓库付款 | `ERR cannot afford the upgrade of <unit> to <target> (needs <cost>)` |
 | `REPAIR` 指向的建筑未完工、满血，或内容没有维修价 | `ERR ... under construction / full health / no repair cost` |
 | `REPAIR` 无法从玩家仓库付款 | `ERR cannot afford the repair (needs <cost>)` |
 | `RECLAIM` 指向已完工建筑 | `ERR ... already finished, and a finished building cannot be reclaimed` |
@@ -236,12 +248,24 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   生产任务无法在中间花掉同一批物资。玩家付不起时什么也不放置、什么也不扣；放置失败会释放预留。
 - `TRAIN` 在属于自己的、已完工的生产建筑里排入一个单位。建筑等级够不够由引擎的生产系统决定，而不是由命令
   解析器决定：在 t1 兵营里训练 t4 单位会得到带生产系统理由的 `ERR ...`，队列保持不变。
-- `UPGRADE` 把一座**已完工、属于自己**的建筑替换成内容指定的下一级。费用是源类型的 `upgradeCost()`，走同一套
-  仓库预留路径，并且只在替换建筑存在之后**扣一次**；任何拒绝（未完工、没有目标、目标不存在、占地不同、位置
-  不干净、付不起）都不扣费，并留下旧建筑。成功时旧建筑被销毁，新类型的已完工建筑站在**同一原点**，拥有
-  **同一个所有者**与**同样的血量比例**，id 是新的，回答里带着它。旧建筑上排队的生产任务会**被取消**（销毁
-  事件放弃它的队列），指向它的搬运任务失败，旧 id 会从所有单位的战斗目标里清掉并离开空间索引。血量不要求
-  满：保留比例意味着升级既不会免费回血，也不会让受损建筑变得不能升级；修复是下面单独的 `REPAIR` 命令。
+- `UPGRADE` 把一座属于自己的已完工建筑替换成内容声明的后继之一。一个升级步可以提供**多个变体**（classic 的
+  t1 兵营可以长成更高的兵营，也可以长成炼狱工厂）：每个变体的价格来自它自己的选项，快照把全部变体列在
+  `upgrade.options` 数组里。省略 `<variantPath>` 时，单选项阶梯直接选中它唯一的后继，而选择有歧义时会被
+  `ERR ... N variants: ...` 拒绝，因此客户端应当始终回发自己选中的 `to` 令牌。变体还可以被内容限定维度
+  （`dimensionsOnly`）——classic 的炼狱工厂只能立在地狱——在别处选中它会在任何扣费之前被拒绝。
+- 快照文档标注它画的是哪个世界：`dimension` 是内容键，`dimensionName` 是 profile 的显示名，
+  `dimensions` 是供客户端渲染切换器的名册，`loadedChunks` 是该维度已流送的区块集合——客户端给区块
+  缺席的瓦片画一层阴影，并随相机持续移动、区块陆续加载让阴影散开。带 `gateway` 标签的建筑行携带
+  `gateway:{"to":"<维度键>","arrival":[x,y]}`（与 `TRAVEL` 会走的同一跳），客户端把它变成一次快速的
+  视角切换；路由未打开时省略该字段。
+- `UPGRADEUNIT <unitId> [tierPath]` 是 `UPGRADE` 的单位版本：把一座属于自己的单位替换成其内容阶梯的
+  后继（`UnitType.upgradeTo()` / `upgradeCost()`）。费用是**源**类型的打包物资，走同一套仓库预留路径，
+  并且只在替换单位存在之后**扣一次**。替换单位在旧单位的原坐标出生，保持所有者、朝向与**血量比例**，
+  旧单位的背包随行（按新容量截断，装不下的部分存回所有者的仓库网络），成功回答 `OK <newUnitId>`——
+  替换出来的单位有新的 id，旧的已经消失，并从所有单位的战斗目标与空间索引里清掉。旧单位的订单队列走
+  普通取消路径，所以被占用的工地会被释放、搬运的预留与货物会在实体消失前交还。每个拒绝都免费且可读：
+  单位无法被指挥、类型没有阶梯（`top of its ladder`）、目标不存在或不在阶梯上、以及付不起。可选的
+  `<tierPath>` 是单位行 `upgrade.options[0]` 条目里的 `to` 令牌；省略时选择阶梯的唯一一步。
 - `REPAIR` 按内容每点血量的维修价，只对**真正恢复的血量**扣费，并且每个 tick 的扣费与该 tick 的治疗在同一个
   世界步里完成；命令应用时会先对整笔剩余维修费做一次仓库预留探测，然后立即释放，所以拒绝不会占用物资。
   `RECLAIM` 返还工地放置时的一半成本，自身不扣任何费用。两者都由内容驱动：维修价为空的目录不会出现
@@ -450,11 +474,14 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
      "w": 3, "h": 3, "progress": 1.00, "queue": 0, "contents": {"gold": 120, "wood": 40},
      "storage": {"slots": 24, "used": 2, "free": 22}, "inbound": 1},
     {"id": 4, "kind": "worker", "x": -10.2, "y": 12.3, "player": 1, "health": 1.00,
-     "w": 1, "h": 1, "progress": 1.00, "queue": 0,
+     "w": 1, "h": 1, "progress": 1.00, "queue": 0, "role": "worker", "builder": true,
+     "contents": {"gold": 6},
      "path": [[-10, 12], [-8, 12], [-6, 12], [-4, 12]], "target": [-4, 12],
      "task": "搬运中 → 兵工厂", "pop": {"kind": "pickup", "tick": 120}},
     {"id": 9, "kind": "barracks", "x": 6.5, "y": -4.5, "player": 1, "health": 1.00,
      "w": 3, "h": 3, "progress": 1.00, "queue": 2, "queueTicks": 87,
+     "trains": [{"path": "unit.melee.t1", "name": "普通", "gold": 20, "level": 1},
+                {"path": "unit.melee.t2", "name": "强化", "gold": 40, "level": 1}],
      "producingNow": {"kind": "unit.melee.t1", "position": 1, "length": 2},
      "demand": {"ready": true, "items": [{"item": "gold", "need": 50, "have": 50, "stock": 500}]},
      "queueItems": [{"kind": "unit.melee.t1", "ticks": 87, "total": 120},
@@ -465,8 +492,16 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
     {"id": 12, "kind": "building.armory.t1", "x": 18.5, "y": 4.5, "player": 3, "health": 0.50,
      "w": 3, "h": 3, "progress": 1.00, "queue": 0,
      "repair": {"gold": 300, "wood": 0},
-     "upgrade": {"to": "building.armory.t2", "gold": 140, "wood": 40}}
+     "upgrade": {"options": [{"to": "building.armory.t2", "gold": 140, "wood": 40},
+                             {"to": "building.purgatory", "gold": 260, "wood": 40}]}}
   ],
+  "dimension": "overworld",
+  "dimensionName": "Earth",
+  "dimensions": [{"key": "overworld", "name": "Earth"}, {"key": "hell", "name": "地狱"}],
+  "loadedChunks": [[0, 0], [1, 0]],
+  "projectiles": [{"id": 1, "x": 10.2, "y": 9.1, "tx": 12.5, "ty": 8.3}],
+  "buildable": ["building.armory.t1", "building.mine.t1", "building.lumbercamp.t1",
+                "building.warehouse", "building.turret.t1", "building.hell_gate"],
   "players": [
     {"id": 1, "name": "Player 1", "gold": 0, "wood": 0, "goldPerMinute": 210, "woodPerMinute": 140,
      "anchor": [3, 2]},
@@ -488,19 +523,23 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
 - `task` 出现在**工程师**单位行上，是一行从单位命令队列队首派生、绝不从移动推断的短文本：`搬运中 → <建筑>`、`建造中 → <建筑>`、`修理中 → <建筑>` 或 `空闲`。`<建筑>` 是执行中建筑的显示名。非工程师单位、建筑和旧服务器都省略该字段；旧客户端忽略它。客户端在实体提示框和选中 HUD 里显示它。
 - `pop` 在引擎发出搬运事实后最多**一秒**内出现在单位行上：`{"kind": "pickup" | "dropoff", "tick": <模拟 tick>}`。`kind` 表示货物进入还是离开该单位的货舱，`tick` 是引擎事件的 tick，客户端用它让同一次事件即使被两次轮询都带上也只播放一次。事件超过 `WorldHost.POP_TTL_TICKS`（20 tick = 1 秒）后省略，旧服务器也不带；不认识它的客户端忽略。
 - `queueItems` 出现在有生产队列的建筑行上，单位或从未有过队列的建筑省略该数组；`queue` 就是它的长度。它按队列顺序列出未完成任务，每项是 `{"kind": ..., "ticks": ..., "total": ...}`：`total` 是配方时长（`Recipe.durationTicks()`），`ticks` 是当前正在 `PRODUCING` 的任务的引擎剩余 tick（`ProductionJob.remainingTicks()`）。尚未开工的任务——等待材料、运输中、排在当前任务之后——报告 `ticks === total`；`WAITING_OUTPUT` 任务虽然仍未完成但已经不再生产，也按同样方式报告。`kind` 是配方产出的单位内容路径（`unit.melee.t1`）；只产出物品的配方回落到配方自己的路径。客户端用清单把 `kind` 解析成显示名；旧客户端可以完全忽略这个数组，继续用 `queue` 画 `生产中 ×N` 标记。
-- `contents` 只出现在内容类型被标记为仓库的建筑行上，并且只列出数量非零的物品；空仓库省略该对象。键是物品内容路径（`gold`、`wood`），值是非负整数，和 `players` 的金额一样会饱和。它是仓库自己的库存，与玩家行求和的是同一个来源，因此客户端可以在选中 HUD 里显示 `库存：金 120 · 木 40`。非仓库建筑永远不带它：生产建筑的私有缓冲不属于物流网络。
+- `role` 出现在每一条单位行上（`combat`、`worker` 或 `support`），客户端的框选优先级靠它区分士兵与带小攻击的工程师。内容类型带 `builder` 标签的单位还会带 `"builder": true`：这是 BUILD 菜单应当依据的**能力标记**，所以升级后的工程师梯（内容路径不再是基础 `unit.engineer`）不需要客户端按类型名匹配也算建造者。`attackDamage` 与 `attackRange` 出现在内容声明了武器的单位或建筑行上；没有武器的建筑（仓库、矿场）与旧服务器省略。两个数字与战斗层实际开火用的是同一份引擎数据，选中面板与实际炮弹不会互相矛盾。
+- `trains` 出现在**已完工**的生产建筑行上：内容驱动的 TRAIN 菜单，该建筑自身等级允许的每个配方一项，形状 `{"path": "<单位内容路径>", "name": "<显示名>", "gold": <整数>, "level": <整数>}`。`path` 是 `TRAIN <buildingId> <unitPath>` 的令牌，`name` 是受训单位的显示名，`gold` 是配方以货币物品（`gold`）计的输入成本，`level` 是配方要求的建筑等级——选中建筑低于它时客户端把该入口禁用。未完工工地或不能生产的建筑省略数组；不训练任何东西的生产建筑可以发空数组。
+- `projectiles` 是自上一份快照以来射出的箭矢通道：每支在飞的箭一项 `{"id": <整数>, "x": <数字>, "y": <数字>, "tx": <数字>, "ty": <数字>}`——出发点与目标点。伤害已经在 tick 内结算完毕；箭矢纯属表现层。列表最多保留 128 支，超过 4 tick 的条目被丢弃，安静的世界发空数组。不认识它的客户端忽略。
+- `buildable` 是**顶层的 BUILD 目录**：建造者可以用 `BUILD <engineerId> <path> <x> <y>` 直接放置的内容路径数组，顺序就是服务器声明的按钮顺序。只能通过升级到达的等级（经典哨塔 t2/t3/t4、炼狱工厂）**不在**数组里，因为命令会拒绝直接放置；可建造的地狱门**在**数组里，因为它是通往地狱的唯一通道。客户端为每个路径渲染一个 BUILD 条目；旧服务器省略该字段，客户端回落到自己的目录。
+- `contents` 出现在**每一个库存非空的行**上，并且只列出数量非零的物品；空仓库与空货舱省略该对象。键是物品内容路径（`gold`、`wood`），值是非负整数，和 `players` 的金额一样会饱和。对仓库而言它是建筑自己的库存，与玩家行求和的是同一个来源，因此客户端可以在选中 HUD 里显示 `库存：金 120 · 木 40`；对载货单位而言它是 HUD `携带` 行背后的货舱；从内容驱动 HUD 起**生产建筑的缓冲**也会上报，选中的兵营能显示里面暂存的材料。生产缓冲仍然*不属于*物流网络——可花费的总量只在 `players` 行里——所以客户端不得把生产建筑的 `contents` 加进资源读数。
 - `storage` 出现在**每一个**仓库行上（空仓库也有）：`{"slots": <整数>, "used": <整数>, "free": <整数>}`。`slots` 是内容的槽位容量（经典仓库是 `24`），`used` 是当前库存占用的槽位数——每 `ItemType.maxStack()` 个单位占一个槽，所以同一种物品超过一叠就会占多个槽——`free` 是剩余量。无上限库存按 `Long.MAX_VALUE` 饱和报告。数字来自引擎的 `Inventory`，因为只有服务器知道每种物品的最大堆叠；客户端不得自己推算容量。浏览器单仓库表头显示 `容量 24 · 已用 2 · 空闲 22`。
 - `inbound` 在至少一个**未完成**搬运任务把它当作目标时出现在仓库行上：一个非负整数，表示在途任务数（手动 `TRANSFER` 是常见来源）。数量为零时省略，所以客户端把缺失读作“没有在途”；浏览器单仓库表头追加 `· 在途 N`。
-- `upgrade` 只出现在**已完工**、且内容类型指定了一个存在于服务目录里的后继类型的建筑行上，表示这座建筑可以用 `UPGRADE <id>` 升级。形状是 `{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}`：`to` 是后继类型的内容路径，`gold` / `wood` 是命令会扣的两种资源（源类型的 `upgradeCost()`）。未完工工地、阶梯顶端、没有后继的类型和悬空的后继引用都不带它，所以客户端不会显示一个命令必然拒绝的升级入口。可负担性**故意不编码**：客户端拿自己的 `players` 行比较成本，资源不足时把入口显示为禁用，而不是隐藏。旧客户端会忽略这个字段。
+- `upgrade` 只出现在**已完工**、且内容类型指定了至少一个*适用*后继的建筑行上，表示这座建筑可以用 `UPGRADE <id> <variantPath>` 升级。形状是 `{"options": [{"to": "<目标内容路径>", "gold": <整数>, "wood": <整数>}, ...]}`——每个变体一项。只有命令真正会接受的选项才会被列出：目标存在于服务目录、**占地相同**，并且**允许立在建筑所在的维度**。主世界的兵营因此只列出更高的兵营，而立在地狱的同一座兵营会同时列出两个变体——客户端永远不会画出一条会被命令以维度为由拒绝的升级入口。未完工工地、阶梯顶端、没有后继的类型和悬空的后继引用都省略整个对象。`gold` / `wood` 是该变体命令会扣的价格（源类型选项自己的成本）。可负担性**故意不编码**：客户端拿自己的 `players` 行比较成本，资源不足时把入口显示为禁用，而不是隐藏。旧客户端会忽略这个字段。
 - `repair` 只出现在**已完工**、受损、且内容声明了维修价的建筑行上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是把**当前缺失血量**全部修满的总价（内容每点血量价 × 缺失血量，`Building.repairCost()`）。满血建筑、未完工工地和 `repairCostPerHealth()` 为空的内容都不带它，所以客户端不会显示命令必然拒绝的维修。可负担性不编码，客户端自己拿 `players` 行比较。旧客户端忽略。
 - `reclaim` 只出现在**未完工**工地上。形状是 `{"gold": <整数>, "wood": <整数>}`，金额是 `RECLAIM <id>` 会存入仓库的返还：放置时记录成本的一半（向下取整，`CommandService.reclaimRefund`）。即使两项都是 `0` 也存在，因为动作仍然会移除工地；已完工建筑不带它。旧客户端忽略。
 - `path` / `target` 只出现在**移动中且已经有路线**的单位行上。`path` 是 `[x, y]` 绝对世界瓦片对数组，表示**剩余**折线（已经走过的点不发送），最多 **64 个点**；`target` 是当前移动命令的目标瓦片 `[x, y]`。空闲或停下的单位、还在等待第一条路线的单位、以及旧服务器都省略这两个字段。坐标与实体的 `x` / `y` 一样是绝对瓦片索引，可以为负，并且不按快照窗口裁剪。路线超过上限时，`path` 只带前 64 个点，`target` 仍然指向真正的目标，客户端据此画线并画目标小圆点。字段纯属表现层、可增量；旧客户端忽略。
-- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不播搬运弹跳、不显示库存行、不显示容量与在途数、不显示升级/维修/回收入口、不画路径）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`pop`、`contents`、`storage`、`inbound`、`upgrade`、`repairCost`、`reclaim`、`path` 与 `pathTarget`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
+- 这些字段都是增量字段：旧服务器可以不带它们，客户端必须在缺失时照常工作（不显示尺寸 HUD、不画进度条、不画生产标记、不显示逐项队列列表、不显示需求图标、不显示工程师任务、不显示角色与建造者标记、不播搬运弹跳、不显示库存行、不显示容量与在途数、不显示升级/维修/回收入口、不画路径、不显示 TRAIN 菜单、不显示箭矢通道、不显示 BUILD 目录）。浏览器客户端在 `src/render/view.ts` 里把它们读成 `footprint`、`progress`、`queue`、`queueTicks`、`queueItems`、`producingNow`、`demand`、`task`、`role`、`builder`、`pop`、`contents`、`storage`、`inbound`、`trains`、`upgrade`、`repairCost`、`reclaim`、`path`、`pathTarget`、`projectiles`、`buildable` 与 `gateway`；单个可选字段格式错误会被忽略，而不是让整份文档失效。
 - `players` 按 id 排序，世界里存在的每个玩家各一行（样例场景、AI 与每个真人账号），带玩家 id、显示名、两种开局资源与两种收入速率，全部是非负整数。每行还可以带 `anchor`：可选的 `[x, y]` **绝对整数瓦片**对，表示该阵营的出生位置。玩家 1 报告样例场景铺开的出生锚点，加入的真人报告确定的基地槽位锚点（不是最终仓库原点），经典机器人报告它开局基地搜索的确定性锚点。值来自 `Player.anchor()`，没人发布时省略；它是**已知的出生位置**，不是实时单位位置，也不是战争迷雾揭示，所以客户端可以用它画方向/距离读数和地图边缘箭头，而不揭示地形或实体。扁平键 `gold` 与 `wood` 就是经典内容目录注册的物品路径；快照不重复它们的显示名（金币 / 木材），其它物品类型暂时不进这份文档。金额是该玩家仓库当前可用的数量——也就是引擎的投放点规则、建造/训练成本检查读取的同一个来源——所以没有仓库的玩家两项都报 `0`。`goldPerMinute` / `woodPerMinute` 是该玩家**存活且已完工**的建筑上内容标签 `income_<n>` / `wood_income_<n>` 之和，与 `ClassicEconomy` 发放时用的是同一套约定：在建工地、被摧毁的建筑和没有匹配标签的类型都不计入，所以不发布任何标签的内容两项都报 `0`。每座建筑第一枚匹配标签生效，与发放钩子一致。这些字段也是增量的：旧服务器可以不带，客户端必须在没有它们时照常工作。浏览器客户端用 `WHOAMI` 回答的 id 匹配对应行，在 HUD 显示名字、金币、木材与收入速率；还没有这一行时显示破折号。它把每个敌对行的 `anchor` 读进顶部敌方行和小地图边缘箭头，畸形对直接忽略。
 - 默认 80×80 窗口的 JSON 约 50 KB（不含路径叠加），最大 128×128 窗口约 130 KB；每个移动中的单位最多增加 64 个瓦片对加一个目标点（约 0.7 KB）。读取窗口也会把引擎焦点移到窗口中心（同一把锁内），让区块流式加载只保留相机附近的区块。
 - 没有世界在运行时——`--world off`，或 host 还没启动——路由回 `503 Service Unavailable`，短文本 `the world is not running`；它不会掉进静态路由的 SPA 回退。
 - `--world` 默认 `on`，`--seed` 默认 `1`，`--chunks` 默认 `4096`，`--http-port 0` 关闭整个浏览器端点，快照与插件资源都不存在。
-- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `storage` / `inbound` 画仓库面板的单仓库表头（容量、已用/空闲槽位与在途调拨数），用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
+- 快照**不改变本文的任何命令、回答、帧规则或版本号**。客户端在画面可见时每 500ms 轮询一次，在 HUD 里显示 `server` 或 `demo` 以及 tick；请求失败时保留确定性的占位地图。Vite dev proxy 把 `/world` 转发到 Java 服务器。仓库里的 `web-client/` 把世界当成无界的，并用 `w` / `h` / `progress` / `queue` / `queueTicks` / `queueItems` 显示尺寸 HUD、建造进度条、`生产中 1/3` 标记（旧快照为 `生产中 ×N`）、需求图标和选中面板里的逐项队列，用 `contents` 画选中载货单位的库存标签，用 `storage` / `inbound` 画仓库面板的单仓库表头（容量、已用/空闲槽位与在途调拨数），用 `task` 显示工程师任务行，用 `pop` 播放 600 ms 搬运动画，用 `players.goldPerMinute` / `players.woodPerMinute` 显示 `(+30/分)` 后缀，用建筑行的 `trains` 与顶层的 `buildable` 数组渲染内容驱动的 TRAIN / BUILD 菜单，用 `builder` 判定 BUILD 菜单的能力，用 `upgrade` 显示**升级**入口，用 `repair` / `reclaim` 显示**修理 / 回收**入口，用 `path` / `target` 画**选中己方单位**的虚线路径（顶部 `路径` 开关，默认开，本次会话内记住）。`Shift`+右键给当前选择追加一个待定路径点（用小叉和同款虚线显示），不带 Shift 的右键把整条路线作为一行 `ORDER MOVE` 提交，`Esc` 清除待定点；敌人永远不画路线。完全不读这些新字段的旧客户端仍然能处理同一份文档。
 
 ## 版本兼容
 

@@ -11,4 +11,9 @@ declare module "node:fs" {
    * plugin's manifest relative to `import.meta.url`.
    */
   export function readFileSync(path: string | URL, encoding: "utf8"): string;
+  /**
+   * Reads a file's raw bytes. The runtime answers a `Buffer`, which extends `Uint8Array`; the check
+   * only uses it for the PNG signature bytes of the classic plugin's material files.
+   */
+  export function readFileSync(path: string | URL): Uint8Array;
 }

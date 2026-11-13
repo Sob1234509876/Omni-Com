@@ -22,8 +22,8 @@
  * the ground rings and minimap dots (`ownershipColor`).
  */
 
-import { BUILDING_PATHS, trainableUnitsForBuilding } from "../commands.ts";
-import { isEngineerKind } from "./selection.ts";
+import { t } from "../i18n.ts";
+import { isBuilderUnit } from "./selection.ts";
 import { progressBarRatio } from "./status.ts";
 import {
   isBuildingEntityKind,
@@ -34,19 +34,138 @@ import {
   ownershipOf,
   type EntityView,
   type Ownership,
+  type PlayerView,
 } from "./view.ts";
 
 /** How many selection chips fit in the strip before the rest collapse into a `+N` chip. */
 export const SELECTION_CHIP_LIMIT = 12;
 
-/** The wire action behind the command bar's stop button. */
-export const STOP_ACTION_LABEL = "停止";
+/**
+ * The BUILD menu an older server (or the demo world) falls back to.
+ *
+ * The snapshot's top-level `buildable` array is the catalogue now; this list is only the legacy shape
+ * the classic plugin shipped, kept so the demo world still offers the five sites the engineer can
+ * place. A server that sends `buildable` wins over this fallback, whatever it contains.
+ */
+export const FALLBACK_BUILD_PATHS: readonly string[] = [
+  "building.armory.t1",
+  "building.mine.t1",
+  "building.lumbercamp.t1",
+  "building.warehouse",
+  "building.turret.t1",
+];
 
-/** The wire action behind the command bar's attack-move button. */
-export const ATTACK_MOVE_ACTION_LABEL = "攻击移动";
+/**
+ * The TRAIN menu a producer row without a `trains` field falls back to.
+ *
+ * The building row's `trains` array is the menu now; this list is the classic armory's recipes in the
+ * historical training order, kept so a served armory that predates the field still offers the whole
+ * melee ladder plus the engineer. Non-producer kinds never fall back to it.
+ */
+export const FALLBACK_TRAIN_PATHS: readonly string[] = [
+  "unit.melee.t1",
+  "unit.melee.t2",
+  "unit.melee.t3",
+  "unit.melee.t4",
+  "unit.melee.t5",
+  "unit.engineer",
+];
+
+/** Whether a building kind is an armory-style producer under the classic fallback rule. */
+function classicProducerKind(kind: string | undefined): boolean {
+  return kind !== undefined && kindName(kind).startsWith("building.armory.");
+}
+
+/**
+ * The TRAIN paths of one selected building: its served `trains` rows, else the classic fallback.
+ *
+ * A row that carries the field is the server's truth — an empty array means "trains nothing" and is
+ * honoured as exactly that. A row without the field is an older server: armory-style kinds fall back
+ * to the classic melee ladder, every other kind (mine, lumber camp, warehouse, an unknown plugin
+ * building) trains nothing, so a building never paints a TRAIN section it cannot honour.
+ */
+export function trainPathsFor(building: EntityView | undefined): readonly string[] {
+  const trains = building?.trains;
+  if (trains !== undefined) {
+    return trains.map((train) => train.path);
+  }
+  return classicProducerKind(building?.kind) ? FALLBACK_TRAIN_PATHS : [];
+}
+
+/** One entry of a building's TRAIN menu, ready for a button. */
+export interface TrainMenuEntry {
+  /** Content path the `TRAIN <buildingId> <unitPath>` line carries. */
+  readonly path: string;
+  /** Server display name, present only on a served `trains` entry. */
+  readonly name?: string;
+  /** Input cost, present only on a served `trains` entry. */
+  readonly gold?: number;
+  /** Required building level, present only on a served `trains` entry. */
+  readonly level?: number;
+  /** Whether the local player's gold covers the cost; `true` for a fallback entry with no cost. */
+  readonly affordable: boolean;
+  /** Full button label: `训练普通 · 金20`, or the display name of a fallback path. */
+  readonly label: string;
+  /** Tooltip: the wire line when affordable, the missing amount when not. */
+  readonly title: string;
+}
+
+/**
+ * The TRAIN menu of one selected building, one entry per recipe the row offers.
+ *
+ * A served `trains` row is rendered verbatim (`训练<name> · 金<n>`), and affordability is the client's
+ * own comparison against the local player's gold; a missing player row counts as not affordable, which
+ * shows the entry disabled instead of hiding it. The classic fallback (an armory row without the
+ * field) keeps the historical bare-path buttons with no cost gate.
+ */
+export function trainMenu(
+  building: EntityView | undefined,
+  player: PlayerView | undefined,
+  labelForPath: (path: string) => string = (path: string): string => path,
+): TrainMenuEntry[] {
+  const trains = building?.trains;
+  if (trains !== undefined) {
+    return trains.map((train): TrainMenuEntry => {
+      const affordable =
+        player !== undefined && Number.isFinite(player.gold) && player.gold >= train.gold;
+      return {
+        path: train.path,
+        name: train.name,
+        gold: train.gold,
+        level: train.level,
+        affordable,
+        label: t("train.menuLabel", { name: train.name, gold: train.gold }),
+        title: affordable
+          ? `${t("train.levelPrefix", { level: train.level })}TRAIN <建筑> ${train.path}`
+          : t("train.affordFail", { name: train.name, gold: train.gold }),
+      };
+    });
+  }
+  if (!classicProducerKind(building?.kind)) {
+    return [];
+  }
+  return FALLBACK_TRAIN_PATHS.map((path): TrainMenuEntry => ({
+    path,
+    affordable: true,
+    label: labelForPath(path),
+    title: `TRAIN <建筑> ${path}`,
+  }));
+}
+
+/** The wire action behind the command bar's stop button (`停止` / `Stop`). */
+export function stopActionLabel(): string {
+  return t("action.stop");
+}
+
+/** The wire action behind the command bar's attack-move button (`攻击移动` / `Attack-move`). */
+export function attackMoveActionLabel(): string {
+  return t("action.attackMove");
+}
 
 /** The one hint line shown when nothing is selected. */
-export const EMPTY_SELECTION_HINT = "未选中任何单位 · 左键点选、拖动框选，或按 O 选中工兵";
+export function emptySelectionHint(): string {
+  return t("hint.empty");
+}
 
 /** How a selection is classified for the context-sensitive command bar. */
 export type CommandSelectionKind =
@@ -108,21 +227,20 @@ export interface CommandBarModel {
 export interface CommandBarOptions {
   /** Manifest display name for a content path; raw path when omitted. */
   readonly labelForPath?: (path: string) => string;
-  readonly buildingPaths?: readonly string[];
   /**
-   * Unit paths one building kind may train.
+   * Buildable content paths, from the snapshot's top-level `buildable` array.
    *
-   * Defaults to the classic catalogue in `commands.ts`. A test can inject a fixture, and the page keeps
-   * one rule: a mine, lumber camp or warehouse trains nothing, while an armory trains the melee line.
+   * The page passes `world.buildable ?? undefined`-shaped input here; when it is omitted (an older
+   * server, the demo world, a short check fixture) the classic five-entry fallback is the catalogue.
    */
-  readonly unitsForBuilding?: (kind: string) => readonly string[];
+  readonly buildingPaths?: readonly string[];
 }
 
 /** The two unit actions, in the order the command bar renders them. */
 function unitActions(): CommandAction[] {
   return [
-    { kind: "stop", zone: "bar", label: STOP_ACTION_LABEL },
-    { kind: "attack-move", zone: "bar", label: ATTACK_MOVE_ACTION_LABEL },
+    { kind: "stop", zone: "bar", label: stopActionLabel() },
+    { kind: "attack-move", zone: "bar", label: attackMoveActionLabel() },
   ];
 }
 
@@ -167,8 +285,7 @@ export function commandBarModel(
   options: CommandBarOptions = {},
 ): CommandBarModel {
   const labelForPath = options.labelForPath ?? ((path: string): string => path);
-  const unitsForBuilding = options.unitsForBuilding ?? trainableUnitsForBuilding;
-  const buildingPaths = options.buildingPaths ?? BUILDING_PATHS;
+  const buildingPaths = options.buildingPaths ?? FALLBACK_BUILD_PATHS;
 
   const selectedCount = selection.length;
   const loggedIn = myPlayerId !== null && Number.isFinite(myPlayerId) && myPlayerId > 0;
@@ -192,7 +309,7 @@ export function commandBarModel(
     ownership: decision.kind,
     ownershipTag: decision.tag,
   };
-  const engineerCount = ownUnits.filter((entity) => isEngineerKind(entity.kind)).length;
+  const engineerCount = ownUnits.filter(isBuilderUnit).length;
   // One or several engineers selected on their own: every one of them is a builder, so the panel offers
   // the four BUILD entries. A mixed unit group (an engineer plus a soldier) deliberately does not,
   // because BUILD needs one builder and silently picking one would be misleading.
@@ -205,7 +322,7 @@ export function commandBarModel(
       kind: "none",
       mixed: false,
       actions: [],
-      hint: EMPTY_SELECTION_HINT,
+      hint: emptySelectionHint(),
     };
   }
 
@@ -215,7 +332,7 @@ export function commandBarModel(
       kind: "other",
       mixed: false,
       actions: [],
-      hint: "你尚未登录（或玩家 id 未知）：请先连接并 LOGIN，再看自己的单位能否下达命令",
+      hint: t("hint.loggedOut"),
     };
   }
 
@@ -225,9 +342,7 @@ export function commandBarModel(
       kind: "mixed",
       mixed: true,
       actions: unitActions(),
-      hint:
-        `已选 ${unitCount} 个单位与 ${buildingCount} 个建筑：混合选择只提供单位动作` +
-        "（停止 / 攻击移动）；TRAIN 与 BUILD 需要单独选中一个建筑或工兵",
+      hint: t("hint.mixed", { units: unitCount, buildings: buildingCount }),
     };
   }
 
@@ -237,9 +352,7 @@ export function commandBarModel(
       kind: "engineer",
       mixed: false,
       actions: [...unitActions(), ...pathActions("build", buildingPaths, labelForPath)],
-      hint:
-        `已选 ${engineerCount} 个工兵：停止 / 攻击移动；右下角 ${buildingPaths.length} 个 BUILD 条目，` +
-        "点条目后左键放置；多个工兵会对同一工地各发一条 BUILD（第一个放置，其余加入）",
+      hint: t("hint.engineer", { count: engineerCount, catalogue: buildingPaths.length }),
     };
   }
 
@@ -249,7 +362,7 @@ export function commandBarModel(
       kind: "units",
       mixed: false,
       actions: unitActions(),
-      hint: `已选 ${unitCount} 个单位：停止 / 攻击移动；右键直接移动或攻击`,
+      hint: t("hint.units", { count: unitCount }),
     };
   }
 
@@ -258,7 +371,7 @@ export function commandBarModel(
     const oneKind = first !== undefined
       && ownBuildings.every((building) => kindName(building.kind) === kindName(first.kind));
     if (oneKind && first !== undefined) {
-      const trainable = unitsForBuilding(first.kind);
+      const trainable = trainPathsFor(first);
       return {
         ...base,
         kind: "building",
@@ -266,10 +379,10 @@ export function commandBarModel(
         actions: pathActions("train", trainable, labelForPath),
         hint:
           trainable.length === 0
-            ? "选中建筑：这个建筑不训练单位（矿井 / 伐木场 / 仓库只产出资源）"
+            ? t("hint.buildingNone")
             : buildingCount === 1
-              ? "选中建筑：右下角是 TRAIN 条目与生产队列，一次只排一个单位"
-              : `已选 ${buildingCount} 座同类型建筑：点一次 TRAIN 会向每座各排一个，它们并行生产`,
+              ? t("hint.buildingSingle")
+              : t("hint.buildingMany", { count: buildingCount }),
       };
     }
   }
@@ -280,7 +393,7 @@ export function commandBarModel(
       kind: "other",
       mixed: false,
       actions: [],
-      hint: "选中的实体没有归属或属于中立方，也没有可下达的单位动作",
+      hint: t("hint.neutral"),
     };
   }
   if (decision.kind === "own") {
@@ -289,7 +402,7 @@ export function commandBarModel(
       kind: "other",
       mixed: false,
       actions: [],
-      hint: "已选多座不同类型的建筑：一次只能向同类型的一组建筑 TRAIN；请只选同一种建筑，或单独选一座",
+      hint: t("hint.mixedBuildings"),
     };
   }
   return {
@@ -297,7 +410,7 @@ export function commandBarModel(
     kind: "other",
     mixed: false,
     actions: [],
-    hint: "选中的实体不属于你，也没有可下达的单位动作",
+    hint: t("hint.otherSelected"),
   };
 }
 

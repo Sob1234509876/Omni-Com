@@ -46,7 +46,9 @@ import java.util.Objects;
  *
  * <p><strong>A hit</strong> deals {@code max(1, damage - armour)} to the victim and publishes
  * {@link Events.DamageDealt}; the event carries the amount actually subtracted from the victim's health,
- * which is the computed damage capped by the health that was left. A victim that reaches zero health gets
+ * which is the computed damage capped by the health that was left. A ranged shot (attack range of two
+ * tiles or more) publishes {@link Events.ProjectileFired} just before that, so a client can draw the
+ * projectile flying; melee reach under two tiles stays silent. A victim that reaches zero health gets
  * an {@link Events.EntityKilled} event and is removed through {@link World#destroy}, so the usual
  * {@link Events.EntityDestroyed} and the end of tick flush follow. The id of the dead unit or building is
  * then cleared from every unit's target, so no survivor is left aiming at a removed entity.
@@ -302,12 +304,24 @@ public final class CombatSystem implements SimulationSystem {
      * Applies one hit from {@code attacker} (unit or building) to {@code victim} (unit or building),
      * publishes the damage and, when the victim dies, the kill and the removal.
      *
-     * <p>The damage is passed in because the caller already resolved it against the victim's armour:
+     * <p>An attacker whose own attack range reaches at least two tiles first publishes
+     * {@link Events.ProjectileFired} for the client's projectile animation; melee reach stays silent.
+     * The damage is passed in because the caller already resolved it against the victim's armour:
      * a unit uses {@link CombatStats#damageAgainst(Entity)} and a building uses the same helper on its
      * type's damage, so both share one arithmetic path and one floor of one.
      */
     private void attack(World world, Tick tick, Entity attacker, Natural damage, int cooldown,
             Entity victim) {
+        // Presentation only: a shot with at least two tiles of reach announces itself before the hit
+        // lands, so a client can draw the projectile flying from the attacker to where the victim
+        // stands this tick. The damage below stays instant and unchanged, and a melee reach under
+        // two tiles publishes nothing, because there is no shot in the air to draw.
+        float shotRange = attacker instanceof Unit unit ? unit.type().attackRange()
+                : attacker instanceof Building building ? building.type().attackRange() : 0f;
+        if (shotRange >= 2f) {
+            world.events().publish(new Events.ProjectileFired(attacker, attacker.position(),
+                    victim.position(), tick.number()));
+        }
         Natural dealt = victim.health().damage(damage);
         // Content with a zero cooldown still has to spend one tick between hits, otherwise the cooldown
         // would be meaningless and the hit order would depend on the entity order in the lists.

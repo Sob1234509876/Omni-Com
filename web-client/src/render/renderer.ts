@@ -6,17 +6,20 @@
  * pixels. It never assumes the two sizes are equal.
  *
  * Draw order is terrain, tile grid (fallback only), the hover tile or the build-placement ghost, ground
- * shadows, enemy unit base tints, ownership rings, entities sorted by y so lower entities overlap higher
+ * shadows, the pulsing white ring of the camera-followed unit (跟随 lock), enemy unit base tints,
+ * ownership rings, entities sorted by y so lower entities overlap higher
  * ones, own-unit white outlines, their health bars and the greyscale construction bar / `生产中 ×N`
- * marker above buildings, the brief achromatic selection flash halo (drawn for a swept entity even before
+ * marker above buildings, the frame's in-flight projectiles (a short grey trail plus a small triangular
+ * head per shot, above every sprite), the thin attack-range circle of every selected entity that
+ * reports one, the brief achromatic selection flash halo (drawn for a swept entity even before
  * the release selects it, and with a second ring for a deliberate click), one gold selection ring per
  * selected entity, the personal marker squares with their numbers, the marquee rectangle, and finally
  * the order crosshair at the pointer. Ownership rings are thinner than selection rings
  * and are drawn first, so every gold selection ring always stays on top. The enemy base tint is the one
- * extra hostile mark, and the white own-unit outline is deliberately achromatic; both live on the
- * canvas, while the surrounding chrome stays greyscale. The flash halo is drawn over the sprite but
- * under the gold ring, so the feedback never hides the selection colour. The construction chrome sits
- * above the roof, never over the sprite.
+ * extra hostile mark, and the white own-unit outline and the white follow ring are deliberately
+ * achromatic; all three live on the canvas, while the surrounding chrome stays greyscale. The flash
+ * halo is drawn over the sprite but under the gold ring, so the feedback never hides the selection
+ * colour. The construction chrome sits above the roof, never over the sprite.
  *
  * The placement ghost is the one deliberate exception to the greyscale chrome rule: it is canvas
  * content, like the ownership rings, so each footprint tile is painted green, red or amber by its
@@ -56,6 +59,7 @@ import {
   drawCrosshair,
   drawEnemyBaseTint,
   drawFlashHalo,
+  drawFollowRing,
   drawGroundShadow,
   drawHealthBar,
   drawOwnUnitOutline,
@@ -71,6 +75,12 @@ import {
 } from "./fallback";
 import { FLASH_COLOR, FLASH_MS, flashIntensity, flashRingCount } from "./flash";
 import { FONT_STACK } from "./font";
+import {
+  FOLLOW_RING_COLOR,
+  followPulse,
+  followRingAlpha,
+  followRingScale,
+} from "./follow.ts";
 import { queueMarkerText, stockTagVisible, unitStockTagLabel } from "./status";
 import {
   popAlpha,
@@ -108,6 +118,20 @@ import {
   pendingRoutePoints,
   type PathPoint,
 } from "./paths";
+import {
+  projectileDrawState,
+  projectileHeadPoints,
+  projectileTrail,
+  type ActiveProjectile,
+  type ProjectileDrawState,
+} from "./projectile";
+import {
+  SHADOW_FADE_STEP,
+  approachShadowAlpha,
+  chunkKey,
+  chunkOfTile,
+  shadowTargetAlpha,
+} from "./shadow";
 
 const BACKGROUND_COLOR = "#0b1016";
 
@@ -262,6 +286,34 @@ export interface RenderOptions {
    * the settings page), so the renderer stays a pure function of its options.
    */
   readonly inventoryRadiusTiles: number;
+  /**
+   * The streamed-chunk set of the drawn dimension, keyed `"<chunkX>,<chunkY>"`, from the snapshot's
+   * `loadedChunks`. A visible tile whose chunk is absent sits under the translucent shadow overlay;
+   * `undefined` (older server, demo world) draws no shadow at all.
+   */
+  readonly loadedChunks?: ReadonlySet<string>;
+  /**
+   * How much of the distance to its target one frame of the shadow dispersal covers. The default is
+   * {@link SHADOW_FADE_STEP}; the offline check passes a `1` to snap the interpolation and assert the
+   * targets directly.
+   */
+  readonly shadowStep?: number;
+  /**
+   * In-flight projectiles of this frame, from the snapshot's optional top-level `projectiles` array.
+   *
+   * The flight math (registration, lerp, clamping) lives in `projectile.ts`; this pass only draws each
+   * shot above the entities: a short trail line backward along the flight angle plus a small triangular
+   * head, in the path overlay's achromatic style. `undefined` (older server, demo world) draws nothing.
+   */
+  readonly projectiles?: readonly ActiveProjectile[];
+  /**
+   * The entity id the camera follow lock (跟随) is holding, or null when the view is free.
+   *
+   * The followed unit gets the pulsing white ground ring (see `follow.ts`), drawn under the ownership
+   * rings and sprites so the operator can see which unit owns the camera lock. A unit outside the
+   * loaded window is not drawn, exactly like every other entity.
+   */
+  readonly followedId?: number | null;
 }
 
 interface Size {
@@ -446,9 +498,109 @@ function drawPathOverlays(
   context.restore();
 }
 
+/**
+ * Draws the frame's in-flight projectiles above the entities.
+ *
+ * Each shot is a short trail line backward along its flight angle plus a small triangular head, both in
+ * the path overlay's achromatic grey so the chrome stays greyscale. All geometry (position, angle,
+ * trail, head vertices) comes from `projectile.ts`; this pass only projects world tiles onto the screen,
+ * skips a shot whose trail bounding box is entirely off-canvas and strokes what is left.
+ */
+function drawProjectiles(
+  context: CanvasRenderingContext2D,
+  camera: Camera,
+  tileSize: number,
+  devicePixelRatio: number,
+  width: number,
+  height: number,
+  projectiles: readonly ProjectileDrawState[],
+): void {
+  const tileOnScreen = camera.effectiveTileSize;
+  const margin = Math.max(24, tileOnScreen * 2);
+  const bounds = {
+    x: -margin,
+    y: -margin,
+    width: width + margin * 2,
+    height: height + margin * 2,
+  };
+  const lineWidth = Math.max(1, 1.25 / devicePixelRatio);
+  context.save();
+  context.strokeStyle = PATH_COLOR;
+  context.fillStyle = PATH_COLOR;
+  context.lineWidth = lineWidth;
+  for (const state of projectiles) {
+    const trail = projectileTrail(state);
+    const from = camera.worldToScreen(trail.fromX * tileSize, trail.fromY * tileSize);
+    const to = camera.worldToScreen(trail.toX * tileSize, trail.toY * tileSize);
+    if (!pathSegmentVisible(from, to, bounds)) {
+      continue;
+    }
+    context.beginPath();
+    context.moveTo(from.x, from.y);
+    context.lineTo(to.x, to.y);
+    context.stroke();
+    context.beginPath();
+    const head = projectileHeadPoints(state);
+    for (let index = 0; index < head.length; index += 1) {
+      const point = head[index];
+      if (point === undefined) {
+        continue;
+      }
+      const screen = camera.worldToScreen(point[0] * tileSize, point[1] * tileSize);
+      if (index === 0) {
+        context.moveTo(screen.x, screen.y);
+      } else {
+        context.lineTo(screen.x, screen.y);
+      }
+    }
+    context.closePath();
+    context.fill();
+  }
+  context.restore();
+}
+
+/**
+ * Draws the attack-range circle of every selected entity that reports a range above one tile.
+ *
+ * The radius is the entity's `attackRange` in world tiles, scaled the same way the entity positions
+ * are (`tileSize * zoom` per tile), and the centre is the entity's already-projected ground point. The
+ * circle is drawn in the path overlay's subtle achromatic style so it reads as measurement chrome, and
+ * only a selected entity ever shows it: a deselected turret or unit draws nothing.
+ */
+function drawAttackRangeCircles(
+  context: CanvasRenderingContext2D,
+  camera: Camera,
+  tileSize: number,
+  devicePixelRatio: number,
+  prepared: readonly PreparedEntity[],
+  selectedIds: ReadonlySet<number>,
+): void {
+  const lineWidth = Math.max(1, 1.25 / devicePixelRatio);
+  context.save();
+  context.strokeStyle = PATH_COLOR;
+  context.lineWidth = lineWidth;
+  for (const item of prepared) {
+    const selected = item.entity.selected === true || selectedIds.has(item.entity.id);
+    if (!selected) {
+      continue;
+    }
+    const range = item.entity.attackRange;
+    if (range === undefined || !Number.isFinite(range) || range <= 1) {
+      continue;
+    }
+    const radius = range * tileSize * camera.zoom;
+    context.beginPath();
+    context.arc(item.screenX, item.screenY, radius, 0, Math.PI * 2);
+    context.stroke();
+  }
+  context.restore();
+}
+
 export class WorldRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
+  /** Per-chunk shade of the shadow overlay; see the draw pass in {@link render}. */
+  private readonly shadowAlphas = new Map<string, number>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -528,6 +680,36 @@ export class WorldRenderer {
 
     if (atlas === null) {
       drawTileGrid(context, camera, range, size.devicePixelRatio);
+    }
+
+    // The unloaded-chunk shadow: one translucent rectangle per visible tile whose chunk the streamer
+    // does not hold yet, drawn after the terrain so the world stays readable under it but before every
+    // overlay and sprite, so paths, rings and entities stay on top. Each chunk keeps its own alpha in
+    // the renderer's map and moves toward its target (invisible over a loaded chunk, the shadow alpha
+    // over an unloaded one) frame by frame, which is the dispersal: as the camera keeps moving, the
+    // chunks it crosses load and their shade fades away instead of snapping off.
+    if (options.loadedChunks !== undefined) {
+      const step = options.shadowStep ?? SHADOW_FADE_STEP;
+      if (this.shadowAlphas.size > 4096) {
+        this.shadowAlphas.clear();
+      }
+      for (let tileY = range.minY; tileY <= range.maxY; tileY += 1) {
+        for (let tileX = range.minX; tileX <= range.maxX; tileX += 1) {
+          const chunk = chunkOfTile(tileX, tileY);
+          const key = chunkKey(chunk.x, chunk.y);
+          const target = shadowTargetAlpha(options.loadedChunks, tileX, tileY);
+          const current = approachShadowAlpha(this.shadowAlphas.get(key) ?? target, target, step);
+          if (current > 0.005) {
+            this.shadowAlphas.set(key, current);
+            const screenX = origin.x + (tileX - range.minX) * tileOnScreen;
+            const screenY = origin.y + (tileY - range.minY) * tileOnScreen;
+            context.fillStyle = `rgba(4, 8, 12, ${current.toFixed(3)})`;
+            context.fillRect(screenX, screenY, tileOnScreen + 0.5, tileOnScreen + 0.5);
+          } else {
+            this.shadowAlphas.set(key, 0);
+          }
+        }
+      }
     }
 
     // Route overlay: above the terrain and the grid, below every shadow, ring and sprite. It is the same
@@ -622,6 +804,25 @@ export class WorldRenderer {
         tileOnScreen,
         isBuildingEntityKind(item.entity.kind),
       );
+    }
+    // Follow-lock pass: the pulsing white ring on the ground under the unit the camera is locked to,
+    // below every ownership ring and sprite so the other marks stay on top of it. The pulse phase
+    // comes from the shared frame clock, so the ring breathes even while the world is idle.
+    if (options.followedId != null) {
+      const followed = prepared.find((item) => item.entity.id === options.followedId);
+      if (followed !== undefined) {
+        const pulse = followPulse(options.nowMs);
+        drawFollowRing(
+          context,
+          followed.screenX,
+          followed.screenY,
+          tileOnScreen,
+          isBuildingEntityKind(followed.entity.kind),
+          FOLLOW_RING_COLOR,
+          followRingScale(pulse),
+          followRingAlpha(pulse),
+        );
+      }
     }
     // Ownership pass: an enemy unit's red base tint first, then one thin ring per entity, so the gold
     // selection ring can stay on top. The base tint is the extra mark that survives a crowded fight;
@@ -747,6 +948,33 @@ export class WorldRenderer {
           }
         }
       }
+    }
+
+    // Attack-range chrome: one thin circle per selected entity that reports an `attackRange` above one
+    // tile, drawn after the entity pass so it sits over the sprite's ground chrome. It shares the path
+    // overlay's subtle grey, and Canvas clips whatever falls outside the frame.
+    drawAttackRangeCircles(
+      context,
+      camera,
+      tileSize,
+      size.devicePixelRatio,
+      prepared,
+      selectedIds,
+    );
+
+    // Projectile pass: the frame's flying shots, drawn above every entity sprite but below the
+    // selection chrome. The flight math lives in `projectile.ts`; here each active shot becomes its
+    // draw state (position + angle) and is painted as a grey trail plus a small triangular head.
+    if (options.projectiles !== undefined && options.projectiles.length > 0) {
+      drawProjectiles(
+        context,
+        camera,
+        tileSize,
+        size.devicePixelRatio,
+        size.width,
+        size.height,
+        projectileDrawState(options.projectiles),
+      );
     }
 
     // Haul pop pass: one small achromatic mark per active pop, drawn above the sprite and its health

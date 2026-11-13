@@ -18,6 +18,7 @@
  *   ground is deliberately no longer a camera pan, because that gesture is the marquee;
  * - Ctrl+1..9 assigns the selection, Shift+1..9 adds to it, and 1..9 recalls it. The pure model is
  *   `src/controlGroups.ts`; this controller only maps the key and reports the mode.
+ * - Ctrl held with a pan key pans at three times the normal speed; a plain Alt or Meta chord is ignored.
  */
 
 import type { Camera, TileCoord, TileRange } from "./camera";
@@ -30,7 +31,16 @@ const DRAG_THRESHOLD_PX = 4;
 const DOUBLE_CLICK_MS = 350;
 /** How far a double click's second press may drift from the first, in CSS pixels. */
 const DOUBLE_CLICK_SLOP_PX = 6;
-const KEY_PAN_SPEED_PX_PER_SECOND = 560;
+/** Baseline keyboard pan speed, in CSS pixels per second. */
+export const KEY_PAN_SPEED_PX_PER_SECOND = 560;
+/**
+ * How much faster a held Ctrl makes the keyboard pan.
+ *
+ * Ctrl+digit keeps its control-group meaning, so a bare Ctrl held together with a pan key is free to
+ * mean "pan faster": W with Ctrl covers three times the ground per second. The multiplier applies only
+ * while Ctrl is actually held, never to a plain Alt or Meta chord.
+ */
+export const CTRL_PAN_SPEED_MULTIPLIER = 3;
 const ZOOM_STEP = 1.18;
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const SPACE_KEY = " ";
@@ -175,6 +185,8 @@ export class InputController {
   private lastY = 0;
   private pointerX = 0;
   private pointerY = 0;
+  /** Whether Ctrl is currently held; a held pan key then pans at the multiplied speed. */
+  private ctrlHeld = false;
 
   constructor(canvas: HTMLCanvasElement, camera: Camera, hooks: InputHooks) {
     this.canvas = canvas;
@@ -233,7 +245,8 @@ export class InputController {
     }
     let dx = 0;
     let dy = 0;
-    const step = KEY_PAN_SPEED_PX_PER_SECOND * deltaSeconds;
+    const step =
+      KEY_PAN_SPEED_PX_PER_SECOND * (this.ctrlHeld ? CTRL_PAN_SPEED_MULTIPLIER : 1) * deltaSeconds;
     if (this.isPressed("a") || this.isPressed("arrowleft")) {
       dx -= step;
     }
@@ -650,10 +663,21 @@ export class InputController {
       }
       return;
     }
-    if (event.ctrlKey || event.metaKey || event.altKey) {
+    const key = event.key.toLowerCase();
+    if (event.ctrlKey && !event.metaKey && !event.altKey) {
+      // Ctrl+digit (assign) was handled above, so this branch is a bare Ctrl chord. Holding Ctrl with
+      // a pan key is the fast-pan shortcut: the key registers like a plain pan key and `update` pans it
+      // at the multiplied speed. Every other Ctrl chord keeps the historical early return.
+      this.ctrlHeld = true;
+      if (PAN_KEYS.has(key)) {
+        event.preventDefault();
+        this.pressedKeys.add(key);
+      }
       return;
     }
-    const key = event.key.toLowerCase();
+    if (event.metaKey || event.altKey) {
+      return;
+    }
     if (key === "escape") {
       event.preventDefault();
       if (this.hooks.onCancel?.() === true) {
@@ -732,9 +756,14 @@ export class InputController {
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     this.pressedKeys.delete(event.key.toLowerCase());
+    // Releasing Ctrl drops the speed back immediately; a pan key still held keeps panning normally.
+    if (event.key === "Control") {
+      this.ctrlHeld = false;
+    }
   };
 
   private readonly handleBlur = (): void => {
     this.pressedKeys.clear();
+    this.ctrlHeld = false;
   };
 }

@@ -11,16 +11,19 @@ import java.util.Map;
 /**
  * One plugin's {@code assets/manifest.json}, read far enough to rewrite it for the browser.
  *
- * <p>The document is the same schema the web client already parses for the old local {@code atlas.json},
- * with the one rule the browser needs on top of it: {@code image} names a file inside the plugin's own
- * {@code assets/} directory and is turned into a URL by the server, so the manifest itself never has to
- * know where the server is listening. Nothing else in the document is interpreted here.
+ * <p>The document stores <strong>one PNG per material</strong>: every {@code tiles} entry names its own
+ * image file and every {@code entities} entry names one vertical-strip image with a frame count, all as
+ * paths relative to the plugin's {@code assets/} directory. The server never resolves those paths into
+ * URLs itself - it hands the browser a {@code baseUrl} for the plugin's asset directory instead, so the
+ * manifest keeps relative paths and stays portable. Nothing else in the document is interpreted here.
  *
- * <p><strong>Why the frames are not parsed.</strong> {@code tiles} and {@code entities} are validated by the
- * client that draws them, deeply and defensively, and a second half-parser on the server would be a second
+ * <p><strong>Why the frame tables are not parsed.</strong> {@code tiles} and {@code entities} are validated by
+ * the client that draws them, deeply and defensively, and a second half-parser on the server would be a second
  * place for the two schemas to drift apart. The server therefore checks the skeleton - an object, a usable
- * image name, an object for each of the two frame tables - and forwards those two tables byte for byte.
- * A manifest that cannot even be scanned is skipped with a log line instead of being guessed at.
+ * tile pixel size, an object for each of the two tables - and forwards those two tables byte for byte.
+ * A manifest that cannot even be scanned is skipped with a log line instead of being guessed at. An image
+ * path that escapes {@code assets/} is stopped later anyway, by the route's own path normalisation, which
+ * turns it into a 404 instead of a file.
  *
  * <p><strong>Why a hand written scanner.</strong> The module builds offline with zero third-party
  * dependencies, so there is no JSON library to call. The scanner only has to understand the shape of a JSON
@@ -39,13 +42,11 @@ final class PluginManifest {
     /** An empty frame table, used when a manifest omits {@code tiles} or {@code entities}. */
     private static final String EMPTY_TABLE = "{}";
 
-    private final String image;
     private final String tilePixels;
     private final String tiles;
     private final String entities;
 
-    private PluginManifest(String image, String tilePixels, String tiles, String entities) {
-        this.image = image;
+    private PluginManifest(String tilePixels, String tiles, String entities) {
         this.tilePixels = tilePixels;
         this.tiles = tiles;
         this.entities = entities;
@@ -55,9 +56,9 @@ final class PluginManifest {
      * Reads and checks one manifest.
      *
      * <p>UTF-8 is decoded strictly and a leading byte order mark is tolerated, because the file is usually
-     * produced by an editor on Windows. A document that is not a JSON object, has no usable {@code image},
-     * or keeps something other than an object in {@code tiles} or {@code entities} is refused: the caller
-     * skips that plugin and serves the rest, so one bad manifest costs only its own content.
+     * produced by an editor on Windows. A document that is not a JSON object, or keeps something other than
+     * an object in {@code tiles} or {@code entities}, is refused: the caller skips that plugin and serves
+     * the rest, so one bad manifest costs only its own content.
      *
      * @param bytes the exact bytes of {@code assets/manifest.json}
      * @return the parsed manifest
@@ -78,64 +79,34 @@ final class PluginManifest {
             text = text.substring(1);
         }
         Map<String, String> members = members(text);
-        String image = imageOf(members.get("image"));
         String tilePixels = members.get("tilePixels");
         if (tilePixels == null || !isNumber(tilePixels)) {
             tilePixels = DEFAULT_TILE_PIXELS;
         }
         String tiles = tableOf("tiles", members.get("tiles"));
         String entities = tableOf("entities", members.get("entities"));
-        return new PluginManifest(image, tilePixels, tiles, entities);
-    }
-
-    /** The validated file name of the plugin's atlas image, relative to its {@code assets/} directory. */
-    String image() {
-        return image;
+        return new PluginManifest(tilePixels, tiles, entities);
     }
 
     /**
      * Renders this manifest as one element of the merged array the server publishes.
      *
-     * <p>The shape is fixed: {@code plugin}, the rewritten {@code atlasUrl}, then the three fields the
-     * client needs. {@code image} is dropped on purpose - the URL already names the file, and a browser that
-     * had to resolve a bare name against the manifest URL would need to know the plugin id anyway.
+     * <p>The shape is fixed: {@code plugin}, a {@code baseUrl} that points at this plugin's asset
+     * directory, then the three fields the client needs. The image paths inside the two tables stay
+     * relative on purpose - the client joins them against {@code baseUrl} - so the manifest itself never
+     * has to know where the server is listening.
      *
      * @param pluginId the id the asset route addresses this plugin by
-     * @param atlasUrl the absolute path of the image on this server
+     * @param baseUrl  the absolute path of this plugin's asset directory, with a trailing slash
      * @return one JSON object, without a trailing comma or newline
      */
-    String toEntry(String pluginId, String atlasUrl) {
+    String toEntry(String pluginId, String baseUrl) {
         return "{\"plugin\":" + quote(pluginId)
-                + ",\"atlasUrl\":" + quote(atlasUrl)
+                + ",\"baseUrl\":" + quote(baseUrl)
                 + ",\"tilePixels\":" + tilePixels
                 + ",\"tiles\":" + tiles
                 + ",\"entities\":" + entities
                 + '}';
-    }
-
-    /** Validates the {@code image} member and returns it as a plain file name. */
-    private static String imageOf(String raw) throws InvalidManifestException {
-        if (raw == null || raw.isEmpty() || raw.charAt(0) != '"') {
-            throw new InvalidManifestException("it has no string 'image' member");
-        }
-        int[] end = new int[1];
-        String image = readString(raw, 0, end);
-        if (end[0] != raw.length()) {
-            throw new InvalidManifestException("its 'image' member is not a plain string");
-        }
-        if (image.isEmpty() || image.length() > 255) {
-            throw new InvalidManifestException("its 'image' member is not a usable file name");
-        }
-        for (int index = 0; index < image.length(); index++) {
-            char character = image.charAt(index);
-            if (character < 0x20 || character == 0x7F || "/\\:".indexOf(character) >= 0) {
-                throw new InvalidManifestException("its 'image' member must be a file name inside assets/");
-            }
-        }
-        if (image.contains("..")) {
-            throw new InvalidManifestException("its 'image' member must not contain '..'");
-        }
-        return image;
     }
 
     /** Requires an optional frame table to be an object, otherwise substituting an empty one. */

@@ -1,172 +1,16 @@
 /**
- * Pure builders for the OC/1 gameplay grammar and the small content catalogue the panel offers.
+ * Pure builders for the OC/1 gameplay grammar.
  *
  * The grammar is documented in `protocol/oc-protocol.md` and implemented by the server's command
  * dispatcher. Every builder returns exactly one line. Arguments are validated here, before a line can
  * reach the socket, so a UI bug can never send a typo such as `ORDRE MOVE` or `ORDER MOVE nope 2 3`.
- */
-
-/**
- * Building content paths the classic plugin currently ships.
  *
- * The server owns the truth: this is only the catalogue the browser panel offers. A path the served
- * world does not know is answered with `ERR unknown building`, so keep this list in step with the
- * classic content when it grows. The warehouse is the content's drop-off building and is buildable by
- * the engineer; its cost (100 gold + 40 wood) is charged by the engine, not by this panel.
- *
- * <p>Only the **t1 turret** is listed: `building.turret.t2` and `.t3` are upgrade-only tiers
- * (`.constructible(false)` in the classic content), so a direct `BUILD` of either is refused by the
- * engine. The higher tiers still appear in the selection panel through the ordinary `UPGRADE` entry.
+ * <p>This module carries **no game content**: the BUILD and TRAIN menus are the snapshot's
+ * top-level `buildable` array and the building row's `trains` array; display names come from the
+ * plugin manifest; upgrade prices come from the row's `upgrade.options`. The presentation-layer
+ * fallbacks for an older server live in `render/commandbar.ts`, and the classic artwork/coverage
+ * fixture list the offline check walks lives in the check script itself.
  */
-export const BUILDING_PATHS = [
-  "building.armory.t1",
-  "building.mine.t1",
-  "building.lumbercamp.t1",
-  "building.warehouse",
-  "building.turret.t1",
-] as const;
-
-/**
- * The gold / wood price and optional attack range of one buildable turret tier.
- *
- * <p>The classic catalogue owns the real numbers; this table only labels the build buttons and the
- * placement status, so a player sees what a turret costs before committing. It mirrors
- * `ClassicContent.TURRET_TIERS`: t1 120 gold + 20 wood (range 6), t2 260 gold + 70 wood (7.5), t3
- * 520 gold + 160 wood (9). An unknown path has no entry and the button keeps its plain path label.
- */
-export interface BuildCostView {
-  readonly gold: number;
-  readonly wood: number;
-  /** Reach in tiles, when the building attacks. */
-  readonly range?: number;
-}
-
-export const BUILDING_COSTS: ReadonlyMap<string, BuildCostView> = new Map<string, BuildCostView>([
-  ["building.turret.t1", { gold: 120, wood: 20, range: 6 }],
-  ["building.turret.t2", { gold: 260, wood: 70, range: 7.5 }],
-  ["building.turret.t3", { gold: 520, wood: 160, range: 9 }],
-]);
-
-/**
- * The label of one build-catalogue button: the content path plus the turret's cost and range.
- *
- * <p>Non-turret kinds keep their historical bare path, because their costs are already visible in the
- * command log and the panel should not grow for buildings that were not the item's subject. A turret
- * line reads for example `building.turret.t1 · 金 120 · 木 20 · 射程 6`.
- */
-export function buildButtonLabel(buildingPath: string): string {
-  const cost = BUILDING_COSTS.get(buildingPath);
-  if (cost === undefined) {
-    return buildingPath;
-  }
-  const range = cost.range === undefined ? "" : ` · 射程 ${formatRange(cost.range)}`;
-  return `${buildingPath} · 金 ${cost.gold} · 木 ${cost.wood}${range}`;
-}
-
-/** Formats a range as a whole number when it is one, otherwise with one decimal place. */
-export function formatRange(range: number): string {
-  return Number.isInteger(range) ? String(range) : range.toFixed(1);
-}
-
-/**
- * Unit content paths the classic plugin currently ships, in training-menu order.
- *
- * The server owns the truth here too. The tier four and tier five recipes need an upgraded armory; the
- * panel still offers them and lets the server answer `ERR ...` when the selected armory is too low.
- */
-export const UNIT_PATHS = [
-  "unit.melee.t1",
-  "unit.melee.t2",
-  "unit.melee.t3",
-  "unit.melee.t4",
-  "unit.melee.t5",
-  "unit.engineer",
-] as const;
-
-/**
- * Every building kind the classic catalogue ships, in upgrade-ladder order.
- *
- * <p>`BUILDING_PATHS` is what the engineer can place; this wider list also contains the upgraded tiers
- * that only appear through `UPGRADE`. The client uses it to give every kind its own content entry and to
- * prove that no two kinds share an atlas cell.
- */
-export const CLASSIC_BUILDING_KINDS = [
-  "building.armory.t1",
-  "building.armory.t2",
-  "building.mine.t1",
-  "building.mine.t2",
-  "building.mine.t3",
-  "building.lumbercamp.t1",
-  "building.lumbercamp.t2",
-  "building.lumbercamp.t3",
-  "building.turret.t1",
-  "building.turret.t2",
-  "building.turret.t3",
-  "building.warehouse",
-] as const;
-
-/** One building kind's client-side content: what it is called and what it may train. */
-export interface BuildingContent {
-  /** Content path, exactly as the server sends it. */
-  readonly path: string;
-  /**
-   * Unit paths this kind's TRAIN panel offers.
-   *
-   * Only a producer has entries. A mine, a lumber camp and a warehouse have none: showing the armory's
-   * unit list on them was the reported bug, because the panel used one global list for every building.
-   */
-  readonly trainableUnits: readonly string[];
-}
-
-/**
- * The trainable units of one classic building kind.
- *
- * <p>The armory is the only producer in this catalogue. Both tiers offer the full melee ladder and the
- * engineer; the engine's level gate refuses the two top tiers from a t1 armory, which is deliberate (the
- * panel lets the server give the readable refusal). Every other building answers an empty list, so a
- * selected mine, lumber camp or warehouse never paints a TRAIN section it cannot honour.
- */
-const NO_UNITS: readonly string[] = [];
-
-export const BUILDING_CONTENT: ReadonlyMap<string, BuildingContent> = new Map<
-  string,
-  BuildingContent
->([
-  ["building.armory.t1", { path: "building.armory.t1", trainableUnits: UNIT_PATHS }],
-  ["building.armory.t2", { path: "building.armory.t2", trainableUnits: UNIT_PATHS }],
-  ["building.mine.t1", { path: "building.mine.t1", trainableUnits: NO_UNITS }],
-  ["building.mine.t2", { path: "building.mine.t2", trainableUnits: NO_UNITS }],
-  ["building.mine.t3", { path: "building.mine.t3", trainableUnits: NO_UNITS }],
-  ["building.lumbercamp.t1", { path: "building.lumbercamp.t1", trainableUnits: NO_UNITS }],
-  ["building.lumbercamp.t2", { path: "building.lumbercamp.t2", trainableUnits: NO_UNITS }],
-  ["building.lumbercamp.t3", { path: "building.lumbercamp.t3", trainableUnits: NO_UNITS }],
-  ["building.turret.t1", { path: "building.turret.t1", trainableUnits: NO_UNITS }],
-  ["building.turret.t2", { path: "building.turret.t2", trainableUnits: NO_UNITS }],
-  ["building.turret.t3", { path: "building.turret.t3", trainableUnits: NO_UNITS }],
-  ["building.warehouse", { path: "building.warehouse", trainableUnits: NO_UNITS }],
-]);
-
-/** Strips a namespace such as `oc:` from a content path; the atlas resolves names the same way. */
-function bareContentPath(path: string): string {
-  const separator = path.lastIndexOf(":");
-  return separator >= 0 ? path.slice(separator + 1) : path;
-}
-
-/** The content entry of one building kind, or `undefined` for a kind this catalogue does not know. */
-export function buildingContent(kind: string): BuildingContent | undefined {
-  return BUILDING_CONTENT.get(kind) ?? BUILDING_CONTENT.get(bareContentPath(kind));
-}
-
-/**
- * Unit paths one building kind may offer, or an empty list for a kind that is not a producer.
- *
- * <p>An unknown building answers no entries rather than the whole unit catalogue: a TRAIN button that
- * the server is guaranteed to refuse is worse than no button, and a plugin building with its own recipes
- * is not something this classic catalogue can describe.
- */
-export function trainableUnitsForBuilding(kind: string): readonly string[] {
-  return buildingContent(kind)?.trainableUnits ?? NO_UNITS;
-}
 
 /** Rejects anything that is not a positive, safely representable integer id. */
 function requirePositiveInteger(value: number, label: string): number {
@@ -402,14 +246,45 @@ export function trainBatch(
 }
 
 /**
- * `UPGRADE <buildingId>`; the answer is `OK <newBuildingId>` or `ERR <reason>`.
+ * `UPGRADE <buildingId> [variantPath]`; the answer is `OK <newBuildingId>` or `ERR <reason>`.
  *
- * The replacement has a new entity id, so the caller must not keep using the old one after a successful
- * answer: the next snapshot contains only the replacement.
+ * The variant path is the `to` token of the snapshot's `upgrade.options` entry the player picked; a
+ * single-option ladder may omit it, but sending it explicitly is always accepted. The replacement has a
+ * new entity id, so the caller must not keep using the old one after a successful answer: the next
+ * snapshot contains only the replacement.
  */
-export function upgrade(buildingId: number): string {
+export function upgrade(buildingId: number, variantPath?: string): string {
   const id = requirePositiveInteger(buildingId, "建筑 id");
-  return `UPGRADE ${id}`;
+  if (variantPath === undefined) {
+    return `UPGRADE ${id}`;
+  }
+  const path = variantPath.trim();
+  if (path === "") {
+    throw new TypeError("升级变体的内容路径不能为空白");
+  }
+  return `UPGRADE ${id} ${path}`;
+}
+
+/**
+ * `UPGRADEUNIT <unitId> [tierPath]`; the answer is `OK <newUnitId>` or `ERR <reason>`.
+ *
+ * A unit row's `upgrade` field carries the successor (or successors) the command can create. The
+ * optional tier path is the `to` token of the option the player picked; a single-option ladder may omit
+ * it, but sending it explicitly is always accepted, exactly like the building `UPGRADE`. The command is
+ * batchable: it may ride in a `BATCH` line like any other verb. The replacement has a new entity id, so
+ * the caller must not keep using the old one after a successful answer: the next snapshot contains only
+ * the replacement.
+ */
+export function upgradeUnit(unitId: number, tierPath?: string): string {
+  const id = requirePositiveInteger(unitId, "单位 id");
+  if (tierPath === undefined) {
+    return `UPGRADEUNIT ${id}`;
+  }
+  const path = tierPath.trim();
+  if (path === "") {
+    throw new TypeError("单位升级的内容路径不能为空白");
+  }
+  return `UPGRADEUNIT ${id} ${path}`;
 }
 
 /**
@@ -492,9 +367,10 @@ export function batchCommands(lines: readonly string[]): string {
  *
  * <p>Q16 sequences run one order after another, so the unit-operating commands are rewritten to their
  * `queue` forms: `ORDER MOVE`, `ORDER ATTACK`, `ORDER ATTACKMOVE`, `BUILD` and `REPAIR`. A command that
- * already ends in `queue`, and every other verb (`TRAIN`, `UPGRADE`, `RECLAIM`, `TRANSFER`), is returned
- * unchanged. The rewrite is a pure string operation and the server validates the result like any other
- * line, so a malformed command still gets a readable `ERR` rather than being "fixed" here.
+ * already ends in `queue`, and every other verb (`TRAIN`, `UPGRADE`, `UPGRADEUNIT`, `RECLAIM`,
+ * `TRANSFER`), is returned unchanged. The rewrite is a pure string operation and the server validates
+ * the result like any other line, so a malformed command still gets a readable `ERR` rather than being
+ * "fixed" here.
  */
 export function sequenceLine(line: string): string {
   const command = line.trim();

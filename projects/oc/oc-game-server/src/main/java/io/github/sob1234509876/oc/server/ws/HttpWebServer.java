@@ -2,6 +2,7 @@ package io.github.sob1234509876.oc.server.ws;
 
 import io.github.sob1234509876.oc.server.plugin.PluginLoader;
 import io.github.sob1234509876.oc.server.world.WorldHost;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -469,7 +470,22 @@ public final class HttpWebServer implements AutoCloseable {
         int centreX = queryInt(request, "cx", hosted.spawnAnchor().x());
         int centreY = queryInt(request, "cy", hosted.spawnAnchor().y());
         int radius = queryInt(request, "r", WorldHost.DEFAULT_SNAPSHOT_RADIUS);
-        byte[] body = hosted.snapshotJson(centreX, centreY, radius).getBytes(StandardCharsets.UTF_8);
+        // An absent dim draws the world's default dimension exactly as before; a present one must name a
+        // dimension this world declares, which is what turns the route into a per-dimension view window.
+        String dimParam = request.queryParameter("dim");
+        DimensionId dimension = null;
+        if (dimParam != null) {
+            dimension = hosted.dimensionByKey(dimParam).orElse(null);
+            if (dimension == null) {
+                HttpResponse.text(400, HttpResponse.reasonFor(400), "unknown dimension: " + dimParam)
+                        .withHeader("Cache-Control", WORLD_CACHE_CONTROL)
+                        .writeTo(out, false);
+                return;
+            }
+        }
+        byte[] body = (dimension == null
+                ? hosted.snapshotJson(centreX, centreY, radius)
+                : hosted.snapshotJson(dimension, centreX, centreY, radius)).getBytes(StandardCharsets.UTF_8);
         HttpResponse.file(200, "OK", body, WORLD_JSON_CONTENT_TYPE, WORLD_CACHE_CONTROL)
                 .writeTo(out, "HEAD".equals(request.method()));
     }

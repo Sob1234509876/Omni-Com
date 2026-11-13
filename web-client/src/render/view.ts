@@ -15,6 +15,7 @@
  */
 
 import type { TileCoord, TileRange } from "./camera";
+import { t } from "../i18n.ts";
 import { selectByPriority } from "./selection.ts";
 
 export type TerrainId = string;
@@ -34,17 +35,61 @@ export const TERRAIN_IDS: readonly TerrainId[] = [
 ];
 
 /**
+ * One variant of an upgrade offer: a successor content path and the two resources
+ * `UPGRADE <id> <variantPath>` charges for choosing it.
+ *
+ * The same shape also carries a unit's `upgrade` field, where the command is `UPGRADEUNIT <unitId>`
+ * and an older wire entry may omit `wood`; a missing amount then reads as `0`, so the affordability
+ * rule degrades to gold-only instead of hiding the entry.
+ */
+export interface UpgradeOptionView {
+  /** Successor content path, for example `building.armory.t2` — the token sent back to the server. */
+  readonly to: string;
+  /** Gold the server will charge for this variant. */
+  readonly gold: number;
+  /** Wood the server will charge for this variant; a wire entry without one reads as `0`. */
+  readonly wood: number;
+}
+
+/**
+ * One training recipe of a producer building, from the snapshot's `trains` array.
+ *
+ * `path` is the unit content path a `TRAIN <buildingId> <unitPath>` line carries, `name` is the
+ * server's display label for the button, `gold` is the input cost the client compares against its own
+ * player row, and `level` is the building level the recipe requires. A malformed entry is dropped
+ * rather than rejecting the world, and a building row without the field is the older-server case the
+ * classic fallback menu covers.
+ */
+export interface TrainView {
+  readonly path: string;
+  readonly name: string;
+  readonly gold: number;
+  readonly level: number;
+}
+
+/**
+ * The view target of a gateway building: the dimension a jump reaches and the arrival tile, straight
+ * from the snapshot's `gateway` object.
+ */
+export interface GatewayView {
+  /** Dimension key the passage reaches, for example `hell`. */
+  readonly to: string;
+  /** Absolute arrival tile, sent by the server as the `[x, y]` pair. */
+  readonly arrival: TileCoord;
+}
+
+/**
  * The optional upgrade offer of a finished building, from the snapshot's `upgrade` object.
  *
- * `to` is the successor's content path (for example `building.armory.t2`) and `gold` / `wood` are the two
- * resources the `UPGRADE <id>` command charges. The server sends the object only when the building can be
- * upgraded (finished, a successor exists); affordability is not encoded, because the client compares the
- * cost with its own player row and shows the entry disabled instead of hiding it.
+ * `options` carries one entry per variant, in the order the content declared them: a plain ladder has
+ * exactly one, a variant step (the classic armory t1, which may grow into the taller armory or into the
+ * purgatory factory) has several, and the HUD paints one 升级 button per entry. An older snapshot that
+ * still sends the single-object shape arrives as exactly one option. Affordability is not encoded,
+ * because the client compares each cost with its own player row and shows the entry disabled instead of
+ * hiding it.
  */
 export interface UpgradeView {
-  readonly to: string;
-  readonly gold: number;
-  readonly wood: number;
+  readonly options: readonly UpgradeOptionView[];
 }
 
 /**
@@ -90,9 +135,10 @@ export interface EntityView {
   /**
    * Optional unit role from a snapshot's `role` field: `combat`, `worker` or `support`.
    *
-   * The current server does not send it, so the marquee priority also recognises the classic
-   * `unit.melee.*` combat line from the kind. A future snapshot can describe a unit whose name does
-   * not reveal its role without the client having to guess.
+   * The current server does not send it, so the marquee priority also recognises the engine's
+   * `unit.melee.*` / `unit.ranged.*` combat content lines from the kind. The demo world declares the
+   * role on its own entities, and a future snapshot can describe a unit whose name does not reveal its
+   * role without the client having to guess.
    */
   readonly role?: string;
   /**
@@ -111,6 +157,16 @@ export interface EntityView {
    * combat line rather than inventing a range.
    */
   readonly attackRange?: number;
+  /**
+   * Whether the server declares this unit a builder, from the snapshot's optional `builder` flag.
+   *
+   * The BUILD menu and the marquee's builder group read this capability instead of guessing from the
+   * content path, so an upgraded engineer tier (`unit.engineer.t2`, a path the client has never seen)
+   * still gets the BUILD catalogue. Builders of any tier carry `builder: true`; a unit row without the
+   * field falls back to the classic `unit.engineer` name rule. Only unit rows carry the flag, so a
+   * building row with it is still a building and never becomes a builder.
+   */
+  readonly builder?: boolean;
   /**
    * Optional animation frame sequence (indices into the kind's atlas row).
    *
@@ -226,11 +282,28 @@ export interface EntityView {
   /**
    * Optional in-place upgrade offer from the snapshot's `upgrade` object.
    *
-   * Present only for a finished own-or-enemy building whose content type names a successor the served
-   * catalogue knows. The HUD turns it into the 升级 entry for a selected own building; an older snapshot
-   * and a top-tier building omit it.
+   * On a building row it names the successor the `UPGRADE <id> [variantPath]` command creates; the HUD
+   * turns it into the 升级 entry for a selected own building. On a unit row it names the successor the
+   * new `UPGRADEUNIT <unitId>` command creates and the HUD offers the same 升级 entry in the unit's own
+   * section. Both rows use the same `{to, gold[, wood]}` shape; an older snapshot and a top-tier
+   * building or fully upgraded unit omit it.
    */
   readonly upgrade?: UpgradeView;
+  /**
+   * The training recipes this producer can run, from the snapshot's optional `trains` array.
+   *
+   * Present only on a building the server currently treats as a producer; a mine, a lumber camp, a
+   * warehouse, a unit row and an older server omit it. When it is absent the HUD falls back to the
+   * classic hard-coded armory menu, so a served row always wins over the fallback.
+   */
+  readonly trains?: readonly TrainView[];
+  /**
+   * View target of a gateway building, from the snapshot's optional `gateway` object: the dimension the
+   * passage reaches and the tile a traveller stands on when they get there. Present only while a route
+   * is actually open, so the button the HUD paints from it always works; a gate with no open passage
+   * omits the field.
+   */
+  readonly gateway?: GatewayView;
   /**
    * Cost of repairing every missing hit point, from the snapshot's optional `repair` object.
    *
@@ -292,6 +365,21 @@ export interface DemandItemView {
 }
 
 /**
+ * One in-flight projectile row, from the snapshot's optional top-level `projectiles` array.
+ *
+ * `x` / `y` are the shot's start tile and `tx` / `ty` the arrival tile, both absolute signed world
+ * tiles. The client animates the flight itself between the two points (see `render/projectile.ts`);
+ * the server sends only the endpoints, never a live position.
+ */
+export interface ProjectileView {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  readonly tx: number;
+  readonly ty: number;
+}
+
+/**
  * Whether the current production job has its inputs, from the snapshot's optional `demand` object.
  *
  * `ready` is false when at least one recipe input is short; `items` is capped at the recipe's input kinds
@@ -333,6 +421,50 @@ export interface WorldView {
    * The demo world and an older server both omit it, so every reader has to tolerate its absence.
    */
   readonly players?: readonly PlayerView[];
+  /** Content key of the dimension this window was drawn from; `undefined` means the default one. */
+  readonly dimension?: string;
+  /** Display name of that dimension, for the HUD; `undefined` on the demo world and older servers. */
+  readonly dimensionName?: string;
+  /**
+   * Every dimension of the world, key first, or `undefined` on the demo world and older servers. The
+   * dimension switcher renders one button per entry.
+   */
+  readonly dimensions?: readonly DimensionView[];
+  /**
+   * Chunk coordinates (`chunkX`, `chunkY` pairs at 16 tiles per chunk) the streamer currently holds for
+   * this dimension, or `undefined` when the server predates the field. A tile whose chunk is absent sits
+   * under the shadow overlay; one whose chunk just loaded watches it disperse.
+   */
+  readonly loadedChunks?: readonly ChunkCoord[];
+  /**
+   * The snapshot's in-flight projectiles, or `undefined` when the server predates the field (old
+   * servers omit the array entirely, and so does the demo world).
+   *
+   * Malformed rows are dropped rather than rejecting the world, exactly like every other optional
+   * field; interpolation keeps the newer frame's list unchanged.
+   */
+  readonly projectiles?: readonly ProjectileView[];
+  /**
+   * Content paths of every directly-buildable building, from the snapshot's optional top-level
+   * `buildable` array.
+   *
+   * The BUILD menu renders one button per entry, so the served catalogue is the panel's only source; a
+   * malformed entry is dropped, and `undefined` means the server predates the field (or the demo world),
+   * which is exactly the case the classic five-entry fallback menu covers.
+   */
+  readonly buildable?: readonly string[];
+}
+
+/** One entry of the snapshot's `dimensions` roster. */
+export interface DimensionView {
+  readonly key: string;
+  readonly name: string;
+}
+
+/** One loaded chunk, in chunk coordinates (16 tiles per chunk). */
+export interface ChunkCoord {
+  readonly x: number;
+  readonly y: number;
 }
 
 /**
@@ -430,15 +562,15 @@ export function ownershipOf(playerId: number | undefined, myPlayerId: number | n
   return "enemy";
 }
 
-/** The one-character HUD tag for an ownership, as shown next to the selected entity's kind. */
+/** The HUD tag for an ownership, as shown next to the selected entity's kind. */
 export function ownershipTag(ownership: Ownership): string {
   switch (ownership) {
     case "mine":
-      return "我";
+      return t("owner.mine");
     case "enemy":
-      return "敌";
+      return t("owner.enemy");
     default:
-      return "中立";
+      return t("owner.neutral");
   }
 }
 
@@ -467,15 +599,15 @@ export function ownershipDecision(
   myPlayerId: number | null,
 ): OwnershipDecision {
   if (myPlayerId === null || !Number.isFinite(myPlayerId) || myPlayerId <= 0) {
-    return { kind: "logged-out", ownership: "neutral", tag: "未登录" };
+    return { kind: "logged-out", ownership: "neutral", tag: t("owner.loggedOut") };
   }
   switch (ownershipOf(playerId, myPlayerId)) {
     case "mine":
-      return { kind: "own", ownership: "mine", tag: "我" };
+      return { kind: "own", ownership: "mine", tag: t("owner.mine") };
     case "enemy":
-      return { kind: "other", ownership: "enemy", tag: "敌" };
+      return { kind: "other", ownership: "enemy", tag: t("owner.enemy") };
     default:
-      return { kind: "neutral", ownership: "neutral", tag: "中立" };
+      return { kind: "neutral", ownership: "neutral", tag: t("owner.neutral") };
   }
 }
 
@@ -863,17 +995,135 @@ function snapshotStorage(value: unknown): WarehouseStorageView | undefined {
 /**
  * Reads the optional `upgrade` object of a building row.
  *
- * `to` must be a non-empty content path and both amounts non-negative safe integers; otherwise the whole
- * object is dropped rather than half-read. Missing means the snapshot predates the field (or the building
- * is top tier / unfinished), which is exactly the legacy path the HUD must keep supporting.
+ * The current shape is `{"options":[{"to":...,"gold":...,"wood":...},...]}`; each entry must carry a
+ * non-empty content path and two non-negative safe integers, and a malformed entry is dropped rather
+ * than half-read. The legacy single-object shape `{"to":...,"gold":...,"wood":...}` (an older server)
+ * arrives as exactly one option. A missing field, an empty options array or nothing readable means the
+ * snapshot predates the field (or the building is top tier / unfinished), which is exactly the legacy
+ * path the HUD must keep supporting.
  */
 function snapshotUpgrade(value: unknown): UpgradeView | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
+  const rawOptions = value["options"];
+  if (Array.isArray(rawOptions)) {
+    const options: UpgradeOptionView[] = [];
+    for (const entry of rawOptions) {
+      const option = snapshotUpgradeOption(entry);
+      if (option !== undefined) {
+        options.push(option);
+      }
+    }
+    return options.length === 0 ? undefined : { options };
+  }
+  // Legacy single-object shape: exactly the first option.
+  const legacy = snapshotUpgradeOption(value);
+  return legacy === undefined ? undefined : { options: [legacy] };
+}
+
+/**
+ * Reads the optional `gateway` object of a gateway building row.
+ *
+ * `to` must be a non-empty dimension key and `arrival` a two-number pair of finite tiles; anything else
+ * drops the field, which simply means the HUD offers no jump. A missing field is the ordinary case for a
+ * building that is not a gateway and for a gate whose passage is not open.
+ */
+function snapshotGateway(value: unknown): GatewayView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const to = value["to"];
+  const rawArrival = value["arrival"];
+  if (typeof to !== "string" || to.trim() === "" || !Array.isArray(rawArrival) || rawArrival.length < 2) {
+    return undefined;
+  }
+  const x = finiteNumber(rawArrival[0]);
+  const y = finiteNumber(rawArrival[1]);
+  if (x === null || y === null) {
+    return undefined;
+  }
+  return { to: to.trim(), arrival: { x: Math.floor(x), y: Math.floor(y) } };
+}
+
+/**
+ * Reads the snapshot's optional `dimensions` roster and `loadedChunks` set, returning the pieces the
+ * {@link WorldView} carries; `undefined` for a field the server predates. A malformed roster or chunk
+ * row is dropped rather than rejecting the document, exactly like the entity fields.
+ */
+function snapshotWorldMeta(payload: Record<string, unknown>): {
+  dimension?: string;
+  dimensionName?: string;
+  dimensions?: readonly DimensionView[];
+  loadedChunks?: readonly ChunkCoord[];
+} {
+  const meta: {
+    dimension?: string;
+    dimensionName?: string;
+    dimensions?: readonly DimensionView[];
+    loadedChunks?: readonly ChunkCoord[];
+  } = {};
+  const dimension = payload["dimension"];
+  if (typeof dimension === "string" && dimension.trim() !== "") {
+    meta.dimension = dimension.trim();
+  }
+  const dimensionName = payload["dimensionName"];
+  if (typeof dimensionName === "string" && dimensionName.trim() !== "") {
+    meta.dimensionName = dimensionName.trim();
+  }
+  const rawDimensions = payload["dimensions"];
+  if (Array.isArray(rawDimensions)) {
+    const roster: DimensionView[] = [];
+    for (const entry of rawDimensions) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const key = entry["key"];
+      const name = entry["name"];
+      if (typeof key === "string" && key.trim() !== "" && typeof name === "string" && name.trim() !== "") {
+        roster.push({ key: key.trim(), name: name.trim() });
+      }
+    }
+    if (roster.length > 0) {
+      meta.dimensions = roster;
+    }
+  }
+  const rawChunks = payload["loadedChunks"];
+  if (Array.isArray(rawChunks)) {
+    const chunks: ChunkCoord[] = [];
+    for (const entry of rawChunks) {
+      if (!Array.isArray(entry) || entry.length < 2) {
+        continue;
+      }
+      const cx = finiteNumber(entry[0]);
+      const cy = finiteNumber(entry[1]);
+      if (cx === null || cy === null || !Number.isInteger(cx) || !Number.isInteger(cy)) {
+        continue;
+      }
+      chunks.push({ x: cx, y: cy });
+    }
+    if (chunks.length > 0) {
+      meta.loadedChunks = chunks;
+    }
+  }
+  return meta;
+}
+
+/**
+ * Validates one `{"to":...,"gold":...[, "wood":...]}` upgrade option, or drops it.
+ *
+ * A building upgrade always names both amounts; a unit upgrade may omit `wood`, which reads as `0` so
+ * the entry survives an older wire shape instead of being hidden. A `wood` that is present but not a
+ * non-negative integer still drops the whole option, exactly like the other amounts.
+ */
+function snapshotUpgradeOption(value: unknown): UpgradeOptionView | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
   const to = value["to"];
   const gold = finiteNumber(value["gold"]);
-  const wood = finiteNumber(value["wood"]);
+  const rawWood = value["wood"];
+  const wood = rawWood === undefined ? 0 : finiteNumber(rawWood);
   if (typeof to !== "string" || to.trim() === "" || gold === null || wood === null) {
     return undefined;
   }
@@ -886,6 +1136,72 @@ function snapshotUpgrade(value: unknown): UpgradeView | undefined {
     return undefined;
   }
   return { to: kindName(to.trim()), gold, wood };
+}
+
+/**
+ * Reads the optional `trains` array of a producer building row.
+ *
+ * `undefined` means the snapshot predates the field (or the row is not a producer), which is the
+ * legacy path the classic fallback menu covers. An array is always returned when the field is an
+ * array, even if every individual entry was malformed: the HUD then offers no recipe, and a served
+ * "this building trains nothing" (`trains: []`) is honoured as exactly that. An entry is kept only
+ * when it has a non-empty content path and name plus a non-negative integer `gold` and a positive
+ * integer `level`; a half-parsed recipe is dropped, not fatal.
+ */
+function snapshotTrains(value: unknown): TrainView[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const trains: TrainView[] = [];
+  for (const rawTrain of value) {
+    if (!isRecord(rawTrain)) {
+      continue;
+    }
+    const path = rawTrain["path"];
+    const name = rawTrain["name"];
+    const gold = finiteNumber(rawTrain["gold"]);
+    const level = finiteNumber(rawTrain["level"]);
+    if (typeof path !== "string" || path.trim() === "" || typeof name !== "string" || name.trim() === "") {
+      continue;
+    }
+    if (
+      gold === null ||
+      level === null ||
+      !Number.isSafeInteger(gold) ||
+      gold < 0 ||
+      !Number.isSafeInteger(level) ||
+      level < 1
+    ) {
+      continue;
+    }
+    trains.push({ path: kindName(path.trim()), name: name.trim(), gold, level });
+  }
+  return trains;
+}
+
+/**
+ * Reads the snapshot's optional top-level `buildable` array.
+ *
+ * `undefined` means the field is absent or not an array, which is what an older server (and the demo
+ * world) sends. Entries are content paths: one with whitespace or emptiness is dropped rather than
+ * reaching the BUILD placement mode, and the surviving order is the server's declared button order.
+ */
+function snapshotBuildable(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const paths: string[] = [];
+  for (const rawPath of value) {
+    if (typeof rawPath !== "string") {
+      continue;
+    }
+    const path = kindName(rawPath.trim());
+    if (path === "" || /\s/u.test(path)) {
+      continue;
+    }
+    paths.push(path);
+  }
+  return paths;
 }
 
 /**
@@ -1146,6 +1462,39 @@ function snapshotAnchor(value: unknown): TileCoord | undefined {
 }
 
 /**
+ * Reads the snapshot's optional top-level `projectiles` array.
+ *
+ * `undefined` means the field is absent, which is what an older server (and the demo world) sends; a
+ * non-array value is treated the same way. A row is kept only with an integer `id` and four finite
+ * coordinates; a non-integer id or a non-finite coordinate drops just that row instead of rejecting the
+ * world, because these rows are presentation detail.
+ */
+function snapshotProjectiles(value: unknown): ProjectileView[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const shots: ProjectileView[] = [];
+  for (const rawShot of value) {
+    if (!isRecord(rawShot)) {
+      continue;
+    }
+    const id = finiteNumber(rawShot["id"]);
+    const x = finiteNumber(rawShot["x"]);
+    const y = finiteNumber(rawShot["y"]);
+    const tx = finiteNumber(rawShot["tx"]);
+    const ty = finiteNumber(rawShot["ty"]);
+    if (id === null || x === null || y === null || tx === null || ty === null) {
+      continue;
+    }
+    if (!Number.isInteger(id)) {
+      continue;
+    }
+    shots.push({ id, x, y, tx, ty });
+  }
+  return shots;
+}
+
+/**
  * Converts `/world/snapshot` JSON into the model the renderer already consumes.
  *
  * The server sends terrain content paths (`grass`, `oc:grass`, ...): they are normalized to the
@@ -1158,8 +1507,12 @@ function snapshotAnchor(value: unknown): TileCoord | undefined {
  * `progress` becomes a clamped `progress`, `queue` / `queueTicks` become `queue` / `queueTicks`,
  * `queueItems` becomes a validated array of `kind` / `ticks` / `total` jobs, `contents` becomes a
  * validated object of positive integer amounts, `storage` becomes a validated `{slots, used, free}`
- * warehouse capacity, `inbound` becomes a non-negative integer, `role` / `attackDamage` become the
- * optional marquee priority metadata, `upgrade` becomes a validated `{to, gold, wood}` offer, and a player
+ * warehouse capacity, `inbound` becomes a non-negative integer, `role` / `attackDamage` / `builder`
+ * become the optional marquee priority and build-menu capability metadata, `upgrade` becomes a
+ * validated `{to, gold, wood}` offer (on a
+ * building row and, for `UPGRADEUNIT`, on a unit row alike), `trains` becomes a validated
+ * `{path, name, gold, level}` recipe list, the top-level `buildable` array becomes the BUILD menu's
+ * content-driven catalogue, and a player
  * row's optional `anchor` becomes a signed `TileCoord`. A snapshot without any of them (an older server, the demo
  * world, every check fixture written before these fields existed) converts exactly as it did before,
  * with all of those properties `undefined`; a player row similarly keeps the optional
@@ -1264,6 +1617,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     // map to validate against.
     const player = finiteNumber(rawEntity["player"]);
     const health = finiteNumber(rawEntity["health"]);
+    const builder = rawEntity["builder"] === true;
     const roleValue = rawEntity["role"];
     const role =
       typeof roleValue === "string" && roleValue.trim() !== "" ? roleValue.trim() : undefined;
@@ -1295,6 +1649,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     const storage = snapshotStorage(rawEntity["storage"]);
     const inbound = optionalNonNegativeInteger(rawEntity["inbound"]);
     const upgrade = snapshotUpgrade(rawEntity["upgrade"]);
+    const trains = snapshotTrains(rawEntity["trains"]);
+    const gateway = snapshotGateway(rawEntity["gateway"]);
     const repairCost = snapshotBuildingCost(rawEntity["repair"]);
     const reclaim = snapshotBuildingCost(rawEntity["reclaim"]);
     const snapshotRoute = snapshotPath(rawEntity["path"], rawEntity["target"]);
@@ -1308,6 +1664,7 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(role === undefined ? {} : { role }),
       ...(attackDamage === null || attackDamage < 0 ? {} : { attackDamage }),
       ...(attackRange === null || attackRange < 0 ? {} : { attackRange }),
+      ...(builder ? { builder } : {}),
       ...(health === null ? {} : { healthRatio: Math.min(1, Math.max(0, health)) }),
       ...(footprint === undefined ? {} : { footprint }),
       ...(progress === null ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
@@ -1325,6 +1682,8 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
       ...(storage === undefined ? {} : { storage }),
       ...(inbound === undefined ? {} : { inbound }),
       ...(upgrade === undefined ? {} : { upgrade }),
+      ...(trains === undefined ? {} : { trains }),
+      ...(gateway === undefined ? {} : { gateway }),
       ...(repairCost === undefined ? {} : { repairCost }),
       ...(reclaim === undefined ? {} : { reclaim }),
       ...(snapshotRoute.path === undefined ? {} : { path: snapshotRoute.path }),
@@ -1382,6 +1741,9 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     }
   }
 
+  const projectiles = snapshotProjectiles(payload["projectiles"]);
+  const buildable = snapshotBuildable(payload["buildable"]);
+
   return {
     tick,
     originX,
@@ -1391,6 +1753,9 @@ export function worldViewFromSnapshot(payload: unknown): ServerWorldView | null 
     tiles,
     entities,
     ...(rawPlayers === undefined ? {} : { players }),
+    ...(projectiles === undefined ? {} : { projectiles }),
+    ...(buildable === undefined ? {} : { buildable }),
+    ...snapshotWorldMeta(payload),
   };
 }
 
@@ -1404,6 +1769,11 @@ export interface SnapshotWindowRequest {
   readonly cx: number;
   readonly cy: number;
   readonly r: number;
+  /**
+   * The dimension the window belongs to, for example `hell`; `undefined` keeps the server's default
+   * dimension, which is what an older client and an older server both mean.
+   */
+  readonly dim?: string;
 }
 
 /**
@@ -1424,10 +1794,12 @@ export function snapshotUrl(baseUrl: string, request: SnapshotWindowRequest | nu
     return path;
   }
   // The server uses `cx` / `cy` as sent (no map to clamp against) and clamps only `r`; sending the
-  // camera tile keeps the client dumb and works for any signed centre.
+  // camera tile keeps the client dumb and works for any signed centre. A dimension rides along as
+  // `dim`; the server answers 400 for one it does not declare, which the fetch layer maps to null.
   return (
     `${path}?cx=${Math.floor(request.cx)}` +
-    `&cy=${Math.floor(request.cy)}&r=${Math.floor(request.r)}`
+    `&cy=${Math.floor(request.cy)}&r=${Math.floor(request.r)}` +
+    (request.dim === undefined ? "" : `&dim=${encodeURIComponent(request.dim)}`)
   );
 }
 
@@ -1596,6 +1968,12 @@ interface EntityAnchor {
   readonly atY: number;
   readonly playerId: number;
   readonly healthRatio?: number;
+  /**
+   * The demo entity's role (`combat` / `worker` / `support`), declared here because the demo world is
+   * the content source for its own few entities: the marquee priority reads the capability, never a
+   * short-kind name list.
+   */
+  readonly role?: "combat" | "worker" | "support";
 }
 
 /**
@@ -1643,16 +2021,16 @@ export function demoWorld(seed: number): WorldView {
   const anchors: readonly EntityAnchor[] = [
     { kind: "warehouse", atX: 0.40, atY: 0.44, playerId: 1 },
     { kind: "barracks", atX: 0.56, atY: 0.57, playerId: 1 },
-    { kind: "worker", atX: 0.33, atY: 0.55, playerId: 1 },
-    { kind: "worker", atX: 0.43, atY: 0.58, playerId: 1, healthRatio: 0.72 },
-    { kind: "worker", atX: 0.36, atY: 0.35, playerId: 1 },
-    { kind: "worker", atX: 0.47, atY: 0.39, playerId: 1 },
-    { kind: "worker", atX: 0.70, atY: 0.63, playerId: 1 },
-    { kind: "soldier", atX: 0.53, atY: 0.47, playerId: 1 },
-    { kind: "soldier", atX: 0.61, atY: 0.49, playerId: 1, healthRatio: 0.55 },
-    { kind: "soldier", atX: 0.57, atY: 0.62, playerId: 1, healthRatio: 0.88 },
-    { kind: "medic", atX: 0.48, atY: 0.51, playerId: 1 },
-    { kind: "soldier", atX: 0.74, atY: 0.40, playerId: 2 },
+    { kind: "worker", atX: 0.33, atY: 0.55, playerId: 1, role: "worker" },
+    { kind: "worker", atX: 0.43, atY: 0.58, playerId: 1, healthRatio: 0.72, role: "worker" },
+    { kind: "worker", atX: 0.36, atY: 0.35, playerId: 1, role: "worker" },
+    { kind: "worker", atX: 0.47, atY: 0.39, playerId: 1, role: "worker" },
+    { kind: "worker", atX: 0.70, atY: 0.63, playerId: 1, role: "worker" },
+    { kind: "soldier", atX: 0.53, atY: 0.47, playerId: 1, role: "combat" },
+    { kind: "soldier", atX: 0.61, atY: 0.49, playerId: 1, healthRatio: 0.55, role: "combat" },
+    { kind: "soldier", atX: 0.57, atY: 0.62, playerId: 1, healthRatio: 0.88, role: "combat" },
+    { kind: "medic", atX: 0.48, atY: 0.51, playerId: 1, role: "support" },
+    { kind: "soldier", atX: 0.74, atY: 0.40, playerId: 2, role: "combat" },
   ];
 
   const entities: EntityView[] = [];
@@ -1674,6 +2052,7 @@ export function demoWorld(seed: number): WorldView {
       playerId: anchor.playerId,
       selected: false,
       ...(anchor.healthRatio === undefined ? {} : { healthRatio: anchor.healthRatio }),
+      ...(anchor.role === undefined ? {} : { role: anchor.role }),
     };
     entities.push(entity);
   }

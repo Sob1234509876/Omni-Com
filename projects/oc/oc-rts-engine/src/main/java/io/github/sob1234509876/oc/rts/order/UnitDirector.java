@@ -4,6 +4,8 @@ import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
+import io.github.sob1234509876.oc.rts.content.ResourceKey;
+import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
@@ -331,6 +333,61 @@ public interface UnitDirector {
     UpgradeResult upgradeBuilding(Building building);
 
     /**
+     * Upgrades one finished building into the <em>chosen</em> successor, for types that declare more than
+     * one {@link BuildingType#upgradeOptions() upgrade variant}.
+     *
+     * <p>Everything else works exactly like {@link #upgradeBuilding(Building)}: the chosen target has to
+     * be one of the source type's options, the price is the chosen option's own bundle, and the refusal
+     * sentences name the target. An unknown target is refused without touching the building; a target the
+     * source does not offer is refused even when the catalogue contains it, so a client cannot upgrade
+     * into a ladder the content never drew. Passing {@code null} chooses the only option when there is
+     * exactly one and is refused as ambiguous otherwise.
+     *
+     * @param building the finished building to replace; may be {@code null}
+     * @param target   content key of one of the source type's upgrade options; may be {@code null}
+     * @return the replacement, or the refusal reason; never {@code null}
+     */
+    UpgradeResult upgradeBuilding(Building building, ResourceKey target);
+
+    /**
+     * Upgrades one unit into the <em>chosen</em> successor of its {@link UnitType#upgradeTo() ladder},
+     * paying the source type's {@link UnitType#upgradeCost() upgrade cost}.
+     *
+     * <p>This is the unit counterpart of {@link #upgradeBuilding(Building, ResourceKey)}, and the rules
+     * are deliberately the same, with every refusal a readable sentence:
+     *
+     * <ul>
+     *   <li><strong>Commandable only.</strong> The unit has to be alive; a dead or missing unit is
+     *       refused before anything else is looked at.</li>
+     *   <li><strong>Real target on the ladder.</strong> The requested target has to exist in the same
+     *       {@link io.github.sob1234509876.oc.rts.content.ContentRegistry} and has to be the successor
+     *       the source type names. A target the source does not offer is refused even when the catalogue
+     *       contains it, so a client cannot upgrade into a ladder the content never drew; a type that
+     *       names itself is refused for the same reason. Passing {@code null} chooses the only ladder
+     *       step a unit can have.</li>
+     *   <li><strong>Paid once.</strong> The cost is reserved through the owner's
+     *       {@link io.github.sob1234509876.oc.rts.economy.Logistics} network, the same path a placement
+     *       uses, and committed only after the replacement exists. A refusal charges nothing and leaves
+     *       no reservation.</li>
+     *   <li><strong>Replaced, not mutated.</strong> The old unit is destroyed and a new unit of the
+     *       target type is spawned at the same position, owned by the same player and facing the same
+     *       direction. It keeps the health <em>fraction</em>, not the absolute hit points, so a
+     *       half-damaged engineer upgrades into a half-damaged successor. Its cargo is carried over,
+     *       clamped to the new capacity, and whatever the replacement cannot hold is deposited into the
+     *       owner's warehouse network instead of vanishing. The old unit's order queue is cancelled
+     *       through the ordinary cancel path, so a held construction site is detached and a hauler's
+     *       claim and carried goods are handed back before the entity dies, and the old id is cleared
+     *       from every unit's combat target. The old id leaves the spatial index with the destroyed
+     *       unit.</li>
+     * </ul>
+     *
+     * @param unit   the unit to replace; may be {@code null}
+     * @param target content key of the successor type; may be {@code null} to choose the ladder's step
+     * @return the replacement, or the refusal reason; never {@code null}
+     */
+    UpgradeResult upgradeUnit(Unit unit, ResourceKey target);
+
+    /**
      * Moves stock from one of the player's warehouses to another through the ordinary hauling path.
      *
      * <p>This is the engine half of the manual logistics command, and it is deliberately a <em>real
@@ -402,36 +459,46 @@ public interface UnitDirector {
     HaulResult tryHaul(Unit engineer, Building target);
 
     /**
-     * Outcome of one upgrade request: either the replacement building or a refusal reason.
+     * Outcome of one upgrade request: either the replacement entity or a refusal reason.
      *
-     * <p>At most one field is set. The replacement is a new entity with a new id; the old building is
-     * already dead when this is returned. The refusal is written for a player and names the reason the
-     * upgrade did not happen, including the exact cost when the warehouses cannot cover it.
+     * <p>At most one field is set. The replacement is a new entity with a new id; the old building or
+     * unit is already dead when this is returned. A building upgrade fills {@link #replacement()}, a
+     * unit upgrade fills {@link #replacementUnit()}. The refusal is written for a player and names the
+     * reason the upgrade did not happen, including the exact cost when the warehouses cannot cover it.
      *
-     * @param replacement the finished building of the new type, or {@code null} when nothing changed
-     * @param refusal     why nothing changed, or {@code null} when the upgrade succeeded
+     * @param replacement     the finished building of the new type, or {@code null} when no building
+     *                        was placed
+     * @param replacementUnit the spawned unit of the new type, or {@code null} when no unit was spawned
+     * @param refusal         why nothing changed, or {@code null} when the upgrade succeeded
      */
-    record UpgradeResult(Building replacement, String refusal) {
+    record UpgradeResult(Building replacement, Unit replacementUnit, String refusal) {
 
         public UpgradeResult {
-            if ((replacement == null) == (refusal == null)) {
+            int set = (replacement == null ? 0 : 1) + (replacementUnit == null ? 0 : 1)
+                    + (refusal == null ? 0 : 1);
+            if (set != 1) {
                 throw new IllegalArgumentException("an upgrade result is either a replacement or a refusal");
             }
         }
 
-        /** A successful upgrade: the old building is gone and the replacement stands in its place. */
+        /** A successful building upgrade: the old building is gone and the replacement stands in its place. */
         public static UpgradeResult upgraded(Building replacement) {
-            return new UpgradeResult(Objects.requireNonNull(replacement, "replacement"), null);
+            return new UpgradeResult(Objects.requireNonNull(replacement, "replacement"), null, null);
+        }
+
+        /** A successful unit upgrade: the old unit is gone and the replacement stands in its place. */
+        public static UpgradeResult upgraded(Unit replacementUnit) {
+            return new UpgradeResult(null, Objects.requireNonNull(replacementUnit, "replacementUnit"), null);
         }
 
         /** Nothing changed, for the given reason. */
         public static UpgradeResult refused(String reason) {
-            return new UpgradeResult(null, Objects.requireNonNull(reason, "reason"));
+            return new UpgradeResult(null, null, Objects.requireNonNull(reason, "reason"));
         }
 
-        /** Whether the building was replaced. */
+        /** Whether the building or unit was replaced. */
         public boolean upgraded() {
-            return replacement != null;
+            return replacement != null || replacementUnit != null;
         }
     }
 

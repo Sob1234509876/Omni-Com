@@ -10,6 +10,11 @@
  *
  * Error toasts are their own category. The presets always leave 错误 on, because the owner asked that no
  * preset can silently hide an error; only a deliberate uncheck of the 错误 checkbox does that.
+ *
+ * The connection group also carries the remembered login (`accountName` / `accountPassword`). The owner
+ * explicitly asked to be logged back in after every reload, so the password is stored as plain text in
+ * `localStorage` — the documented trade-off of that request. `main.ts` prefills the fields and sends one
+ * automatic `LOGIN` per connection; a 设置 reset clears both fields again.
  */
 
 /** One `localStorage` key for the whole settings object; never a key per field. */
@@ -53,7 +58,7 @@ export const MESSAGE_CATEGORY_LABELS: Readonly<Record<MessageCategory, string>> 
 /** Whether each category may produce a toast. */
 export type MessageFilters = Readonly<Record<MessageCategory, boolean>>;
 
-/** Every category enabled; the factory default. */
+/** Every category enabled. */
 export const ALL_MESSAGES: MessageFilters = {
   command: true,
   ping: true,
@@ -62,6 +67,22 @@ export const ALL_MESSAGES: MessageFilters = {
   combat: true,
   event: true,
   error: true,
+};
+
+/**
+ * The quiet filter table: errors and the derived world events stay on, routine exchange and action
+ * chatter stays off. This is the factory default (the toast stack should not narrate every command to
+ * a player who has not asked for it) and the `安静` preset's table; 错误 is always on, whatever the
+ * preset or stored value was.
+ */
+export const QUIET_MESSAGES: MessageFilters = {
+  ...ALL_MESSAGES,
+  command: false,
+  ping: false,
+  build: false,
+  production: false,
+  combat: false,
+  event: true,
 };
 
 /** The three named filter presets. */
@@ -81,8 +102,8 @@ export const FILTER_PRESETS: readonly {
   {
     id: "quiet",
     label: "安静",
-    // Quiet keeps errors and the derived world events, and drops routine exchange/action chatter.
-    filters: { ...ALL_MESSAGES, command: false, ping: false, build: false, production: false, combat: false, event: true },
+    // The 安静 preset and the factory default share one table; see `QUIET_MESSAGES`.
+    filters: QUIET_MESSAGES,
   },
   { id: "all", label: "全部", filters: ALL_MESSAGES },
 ] as const;
@@ -116,6 +137,7 @@ export function classifyCommand(command: string | null): MessageCategory {
       return "ping";
     case "BUILD":
     case "UPGRADE":
+    case "UPGRADEUNIT":
       return "build";
     case "TRAIN":
       return "production";
@@ -167,7 +189,12 @@ export function classifyToast(
   return classifyCommand(command);
 }
 
-/** The server address/port pair; credentials are deliberately never persisted. */
+/**
+ * The server address/port pair.
+ *
+ * Only the address lives here; the account name and password are separate top-level fields on
+ * {@link Settings} (the owner explicitly asked to remember the login, so they are persisted too).
+ */
 export interface ConnectionSettings {
   readonly host: string;
   readonly port: string;
@@ -195,6 +222,22 @@ export function clampInventoryRadius(value: number): number {
   return Math.min(MAX_INVENTORY_RADIUS_TILES, Math.max(MIN_INVENTORY_RADIUS_TILES, Math.round(value)));
 }
 
+/**
+ * The UI language setting: a concrete language or `auto`, which resolves from `navigator.language`
+ * (exact `zh-CN` match first, then the base `zh` language, else English — see `resolveLanguage` in
+ * `src/i18n.ts`). English is the default everywhere: a fresh profile with no stored value resolves
+ * through `auto`, and the zh-CN dictionary keeps the page's original Chinese wording.
+ */
+export type LanguageSetting = "auto" | "en" | "zh-CN";
+
+/** Every value the settings panel's language selector offers, in display order. */
+export const LANGUAGE_SETTINGS: readonly LanguageSetting[] = ["auto", "en", "zh-CN"] as const;
+
+/** Whether a raw value is a language setting the panel and the parser both accept. */
+export function isLanguageSetting(value: string): value is LanguageSetting {
+  return (LANGUAGE_SETTINGS as readonly string[]).includes(value);
+}
+
 /** Everything under one storage key. */
 export interface Settings {
   readonly filters: MessageFilters;
@@ -203,16 +246,44 @@ export interface Settings {
   readonly connection: ConnectionSettings;
   /** Radius in tiles of the Q9 inventory tag around the pointer; see {@link clampInventoryRadius}. */
   readonly inventoryRadiusTiles: number;
+  /**
+   * UI language: `auto` resolves from the browser, otherwise a concrete language. Optional on the
+   * wire; a stored object without it parses as the `auto` default, so an existing profile keeps its
+   * behaviour (which, for a Chinese browser, was and stays Chinese).
+   */
+  readonly language: LanguageSetting;
+  /**
+   * Remembered login account name; empty when the player did not save one.
+   *
+   * Kept so the page can prefill the 登录 fields and, once the handshake completes, log in by itself.
+   * Optional on the wire: a stored object without it parses as the empty default.
+   */
+  readonly accountName: string;
+  /**
+   * Remembered login password for {@link accountName}; empty when the player did not save one.
+   *
+   * **The password is stored as plain text in `localStorage` by explicit user request** (the owner
+   * asked to stay logged in across page reloads and accepted the plain-text trade-off). The field is
+   * optional on the wire and parses as the empty default when missing.
+   */
+  readonly accountPassword: string;
 }
 
 /** A fresh copy of the factory defaults; callers may keep and mutate their copy. */
 export function defaultSettings(): Settings {
   return {
-    filters: { ...ALL_MESSAGES },
+    // The quiet table, not "all": the toast stack starts quiet (errors and world events only) and a
+    // player who wants the narration opts in. A stored settings object is never rewritten — this
+    // default only applies to a fresh browser profile, and `readFilters` keeps whatever an existing
+    // user persisted, filling missing categories from `ALL_MESSAGES` as before.
+    filters: { ...QUIET_MESSAGES },
     showPaths: true,
     viewHidden: false,
     connection: { host: "", port: "" },
     inventoryRadiusTiles: DEFAULT_INVENTORY_RADIUS_TILES,
+    language: "auto",
+    accountName: "",
+    accountPassword: "",
   };
 }
 
@@ -285,6 +356,14 @@ export function parseSettings(raw: string | null | undefined): Settings {
   const showPaths = value["showPaths"];
   const viewHidden = value["viewHidden"];
   const inventoryRadiusTiles = value["inventoryRadiusTiles"];
+  // The language follows the optional-string rule too: missing means `auto`, a non-string or an
+  // unknown language value means the whole stored object is corrupt (the same all-or-nothing rule
+  // every other field follows).
+  const language = value["language"];
+  // The remembered account fields follow the same optional-string rule as `host` / `port`: missing
+  // means the empty default, a non-string value means the whole stored object is corrupt.
+  const accountName = value["accountName"];
+  const accountPassword = value["accountPassword"];
   if (filters === null || connection === null) {
     return fallback;
   }
@@ -297,6 +376,15 @@ export function parseSettings(raw: string | null | undefined): Settings {
   if (inventoryRadiusTiles !== undefined && typeof inventoryRadiusTiles !== "number") {
     return fallback;
   }
+  if (language !== undefined && (typeof language !== "string" || !isLanguageSetting(language))) {
+    return fallback;
+  }
+  if (accountName !== undefined && typeof accountName !== "string") {
+    return fallback;
+  }
+  if (accountPassword !== undefined && typeof accountPassword !== "string") {
+    return fallback;
+  }
   return {
     filters,
     showPaths: showPaths ?? fallback.showPaths,
@@ -305,10 +393,19 @@ export function parseSettings(raw: string | null | undefined): Settings {
     inventoryRadiusTiles: inventoryRadiusTiles === undefined
       ? fallback.inventoryRadiusTiles
       : clampInventoryRadius(inventoryRadiusTiles),
+    language: language ?? fallback.language,
+    accountName: accountName ?? "",
+    accountPassword: accountPassword ?? "",
   };
 }
 
-/** Serialises one settings object with an explicit version; field order is stable for the check. */
+/**
+ * Serialises one settings object with an explicit version; field order is stable for the check.
+ *
+ * The account fields are written as plain text (see {@link Settings.accountPassword}); a player who
+ * never saved an account serialises two empty strings, which is byte-compatible with the shape the
+ * page wrote before the fields existed apart from the two extra keys.
+ */
 export function serializeSettings(settings: Settings): string {
   return JSON.stringify({
     version: SETTINGS_VERSION,
@@ -324,9 +421,12 @@ export function serializeSettings(settings: Settings): string {
     showPaths: settings.showPaths,
     viewHidden: settings.viewHidden,
     inventoryRadiusTiles: settings.inventoryRadiusTiles,
+    language: settings.language,
     connection: {
       host: settings.connection.host,
       port: settings.connection.port,
     },
+    accountName: settings.accountName,
+    accountPassword: settings.accountPassword,
   });
 }

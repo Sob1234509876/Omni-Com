@@ -67,9 +67,13 @@ export const DEFAULT_BUILDING_FOOTPRINT: Footprint = { width: 3, height: 3 };
 /**
  * Footprints the client knows, keyed by content path.
  *
- * These mirror the classic catalogue (`ClassicContent`), where the armory tiers, the mine tiers, the
- * lumber-camp tiers and the drop-off warehouse all declare `.size(3, 3)`. Keep this table in step with
- * the catalogue; a path that is missing here simply uses {@link DEFAULT_BUILDING_FOOTPRINT}.
+ * **Defensive fallback only** (the hardcoded-data audit rule): the wire cannot report a footprint for a
+ * building that does not exist yet — the snapshot carries `w` / `h` for *existing* entities only — so
+ * this table mirrors the classic catalogue (`ClassicContent`) to keep the placement ghost honest:
+ * armory / mine / lumber-camp tiers and the drop-off warehouse at 3x3, the turret line at 2x2. A path
+ * missing here simply uses {@link DEFAULT_BUILDING_FOOTPRINT}, and once a building exists its served
+ * row always wins (`entityFootprintWidth` / `entityFootprintHeight`). No menu or command reads this
+ * table; it only shapes the ghost's tile hint.
  */
 const BUILDING_FOOTPRINTS: ReadonlyMap<string, Footprint> = new Map<string, Footprint>([
   ["building.armory.t1", { width: 3, height: 3 }],

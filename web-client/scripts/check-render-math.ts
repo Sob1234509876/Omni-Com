@@ -3,9 +3,9 @@
  *
  * Nothing here touches the DOM. Node 24 strips the TypeScript types and runs the file directly, so
  * the check exercises the same `camera.ts`, `view.ts`, `status.ts`, `marquee.ts`, `sweep.ts`, `flash.ts`,
- * `crosshair.ts`, `toast.ts`, `atlas.ts`,
+ * `crosshair.ts`, `follow.ts`, `toast.ts`, `atlas.ts`,
  * `fallback.ts`, `interpolate.ts`, `selection.ts`, `commandbar.ts`, `upgrade.ts`, `tooltip.ts`,
- * `events.ts`, `resources.ts`, `logistics.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
+ * `events.ts`, `resources.ts`, `logistics.ts`, `projectile.ts` and `latex.ts` the browser imports - no duplicated formulas. `scripts/tsconfig.check.json` is only
  * used for type checking.
  *
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
@@ -13,19 +13,12 @@
 
 import { readFileSync } from "node:fs";
 import {
-  BUILDING_CONTENT,
-  BUILDING_COSTS,
-  BUILDING_PATHS,
-  CLASSIC_BUILDING_KINDS,
-  UNIT_PATHS,
   MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
   batchCommands,
   build,
   buildBatch,
-  buildButtonLabel,
   buildPlacementBatch,
-  buildingContent,
   haul,
   orderAttack,
   orderAttackMove,
@@ -38,12 +31,21 @@ import {
   sequenceLine,
   train,
   trainBatch,
-  trainableUnitsForBuilding,
   transfer,
   upgrade,
+  upgradeUnit,
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
+import { FALLBACK_BUILD_PATHS, FALLBACK_TRAIN_PATHS } from "../src/render/commandbar.ts";
+import {
+  CHUNK_SIZE_TILES,
+  SHADOW_ALPHA,
+  approachShadowAlpha,
+  chunkKey,
+  chunkOfTile,
+  shadowTargetAlpha,
+} from "../src/render/shadow.ts";
 import {
   CAMERA_SAFETY_BOUND_TILES,
   Camera,
@@ -60,13 +62,18 @@ import {
 } from "../src/render/interpolate.ts";
 import {
   atlasLabel,
+  buildAtlasSources,
   compositeAtlas,
   entityDisplayName,
+  entityFrameRects,
   itemDisplayLabel,
   mergeLayers,
   parseAtlas,
   readManifestEntry,
+  lookupAtlasEntity,
   tileDisplayName,
+  tileRect,
+  type AtlasData,
   type AtlasSource,
 } from "../src/render/atlas.ts";
 import {
@@ -78,6 +85,17 @@ import {
   terrainColor,
 } from "../src/render/fallback.ts";
 import { FONT_STACK } from "../src/render/font.ts";
+import {
+  FOLLOW_PULSE_MS,
+  FOLLOW_RING_COLOR,
+  FOLLOW_RING_MAX_ALPHA,
+  FOLLOW_RING_MAX_SCALE,
+  FOLLOW_RING_MIN_ALPHA,
+  FOLLOW_RING_MIN_SCALE,
+  followPulse,
+  followRingAlpha,
+  followRingScale,
+} from "../src/render/follow.ts";
 import {
   CLICK_FLASH_STRENGTH,
   FLASH_COLOR,
@@ -138,6 +156,18 @@ import {
   registerSnapshotPops,
   type PopRecord,
 } from "../src/render/pop.ts";
+import {
+  PROJECTILE_HEAD_TILES,
+  PROJECTILE_SPEED_TPS,
+  PROJECTILE_TRAIL_TILES,
+  projectileAngle,
+  projectileDrawState,
+  projectileFlightMs,
+  projectileHeadPoints,
+  projectileTrail,
+  trackProjectiles,
+  type TrackedProjectile,
+} from "../src/render/projectile.ts";
 import {
   CONTROL_GROUP_MAX,
   EMPTY_CONTROL_GROUPS,
@@ -202,13 +232,23 @@ import {
   type WorldView,
 } from "../src/render/view.ts";
 import {
-  UPGRADE_ACTION_LABEL,
-  UPGRADE_ALL_ACTION_LABEL,
   upgradeBatchPlan,
   upgradeBatchSummary,
   upgradeCostLabel,
+  upgradeEntries,
   upgradeEntry,
+  unitUpgradeEntry,
 } from "../src/render/upgrade.ts";
+import { isBuilderUnit } from "../src/render/selection.ts";
+import {
+  DICTIONARIES,
+  LANGUAGES,
+  currentI18nLanguage,
+  initI18n,
+  resolveLanguage,
+  t,
+} from "../src/i18n.ts";
+import { isLanguageSetting } from "../src/settings.ts";
 import {
   CONTINUE_BUILD_ACTION_LABEL,
   HAUL_ACTION_LABEL,
@@ -307,14 +347,14 @@ import {
 } from "../src/render/selection.ts";
 import { pickEntityAt } from "../src/render/picking.ts";
 import {
-  ATTACK_MOVE_ACTION_LABEL,
-  EMPTY_SELECTION_HINT,
   SELECTION_CHIP_LIMIT,
-  STOP_ACTION_LABEL,
+  attackMoveActionLabel,
   chipLabel,
   commandBarModel,
+  emptySelectionHint,
   healthBarRatio,
   selectionChipList,
+  stopActionLabel,
 } from "../src/render/commandbar.ts";
 import {
   TOOLTIP_GAP_PX,
@@ -350,16 +390,16 @@ import {
   warehouseResourceTotals,
 } from "../src/render/resources.ts";
 import {
-  WAREHOUSE_MARK_NOTE,
-  WAREHOUSE_SCOPE_TOGGLE_SINGLE,
-  WAREHOUSE_SCOPE_TOGGLE_TOTAL,
   ownWarehouses,
   selectedOwnWarehouse,
   transferAnswerLabel,
   transferFormModel,
   transferTargetLabel,
   warehouseInboundLabel,
+  warehouseMarkNote,
   warehousePanelModel,
+  warehouseScopeToggleSingleLabel,
+  warehouseScopeToggleTotalLabel,
   warehouseStorageLabel,
 } from "../src/render/logistics.ts";
 import {
@@ -411,8 +451,37 @@ import {
   UI_WEIGHTS,
 } from "../src/theme.ts";
 
+/**
+ * Every building kind the classic catalogue ships, in upgrade-ladder order.
+ *
+ * <p>This is a **check fixture**, not game data the client renders from: it exists so the atlas
+ * coverage, footprint and command-builder assertions can walk the classic plugin's content the same
+ * way the server's `ClassicContent` declares it. The BUILD and TRAIN menus never read a client-side
+ * catalogue — the snapshot's `buildable` / `trains` arrays are the catalogue — so production code
+ * carries no such list (removed from `src/commands.ts` in the hardcoded-data audit).
+ */
+const CLASSIC_BUILDING_KINDS = [
+  "building.armory.t1",
+  "building.armory.t2",
+  "building.mine.t1",
+  "building.mine.t2",
+  "building.mine.t3",
+  "building.lumbercamp.t1",
+  "building.lumbercamp.t2",
+  "building.lumbercamp.t3",
+  "building.turret.t1",
+  "building.turret.t2",
+  "building.turret.t3",
+  "building.warehouse",
+] as const;
+
 let passed = 0;
 const failures: string[] = [];
+
+// The fixtures below assert the exact strings the page printed before the i18n layer existed, which is
+// the zh-CN wording. The HUD label rules resolve through `t()`, so the check pins zh-CN here and the
+// dedicated i18n block further down switches languages explicitly (and pins zh-CN back).
+initI18n("zh-CN");
 
 function check(name: string, condition: boolean, detail: string | null = ""): void {
   if (condition) {
@@ -608,9 +677,9 @@ const marqueeWorld: WorldView = {
   height: 8,
   tiles: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => "grass" as TerrainId)),
   entities: [
-    { id: 1, kind: "worker", x: 2.4, y: 2.6, playerId: 1 },
-    { id: 2, kind: "soldier", x: 3.1, y: 4.9, playerId: 1 },
-    { id: 3, kind: "worker", x: 2.5, y: 2.5, playerId: 2 },
+    { id: 1, kind: "worker", x: 2.4, y: 2.6, playerId: 1, role: "worker" },
+    { id: 2, kind: "soldier", x: 3.1, y: 4.9, playerId: 1, role: "combat" },
+    { id: 3, kind: "worker", x: 2.5, y: 2.5, playerId: 2, role: "worker" },
     { id: 4, kind: "warehouse", x: 2.5, y: 2.5, playerId: 1 },
     { id: 5, kind: "worker", x: 7.5, y: 7.5, playerId: 1 },
     { id: 6, kind: "worker", x: 2.5, y: 3, playerId: 0 },
@@ -1510,6 +1579,44 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// Snapshot projectiles: optional top-level rows, malformed rows dropped, absence tolerated
+// ---------------------------------------------------------------------------------------------
+
+const projectileSnapshot = worldViewFromSnapshot({
+  ...validSnapshot,
+  projectiles: [
+    { id: 7, x: -3, y: 4.5, tx: 12, ty: 4.5 },
+    { id: 8.5, x: 0, y: 0, tx: 1, ty: 1 }, // non-integer id: the whole row is dropped
+    { id: 9, x: 0, y: Number.NaN, tx: 1, ty: 1 }, // non-finite coordinate: row dropped
+    { id: 10, x: "2", y: 0, tx: 1, ty: 1 }, // non-number coordinate: row dropped
+    { id: 11, x: 0, y: 0, tx: Number.POSITIVE_INFINITY, ty: 1 }, // non-finite target: row dropped
+    { x: 0, y: 0, tx: 1, ty: 1 }, // missing id: row dropped
+    "nope", // not an object: row dropped
+  ],
+});
+check(
+  "快照的顶层 projectiles 解析出合法行，起终点按原样保留（可为负与小数）",
+  projectileSnapshot !== null &&
+    projectileSnapshot.projectiles !== undefined &&
+    projectileSnapshot.projectiles.length === 1 &&
+    JSON.stringify(projectileSnapshot.projectiles[0]) ===
+      JSON.stringify({ id: 7, x: -3, y: 4.5, tx: 12, ty: 4.5 }),
+  JSON.stringify(projectileSnapshot?.projectiles ?? null),
+);
+check(
+  "快照缺 projectiles 字段或字段不是数组时是 undefined（旧服务器照常解析）",
+  worldViewFromSnapshot(validSnapshot)?.projectiles === undefined &&
+    worldViewFromSnapshot({ ...validSnapshot, projectiles: { id: 1 } })?.projectiles ===
+      undefined &&
+    worldViewFromSnapshot({ ...validSnapshot, projectiles: [] })?.projectiles?.length === 0,
+  String(worldViewFromSnapshot(validSnapshot)?.projectiles),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Camera-driven window streaming: signed centres, the duplicate-origin guard and request ordering
+// ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
 // Camera-driven window streaming: signed centres, the duplicate-origin guard and request ordering
 // ---------------------------------------------------------------------------------------------
 
@@ -1776,102 +1883,269 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
-// Atlas parsing
+// Atlas parsing (per-material schema: one image file per tile, one vertical strip per entity)
 // ---------------------------------------------------------------------------------------------
+
+/** Resolves test image paths the way the loader does: entry base + relative path, no document needed. */
+function testResolveUrl(data: AtlasData, imagePath: string): string {
+  return `${data.baseUrl}${imagePath}`;
+}
+
+/** One fake decoded image per referenced file, always the given size. */
+function fakeImages(data: AtlasData, width: number, height: number): Map<string, HTMLImageElement> {
+  const images = new Map<string, HTMLImageElement>();
+  const paths = new Set<string>();
+  for (const tile of data.tiles.values()) {
+    paths.add(tile.image);
+  }
+  for (const entity of data.entities.values()) {
+    paths.add(entity.image);
+  }
+  for (const imagePath of paths) {
+    images.set(
+      testResolveUrl(data, imagePath),
+      { naturalWidth: width, naturalHeight: height } as unknown as HTMLImageElement,
+    );
+  }
+  return images;
+}
 
 const parsed = parseAtlas(
   {
-    image: "atlas.png",
-    tilePixels: 32,
+    plugin: "oc-fixture",
+    tilePixels: 16,
     tiles: {
-      grass: [0, 0, 32, 32],
-      water: [32, 0, 32, 32],
-      bad: [250, 0, 32, 32],
+      grass: { image: "tiles/grass.png", name: "草地" },
+      water: { image: "tiles/water.png" },
+      traversal: { image: "../evil/atlas.png", name: "越权" },
+      absolute: { image: "/absolute.png", name: "绝对" },
+      backslash: { image: "tiles\\grass.png", name: "反斜杠" },
+      empty: { image: "  ", name: "空" },
+      tooLong: { image: `${"a".repeat(255)}/b.png`, name: "过长" },
+      notAnObject: 7,
     },
     entities: {
-      worker: {
-        frames: [
-          [0, 32, 32, 48],
-          [250, 0, 32, 32],
-        ],
+      "unit.melee.t1": {
+        image: "entities/unit.melee.t1.png",
+        frames: 2,
         fps: 6,
+        anchor: [0.5, 0.9],
+        scale: 1.5,
+        name: "普通",
       },
-      soldier: { frames: [[0, 80, 32, 48]] },
-      broken: { frames: [[500, 0, 32, 32]] },
+      worker: { image: "entities/worker.png", frames: 1 },
+      zeroFrames: { image: "entities/zero.png", frames: 0 },
+      tooManyFrames: { image: "entities/many.png", frames: 17 },
+      fractionalFrames: { image: "entities/half.png", frames: 1.5 },
+      missingImage: { frames: 2 },
       notAnObject: 7,
     },
   },
-  256,
-  320,
+  "oc-fixture",
+  "/plugin-assets/oc-fixture/",
 );
 
-check("合法图集解析成功", parsed.ok);
+check("合法材质清单解析成功", parsed.ok);
 if (parsed.ok) {
-  const worker = parsed.data.entities.get("worker");
+  const grass = parsed.data.tiles.get("grass");
   check(
-    "越界帧被丢弃，合法帧保留",
-    worker !== undefined && worker.frames.length === 1,
-    String(worker?.frames.length),
+    "合法地块保留，image 路径与 name 被记录",
+    grass !== undefined &&
+      grass.image === "tiles/grass.png" &&
+      grass.name === "草地" &&
+      parsed.data.tiles.get("water")?.name === "",
+    JSON.stringify(grass),
   );
   check(
-    "合法地形帧保留，越界地形帧丢弃",
-    parsed.data.tiles.has("grass") && parsed.data.tiles.has("water") && !parsed.data.tiles.has("bad"),
-    String(parsed.data.tiles.size),
+    "不安全的 image 路径（..、绝对路径、反斜杠、空、超长）全部被拒绝",
+    !parsed.data.tiles.has("traversal") &&
+      !parsed.data.tiles.has("absolute") &&
+      !parsed.data.tiles.has("backslash") &&
+      !parsed.data.tiles.has("empty") &&
+      !parsed.data.tiles.has("tooLong") &&
+      !parsed.data.tiles.has("notAnObject"),
+    [...parsed.data.tiles.keys()].join(","),
   );
   check(
-    "越界帧会给出警告",
-    parsed.warnings.some((warning) => warning.includes("tiles.bad")) &&
-      parsed.warnings.some((warning) => warning.includes("entities.worker.frames")),
+    "被拒绝的地块会给出警告",
+    ["traversal", "absolute", "backslash", "empty", "tooLong", "notAnObject"].every((label) =>
+      parsed.warnings.some((warning) => warning.includes(`tiles.${label}`)),
+    ),
   );
-  check("所有帧都越界的实体被丢弃", !parsed.data.entities.has("broken"));
-  check("非对象实体条目被丢弃", !parsed.data.entities.has("notAnObject"));
-  check("显式 fps 被保留", worker?.fps === 6, String(worker?.fps));
+  const melee = parsed.data.entities.get("unit.melee.t1");
   check(
-    "缺省 anchor 是脚底 [0.5, 0.75]",
-    worker?.anchor[0] === 0.5 && worker?.anchor[1] === 0.75,
+    "实体的 image、frames 与显式 fps/anchor/scale/name 被保留",
+    melee !== undefined &&
+      melee.image === "entities/unit.melee.t1.png" &&
+      melee.frames === 2 &&
+      melee.fps === 6 &&
+      melee.anchor[0] === 0.5 &&
+      melee.anchor[1] === 0.9 &&
+      melee.scale === 1.5 &&
+      melee.name === "普通",
+    JSON.stringify(melee),
   );
-  check("缺省 scale 是 1", worker?.scale === 1);
+  check(
+    "frames 不是 1..16 整数或缺 image 的实体被丢弃",
+    !parsed.data.entities.has("zeroFrames") &&
+      !parsed.data.entities.has("tooManyFrames") &&
+      !parsed.data.entities.has("fractionalFrames") &&
+      !parsed.data.entities.has("missingImage") &&
+      !parsed.data.entities.has("notAnObject"),
+    [...parsed.data.entities.keys()].join(","),
+  );
+  check(
+    "被拒绝的实体会给出警告",
+    ["zeroFrames", "tooManyFrames", "fractionalFrames", "missingImage", "notAnObject"].every((label) =>
+      parsed.warnings.some((warning) => warning.includes(`entities.${label}`)),
+    ),
+  );
+  check(
+    "images 是去重后的相对路径列表（多个名字共用一个文件时只出现一次）",
+    (() => {
+      const shared = parseAtlas(
+        {
+          tiles: { grass: { image: "tiles/shared.png" }, dirt: { image: "tiles/shared.png" } },
+          entities: { worker: { image: "tiles/shared.png", frames: 1 } },
+        },
+        "oc-shared",
+        "/plugin-assets/oc-shared/",
+      );
+      return shared.ok && JSON.stringify(shared.images) === JSON.stringify(["tiles/shared.png"]);
+    })(),
+    "dedupe",
+  );
+  check("baseUrl 缺少结尾斜杠时补上", parsed.data.baseUrl === "/plugin-assets/oc-fixture/");
 }
+
+// One file serves as a tile OR as an entity material, never both: entities are collected first, a
+// tile reusing an entity image is dropped (that terrain falls back to procedural drawing), and a
+// later entity reusing an earlier entity's image is dropped as well.
+const clash = parseAtlas(
+  {
+    tiles: {
+      grass: { image: "tiles/grass.png" },
+      ghost: { image: "entities/worker.png", name: "占用实体贴图的地块" },
+    },
+    entities: {
+      worker: { image: "entities/worker.png", frames: 2 },
+      rider: { image: "entities/worker.png", frames: 1 },
+    },
+  },
+  "oc-clash",
+  "/plugin-assets/oc-clash/",
+);
+check(
+  "与实体贴图重复的地块被丢弃（回退程序化绘制），其余地块照常保留",
+  clash.ok &&
+    clash.data.tiles.has("grass") &&
+    !clash.data.tiles.has("ghost") &&
+    clash.data.entities.has("worker") &&
+    clash.warnings.some((warning) => warning.includes("tiles.ghost")),
+  clash.ok ? clash.warnings.join("|") : "parse failed",
+);
+check(
+  "同一清单里两个实体共用一张贴图时，后出现的实体被丢弃，下载列表只有一个文件",
+  clash.ok &&
+    clash.data.entities.has("worker") &&
+    !clash.data.entities.has("rider") &&
+    clash.warnings.some((warning) => warning.includes("entities.rider")) &&
+    JSON.stringify(clash.images) === JSON.stringify(["tiles/grass.png", "entities/worker.png"]),
+  clash.ok ? JSON.stringify(clash.images) : "parse failed",
+);
 
 const minimal = parseAtlas(
   {
-    image: "atlas.png",
-    tiles: { grass: [0, 0, 16, 16] },
-    entities: { worker: { frames: [[0, 0, 16, 16]] } },
+    tiles: { grass: { image: "tiles/grass.png" } },
+    entities: { worker: { image: "entities/worker.png", frames: 4 } },
   },
-  64,
-  64,
+  "oc-min",
+  "/plugin-assets/oc-min",
 );
 check("缺省 tilePixels 按 32 处理", minimal.ok && minimal.data.tilePixels === 32);
 if (minimal.ok) {
   const worker = minimal.data.entities.get("worker");
-  check("缺省 fps 是 4", worker?.fps === 4);
-  check("缺省 scale 是 1", worker?.scale === 1);
+  check(
+    "缺省 fps 是 4、anchor 是脚底 [0.5, 0.75]、scale 是 1、name 为空",
+    worker !== undefined &&
+      worker.fps === 4 &&
+      worker.anchor[0] === 0.5 &&
+      worker.anchor[1] === 0.75 &&
+      worker.scale === 1 &&
+      worker.name === "",
+    JSON.stringify(worker),
+  );
 }
 
-// The manifest may label tiles and entity kinds. A named tile uses the {"rect": ..., "name": ...}
-// object form; the old array form stays valid and simply has no label.
+check(
+  "地块的 rect 是整张图片",
+  JSON.stringify(tileRect(16, 16)) === JSON.stringify({ x: 0, y: 0, width: 16, height: 16 }),
+);
+const stripFrames = entityFrameRects(16, 48, 3);
+check(
+  "实体条带按帧数切成等高竖片",
+  stripFrames !== null &&
+    stripFrames.length === 3 &&
+    JSON.stringify(stripFrames[0]) === JSON.stringify({ x: 0, y: 0, width: 16, height: 16 }) &&
+    JSON.stringify(stripFrames[1]) === JSON.stringify({ x: 0, y: 16, width: 16, height: 16 }) &&
+    JSON.stringify(stripFrames[2]) === JSON.stringify({ x: 0, y: 32, width: 16, height: 16 }),
+  JSON.stringify(stripFrames),
+);
+check(
+  "高度不能整除帧数、尺寸非法或帧数非法时返回 null（丢弃实体而不是画出撕裂帧）",
+  entityFrameRects(16, 50, 3) === null &&
+    entityFrameRects(16, 0, 1) === null &&
+    entityFrameRects(0, 16, 1) === null &&
+    entityFrameRects(16, 16, 0) === null &&
+    entityFrameRects(16, 16, 2.5) === null,
+);
+
+// The manifest may label tiles and entity kinds; a nameless entry falls back to its own id.
 const namedFixture = parseAtlas(
   {
-    image: "atlas.png",
+    tilePixels: 16,
     tiles: {
-      grass: { rect: [0, 0, 16, 16], name: "草地" },
-      water: [16, 0, 16, 16],
+      grass: { image: "tiles/grass.png", name: "草地" },
+      water: { image: "tiles/water.png" },
     },
     entities: {
-      "unit.melee.t1": { frames: [[0, 0, 16, 16]], name: "普通" },
-      "unit.engineer": { frames: [[16, 0, 16, 16]] },
+      "unit.melee.t1": { image: "entities/melee.png", frames: 2, name: "普通" },
+      "unit.engineer": { image: "entities/engineer.png", frames: 1 },
     },
   },
-  64,
-  64,
+  "oc-named",
+  "/plugin-assets/oc-named/",
 );
 check("带 name 的清单解析成功", namedFixture.ok);
 if (namedFixture.ok) {
-  // The merge never reads pixels; a private placeholder keeps this block independent of the
-  // composite-atlas section's shared image further down.
-  const namedImage = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
-  const namedAtlas = compositeAtlas([{ ...namedFixture.data, image: namedImage }]);
+  // One file per material: four entries, four sources, each frame a rect into its own file.
+  const namedAtlas = compositeAtlas(
+    buildAtlasSources([namedFixture.data], fakeImages(namedFixture.data, 16, 32), testResolveUrl)
+      .sources,
+  );
+  const meleeEntry = namedAtlas === null ? undefined : lookupAtlasEntity(namedAtlas, "unit.melee.t1");
+  check(
+    "每张图变成自己的 source：地块 rect 是整张图，实体帧是等高竖片",
+    namedAtlas !== null &&
+      namedAtlas.sources.length === 4 &&
+      namedAtlas.sources.every((source) => source.plugin === "oc-named") &&
+      meleeEntry !== undefined &&
+      JSON.stringify(meleeEntry.sprite.frames) ===
+        JSON.stringify([
+          { x: 0, y: 0, width: 16, height: 16 },
+          { x: 0, y: 16, width: 16, height: 16 },
+        ]),
+    `sources=${namedAtlas?.sources.length}`,
+  );
+  const engineerEntry =
+    namedAtlas === null ? undefined : lookupAtlasEntity(namedAtlas, "unit.engineer");
+  check(
+    "单帧实体的竖片占满整张图",
+    engineerEntry !== undefined &&
+      JSON.stringify(engineerEntry.sprite.frames[0]) ===
+        JSON.stringify({ x: 0, y: 0, width: 16, height: 32 }),
+    JSON.stringify(engineerEntry?.sprite.frames),
+  );
   check(
     "带 name 的清单得到预期标签表（按地形路径与实体 kind 暴露）",
     namedAtlas !== null &&
@@ -1899,8 +2173,8 @@ if (namedFixture.ok) {
 // treats those paths as "every resource that exists" even when the player owns none.
 const itemFixture = parseAtlas(
   {
-    image: "atlas.png",
-    tiles: { grass: [0, 0, 8, 8] },
+    tilePixels: 16,
+    tiles: { grass: { image: "tiles/grass.png" } },
     items: {
       gold: "金币",
       wood: { name: "木材" },
@@ -1908,8 +2182,8 @@ const itemFixture = parseAtlas(
       blank: "",
     },
   },
-  8,
-  8,
+  "oc-items",
+  "/plugin-assets/oc-items/",
 );
 check(
   "清单的物品定义支持字符串与 { name } 两种写法，空名称回退到路径",
@@ -1921,8 +2195,10 @@ check(
   itemFixture.ok ? JSON.stringify([...itemFixture.data.items]) : itemFixture.reason,
 );
 if (itemFixture.ok) {
-  const itemImage = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
-  const itemAtlas = compositeAtlas([{ ...itemFixture.data, image: itemImage }]);
+  const itemAtlas = compositeAtlas(
+    buildAtlasSources([itemFixture.data], fakeImages(itemFixture.data, 16, 16), testResolveUrl)
+      .sources,
+  );
   check(
     "物品标签按清单名称解析，未定义名称时回退到路径（带命名空间也能命中）",
     itemAtlas !== null &&
@@ -1934,109 +2210,150 @@ if (itemFixture.ok) {
   );
 }
 
-check("非对象图集被拒绝", parseAtlas(null, 64, 64).ok === false);
+check("非对象清单被拒绝", parseAtlas(null, "p", "/plugin-assets/p/").ok === false);
 check(
-  "缺少 image 的图集被拒绝",
-  parseAtlas({ tiles: { grass: [0, 0, 1, 1] } }, 64, 64).ok === false,
+  "只剩坏路径地块的清单被拒绝",
+  parseAtlas({ tiles: { grass: { image: "../up.png" } } }, "p", "/plugin-assets/p/").ok === false,
 );
-check("没有可用帧的图集被拒绝", parseAtlas({ image: "atlas.png" }, 64, 64).ok === false);
 check(
-  "无效图片尺寸被拒绝",
-  parseAtlas({ image: "atlas.png", tiles: { grass: [0, 0, 1, 1] } }, 0, 0).ok === false,
+  "没有任何地块、实体或物品的清单被拒绝",
+  parseAtlas({ tilePixels: 16 }, "p", "/plugin-assets/p/").ok === false,
+);
+check(
+  "所有 frames 都越界的清单被拒绝",
+  parseAtlas(
+    { entities: { worker: { image: "entities/worker.png", frames: 99 } } },
+    "p",
+    "/plugin-assets/p/",
+  ).ok === false,
+);
+check(
+  "物品定义单独也能撑起一个清单",
+  parseAtlas({ items: { gold: "金币" } }, "p", "/plugin-assets/p/").ok === true,
 );
 
 // ---------------------------------------------------------------------------------------------
-// Composite atlas: the server's manifest array, last wins
+// Composite atlas: the server's manifest array of per-file sources, last wins
 // ---------------------------------------------------------------------------------------------
-
-// Node has no HTMLImageElement and the merge never reads the pixels, so one placeholder is enough for
-// the checks that only need the attachment step.
-const PLACEHOLDER_IMAGE = { naturalWidth: 1, naturalHeight: 1 } as unknown as HTMLImageElement;
 
 const firstEntry = parseAtlas(
   {
     plugin: "oc-hello",
-    atlasUrl: "/plugin-assets/oc-hello/atlas.png",
-    image: "atlas.png",
     tilePixels: 32,
-    tiles: { grass: [0, 0, 32, 32], water: [32, 0, 32, 32] },
-    entities: { worker: { frames: [[0, 32, 32, 48]] } },
+    tiles: { grass: { image: "tiles/grass.png" }, water: { image: "tiles/water.png" } },
+    entities: { worker: { image: "entities/worker.png", frames: 2 } },
   },
-  256,
-  80,
+  "oc-hello",
+  "/plugin-assets/oc-hello/",
 );
 const secondEntry = parseAtlas(
   {
     plugin: "oc-forest",
-    atlasUrl: "/plugin-assets/oc-forest/atlas.png",
-    image: "atlas.png",
     tilePixels: 16,
-    tiles: { grass: [16, 0, 16, 16], sand: [0, 0, 16, 16] },
+    tiles: { grass: { image: "tiles/grass.png" }, sand: { image: "tiles/sand.png" } },
     entities: {
-      worker: { frames: [[0, 16, 16, 24]], fps: 8 },
-      soldier: { frames: [[16, 16, 16, 24]] },
+      worker: { image: "entities/worker.png", frames: 2, fps: 8 },
+      soldier: { image: "entities/soldier.png", frames: 1 },
     },
   },
-  128,
-  64,
+  "oc-forest",
+  "/plugin-assets/oc-forest/",
 );
 check("两个插件条目都解析成功", firstEntry.ok && secondEntry.ok);
 
 if (firstEntry.ok && secondEntry.ok) {
-  const merged = mergeLayers([firstEntry.data, secondEntry.data]);
-  check("后面的插件覆盖同名地形（last wins）", merged.tiles.get("grass") === 1,
-    String(merged.tiles.get("grass")));
-  check("只在前一条目出现的地形仍然保留", merged.tiles.get("water") === 0,
-    String(merged.tiles.get("water")));
-  check("只在后一条目出现的地形被加入", merged.tiles.get("sand") === 1,
-    String(merged.tiles.get("sand")));
-  check("后面的插件覆盖同名实体（last wins）", merged.entities.get("worker") === 1,
-    String(merged.entities.get("worker")));
-  check("只在前一条目出现的实体仍然保留", merged.entities.get("soldier") === 1,
-    String(merged.entities.get("soldier")));
+  const firstSources = buildAtlasSources(
+    [firstEntry.data],
+    fakeImages(firstEntry.data, 32, 32),
+    testResolveUrl,
+  );
+  const secondSources = buildAtlasSources(
+    [secondEntry.data],
+    fakeImages(secondEntry.data, 16, 32),
+    testResolveUrl,
+  );
+  const sources: readonly AtlasSource[] = [...firstSources.sources, ...secondSources.sources];
+  const merged = mergeLayers(sources);
+  const grassLayer = merged.tiles.get("grass");
+  const waterLayer = merged.tiles.get("water");
+  const sandLayer = merged.tiles.get("sand");
+  check(
+    "后面的插件覆盖同名地形（last wins），只属于一条的地形保留自己的来源",
+    grassLayer !== undefined &&
+      sources[grassLayer]?.plugin === "oc-forest" &&
+      waterLayer !== undefined &&
+      sources[waterLayer]?.plugin === "oc-hello" &&
+      sandLayer !== undefined &&
+      sources[sandLayer]?.plugin === "oc-forest",
+    `grass=${grassLayer} water=${waterLayer} sand=${sandLayer}`,
+  );
+  const workerLayer = merged.entities.get("worker");
+  const soldierLayer = merged.entities.get("soldier");
+  check(
+    "后面的插件覆盖同名实体（last wins），只属于一条的实体保留自己的来源",
+    workerLayer !== undefined &&
+      sources[workerLayer]?.plugin === "oc-forest" &&
+      soldierLayer !== undefined &&
+      sources[soldierLayer]?.plugin === "oc-forest",
+    `worker=${workerLayer} soldier=${soldierLayer}`,
+  );
   check("贡献插件按出现顺序去重", merged.plugins.join(",") === "oc-hello,oc-forest",
     merged.plugins.join(","));
 
-  const sources: readonly AtlasSource[] = [
-    { ...firstEntry.data, image: PLACEHOLDER_IMAGE },
-    { ...secondEntry.data, image: PLACEHOLDER_IMAGE },
-  ];
   const composite = compositeAtlas(sources);
   check(
-    "合成图集用胜出插件的帧与图片",
-    composite?.tiles.get("grass")?.rect.x === 16 &&
-      composite.tiles.get("grass")?.source.plugin === "oc-forest",
-    String(composite?.tiles.get("grass")?.rect.x),
+    "合成图集用胜出插件的文件与 recommended tilePixels",
+    composite?.tiles.get("grass")?.source.plugin === "oc-forest" &&
+      composite?.tiles.get("grass")?.source.tilePixels === 16 &&
+      composite?.tiles.get("grass")?.rect.width === 16,
+    String(composite?.tiles.get("grass")?.rect.width),
   );
   check(
-    "合成图集里每个名字都记住自己的来源条目",
+    "合成图集里每个名字都记住自己的来源文件",
     composite?.entities.get("worker")?.source.plugin === "oc-forest" &&
       composite?.entities.get("soldier")?.source.plugin === "oc-forest",
   );
 
-  const single = compositeAtlas([{ ...firstEntry.data, image: PLACEHOLDER_IMAGE }]);
+  const single = compositeAtlas(firstSources.sources);
   check(
     "只有一个插件时合成图集照常工作",
-    single?.tiles.get("water")?.rect.x === 32 &&
-      single.tiles.get("water")?.source.plugin === "oc-hello" &&
-      single.entities.get("worker")?.source.plugin === "oc-hello",
+    single?.tiles.get("water")?.source.plugin === "oc-hello" &&
+      single.tiles.get("water")?.source.tilePixels === 32 &&
+      single.entities.get("worker")?.source.plugin === "oc-hello" &&
+      single.entities.get("worker")?.sprite.frames.length === 2,
+  );
+
+  // A file that failed to decode drops exactly the names that reference it.
+  const partialImages = fakeImages(firstEntry.data, 32, 32);
+  partialImages.delete(testResolveUrl(firstEntry.data, "tiles/water.png"));
+  const partial = compositeAtlas(
+    buildAtlasSources([firstEntry.data], partialImages, testResolveUrl).sources,
+  );
+  check(
+    "载入失败的文件只丢掉引用它的名字，其余照常合成",
+    partial?.tiles.has("grass") === true &&
+      partial?.tiles.has("water") === false &&
+      partial?.entities.has("worker") === true,
+    JSON.stringify([...(partial?.tiles.keys() ?? [])]),
+  );
+
+  // A strip whose height does not divide into its frame count drops that entity with a problem line.
+  const odd = buildAtlasSources([firstEntry.data], fakeImages(firstEntry.data, 32, 51), testResolveUrl);
+  check(
+    "条带高度不能整除帧数时丢弃该实体并给出问题行",
+    odd.sources.every((source) => source.entities.size === 0) &&
+      odd.sources.some((source) => source.tiles.size > 0) &&
+      odd.problems.length === 1,
+    JSON.stringify(odd.problems),
   );
 }
 
 check("空数组没有图集，客户端因此回退到程序化绘制", compositeAtlas([]) === null);
 
-const urlOnly = parseAtlas(
-  { atlasUrl: "/plugin-assets/oc-hello/atlas.png", tiles: { grass: [0, 0, 32, 32] } },
-  32,
-  32,
-);
-check(
-  "只有 atlasUrl 的条目也能解析，并从 URL 得到文件名",
-  urlOnly.ok && urlOnly.data.imageName === "atlas.png" && urlOnly.data.plugin === "",
-);
-
-// The checked-in classic manifest is the one the game view actually receives, so prove from disk
-// that every tile and every entity kind carries a usable name, not just that the parser accepts it.
+// The checked-in classic manifest is the one the game view actually receives. It is being converted
+// from the packed atlas to one PNG per material; the raw-count and coverage checks below hold for both
+// shapes, and once the v2 entries land on disk the per-material checks (names, safe paths, every
+// referenced file present as a real PNG) start asserting against them.
 const CLASSIC_MANIFEST_URL = new URL(
   "../../projects/oc/oc-game-server-classic/src/main/resources/assets/manifest.json",
   import.meta.url,
@@ -2057,58 +2374,213 @@ try {
     `经典插件清单不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
   );
 }
-const classicAtlas = parseAtlas(classicManifest, 96, 160);
-check("经典插件的 manifest.json 可以被解析", classicAtlas.ok);
 const classicRoot = recordTable(classicManifest);
 const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
 const classicEntities = classicRoot === null ? null : recordTable(classicRoot["entities"]);
 check(
-  "经典清单的每个地块都有非空 name",
-  classicAtlas.ok &&
-    classicTiles !== null &&
-    classicAtlas.data.tiles.size === Object.keys(classicTiles).length &&
-    [...classicAtlas.data.tiles.values()].every((tile) => tile.name.trim() !== ""),
-  classicAtlas.ok
-    ? `${classicAtlas.data.tiles.size} tiles / ${classicTiles === null ? "?" : Object.keys(classicTiles).length} parsed`
-    : classicAtlas.reason,
+  "经典清单声明 24 个地块与 37 个实体",
+  classicTiles !== null &&
+    Object.keys(classicTiles).length === 24 &&
+    classicEntities !== null &&
+    Object.keys(classicEntities).length === 37,
+  `tiles=${classicTiles === null ? "?" : Object.keys(classicTiles).length} entities=${classicEntities === null ? "?" : Object.keys(classicEntities).length}`,
 );
 check(
-  "经典清单的每个实体 kind 都有非空 name",
-  classicAtlas.ok &&
-    classicEntities !== null &&
-    classicAtlas.data.entities.size === Object.keys(classicEntities).length &&
-    [...classicAtlas.data.entities.values()].every((entity) => entity.name.trim() !== ""),
-  classicAtlas.ok
-    ? `${classicAtlas.data.entities.size} entities / ${classicEntities === null ? "?" : Object.keys(classicEntities).length} parsed`
-    : classicAtlas.reason,
+  "经典清单的实体覆盖全部单位路径与建筑 kind",
+  classicEntities !== null &&
+    FALLBACK_TRAIN_PATHS.every((path) => classicEntities[path] !== undefined) &&
+    CLASSIC_BUILDING_KINDS.every((kind) => classicEntities[kind] !== undefined),
+  [...FALLBACK_TRAIN_PATHS, ...CLASSIC_BUILDING_KINDS]
+    .filter((kind) => classicEntities === null || classicEntities[kind] === undefined)
+    .join(","),
+);
+check(
+  "经典清单的地块覆盖每个渲染地形与 void",
+  classicTiles !== null &&
+    TERRAIN_IDS.every((terrain) => classicTiles[terrain] !== undefined) &&
+    classicTiles[TERRAIN_VOID] !== undefined,
+  [...TERRAIN_IDS, TERRAIN_VOID]
+    .filter((terrain) => classicTiles === null || classicTiles[terrain] === undefined)
+    .join(","),
+);
+
+const classicAtlas = parseAtlas(classicManifest, "oc-classic", "/plugin-assets/oc-classic/");
+if (classicAtlas.ok) {
+  check(
+    "经典清单的每个 v2 地块都有非空 name",
+    classicAtlas.data.tiles.size === (classicTiles === null ? 0 : Object.keys(classicTiles).length) &&
+      [...classicAtlas.data.tiles.values()].every((tile) => tile.name.trim() !== ""),
+    `${classicAtlas.data.tiles.size} tiles parsed`,
+  );
+  check(
+    "经典清单的每个 v2 实体都有非空 name",
+    classicAtlas.data.entities.size ===
+      (classicEntities === null ? 0 : Object.keys(classicEntities).length) &&
+      [...classicAtlas.data.entities.values()].every((entity) => entity.name.trim() !== ""),
+    `${classicAtlas.data.entities.size} entities parsed`,
+  );
+
+  // Every referenced file must exist on disk next to the manifest and start with the PNG signature
+  // bytes 89 50 4E 47, so a typo'd path or a stub file fails here instead of on the player's screen.
+  const assetsDir = new URL(".", CLASSIC_MANIFEST_URL);
+  const missing: string[] = [];
+  const notPng: string[] = [];
+  for (const imagePath of classicAtlas.images) {
+    let bytes: Uint8Array;
+    try {
+      bytes = readFileSync(new URL(imagePath, assetsDir));
+    } catch {
+      missing.push(imagePath);
+      continue;
+    }
+    const signature = bytes.subarray(0, 4);
+    if (
+      signature[0] !== 0x89 ||
+      signature[1] !== 0x50 ||
+      signature[2] !== 0x4e ||
+      signature[3] !== 0x47
+    ) {
+      notPng.push(imagePath);
+    }
+  }
+  check(
+    "经典清单引用的每个材质文件都存在且是 PNG（89 50 4E 47 签名）",
+    missing.length === 0 && notPng.length === 0,
+    `missing=[${missing.join(", ")}] notPng=[${notPng.join(", ")}]`,
+  );
+} else {
+  console.info(
+    `经典清单还不是 v2 材质格式（${classicAtlas.reason}）；PNG 拆分落地后，v2 地块/实体的名称、路径与文件校验会生效`,
+  );
+}
+
+// ---- dimension, gateway and unloaded-chunk shadow -----------------------------------------
+
+check(
+  "snapshotUrl 把维度编码为 dim 参数，缺省时不带",
+  snapshotUrl("", { cx: -3.2, cy: 40, r: 40, dim: "hell" })
+    === "/world/snapshot?cx=-4&cy=40&r=40&dim=hell" &&
+    snapshotUrl("", { cx: 1, cy: 2, r: 40 }) === "/world/snapshot?cx=1&cy=2&r=40",
+  snapshotUrl("", { cx: -3.2, cy: 40, r: 40, dim: "hell" }),
+);
+const metaWorld = worldViewFromSnapshot({
+  tick: 9,
+  width: 1,
+  height: 1,
+  tiles: [["grass"]],
+  entities: [
+    {
+      id: 3,
+      kind: "oc:building.hell_gate",
+      x: 0.5,
+      y: 0.5,
+      player: 1,
+      gateway: { to: "hell", arrival: [8, 8] },
+    },
+  ],
+  dimension: "hell",
+  dimensionName: "地狱",
+  dimensions: [
+    { key: "overworld", name: "主世界" },
+    { key: "hell", name: "地狱" },
+  ],
+  loadedChunks: [
+    [0, 0],
+    [3, -2],
+  ],
+});
+check(
+  "快照解析维度名册、loadedChunks 与建筑 gateway 目标",
+  metaWorld !== null &&
+    metaWorld.dimension === "hell" &&
+    metaWorld.dimensionName === "地狱" &&
+    metaWorld.dimensions?.length === 2 &&
+    metaWorld.dimensions[1]?.name === "地狱" &&
+    metaWorld.loadedChunks?.length === 2 &&
+    metaWorld.loadedChunks[1]?.x === 3 &&
+    metaWorld.loadedChunks[1]?.y === -2 &&
+    metaWorld.entities[0]?.gateway?.to === "hell" &&
+    metaWorld.entities[0]?.gateway?.arrival.x === 8 &&
+    metaWorld.entities[0]?.gateway?.arrival.y === 8,
+  JSON.stringify(metaWorld?.entities.map((entity) => entity.gateway)),
+);
+check(
+  "旧服务端快照没有维度字段时照常解析，实体没有 gateway",
+  (() => {
+    const legacy = worldViewFromSnapshot({
+      tick: 1,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [{ id: 5, kind: "building.armory.t1", x: 0.5, y: 0.5, player: 1 }],
+    });
+    return (
+      legacy !== null &&
+      legacy.dimension === undefined &&
+      legacy.dimensions === undefined &&
+      legacy.loadedChunks === undefined &&
+      legacy.entities[0]?.gateway === undefined
+    );
+  })(),
+);
+check(
+  "区块坐标：16 瓦一块，负坐标向下取整",
+  chunkOfTile(0, 0).x === 0 &&
+    chunkOfTile(15, 16).y === 1 &&
+    chunkOfTile(-1, -16).x === -1 &&
+    chunkOfTile(-1, -16).y === -1 &&
+    CHUNK_SIZE_TILES === 16,
+);
+check(
+  "阴影目标：loadedChunks 缺省不遮，未加载块给满阴影，加载块透明",
+  (() => {
+    const loaded = new Set([chunkKey(0, 0), chunkKey(2, -1)]);
+    return (
+      shadowTargetAlpha(undefined, 5, 5) === 0 &&
+      shadowTargetAlpha(loaded, 5, 5) === 0 &&
+      shadowTargetAlpha(loaded, 20, 0) === SHADOW_ALPHA &&
+      shadowTargetAlpha(loaded, 40, -16) === 0 &&
+      shadowTargetAlpha(loaded, 1, 1) === 0
+    );
+  })(),
+);
+check(
+  "阴影散开：alpha 逐步逼近目标且不越过",
+  approachShadowAlpha(0.0, SHADOW_ALPHA, 0.08) === 0.08 &&
+    approachShadowAlpha(SHADOW_ALPHA - 0.03, SHADOW_ALPHA, 0.08) === SHADOW_ALPHA &&
+    approachShadowAlpha(0.5, 0, 0.08) === 0.42 &&
+    approachShadowAlpha(0.05, 0, 0.08) === 0,
 );
 
 const goodEntry = readManifestEntry({
   plugin: "oc-hello",
-  atlasUrl: "/plugin-assets/oc-hello/atlas.png",
+  baseUrl: "/plugin-assets/oc-hello/",
 });
 check(
-  "合法条目给出 plugin 与 atlasUrl",
+  "合法条目给出 plugin 与 baseUrl",
   goodEntry.ok &&
     goodEntry.entry.plugin === "oc-hello" &&
-    goodEntry.entry.atlasUrl === "/plugin-assets/oc-hello/atlas.png",
+    goodEntry.entry.baseUrl === "/plugin-assets/oc-hello/",
 );
 const malformedEntries = [
   readManifestEntry(null),
   readManifestEntry("atlas.png"),
   readManifestEntry({}),
-  readManifestEntry({ atlasUrl: 7 }),
-  readManifestEntry({ atlasUrl: "plugin-assets/atlas.png" }),
-  readManifestEntry({ atlasUrl: "http://evil.example/atlas.png" }),
-  readManifestEntry({ atlasUrl: "//evil.example/atlas.png" }),
+  readManifestEntry({ baseUrl: "/plugin-assets/x/" }),
+  readManifestEntry({ plugin: "x" }),
+  readManifestEntry({ plugin: "x", baseUrl: "" }),
+  readManifestEntry({ plugin: "x", baseUrl: 7 }),
+  readManifestEntry({ plugin: "x", baseUrl: "plugin-assets/x/" }),
+  readManifestEntry({ plugin: "x", baseUrl: "http://evil.example/x/" }),
+  readManifestEntry({ plugin: "x", baseUrl: "//evil.example/x/" }),
 ];
 check(
   "畸形条目被跳过并各自给出警告",
   malformedEntries.every((result) => !result.ok && result.warning !== ""),
 );
 check(
-  "缺少 plugin 的条目仍可加载它的图片",
-  readManifestEntry({ atlasUrl: "/plugin-assets/x/atlas.png" }).ok === true,
+  "同源绝对路径的条目被接受",
+  readManifestEntry({ plugin: "x", baseUrl: "/plugin-assets/x/" }).ok === true,
 );
 
 check("没有图集时 HUD 显示 procedural", atlasLabel([]) === "procedural");
@@ -2306,46 +2778,18 @@ check(
 );
 
 check(
-  "建筑目录与面板一致",
-  JSON.stringify(BUILDING_PATHS) ===
-    JSON.stringify([
-      "building.armory.t1",
-      "building.mine.t1",
-      "building.lumbercamp.t1",
-      "building.warehouse",
-      "building.turret.t1",
-    ]),
-  BUILDING_PATHS.join(", "),
-);
-check(
-  "建筑目录包含木材营地 building.lumbercamp.t1",
-  BUILDING_PATHS.includes("building.lumbercamp.t1") &&
-    build(1, "building.lumbercamp.t1", 5, 6) === "BUILD 1 building.lumbercamp.t1 5 6",
-  BUILDING_PATHS.join(", "),
-);
-check(
-  "建筑目录包含工程师可建的仓库 building.warehouse",
-  BUILDING_PATHS.includes("building.warehouse") &&
+  "建筑目录由快照 buildable 驱动；经典目录保留全部 15 个可建造 kind",
+  CLASSIC_BUILDING_KINDS.includes("building.lumbercamp.t1") &&
+    build(1, "building.lumbercamp.t1", 5, 6) === "BUILD 1 building.lumbercamp.t1 5 6" &&
     build(1, "building.warehouse", 7, 8) === "BUILD 1 building.warehouse 7 8",
-  BUILDING_PATHS.join(", "),
+  CLASSIC_BUILDING_KINDS.join(", "),
 );
 check(
-  "单位目录与面板一致",
-  JSON.stringify(UNIT_PATHS) ===
-    JSON.stringify([
-      "unit.melee.t1",
-      "unit.melee.t2",
-      "unit.melee.t3",
-      "unit.melee.t4",
-      "unit.melee.t5",
-      "unit.engineer",
-    ]),
-  UNIT_PATHS.join(", "),
-);
-check(
-  "目录里每条路径都能原样交给对应的构建器",
-  UNIT_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
-    BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
+  "单位目录与面板一致（训练菜单由快照 trains 驱动，回退目录保留六个经典条目）",
+  FALLBACK_TRAIN_PATHS.join(",") ===
+    "unit.melee.t1,unit.melee.t2,unit.melee.t3,unit.melee.t4,unit.melee.t5,unit.engineer" &&
+    FALLBACK_TRAIN_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
+    CLASSIC_BUILDING_KINDS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
 );
 
 // Shift-click queueing (item 27): the plan keeps the mode armed and every line carries the queue token.
@@ -2377,17 +2821,6 @@ check(
     ]),
   buildBatch([3, 1, 2], "building.warehouse", 4, 5, true).join(" | "),
 );
-check(
-  "哨塔目录带三档造价与射程，按钮标签把它显示出来",
-  BUILDING_COSTS.get("building.turret.t1")?.gold === 120 &&
-    BUILDING_COSTS.get("building.turret.t1")?.wood === 20 &&
-    BUILDING_COSTS.get("building.turret.t2")?.range === 7.5 &&
-    BUILDING_COSTS.get("building.turret.t3")?.range === 9 &&
-    buildButtonLabel("building.turret.t2") === "building.turret.t2 · 金 260 · 木 70 · 射程 7.5" &&
-    buildButtonLabel("building.warehouse") === "building.warehouse",
-  buildButtonLabel("building.turret.t2"),
-);
-
 // ---------------------------------------------------------------------------------------------
 // Heartbeat
 // ---------------------------------------------------------------------------------------------
@@ -2518,8 +2951,8 @@ function placementWorld(): WorldView {
 const placementFixture = placementWorld();
 
 check(
-  "建筑足迹查表：三档哨塔是 2×2，其它经典建筑是 3×3（命名空间也能命中）",
-  BUILDING_PATHS.every((path) => {
+  "建筑足迹查表：哨塔系列是 2×2，其它经典建筑是 3×3（命名空间也能命中）",
+  CLASSIC_BUILDING_KINDS.every((path) => {
     const footprint = footprintForKind(path);
     return path.startsWith("building.turret.")
       ? footprint.width === 2 && footprint.height === 2
@@ -2527,7 +2960,7 @@ check(
   }) &&
     footprintForKind("oc:building.warehouse").height === 3 &&
     footprintForKind("oc:building.turret.t3").width === 2,
-  BUILDING_PATHS.map((path) => `${path}=${footprintForKind(path).width}`).join(", "),
+  CLASSIC_BUILDING_KINDS.map((path) => `${path}=${footprintForKind(path).width}`).join(", "),
 );
 check(
   "未知建筑 kind 的足迹回退到默认 3×3",
@@ -3723,8 +4156,8 @@ check(
   singlePanel.scope === "single" &&
     singlePanel.rows.map((row) => `${row.name}=${row.amount}`).join(",") === "木=40,金=120" &&
     singlePanel.summary === "仓库 #1 · 容量 24 · 已用 2 · 空闲 22 · 在途 1" &&
-    singlePanel.toggleLabel === WAREHOUSE_SCOPE_TOGGLE_SINGLE &&
-    singlePanel.note === WAREHOUSE_MARK_NOTE &&
+    singlePanel.toggleLabel === warehouseScopeToggleSingleLabel() &&
+    singlePanel.note === warehouseMarkNote() &&
     singlePanel.transferVisible === true &&
     singlePanel.transferReady === true,
   `${singlePanel.summary} / ${singlePanel.rows.map((row) => row.name).join(",")}`,
@@ -3742,7 +4175,7 @@ check(
   "总计偏好：同一座仓库选中时切回合计，表头说明总计，切换按钮回到单仓库",
   totalWithSingle.scope === "total" &&
     totalWithSingle.summary === "4 个仓库 · 总计" &&
-    totalWithSingle.toggleLabel === WAREHOUSE_SCOPE_TOGGLE_TOTAL &&
+    totalWithSingle.toggleLabel === warehouseScopeToggleTotalLabel() &&
     totalWithSingle.note === "" &&
     totalWithSingle.transferVisible === false,
   `${totalWithSingle.scope} / ${totalWithSingle.summary}`,
@@ -3997,7 +4430,7 @@ check(
   emptyCommand.kind === "none" &&
     emptyCommand.mixed === false &&
     emptyCommand.actions.length === 0 &&
-    emptyCommand.hint === EMPTY_SELECTION_HINT,
+    emptyCommand.hint === emptySelectionHint(),
   `${emptyCommand.kind} / ${emptyCommand.actions.length}`,
 );
 
@@ -4011,7 +4444,7 @@ check(
     unitCommand.actions.map((action) => action.kind).join(",") === "stop,attack-move" &&
     unitCommand.actions.every((action) => action.zone === "bar") &&
     unitCommand.actions.map((action) => action.label).join(",") ===
-      `${STOP_ACTION_LABEL},${ATTACK_MOVE_ACTION_LABEL}`,
+      `${stopActionLabel()},${attackMoveActionLabel()}`,
   `${unitCommand.kind} / ${unitCommand.actions.map((action) => action.kind).join(",")}`,
 );
 
@@ -4022,14 +4455,14 @@ check(
     engineerCommand.actions.slice(0, 2).map((action) => action.kind).join(",") ===
       "stop,attack-move" &&
     engineerCommand.actions.filter((action) => action.kind === "build").length ===
-      BUILDING_PATHS.length &&
+      FALLBACK_BUILD_PATHS.length &&
     engineerCommand.actions
       .filter((action) => action.kind === "build")
       .every((action) => action.zone === "context") &&
     engineerCommand.actions
       .filter((action) => action.kind === "build")
       .map((action) => action.path)
-      .join(",") === BUILDING_PATHS.join(","),
+      .join(",") === FALLBACK_BUILD_PATHS.join(","),
   `${engineerCommand.kind} / ${engineerCommand.actions.length}`,
 );
 
@@ -4039,7 +4472,7 @@ const buildingCommand = commandBarModel([commandBuilding(4)], 1, {
 check(
   "选中自己的建筑时只给出 TRAIN 条目（右下角），没有单位动作",
   buildingCommand.kind === "building" &&
-    buildingCommand.actions.length === UNIT_PATHS.length &&
+    buildingCommand.actions.length === FALLBACK_TRAIN_PATHS.length &&
     buildingCommand.actions.every(
       (action) => action.kind === "train" && action.zone === "context",
     ) &&
@@ -4056,7 +4489,7 @@ check(
   "选中多座同类型建筑仍给出 TRAIN，提示说明一次点击会并行排产",
   multiBuildingCommand.kind === "building" &&
     multiBuildingCommand.buildingCount === 3 &&
-    multiBuildingCommand.actions.length === UNIT_PATHS.length &&
+    multiBuildingCommand.actions.length === FALLBACK_TRAIN_PATHS.length &&
     multiBuildingCommand.actions.every((action) => action.kind === "train") &&
     multiBuildingCommand.hint.includes("并行生产"),
   `${multiBuildingCommand.kind} / ${multiBuildingCommand.hint}`,
@@ -4150,7 +4583,7 @@ function upgradeBuilding(
     y: id,
     playerId,
     progress: 1,
-    upgrade: { to: "building.armory.t2", gold, wood },
+    upgrade: { options: [{ to: "building.armory.t2", gold, wood }] },
   };
 }
 
@@ -4172,7 +4605,7 @@ check(
     affordableUpgrade.affordable &&
     !affordableUpgrade.disabled &&
     affordableUpgrade.label ===
-      `${UPGRADE_ACTION_LABEL} · 兵营·强化 · ${upgradeCostLabel(140, 40)}`,
+      `${t("action.upgrade")} · 兵营·强化 · ${upgradeCostLabel(140, 40)}`,
   affordableUpgrade?.label ?? "<null>",
 );
 check(
@@ -4225,25 +4658,62 @@ check(
   upgradeEntry(plainBuilding, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
     null,
 );
-const upgradeUnit: EntityView = {
+const upgradeUnitRow: EntityView = {
   id: 47,
   kind: "unit.melee.t1",
   x: 47,
   y: 47,
   playerId: 1,
-  upgrade: { to: "building.armory.t2", gold: 140, wood: 40 },
+  upgrade: { options: [{ to: "building.armory.t2", gold: 140, wood: 40 }] },
 };
 check(
   "单位即使带 upgrade 字段也不出现升级条目（升级只属于建筑）",
-  upgradeEntry(upgradeUnit, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
+  upgradeEntry(upgradeUnitRow, 1, { id: 1, name: "Player 1", gold: 999, wood: 999 }) ===
     null,
 );
+const variantBuilding: EntityView = {
+  id: 48,
+  kind: "building.armory.t1",
+  x: 48,
+  y: 48,
+  playerId: 1,
+  progress: 1,
+  upgrade: {
+    options: [
+      { to: "building.armory.t2", gold: 140, wood: 40 },
+      { to: "building.purgatory", gold: 260, wood: 40 },
+    ],
+  },
+};
+const variantLabels = (path: string): string =>
+  path === "building.purgatory" ? "炼狱工厂" : upgradeLabels(path);
 check(
-  "UPGRADE 命令构建器生成 UPGRADE <id> 并拒绝非法 id",
+  "变体升级：upgradeEntry 给第一变体，upgradeEntries 按声明顺序给全部并各带费用",
+  (() => {
+    const player = { id: 1, name: "Player 1", gold: 300, wood: 60 };
+    const entries = upgradeEntries(variantBuilding, 1, player, variantLabels);
+    const first = upgradeEntry(variantBuilding, 1, player, variantLabels);
+    return (
+      first !== null &&
+      first.target === "building.armory.t2" &&
+      entries.length === 2 &&
+      entries[1]?.target === "building.purgatory" &&
+      entries[1]?.targetName === "炼狱工厂" &&
+      entries[1]?.gold === 260 &&
+      entries[1]?.wood === 40 &&
+      entries[1]?.affordable &&
+      entries[1]?.label === `${t("action.upgrade")} · 炼狱工厂 · ${upgradeCostLabel(260, 40)}`
+    );
+  })(),
+);
+check(
+  "UPGRADE 命令构建器生成 UPGRADE <id>，带变体时生成 UPGRADE <id> <variantPath>，并拒绝非法输入",
   upgrade(12) === "UPGRADE 12" &&
+    upgrade(12, "building.purgatory") === "UPGRADE 12 building.purgatory" &&
     throwsChinese(() => upgrade(0)) &&
     throwsChinese(() => upgrade(1.5)) &&
-    throwsChinese(() => upgrade(-3)),
+    throwsChinese(() => upgrade(-3)) &&
+    throwsChinese(() => upgrade(12, "  ")),
 );
 
 const batchPlayer = { id: 1, name: "Player 1", gold: 300, wood: 100 };
@@ -4256,8 +4726,8 @@ const batchPlan = upgradeBatchPlan(batchBuildings, 1, batchPlayer);
 check(
   "升级全部：按选择顺序每个买得起的建筑一条 UPGRADE，余额不足的那个跳过并给原因",
   batchPlan !== null &&
-    UPGRADE_ALL_ACTION_LABEL === "升级全部" &&
-    batchPlan.lines.join(",") === "UPGRADE 50,UPGRADE 51" &&
+    t("action.batch") === "批量" &&
+    batchPlan.lines.join(",") === "UPGRADE 50 building.armory.t2,UPGRADE 51 building.armory.t2" &&
     batchPlan.buildingIds.join(",") === "50,51" &&
     batchPlan.skipped.length === 1 &&
     batchPlan.skipped[0]?.buildingId === 52 &&
@@ -4273,7 +4743,7 @@ check(
     [upgradeBuilding(53, 140, 40), upgradeBuilding(54, 140, 40)],
     1,
     { ...batchPlayer, gold: 150 },
-  )?.lines.join(",") === "UPGRADE 53",
+  )?.lines.join(",") === "UPGRADE 53 building.armory.t2",
 );
 check(
   "升级全部跳过未完工与没有后续等级的建筑，其余照常发送",
@@ -4285,7 +4755,7 @@ check(
       y: 55,
       playerId: 1,
       progress: 0.3,
-      upgrade: { to: "building.armory.t2", gold: 140, wood: 40 },
+      upgrade: { options: [{ to: "building.armory.t2", gold: 140, wood: 40 }] },
     };
     const topTier: EntityView = {
       id: 56,
@@ -4301,7 +4771,7 @@ check(
       batchPlayer,
     );
     return plan !== null &&
-      plan.lines.join(",") === "UPGRADE 57" &&
+      plan.lines.join(",") === "UPGRADE 57 building.armory.t2" &&
       plan.skipped.map((skip) => `${skip.buildingId}:${skip.reason}`).join(",") ===
         "55:unfinished,56:no-successor" &&
       plan.summary === "已发送 1 条升级 / 2 条被拒绝";
@@ -4316,7 +4786,7 @@ check(
       batchPlayer,
     ) === null &&
     upgradeBatchPlan([upgradeBuilding(60, 140, 40, 2)], 1, batchPlayer) === null &&
-    upgradeBatchPlan([upgradeUnit], 1, batchPlayer) === null,
+    upgradeBatchPlan([upgradeUnitRow], 1, batchPlayer) === null,
   "all null",
 );
 check(
@@ -4342,7 +4812,7 @@ const upgradeSnapshot = worldViewFromSnapshot({
       x: 0.5,
       y: 0.5,
       player: 1,
-      upgrade: { to: "oc:building.armory.t2", gold: 140, wood: 40 },
+      upgrade: { options: [{ to: "oc:building.armory.t2", gold: 140, wood: 40 }] },
     },
     {
       id: 8,
@@ -4350,16 +4820,16 @@ const upgradeSnapshot = worldViewFromSnapshot({
       x: 1.5,
       y: 0.5,
       player: 1,
-      upgrade: { to: "", gold: -1, wood: "none" },
+      upgrade: { options: [{ to: "", gold: -1, wood: "none" }] },
     },
   ],
 });
 check(
   "快照解析 upgrade 对象并去掉命名空间；畸形对象整体忽略",
   upgradeSnapshot !== null &&
-    upgradeSnapshot.entities[0]?.upgrade?.to === "building.armory.t2" &&
-    upgradeSnapshot.entities[0]?.upgrade?.gold === 140 &&
-    upgradeSnapshot.entities[0]?.upgrade?.wood === 40 &&
+    upgradeSnapshot.entities[0]?.upgrade?.options[0]?.to === "building.armory.t2" &&
+    upgradeSnapshot.entities[0]?.upgrade?.options[0]?.gold === 140 &&
+    upgradeSnapshot.entities[0]?.upgrade?.options[0]?.wood === 40 &&
     upgradeSnapshot.entities[1]?.upgrade === undefined,
   JSON.stringify(upgradeSnapshot?.entities.map((entity) => entity.upgrade)),
 );
@@ -5281,10 +5751,10 @@ const engineerC: EntityView = { id: 43, kind: "unit.engineer", x: 7.5, y: 5.5, p
 const multiEngineerCommand = commandBarModel([engineerA, engineerB, engineerC], 3);
 const engineerBuildActions = multiEngineerCommand.actions.filter((action) => action.kind === "build");
 check(
-  "选中多个工兵时仍显示全部四个 BUILD 条目（兵工厂/矿井/伐木场/仓库）",
+  "选中多个工兵时仍显示全部 BUILD 条目（回退目录的全部条目）",
   multiEngineerCommand.kind === "engineer" &&
-    engineerBuildActions.length === BUILDING_PATHS.length &&
-    engineerBuildActions.map((action) => action.path).join(",") === BUILDING_PATHS.join(",") &&
+    engineerBuildActions.length === FALLBACK_BUILD_PATHS.length &&
+    engineerBuildActions.map((action) => action.path).join(",") === FALLBACK_BUILD_PATHS.join(",") &&
     engineerBuildActions.every((action) => action.zone === "context"),
   `${multiEngineerCommand.kind} / ${engineerBuildActions.map((action) => action.path).join(",")}`,
 );
@@ -5312,58 +5782,81 @@ check(
   buildBatch([engineerA.id, engineerB.id], "building.armory.t1", 5, 6).join(" | "),
 );
 check(
-  "工程师的 BUILD 目录与面板一致，四个路径都可以生成 BUILD 命令",
-  BUILDING_PATHS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
-  BUILDING_PATHS.join(","),
+  "工程师的 BUILD 目录与面板一致，每个路径都可以生成 BUILD 命令",
+  CLASSIC_BUILDING_KINDS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
+  CLASSIC_BUILDING_KINDS.join(","),
 );
 
-// BUG B: every classic building kind has its own content entry, its own train list and its own atlas
-// cell. The old manifest pointed lumber camp t1/t2/t3 and the warehouse at the armory/mine cells, and the
-// panel reused the armory's unit list for every building.
-const classicBuildingSprites =
-  classicAtlas.ok ? classicAtlas.data.entities : new Map<string, never>();
-const buildingFrameSignatures = CLASSIC_BUILDING_KINDS.map((kind) => {
-  const sprite = classicBuildingSprites.get(kind);
-  return sprite === undefined
-    ? ""
-    : sprite.frames.map((frame) => `${frame.x},${frame.y},${frame.width},${frame.height}`).join(";");
+// BUG B: every classic building kind has its own content entry and its own train list, and - under the
+// per-material schema - its own PNG file, so no two kinds ever draw from the same art. The old manifest
+// pointed lumber camp t1/t2/t3 and the warehouse at the armory/mine cells, and the panel reused the
+// armory's unit list for every building.
+if (classicAtlas.ok) {
+  const buildingEntries = CLASSIC_BUILDING_KINDS.map(
+    (kind) => classicAtlas.data.entities.get(kind) ?? null,
+  );
+  check(
+    "每个经典建筑 kind 都有自己的材质文件与至少一帧",
+    buildingEntries.every((entry) => entry !== null && entry.image !== "" && entry.frames >= 1),
+    buildingEntries.map((entry) => (entry === null ? "missing" : entry.image)).join(" | "),
+  );
+  check(
+    "没有两个经典建筑共用同一个材质文件",
+    new Set(buildingEntries.map((entry) => (entry === null ? "" : entry.image))).size ===
+      CLASSIC_BUILDING_KINDS.length,
+    buildingEntries.map((entry) => (entry === null ? "" : entry.image)).join(" | "),
+  );
+} else {
+  console.info("经典清单仍是旧版格式，跳过每个建筑一个材质文件的校验（PNG 拆分落地后生效）");
+}
+// The train menu is the building row's `trains` array now; assert the parse over a served armory row.
+const trainsWorld = worldViewFromSnapshot({
+  tick: 30,
+  width: 1,
+  height: 1,
+  tiles: [["grass"]],
+  entities: [
+    {
+      id: 21,
+      kind: "oc:building.armory.t1",
+      x: 0.5,
+      y: 0.5,
+      player: 1,
+      trains: [
+        { path: "oc:unit.melee.t1", name: "普通", gold: 20, level: 1 },
+        { path: "oc:unit.ranged.t3", name: "弓手·精英", gold: 120, level: 1 },
+        { path: "oc:unit.engineer.t5", name: "工程师·战王", gold: 300, level: 2 },
+      ],
+    },
+    {
+      id: 22,
+      kind: "building.mine.t1",
+      x: 1.5,
+      y: 0.5,
+      player: 1,
+      trains: [{ path: "", gold: -5, level: "two" }],
+    },
+  ],
 });
 check(
-  "每个经典建筑 kind 都在图集里有自己的实体帧",
-  buildingFrameSignatures.every((signature) => signature !== ""),
-  buildingFrameSignatures.join(" | "),
+  "UPGRADEUNIT 命令构建器：正整数生成 UPGRADEUNIT <id>，零/负数/小数抛中文错误",
+  upgradeUnit(9) === "UPGRADEUNIT 9" &&
+    throwsChinese(() => upgradeUnit(0)) &&
+    throwsChinese(() => upgradeUnit(-2)) &&
+    throwsChinese(() => upgradeUnit(1.5)),
+  upgradeUnit(9),
 );
 check(
-  "没有两个经典建筑共用同一个纹理格",
-  new Set(buildingFrameSignatures).size === CLASSIC_BUILDING_KINDS.length,
-  buildingFrameSignatures.join(" | "),
-);
-check(
-  "每个经典建筑都有自己的内容条目，且 train 列表只属于正确 kind",
-  CLASSIC_BUILDING_KINDS.every((kind) => {
-    const entry = buildingContent(kind);
-    const trainable = trainableUnitsForBuilding(kind);
-    const producer = kind.startsWith("building.armory.");
-    return (
-      entry !== undefined &&
-      entry.path === kind &&
-      (producer ? trainable.join(",") === UNIT_PATHS.join(",") : trainable.length === 0)
-    );
-  }),
-  CLASSIC_BUILDING_KINDS.map((kind) => `${kind}:${trainableUnitsForBuilding(kind).length}`).join(", "),
-);
-check(
-  "伐木场、矿井和仓库不再显示 TRAIN 条目；兵工厂仍显示单位列表",
-  trainableUnitsForBuilding("building.lumbercamp.t1").length === 0 &&
-    trainableUnitsForBuilding("building.mine.t1").length === 0 &&
-    trainableUnitsForBuilding("building.warehouse").length === 0 &&
-    trainableUnitsForBuilding("building.armory.t1").join(",") === UNIT_PATHS.join(","),
-);
-check(
-  "BUILDING_CONTENT 覆盖全部十二个经典建筑",
-  BUILDING_CONTENT.size === CLASSIC_BUILDING_KINDS.length &&
-    CLASSIC_BUILDING_KINDS.every((kind) => BUILDING_CONTENT.has(kind)),
-  String(BUILDING_CONTENT.size),
+  "快照解析建筑行的 trains 菜单（路径去命名空间、坏行丢弃、缺字段不出现）",
+  trainsWorld !== null &&
+    trainsWorld.entities[0]?.trains?.length === 3 &&
+    trainsWorld.entities[0]?.trains[0]?.path === "unit.melee.t1" &&
+    trainsWorld.entities[0]?.trains[0]?.name === "普通" &&
+    trainsWorld.entities[0]?.trains[0]?.gold === 20 &&
+    trainsWorld.entities[0]?.trains[0]?.level === 1 &&
+    trainsWorld.entities[0]?.trains[2]?.level === 2 &&
+    trainsWorld.entities[1]?.trains?.length === 0,
+  JSON.stringify(trainsWorld?.entities.map((entity) => entity.trains)),
 );
 
 // BUG C: centre coordinates -> footprint origin is exactly one conversion, and the BUILD ghost and a
@@ -6260,6 +6753,152 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// Projectiles: tracking, angle math, draw states and the renderer-relevant clamping
+// ---------------------------------------------------------------------------------------------
+
+const shotSeen = new Map<number, TrackedProjectile>();
+// 14 tiles at 14 tiles/s: exactly one second of flight, pointing east (0 rad).
+const SHOT_START = { x: 2, y: 3, tx: 16, ty: 3 };
+check(
+  "飞行速度是 14 格/秒，14 格的飞行恰好一秒，零长度立即到达",
+  PROJECTILE_SPEED_TPS === 14 &&
+    PROJECTILE_TRAIL_TILES === 0.6 &&
+    PROJECTILE_HEAD_TILES === 0.24 &&
+    projectileFlightMs(2, 3, 16, 3) === 1_000 &&
+    projectileFlightMs(4, 4, 4, 4) === 0,
+  String(projectileFlightMs(2, 3, 16, 3)),
+);
+
+const firstFlight = trackProjectiles(shotSeen, [{ id: 1, ...SHOT_START }], 5_000);
+check(
+  "新 id 以当前时钟登记为起飞时刻，起始帧的位置就是起点",
+  shotSeen.get(1)?.startMs === 5_000 &&
+    firstFlight.length === 1 &&
+    firstFlight[0]?.x === 2 &&
+    firstFlight[0]?.y === 3 &&
+    firstFlight[0]?.tx === 16 &&
+    firstFlight[0]?.angle === 0 &&
+    firstFlight[0]?.flightMs === 1_000,
+  JSON.stringify(firstFlight),
+);
+
+const repeatedShot = trackProjectiles(shotSeen, [{ id: 1, x: 9, y: 9, tx: 9, ty: 9 }], 5_100);
+check(
+  "同一 id 的重复快照被忽略：飞行不重新计时也不改道",
+  shotSeen.get(1)?.startMs === 5_000 &&
+    shotSeen.get(1)?.tx === 16 &&
+    shotSeen.get(1)?.ty === 3 &&
+    repeatedShot.length === 1 &&
+    repeatedShot[0]?.tx === 16,
+  JSON.stringify([...shotSeen.values()]),
+);
+
+// Second id registers alongside the first; the answer comes back in id order, and the southbound
+// 14-tile leg is one second at +90°.
+const twoShots = trackProjectiles(shotSeen, [{ id: 2, x: 4, y: 10, tx: 4, ty: 24 }], 5_200);
+check(
+  "第二个 id 正常登记，活动列表按 id 排序，90° 飞行的方向角是 +π/2",
+  twoShots.length === 2 &&
+    twoShots[0]?.id === 1 &&
+    twoShots[1]?.id === 2 &&
+    near(twoShots[1]?.angle ?? 0, Math.PI / 2),
+  JSON.stringify(twoShots),
+);
+
+// Mid-flight: the frame position is the straight lerp. Shot 1 is at half time (progress 0.5); shot 2
+// started at 5200, so 300 ms into its flight is progress 0.3.
+const halfway = trackProjectiles(shotSeen, undefined, 5_500);
+check(
+  "半程时位置是起终点的直线插值（各自按自己的起飞时刻计算进度）",
+  halfway.length === 2 &&
+    halfway[0]?.x === 9 &&
+    halfway[0]?.y === 3 &&
+    near(halfway[1]?.x ?? 0, 4) &&
+    near(halfway[1]?.y ?? 0, 14.2),
+  JSON.stringify(halfway),
+);
+
+check(
+  "方向角：0°、90°、45° 三个基准方向",
+  projectileAngle(0, 0, 5, 0) === 0 &&
+    projectileAngle(0, 0, 0, 5) === Math.PI / 2 &&
+    near(projectileAngle(0, 0, 5, 5), Math.PI / 4),
+  `${projectileAngle(0, 0, 5, 0)}/${projectileAngle(0, 0, 0, 5)}/${projectileAngle(0, 0, 5, 5)}`,
+);
+
+// Near arrival the lerp stays on the segment and never overshoots the target tile (shot 2 is at
+// progress 0.799 here, shot 1 at 0.999).
+const nearArrival = trackProjectiles(shotSeen, undefined, 5_999);
+check(
+  "接近终点的帧仍在线性插值上，位置不会越过目标格",
+  nearArrival.length === 2 &&
+    near(nearArrival[0]?.x ?? 0, 15.986) &&
+    near(nearArrival[0]?.y ?? 0, 3) &&
+    near(nearArrival[1]?.x ?? 0, 4) &&
+    near(nearArrival[1]?.y ?? 0, 21.186),
+  JSON.stringify(nearArrival),
+);
+
+// Arrival: shot 1's final frame is clamped exactly onto its target tile, then the entry is pruned;
+// shot 2 (started at 5200) is still 200 ms short of its own arrival and keeps flying.
+const arrival = trackProjectiles(shotSeen, undefined, 6_000);
+check(
+  "到达时最后一帧被钳制在目标格上，随后条目从 seen 里清除；未到点的飞行继续",
+  shotSeen.has(1) === false &&
+    shotSeen.has(2) === true &&
+    arrival.length === 2 &&
+    arrival[0]?.x === 16 &&
+    arrival[0]?.y === 3 &&
+    near(arrival[1]?.x ?? 0, 4) &&
+    near(arrival[1]?.y ?? 0, 21.2),
+  JSON.stringify(arrival),
+);
+// Shot 2 reaches its target at 6200: clamped final frame, then pruned; the next frame draws nothing.
+const secondArrival = trackProjectiles(shotSeen, undefined, 6_200);
+check(
+  "第二发到达：同样钳制在目标格并被清理，之后的帧不再绘制",
+  shotSeen.has(2) === false &&
+    secondArrival.length === 1 &&
+    secondArrival[0]?.x === 4 &&
+    secondArrival[0]?.y === 24 &&
+    trackProjectiles(shotSeen, undefined, 6_201).length === 0 &&
+    shotSeen.size === 0,
+  JSON.stringify(secondArrival),
+);
+
+const drawnStates = projectileDrawState(halfway);
+check(
+  "projectileDrawState 只给出渲染需要的位置与方向角",
+  drawnStates.length === 2 &&
+    JSON.stringify(drawnStates[0]) === JSON.stringify({ x: 9, y: 3, angle: 0 }),
+  JSON.stringify(drawnStates),
+);
+
+const trailEast = projectileTrail({ x: 9, y: 3, angle: 0 });
+const headEast = projectileHeadPoints({ x: 9, y: 3, angle: 0 });
+check(
+  "拖尾从 -angle 方向后方 0.6 格连到当前位置，箭头尖朝 angle 前方",
+  near(trailEast.fromX, 8.4) &&
+    near(trailEast.fromY, 3) &&
+    trailEast.toX === 9 &&
+    trailEast.toY === 3 &&
+    headEast.length === 3 &&
+    near(headEast[0]?.[0] ?? 0, 9 + PROJECTILE_HEAD_TILES) &&
+    near(headEast[0]?.[1] ?? 0, 3) &&
+    (headEast[1]?.[0] ?? 0) < 9 &&
+    (headEast[2]?.[0] ?? 0) < 9,
+  JSON.stringify({ trailEast, headEast }),
+);
+
+// The renderer-relevant clamping: an arrival frame's draw state sits exactly on the target tile.
+check(
+  "渲染端关心的钳制：到达帧的绘制状态就是目标格与方向角",
+  JSON.stringify(projectileDrawState(arrival)[0]) ===
+    JSON.stringify({ x: 16, y: 3, angle: 0 }),
+  JSON.stringify(projectileDrawState(arrival)),
+);
+
+// ---------------------------------------------------------------------------------------------
 // UI font stack
 // ---------------------------------------------------------------------------------------------
 
@@ -6289,17 +6928,30 @@ check(
   bodyStack,
 );
 
+/** The slice of index.html between two anchors, or null when either anchor is missing. */
+function sliceBetween(text: string, start: string, end: string): string | null {
+  const from = text.indexOf(start);
+  if (from < 0) {
+    return null;
+  }
+  const to = text.indexOf(end, from);
+  return to < 0 ? null : text.slice(from, to);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Settings, message filters and the palette
 // ---------------------------------------------------------------------------------------------
 
 check(
-  "消息筛选有七个类别，默认全部打开且标签非空",
+  "消息筛选有七个类别且标签非空；默认是安静预设（错误恒开，事件开，其余关）",
   MESSAGE_CATEGORIES.length === 7 &&
     MESSAGE_CATEGORIES.every(
-      (category) => MESSAGE_CATEGORY_LABELS[category].trim() !== "" && ALL_MESSAGES[category],
+      (category) => MESSAGE_CATEGORY_LABELS[category].trim() !== "",
     ) &&
-    MESSAGE_CATEGORIES.every((category) => isToastAllowed(defaultSettings().filters, category)),
+    isToastAllowed(defaultSettings().filters, "error") &&
+    isToastAllowed(defaultSettings().filters, "event") &&
+    !isToastAllowed(defaultSettings().filters, "ping") &&
+    !isToastAllowed(defaultSettings().filters, "command"),
   MESSAGE_CATEGORIES.join(","),
 );
 
@@ -6412,7 +7064,7 @@ check(
 check(
   "保存值带版本号，并且整份设置只使用一个固定的 localStorage 键",
   serializeSettings(savedSettings) ===
-    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"inventoryRadiusTiles":12,"connection":{"host":"127.0.0.1","port":"25567"}}` &&
+    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"inventoryRadiusTiles":12,"language":"auto","connection":{"host":"127.0.0.1","port":"25567"},"accountName":"","accountPassword":""}` &&
     SETTINGS_STORAGE_KEY === "omni-com.web-client.settings" &&
     SETTINGS_VERSION === 1,
   SETTINGS_STORAGE_KEY,
@@ -6423,9 +7075,11 @@ check(
   "缺失、非 JSON、非对象或旧版本的值回退到默认设置",
   parseSettings(null).showPaths &&
     parseSettings("").filters.error &&
-    parseSettings("not json").filters.command &&
+    parseSettings("not json").filters.error &&
     parseSettings("[]").connection.host === "" &&
     parseSettings(JSON.stringify({ version: SETTINGS_VERSION - 1, filters: ALL_MESSAGES })).filters
+      .error &&
+    !parseSettings(JSON.stringify({ version: SETTINGS_VERSION - 1, filters: ALL_MESSAGES })).filters
       .command &&
     parseSettings(JSON.stringify({ version: 999 })).showPaths === defaults.showPaths,
   serializeSettings(parseSettings("not json")),
@@ -6446,7 +7100,7 @@ check(
         version: SETTINGS_VERSION,
         filters: { ...ALL_MESSAGES, ping: "yes" },
       }),
-    ).filters.ping === true &&
+    ).filters.ping === false &&
     parseSettings(
       JSON.stringify({
         version: SETTINGS_VERSION,
@@ -6486,6 +7140,40 @@ check(
       JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: "wide" }),
     ).inventoryRadiusTiles === DEFAULT_INVENTORY_RADIUS_TILES,
   "inventory radius rules",
+);
+
+check(
+  "记住账号：序列化往返恢复账号与密码，缺失补空串，类型错误整份回退",
+  (() => {
+    const withAccount: Settings = {
+      ...savedSettings,
+      accountName: "alice",
+      accountPassword: "secret",
+    };
+    const restoredAccount = parseSettings(serializeSettings(withAccount));
+    const withoutAccount = parseSettings(
+      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES }),
+    );
+    return (
+      restoredAccount.accountName === "alice" &&
+      restoredAccount.accountPassword === "secret" &&
+      serializeSettings(restoredAccount) === serializeSettings(withAccount) &&
+      withoutAccount.accountName === "" &&
+      withoutAccount.accountPassword === "" &&
+      // A non-string account field is the same corruption rule as the other optional strings: the
+      // whole stored object falls back to the defaults, which carry empty account fields.
+      parseSettings(
+        JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, accountName: 42 }),
+      ).accountName === "" &&
+      parseSettings(
+        JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, accountPassword: 7 }),
+      ).accountPassword === "" &&
+      parseSettings(
+        JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, accountName: 42 }),
+      ).connection.host === ""
+    );
+  })(),
+  "account persistence rules",
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -6710,6 +7398,416 @@ check(
     /class="minimap"/.test(indexHtml) &&
     /class="bottom-bar"/.test(indexHtml),
   "full-canvas RTS layout",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Follow-lock highlight
+// ---------------------------------------------------------------------------------------------
+
+const followPulseZero = followPulse(0);
+const followPulseQuarter = followPulse(FOLLOW_PULSE_MS / 4);
+const followPulseHalf = followPulse(FOLLOW_PULSE_MS / 2);
+const followPulseWrap = followPulse(FOLLOW_PULSE_MS);
+check(
+  "跟随光环的呼吸相位：起点 0、四分之一周期 0.5、半周期 1、整周期回绕到 0",
+  followPulseZero === 0 &&
+    near(followPulseQuarter, 0.5) &&
+    near(followPulseHalf, 1) &&
+    near(followPulseWrap, followPulseZero) &&
+    near(followPulse(FOLLOW_PULSE_MS * 3 + 5, FOLLOW_PULSE_MS), followPulse(5)),
+  `${followPulseZero}/${followPulseQuarter}/${followPulseHalf}/${followPulseWrap}`,
+);
+
+check(
+  "跟随光环呼吸相位始终落在 0..1；坏时钟与非正周期坍缩为静止相位",
+  followPulse(FOLLOW_PULSE_MS * 0.25) >= 0 &&
+    followPulse(FOLLOW_PULSE_MS * 0.75) <= 1 &&
+    followPulse(Number.NaN) === 0 &&
+    followPulse(Number.POSITIVE_INFINITY) === 0 &&
+    followPulse(1_000, 0) === 0 &&
+    followPulse(1_000, -5) === 0,
+  "follow pulse guards",
+);
+
+const followPulseSample = followPulse(FOLLOW_PULSE_MS / 3);
+check(
+  "跟随光环的半径与不透明度随相位单调变化，并停在文档范围内（非有限相位回落到静止值）",
+  followRingScale(0) === FOLLOW_RING_MIN_SCALE &&
+    near(followRingScale(1), FOLLOW_RING_MAX_SCALE) &&
+    followRingScale(followPulseSample) > FOLLOW_RING_MIN_SCALE &&
+    followRingScale(followPulseSample) < FOLLOW_RING_MAX_SCALE &&
+    followRingAlpha(0) === FOLLOW_RING_MIN_ALPHA &&
+    near(followRingAlpha(1), FOLLOW_RING_MAX_ALPHA) &&
+    followRingAlpha(followPulseSample) > FOLLOW_RING_MIN_ALPHA &&
+    followRingAlpha(followPulseSample) < FOLLOW_RING_MAX_ALPHA &&
+    followRingAlpha(1) <= 1 &&
+    followRingAlpha(0) >= 0 &&
+    followRingScale(Number.NaN) === FOLLOW_RING_MIN_SCALE &&
+    followRingAlpha(Number.NaN) === FOLLOW_RING_MIN_ALPHA,
+  `${followRingScale(followPulseSample)}/${followRingAlpha(followPulseSample)}`,
+);
+
+check(
+  "跟随光环是画布内容：白色描边，不借用选中环的金色或任何归属色",
+  FOLLOW_RING_COLOR.startsWith("rgba(255, 255, 255") &&
+    !SELECTION_COLOR.startsWith("rgba(255, 255, 255") &&
+    Number.isFinite(FOLLOW_RING_MIN_SCALE) &&
+    FOLLOW_RING_MIN_SCALE >= 1 &&
+    FOLLOW_RING_MAX_SCALE > FOLLOW_RING_MIN_SCALE &&
+    FOLLOW_RING_MAX_ALPHA <= 1 &&
+    FOLLOW_RING_MAX_ALPHA > FOLLOW_RING_MIN_ALPHA,
+  FOLLOW_RING_COLOR,
+);
+
+// ---------------------------------------------------------------------------------------------
+// Chrome layout: BUILD rail, left-docked console, help view and the debug key
+// ---------------------------------------------------------------------------------------------
+
+const commandContextBlock = sliceBetween(indexHtml, 'id="command-context"', "</aside>");
+const buildRailBlock = sliceBetween(indexHtml, 'id="build-panel"', "</aside>");
+const buildRailRule = /(?:^|\n)\s*\.build-rail\s*\{[^}]*\}/.exec(indexHtml)?.[0] ?? "";
+check(
+  "BUILD 是右侧全高面板：#build-section 移出底部上下文区，放进 #build-panel，三个 id 保持不变",
+  buildRailBlock !== null &&
+    buildRailBlock.includes('id="build-section"') &&
+    buildRailBlock.includes('id="build-buttons"') &&
+    buildRailBlock.includes('id="build-target"') &&
+    commandContextBlock !== null &&
+    !commandContextBlock.includes("build-section") &&
+    /--build-rail-width:\s*\d+px/.test(indexHtml) &&
+    buildRailRule.includes("position: absolute") &&
+    buildRailRule.includes("right: 14px") &&
+    buildRailRule.includes("bottom: 14px") &&
+    buildRailRule.includes("top: 14px"),
+  "build rail",
+);
+
+check(
+  "BUILD 按钮不带客户端造价：造价是服务器内容，BUILD 目录只显示路径并由清单命名",
+  readFileSync(new URL("../src/main.ts", import.meta.url), "utf8")
+    .includes("button.textContent = buildingPath;") &&
+    !readFileSync(new URL("../src/commands.ts", import.meta.url), "utf8").includes(
+      "BUILDING_COSTS",
+    ),
+  "build buttons are content-driven",
+);
+
+check(
+  "打开 BUILD 面板时顶部列、底部栏、提示堆栈与连接面板整体左移一个轨宽；隐藏画面时轨道一并隐藏",
+  /body\.build-rail-open \.top-right\s*\{[^}]*right:\s*calc\(var\(--build-rail-width\)/s.test(indexHtml) &&
+    /body\.build-rail-open \.bottom-bar\s*\{[^}]*right:\s*calc\(var\(--build-rail-width\)/s.test(indexHtml) &&
+    /body\.build-rail-open \.toast-stack\s*\{[^}]*right:\s*calc\(var\(--build-rail-width\)/s.test(indexHtml) &&
+    /body\.build-rail-open \.connection-overlay\s*\{[^}]*right:\s*calc\(var\(--build-rail-width\)/s.test(indexHtml) &&
+    /\.build-rail-buttons button\s*\{[^}]*font-size:\s*13px/s.test(indexHtml) &&
+    indexHtml.includes("body.view-hidden .build-rail"),
+  "build rail shifts",
+);
+
+const consoleOverlayRule = /(?:^|\n)\s*\.console-overlay\s*\{[^}]*\}/.exec(indexHtml)?.[0] ?? "";
+const consoleBlock = sliceBetween(indexHtml, 'id="console-overlay"', 'id="help-overlay"');
+check(
+  "控制台停靠在左侧且更紧凑：overlay 锚定 left:14px（不再锚定 right），面板收紧到 10px 内边距",
+  consoleOverlayRule.includes("position: fixed") &&
+    consoleOverlayRule.includes("left: 14px") &&
+    consoleOverlayRule.includes("bottom: 14px") &&
+    !consoleOverlayRule.includes("right: 14px") &&
+    /\.console-panel\s*\{[^}]*padding:\s*10px/s.test(indexHtml),
+  "console dock",
+);
+
+const connectionBlock = sliceBetween(indexHtml, 'id="connection-overlay"', 'id="console-overlay"');
+check(
+  "debug.key 输入在控制台面板里（engine-info 的密钥与命令同处一地），连接面板不再携带它",
+  consoleBlock !== null &&
+    consoleBlock.includes('id="debug-key"') &&
+    connectionBlock !== null &&
+    !connectionBlock.includes("debug-key"),
+  "debug key",
+);
+
+const helpBlock = sliceBetween(indexHtml, 'id="help-overlay"', '<div id="entity-tooltip"');
+check(
+  "帮助视图：连接说明与操作提示从连接面板移入 #help-overlay，入口是 帮助/操作说明… 两个按钮，出口有关闭按钮",
+  helpBlock !== null &&
+    helpBlock.includes("操作说明") &&
+    helpBlock.includes("游戏操作提示") &&
+    indexHtml.includes('id="open-help"') &&
+    indexHtml.includes('id="help-close"') &&
+    indexHtml.includes('id="connection-help-link"') &&
+    /\.help-overlay\s*\{[^}]*position:\s*fixed/s.test(indexHtml) &&
+    connectionBlock !== null &&
+    !connectionBlock.includes("游戏操作提示"),
+  "help view",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Wire adaptation: served buildable catalogue, builder capability, options-driven upgrades,
+// contents / storage display and the batchable UPGRADEUNIT
+// ---------------------------------------------------------------------------------------------
+
+// The BUILD menu reads the snapshot's top-level `buildable` array when it is present; the classic
+// five-entry FALLBACK list is only for the demo world and a snapshot without the field.
+const servedCatalogue = ["building.hell_gate", "building.mine.t1", "building.warehouse"];
+const servedBuilderCommand = commandBarModel(
+  [{ id: 61, kind: "unit.engineer", x: 1.5, y: 1.5, playerId: 1 }],
+  1,
+  { buildingPaths: servedCatalogue },
+);
+const servedBuildActions = servedBuilderCommand.actions.filter((action) => action.kind === "build");
+check(
+  "BUILD 目录来自快照的 buildable 数组（地狱门在列），回退目录只在缺字段时使用",
+  servedBuildActions.map((action) => action.path).join(",") === servedCatalogue.join(",") &&
+    commandBarModel([{ id: 62, kind: "unit.engineer", x: 1.5, y: 1.5, playerId: 1 }], 1, {})
+      .actions.filter((action) => action.kind === "build")
+      .map((action) => action.path)
+      .join(",") === FALLBACK_BUILD_PATHS.join(","),
+  servedBuildActions.map((action) => action.path).join(","),
+);
+
+// The server declares builders of any tier with `builder: true`; the name rule is only the fallback.
+const upgradedEngineer: EntityView = {
+  id: 71,
+  kind: "unit.engineer.t2",
+  x: 2.5,
+  y: 2.5,
+  playerId: 1,
+  builder: true,
+};
+const namedEngineer: EntityView = { id: 72, kind: "unit.engineer", x: 3.5, y: 3.5, playerId: 1 };
+check(
+  "builder 能力字段让升级后的工兵层获得 BUILD 菜单；建筑与普通单位不算工兵",
+  isBuilderUnit(upgradedEngineer) &&
+    isBuilderUnit(namedEngineer) &&
+    !isBuilderUnit({ id: 73, kind: "unit.engineer.t2", x: 4.5, y: 4.5, playerId: 1 }) &&
+    !isBuilderUnit({ id: 74, kind: "building.warehouse", x: 5.5, y: 5.5, playerId: 1, builder: true }) &&
+    !isBuilderUnit({ id: 75, kind: "unit.melee.t1", x: 6.5, y: 6.5, playerId: 1, builder: false }),
+  "builder capability",
+);
+check(
+  "升级工兵层单独选中时进入 engineer 分类并拿到 BUILD 条目（服务目录）",
+  commandBarModel([upgradedEngineer], 1, { buildingPaths: servedCatalogue }).kind === "engineer" &&
+    commandBarModel([upgradedEngineer], 1, { buildingPaths: servedCatalogue })
+      .actions.filter((action) => action.kind === "build")
+      .length === servedCatalogue.length,
+  commandBarModel([upgradedEngineer], 1, { buildingPaths: servedCatalogue }).kind,
+);
+check(
+  "快照解析保留布尔 builder 字段（只接受 true），非布尔值被丢弃",
+  (() => {
+    const parsed = worldViewFromSnapshot({
+      tick: 1,
+      width: 1,
+      height: 1,
+      tiles: [["grass"]],
+      entities: [
+        { id: 1, kind: "unit.engineer.t2", x: 0.5, y: 0.5, player: 1, builder: true },
+        { id: 2, kind: "unit.engineer", x: 0.5, y: 0.5, player: 1, builder: "yes" },
+        { id: 3, kind: "unit.melee.t1", x: 0.5, y: 0.5, player: 1 },
+      ],
+    });
+    return (
+      parsed !== null &&
+      parsed.entities[0]?.builder === true &&
+      parsed.entities[1]?.builder === undefined &&
+      parsed.entities[2]?.builder === undefined
+    );
+  })(),
+  "snapshot builder flag",
+);
+
+// The upgrade offer is an options array: one entry per option, one batch plan per variant.
+const tripleOptionBuilding: EntityView = {
+  id: 81,
+  kind: "building.armory.t1",
+  x: 8.5,
+  y: 8.5,
+  playerId: 1,
+  progress: 1,
+  upgrade: {
+    options: [
+      { to: "building.armory.t2", gold: 140, wood: 40 },
+      { to: "building.purgatory", gold: 260, wood: 40 },
+      { to: "building.hell_gate", gold: 400, wood: 100 },
+    ],
+  },
+};
+check(
+  "options 数组驱动的升级条目：每条路线一个条目并各带自己的费用",
+  upgradeEntries(tripleOptionBuilding, 1, { id: 1, name: "P", gold: 999, wood: 999 }).length === 3 &&
+    upgradeEntries(tripleOptionBuilding, 1, { id: 1, name: "P", gold: 999, wood: 999 })[2]?.target ===
+      "building.hell_gate" &&
+    upgradeEntries(tripleOptionBuilding, 1, { id: 1, name: "P", gold: 999, wood: 999 })[2]?.gold === 400,
+  "three options, three entries",
+);
+check(
+  "批量升级按 options.length 生成每条路线的计划：三条路线各得一个 plan；炮塔 t1 只有一条路线（一个批量按钮）",
+  (() => {
+    const player = { id: 1, name: "P", gold: 100000, wood: 100000 };
+    const third = upgradeBatchPlan([tripleOptionBuilding], 1, player, 2);
+    const turret = { id: 91, kind: "building.turret.t1", x: 1, y: 1, playerId: 1, progress: 1,
+      upgrade: { options: [{ to: "building.turret.t2", gold: 260, wood: 70 }] } };
+    const turretGroup = [turret, { ...turret, id: 92, x: 2 }];
+    // The page derives the plan count from the first selected building's options length, so a turret
+    // t1 group paints exactly one 批量 button (variant 0) and no bogus second one.
+    const turretPlans = Array.from({ length: turret.upgrade?.options.length ?? 0 }, (_, variant) =>
+      upgradeBatchPlan(turretGroup, 1, player, variant),
+    );
+    const firstPlan = turretPlans[0] ?? null;
+    return (
+      third !== null &&
+      third.variantIndex === 2 &&
+      third.lines.join(",") === "UPGRADE 81 building.hell_gate" &&
+      turretPlans.length === 1 &&
+      firstPlan !== null &&
+      firstPlan.variantIndex === 0 &&
+      firstPlan.lines.length === 2 &&
+      firstPlan.lines.every((line) => line.startsWith("UPGRADE ")) &&
+      firstPlan.lines.every((line) => line.endsWith("building.turret.t2"))
+    );
+  })(),
+  "batch plans per option",
+);
+check(
+  "UPGRADEUNIT 接受 tierPath（UPGRADEUNIT <id> <path>）并可与 BUILD 一样进入 BATCH",
+  upgradeUnit(7, "unit.engineer.t2") === "UPGRADEUNIT 7 unit.engineer.t2" &&
+    upgradeUnit(7) === "UPGRADEUNIT 7" &&
+    sequenceLine("UPGRADEUNIT 7 unit.engineer.t2") === "UPGRADEUNIT 7 unit.engineer.t2" &&
+    batchCommands(["TRAIN 3 unit.melee.t1", "UPGRADEUNIT 7 unit.engineer.t2"]) ===
+      "BATCH TRAIN 3 unit.melee.t1; UPGRADEUNIT 7 unit.engineer.t2",
+  "UPGRADEUNIT batchable",
+);
+check(
+  "unitUpgradeEntry 读单位行的 options 数组并把目标 tier 交给命令",
+  (() => {
+    const unit: EntityView = {
+      id: 97,
+      kind: "unit.engineer",
+      x: 9.5,
+      y: 9.5,
+      playerId: 1,
+      upgrade: { options: [{ to: "unit.engineer.t2", gold: 15, wood: 0 }] },
+    };
+    const offer = unitUpgradeEntry(unit, 1, { id: 1, name: "P", gold: 30, wood: 5 });
+    return offer !== null && offer.unitId === 97 && offer.target === "unit.engineer.t2" && offer.affordable;
+  })(),
+  "unit upgrade entry",
+);
+
+// Every entity with a non-empty inventory shows what it holds; a warehouse also shows slot accounting.
+check(
+  "contents 渲染：建筑缓冲库存与单位货物共用一条稳定规则，仓库槽位来自服务端 storage",
+  (() => {
+    const bufferBuilding: EntityView = {
+      id: 101,
+      kind: "building.mine.t1",
+      x: 1, y: 1, playerId: 1,
+      contents: { gold: 30 },
+    };
+    const warehouse: EntityView = {
+      id: 102,
+      kind: "building.warehouse",
+      x: 2, y: 2, playerId: 1,
+      contents: { gold: 120, wood: 40 },
+      storage: { slots: 24, used: 2, free: 22 },
+    };
+    const enemyUnit: EntityView = {
+      id: 103,
+      kind: "unit.melee.t1",
+      x: 3, y: 3, playerId: 2,
+      contents: { wood: 10 },
+    };
+    return (
+      warehouseContentsLabel(bufferBuilding) === `库存：${t("item.gold")} 30` &&
+      warehouseContentsLabel(warehouse) === `库存：${t("item.gold")} 120 · ${t("item.wood")} 40` &&
+      unitCargoLabel(enemyUnit) === `携带：${t("item.wood")} 10` &&
+      warehouseContentsLabel({ id: 104, kind: "building.warehouse", x: 4, y: 4 }) === null &&
+      warehouseStorageLabel(warehouse) === `容量 24 · 已用 2 · 空闲 22` &&
+      warehouseStorageLabel({ id: 105, kind: "building.warehouse", x: 5, y: 5 }) === "容量未知（旧快照）"
+    );
+  })(),
+  "contents and storage labels",
+);
+
+// ---------------------------------------------------------------------------------------------
+// i18n: dictionaries, fallback chain, auto detection
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "en 与 zh-CN 字典键完全一致（en 完备，zh 不缺键）",
+  LANGUAGES.join(",") === "en,zh-CN" &&
+    Object.keys(DICTIONARIES.en).every((key) => DICTIONARIES["zh-CN"][key] !== undefined) &&
+    Object.keys(DICTIONARIES["zh-CN"]).every((key) => DICTIONARIES.en[key] !== undefined),
+  `en=${Object.keys(DICTIONARIES.en).length} zh=${Object.keys(DICTIONARIES["zh-CN"]).length}`,
+);
+check(
+  "语言设置守卫只接受 auto/en/zh-CN",
+  isLanguageSetting("auto") &&
+    isLanguageSetting("en") &&
+    isLanguageSetting("zh-CN") &&
+    !isLanguageSetting("fr") &&
+    !isLanguageSetting(""),
+  "language settings guard",
+);
+check(
+  "resolveLanguage：精确 zh-CN、基础 zh、zh 变体都命中中文；未知与缺失回退英文",
+  resolveLanguage("auto", "zh-CN") === "zh-CN" &&
+    resolveLanguage("auto", "zh") === "zh-CN" &&
+    resolveLanguage("auto", "zh-TW") === "zh-CN" &&
+    resolveLanguage("auto", "ZH-CN") === "zh-CN" &&
+    resolveLanguage("auto", "en-GB") === "en" &&
+    resolveLanguage("auto", "fr") === "en" &&
+    resolveLanguage("auto", "") === "en" &&
+    resolveLanguage("auto", null) === "en" &&
+    resolveLanguage("en", "zh-CN") === "en" &&
+    resolveLanguage("zh-CN", "en") === "zh-CN",
+  "auto detection",
+);
+check(
+  "t()：当前语言命中、缺键回退 en、两边都缺回退键名、{name} 占位符插值",
+  (() => {
+    initI18n("zh-CN");
+    const zhUpgrade = t("action.upgrade") === "升级";
+    initI18n("en");
+    const enUpgrade = t("action.upgrade") === "Upgrade";
+    const fallbackToKey = t("i18n.missing-in-both") === "i18n.missing-in-both";
+    // A key that exists only in en (a zh translation not written yet) reads as English: the check
+    // plants one through a mutable view, asserts, and removes it again.
+    const mutableEn = DICTIONARIES.en as Record<string, string>;
+    initI18n("en");
+    mutableEn["i18n.temp.only-en"] = "only english";
+    initI18n("zh-CN");
+    const fallsBackToEn = t("i18n.temp.only-en") === "only english";
+    delete mutableEn["i18n.temp.only-en"];
+    initI18n("zh-CN");
+    const interpolated = t("upgrade.summary", { sent: 2, rejected: 1 }) ===
+      "已发送 2 条升级 / 1 条被拒绝";
+    initI18n("en");
+    const interpolatedEn = t("upgrade.summary", { sent: 2, rejected: 1 }) ===
+      "sent 2 upgrade(s) / 1 refused";
+    initI18n("zh-CN");
+    return zhUpgrade && enUpgrade && fallbackToKey && fallsBackToEn && interpolated && interpolatedEn &&
+      currentI18nLanguage() === "zh-CN";
+  })(),
+  "t() chain",
+);
+check(
+  "语言切换重绘 HUD 标签：动作与费用标签跟随当前语言",
+  (() => {
+    initI18n("en");
+    const enOk =
+      stopActionLabel() === "Stop" &&
+      attackMoveActionLabel() === "Attack-move" &&
+      emptySelectionHint().startsWith("Nothing selected") &&
+      upgradeCostLabel(140, 40) === "gold 140 · wood 40";
+    initI18n("zh-CN");
+    const zhOk =
+      stopActionLabel() === "停止" &&
+      attackMoveActionLabel() === "攻击移动" &&
+      emptySelectionHint().startsWith("未选中任何单位") &&
+      upgradeCostLabel(140, 40) === "金 140 · 木 40";
+    return enOk && zhOk;
+  })(),
+  "language switch repaints labels",
 );
 
 // ---------------------------------------------------------------------------------------------

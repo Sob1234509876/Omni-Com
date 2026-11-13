@@ -61,6 +61,15 @@ public final class ClassicPlugin implements Plugin {
     /** The engineer crew policy, registered after the bots so a bot's new queue is visible to it. */
     private final ClassicEngineerPool engineerPool = new ClassicEngineerPool();
 
+    /** Keeps the world's gateway links in step with the standing hell gates. */
+    private final HellGates hellGates = new HellGates();
+
+    /** Spawns and drives the hell denizens, registered after the gates they spawn around. */
+    private final HellDenizens hellDenizens = new HellDenizens();
+
+    /** Rolls the one-in-ten-thousand wild spawn for every chunk a player enters for the first time. */
+    private final WildSpawns wildSpawns = new WildSpawns();
+
     /** Creates the plugin; the loader uses the implicit public no-argument constructor it sees here. */
     public ClassicPlugin() {
     }
@@ -101,6 +110,9 @@ public final class ClassicPlugin implements Plugin {
         context.registerWorldTickHook(economy);
         context.registerWorldTickHook(bots);
         context.registerWorldTickHook(engineerPool);
+        context.registerWorldTickHook(hellGates);
+        context.registerWorldTickHook(hellDenizens);
+        context.registerWorldTickHook(wildSpawns);
     }
 
     /** The catalogue this plugin registered; exposed so the self check can assert it is the same object. */
@@ -125,6 +137,6 @@ public final class ClassicPlugin implements Plugin {
 
     /** The hooks this plugin registers, in registration order; the same list {@link #onLoad} adds. */
     public List<WorldTickHook> worldTickHooks() {
-        return List.of(economy, bots, engineerPool);
+        return List.of(economy, bots, engineerPool, hellGates, hellDenizens, wildSpawns);
     }
 }

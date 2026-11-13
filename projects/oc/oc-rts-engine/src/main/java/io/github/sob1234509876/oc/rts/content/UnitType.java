@@ -5,6 +5,7 @@ import io.github.sob1234509876.oc.googology.Natural;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -30,6 +31,8 @@ public final class UnitType implements Comparable<UnitType> {
     private final float speed;
     private final float radius;
     private final ItemBundle cost;
+    private final ResourceKey upgradeTo;
+    private final ItemBundle upgradeCost;
     private final int buildTimeTicks;
     private final Natural cargoCapacity;
     private final String spriteSetId;
@@ -38,6 +41,7 @@ public final class UnitType implements Comparable<UnitType> {
     private final float attackRange;
     private final int attackCooldownTicks;
     private final int armour;
+    private final int buildRate;
 
     UnitType(
             ResourceKey key,
@@ -47,6 +51,8 @@ public final class UnitType implements Comparable<UnitType> {
             float speed,
             float radius,
             ItemBundle cost,
+            ResourceKey upgradeTo,
+            ItemBundle upgradeCost,
             int buildTimeTicks,
             Natural cargoCapacity,
             String spriteSetId,
@@ -54,7 +60,8 @@ public final class UnitType implements Comparable<UnitType> {
             Natural attackDamage,
             float attackRange,
             int attackCooldownTicks,
-            int armour) {
+            int armour,
+            int buildRate) {
         this.key = Objects.requireNonNull(key, "key");
         this.displayName = displayName == null ? key.path() : displayName;
         this.role = Objects.requireNonNull(role, "role");
@@ -62,6 +69,8 @@ public final class UnitType implements Comparable<UnitType> {
         this.speed = speed;
         this.radius = radius;
         this.cost = cost;
+        this.upgradeTo = upgradeTo;
+        this.upgradeCost = upgradeCost == null ? ItemBundle.EMPTY : upgradeCost;
         this.buildTimeTicks = buildTimeTicks;
         this.cargoCapacity = cargoCapacity;
         this.spriteSetId = spriteSetId;
@@ -73,6 +82,10 @@ public final class UnitType implements Comparable<UnitType> {
             throw new IllegalArgumentException("armour must not be negative, was " + armour);
         }
         this.armour = armour;
+        if (buildRate < 1) {
+            throw new IllegalArgumentException("build rate must be at least one, was " + buildRate);
+        }
+        this.buildRate = buildRate;
     }
 
     public ResourceKey key() {
@@ -104,6 +117,40 @@ public final class UnitType implements Comparable<UnitType> {
     /** Items that have to be delivered to the producing building before it can start. */
     public ItemBundle cost() {
         return cost;
+    }
+
+    /**
+     * The successor this unit can be upgraded into, or empty when it is the top of its ladder.
+     *
+     * <p>The reference is resolved against the catalogue namespace like a recipe's {@code unitOutput},
+     * so content writes {@code .upgradesTo("unit.engineer.t2")}. The target is deliberately not
+     * validated when the catalogue is built: a target that does not exist is a data error that
+     * {@link io.github.sob1234509876.oc.rts.order.UnitDirector#upgradeUnit} refuses at command time
+     * with a readable message, and a scenario can assert exactly that failure.
+     *
+     * <p>An upgrade link does not make a tier reachable by itself; the command still checks the owner's
+     * warehouses and the unit itself, and the old unit is replaced by a new unit of the named type, not
+     * modified in place.
+     */
+    public Optional<ResourceKey> upgradeTo() {
+        return upgradeTo == null ? Optional.empty() : Optional.of(upgradeTo);
+    }
+
+    /**
+     * The items the owner's warehouses have to provide when a unit of this type is upgraded, or empty
+     * when there is no upgrade or the step is free.
+     *
+     * <p>The cost belongs to the source type, so the ladder reads as a sequence of steps:
+     * {@code t1}'s bundle is charged for {@code t1 -> t2}, and it is reserved and committed by the same
+     * logistics path a unit production uses, exactly once per successful upgrade.
+     */
+    public ItemBundle upgradeCost() {
+        return upgradeCost;
+    }
+
+    /** Whether this type names a successor; the target still has to exist in the catalogue. */
+    public boolean canUpgrade() {
+        return upgradeTo != null;
     }
 
     public int buildTimeTicks() {
@@ -153,6 +200,21 @@ public final class UnitType implements Comparable<UnitType> {
      */
     public int armour() {
         return armour;
+    }
+
+    /**
+     * Construction points this unit contributes per tick while standing at its build spot, and the
+     * multiplier on the repair rate when it repairs.
+     *
+     * <p>{@code 1} when the content did not set it, which reproduces the historical fixed rule exactly:
+     * one standing builder used to add one construction point per tick and repair four hit points per
+     * tick, so a unit without an explicit rate behaves as before. The construction system sums the rates
+     * of the standing builders (still counting at most {@code MAX_BUILDERS_PER_SITE} workers), and the
+     * repair order multiplies the base repair rate by this value - the knobs an upgraded engineer tier
+     * turns.
+     */
+    public int buildRate() {
+        return buildRate;
     }
 
     public boolean canAttack() {

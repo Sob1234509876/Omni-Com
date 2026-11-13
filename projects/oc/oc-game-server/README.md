@@ -18,7 +18,7 @@ content and assets through `plugins/*.jar`.
 | Base package | `io.github.sob1234509876.oc.server`, with `.auth`, `.net`, `.plugin`, `.ws` and `.world` below it |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** (the in-repo RTS engine supplies the hosted world) |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1237 checks, no test framework, no network) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server:selfcheck` (1262 checks, no test framework, no network) |
 | TCP channel | encrypted, `25566` by default (`--port`) |
 | Browser endpoint | HTTP/WebSocket, `25567` by default (`--http-port`; `0` disables it and the world) |
 | Help | [`help/README.md`](help/README.md) — five chapters, in Chinese |
@@ -33,10 +33,10 @@ content and assets through `plugins/*.jar`.
 The self check prints one line at the end:
 
 ```text
-game server self check: all 1237 checks passed.
+game server self check: all 1262 checks passed.
 ```
 
-1237 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
+1262 is the sum of twelve check classes that `ServerCheck` runs in order: `AuthCheck` 65 (accounts, the local
 store, escaping, concurrency, the PBKDF2 parameters), `NetworkCheck` 57 (handshake, commands, concurrency and
 a hostile client, on real loopback sockets), `PluginCheck` 76 (plugin jars compiled at run time and loaded for
 real), `RequestCheck` 43 (`REQ` authorisation, transparent forwarding, failure handling), `WebSocketCheck` 88
@@ -49,7 +49,7 @@ buildable spawn anchor found from `(0,0)` inside a 64-tile bound, the windowed s
 answers, and the income rates, per-job `queueItems`, `producingNow` / `demand`, engineer `task`, the
 one-second haul `pop`, and the new `orderQueue` / `attackDamage` / `attackRange` fields of a snapshot row),
 `WorldTickHookCheck` 23 (the
-plugin tick hook contract and its ordering), `PlayerCommandCheck` 227 (`WHOAMI`, account identity, the
+plugin tick hook contract and its ordering), `PlayerCommandCheck` 252 (`WHOAMI`, account identity, the
 world-thread command queue, movement orders, ownership, building cost, the `queue` append forms of
 `BUILD` / `ORDER` / `REPAIR`, the `BATCH` merged order with its 16-command cap and its first-failure
 index, the production tier gate, the builder's reach rule, the `UPGRADE` ownership/cost rules, the
@@ -207,7 +207,7 @@ that a plugin never sees a socket, a password or the live game.
 ```text
 src/main/java/module-info.java          exports the six packages, requires the RTS engine
 src/main/java/.../server/               the six packages above
-src/selfcheck/java/.../server/check/    the 1237 check self check program
+src/selfcheck/java/.../server/check/    the 1262 check self check program
 help/                                   the five chapters, in Chinese
 ```
 

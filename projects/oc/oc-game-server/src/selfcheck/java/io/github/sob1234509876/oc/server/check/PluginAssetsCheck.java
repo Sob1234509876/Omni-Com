@@ -77,35 +77,36 @@ public final class PluginAssetsCheck {
             new Fixture("oc-asset-delta", "ocassets.delta", "DeltaPlugin", "d-delta-plugin.jar"),
             new Fixture("oc-asset-epsilon", "ocassets.epsilon", "EpsilonPlugin", "e-epsilon-plugin.jar"));
 
-    /** The manifest of the first fixture; compact on purpose, so its raw frame tables are predictable. */
-    private static final String ALPHA_MANIFEST = "{\"image\":\"atlas.png\",\"tilePixels\":32,"
-            + "\"tiles\":{\"grass\":[0,0,32,32],\"water\":[32,0,32,32]},"
-            + "\"entities\":{\"worker\":{\"frames\":[[0,32,32,48],[32,32,32,48]],\"fps\":6,"
-            + "\"anchor\":[0.5,0.75],\"scale\":1}}}";
+    /** The v2 manifest of the first fixture: one PNG per material, paths relative to assets/. */
+    private static final String ALPHA_MANIFEST = "{\"tilePixels\":32,"
+            + "\"tiles\":{\"grass\":{\"image\":\"tiles/grass.png\",\"name\":\"Grass\"},"
+            + "\"water\":{\"image\":\"tiles/water.png\",\"name\":\"Water\"}},"
+            + "\"entities\":{\"worker\":{\"image\":\"entities/worker.png\",\"frames\":2,\"fps\":6,"
+            + "\"anchor\":[0.5,0.75],\"scale\":1,\"name\":\"Worker\"}}}";
 
-    /** The manifest of the second fixture, which must follow the first in the merged array. */
-    private static final String BETA_MANIFEST = "{\"image\":\"atlas.png\",\"tilePixels\":16,"
-            + "\"tiles\":{\"sand\":[0,0,16,16]},"
-            + "\"entities\":{\"soldier\":{\"frames\":[[0,16,16,24]]}}}";
+    /** The v2 manifest of the second fixture, which must follow the first in the merged array. */
+    private static final String BETA_MANIFEST = "{\"tilePixels\":16,"
+            + "\"tiles\":{\"sand\":{\"image\":\"tiles/sand.png\",\"name\":\"Sand\"}},"
+            + "\"entities\":{\"soldier\":{\"image\":\"entities/soldier.png\",\"frames\":1,\"name\":\"Soldier\"}}}";
 
-    /** A manifest with a path in {@code image}, which the route must refuse to publish. */
-    private static final String BROKEN_MANIFEST = "{\"image\":\"../secret.png\","
-            + "\"tiles\":{\"grass\":[0,0,16,16]}}";
+    /** A manifest whose entities table is not an object, which the server refuses to publish. */
+    private static final String BROKEN_MANIFEST = "{\"tiles\":{\"grass\":[0,0,16,16]},\"entities\":[]}";
 
     /** The exact merged manifest the two publishing fixtures must produce, order and rewrite included. */
     private static final String EXPECTED_MANIFEST = "["
             + "{\"plugin\":\"oc-asset-alpha\","
-            + "\"atlasUrl\":\"/plugin-assets/oc-asset-alpha/atlas.png\","
+            + "\"baseUrl\":\"/plugin-assets/oc-asset-alpha/\","
             + "\"tilePixels\":32,"
-            + "\"tiles\":{\"grass\":[0,0,32,32],\"water\":[32,0,32,32]},"
-            + "\"entities\":{\"worker\":{\"frames\":[[0,32,32,48],[32,32,32,48]],\"fps\":6,"
-            + "\"anchor\":[0.5,0.75],\"scale\":1}}}"
+            + "\"tiles\":{\"grass\":{\"image\":\"tiles/grass.png\",\"name\":\"Grass\"},"
+            + "\"water\":{\"image\":\"tiles/water.png\",\"name\":\"Water\"}},"
+            + "\"entities\":{\"worker\":{\"image\":\"entities/worker.png\",\"frames\":2,\"fps\":6,"
+            + "\"anchor\":[0.5,0.75],\"scale\":1,\"name\":\"Worker\"}}}"
             + ","
             + "{\"plugin\":\"oc-asset-beta\","
-            + "\"atlasUrl\":\"/plugin-assets/oc-asset-beta/atlas.png\","
+            + "\"baseUrl\":\"/plugin-assets/oc-asset-beta/\","
             + "\"tilePixels\":16,"
-            + "\"tiles\":{\"sand\":[0,0,16,16]},"
-            + "\"entities\":{\"soldier\":{\"frames\":[[0,16,16,24]]}}}"
+            + "\"tiles\":{\"sand\":{\"image\":\"tiles/sand.png\",\"name\":\"Sand\"}},"
+            + "\"entities\":{\"soldier\":{\"image\":\"entities/soldier.png\",\"frames\":1,\"name\":\"Soldier\"}}}"
             + "]";
 
     /** The content type of the merged manifest, which differs from what {@code MimeTypes} gives a file. */
@@ -225,10 +226,10 @@ public final class PluginAssetsCheck {
         check.equal(Integer.toString(manifest.body().length), manifest.header("content-length"),
                 "合并清单带正确的 Content-Length");
         check.equal(EXPECTED_MANIFEST, manifest.text(),
-                "合并清单是数组：插件顺序、atlasUrl 改写与两个帧表都逐字节正确");
+                "合并清单是数组：插件顺序、baseUrl 改写与两个帧表都逐字节正确");
         check.that(manifest.text().startsWith("[") && manifest.text().endsWith("]"),
                 "合并清单是 JSON 数组");
-        check.that(!manifest.text().contains("\"image\""), "改写后的清单里不再有 image 字段");
+        check.that(!manifest.text().contains("\"atlasUrl\""), "改写后的清单里不再有 atlasUrl 字段");
         check.that(manifest.text().indexOf("oc-asset-alpha") < manifest.text().indexOf("oc-asset-beta"),
                 "数组顺序就是插件加载顺序");
         check.that(!manifest.text().contains("oc-asset-gamma"),

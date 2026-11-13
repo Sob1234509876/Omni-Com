@@ -60,3 +60,15 @@ tasks.register('scenario', JavaExec) {
     classpath = sourceSets.selfCheck.runtimeClasspath
     mainClass = 'io.github.sob1234509876.oc.rts.scenario.RtsScenario'
 }
+
+// Comments and descriptions may contain non-ASCII text, so the build must not fall back to the
+// platform encoding, which is GBK on a Chinese Windows install.
+javadoc {
+    options {
+        encoding = "UTF-8"
+        charSet = "UTF-8"
+        docEncoding = "UTF-8"
+    }
+    options.addBooleanOption('Xdoclint:all,-missing', true)
+    options.addStringOption('Xdoclint:none', '-quiet')
+}

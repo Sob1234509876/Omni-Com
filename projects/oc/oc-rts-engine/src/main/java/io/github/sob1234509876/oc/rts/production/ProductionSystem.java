@@ -223,6 +223,11 @@ public final class ProductionSystem implements SimulationSystem {
         Inventory inventory = building.inventory();
         ItemBundle missing = missingFrom(inventory, inputs);
         if (missing.isEmpty()) {
+            // The buffer was pre-stocked by hand (the classic AI does this, an upgrade carries its
+            // predecessor's buffer over, or a cancelled job left goods behind). The mailbox rule still
+            // applies: the job consumes exactly this one job's inputs now, so the goods cannot silently
+            // serve a second job for free and cannot sit in the buffer forever either.
+            inventory.extractUpTo(inputs);
             startProducing(building, job, tick);
             return;
         }

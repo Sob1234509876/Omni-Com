@@ -5,6 +5,7 @@ import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.Recipe;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;
+import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 import io.github.sob1234509876.oc.rts.entity.Entity;
@@ -51,6 +52,17 @@ public final class Events {
      * {@code null} when the source is unknown. {@code EntityDestroyed} follows, as for every removal.
      */
     public record EntityKilled(Entity victim, Entity killer, long tick) {
+    }
+
+    /**
+     * A ranged attacker released a shot from {@code from} towards {@code to}: the presentation fact a
+     * client needs to draw a projectile flying. Published by {@link io.github.sob1234509876.oc.rts.combat.CombatSystem}
+     * immediately before the hit is applied, so the flight always precedes its own impact - the damage
+     * itself stays instant and this event never changes when or how much the victim loses. Only shots
+     * with an attack range of at least two tiles announce themselves; a melee reach of under two tiles
+     * is silent, because there is nothing in the air to draw.
+     */
+    public record ProjectileFired(Entity attacker, Vec2 from, Vec2 to, long tick) {
     }
 
     /** A building was placed under construction and finished it. */

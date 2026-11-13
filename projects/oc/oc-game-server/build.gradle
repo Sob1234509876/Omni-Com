@@ -61,3 +61,15 @@ tasks.register('server', JavaExec) {
     workingDir = rootProject.projectDir
     standardInput = System.in
 }
+
+// Comments and descriptions may contain non-ASCII text, so the build must not fall back to the
+// platform encoding, which is GBK on a Chinese Windows install.
+javadoc {
+    options {
+        encoding = "UTF-8"
+        charSet = "UTF-8"
+        docEncoding = "UTF-8"
+    }
+    options.addBooleanOption('Xdoclint:all,-missing', true)
+    options.addStringOption('Xdoclint:none', '-quiet')
+}

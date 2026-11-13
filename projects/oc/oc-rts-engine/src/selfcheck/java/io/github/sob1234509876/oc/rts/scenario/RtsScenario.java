@@ -9,6 +9,7 @@ import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.combat.CombatStats;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.DimensionContent;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
@@ -16,6 +17,7 @@ import io.github.sob1234509876.oc.rts.content.ScenarioContent;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitRole;
 import io.github.sob1234509876.oc.rts.content.UnitType;
+import io.github.sob1234509876.oc.rts.content.WorldContent;
 import io.github.sob1234509876.oc.rts.core.ChunkPos;import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
@@ -38,6 +40,7 @@ import io.github.sob1234509876.oc.rts.map.Chunk;
 import io.github.sob1234509876.oc.rts.map.ChunkedMap;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.NoiseTerrainGenerator;
+import io.github.sob1234509876.oc.rts.map.NoiseSettings;
 import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
@@ -126,6 +129,10 @@ public final class RtsScenario {
         checkBuilderArrival(check);
         checkRepairAndReclaim(check);
         checkWaypointsAndPaths(check);
+        checkHellAndVariants(check);
+        checkUnitUpgrades(check);
+        checkPreStockedProduction(check, content);
+        checkUnitInherit(check);
 
         check.summary("RTS engine scenario");
     }
@@ -1414,6 +1421,8 @@ public final class RtsScenario {
     private static final String WEAKLING = "weakling";
     /** Has damage but a range of zero, so it still cannot attack. */
     private static final String STATUE = "statue";
+    /** Hits like the duelist but with a melee reach of 0.9 tiles, so it fires no projectile. */
+    private static final String SWORDSMAN = "swordsman";
     /** A 3x3, 30 hit point building with no armour: three hits of 10 kill it. */
     private static final String WALL = "wall";
     /** The same building with armour 5: a 10 damage hit deals 5, so six hits are needed. */
@@ -1452,8 +1461,10 @@ public final class RtsScenario {
         World duelWorld = duel.world();
         List<Natural> duelAmounts = new ArrayList<>();
         List<Events.EntityKilled> kills = new ArrayList<>();
+        List<Events.ProjectileFired> duelShots = new ArrayList<>();
         duelWorld.events().subscribe(Events.DamageDealt.class, event -> duelAmounts.add(event.amount()));
         duelWorld.events().subscribe(Events.EntityKilled.class, kills::add);
+        duelWorld.events().subscribe(Events.ProjectileFired.class, duelShots::add);
         Unit fighter = duelWorld.spawnUnit(content.unit(DUELIST), blue, new Vec2(10.5f, 10.5f));
         Unit victim = duelWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.5f, 10.5f));
         duel.tick(60);
@@ -1468,6 +1479,25 @@ public final class RtsScenario {
         }
         check.equal(List.of(Natural.of(10), Natural.of(10), Natural.of(10)), duelAmounts,
                 "the DamageDealt events carry the three hits of ten");
+        check.equal(3, duelShots.size(), "every one of the three shots published exactly one projectile event");
+        check.that(duelShots.stream().allMatch(shot -> shot.attacker() == fighter
+                        && shot.from().equals(fighter.position()) && shot.to().equals(victim.position())),
+                "each projectile flies from the duelist's position at fire time to the victim's position");
+        check.equal(List.of(1L, 11L, 21L), duelShots.stream().map(Events.ProjectileFired::tick).toList(),
+                "the projectile events carry the same ticks as the damage events (1, 11, 21)");
+
+        // --- a 0.9 tile melee duel hits like the duelist but stays silent: no projectile event
+        OcRtsEngine melee = combatEngine(content, blue, red);
+        World meleeWorld = melee.world();
+        List<Natural> meleeAmounts = new ArrayList<>();
+        List<Events.ProjectileFired> meleeShots = new ArrayList<>();
+        meleeWorld.events().subscribe(Events.DamageDealt.class, event -> meleeAmounts.add(event.amount()));
+        meleeWorld.events().subscribe(Events.ProjectileFired.class, meleeShots::add);
+        meleeWorld.spawnUnit(content.unit(SWORDSMAN), blue, new Vec2(10.5f, 10.5f));
+        meleeWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(11.35f, 10.5f));
+        melee.tick(60);
+        check.equal(3, meleeAmounts.size(), "the 0.9 tile swordsman still lands its three melee hits");
+        check.equal(0, meleeShots.size(), "a duel between 0.9 tile melee units publishes no projectile event");
 
         // --- overkill: the event reports what was subtracted, not what the attacker could have dealt
         OcRtsEngine overkill = combatEngine(content, blue, red);
@@ -1802,7 +1832,9 @@ public final class RtsScenario {
         OcRtsEngine shot = combatEngine(content, blue, red);
         World shotWorld = shot.world();
         List<Events.DamageDealt> hits = new ArrayList<>();
+        List<Events.ProjectileFired> towerShots = new ArrayList<>();
         shotWorld.events().subscribe(Events.DamageDealt.class, hits::add);
+        shotWorld.events().subscribe(Events.ProjectileFired.class, towerShots::add);
         Building towerBuilding = shotWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
         Unit near = shotWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(23.5f, 21.5f));
         Unit far = shotWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(25.5f, 21.5f));
@@ -1813,14 +1845,25 @@ public final class RtsScenario {
         check.equal(1, hits.size(), "the tower published exactly one DamageDealt event");
         check.equal(towerBuilding.id(), hits.get(0).source().id(), "the building is the recorded attacker");
         check.equal(near.id(), towerBuilding.targetId(), "the tower records the nearest unit as its target");
+        check.equal(1, towerShots.size(), "the tower's shot published exactly one projectile event");
+        if (towerShots.size() == 1) {
+            Events.ProjectileFired towerShot = towerShots.get(0);
+            check.that(towerShot.attacker() == towerBuilding
+                            && towerShot.from().equals(towerBuilding.position())
+                            && towerShot.to().equals(near.position()),
+                    "the tower's projectile flies from the tower to the nearest hostile unit's position");
+        }
 
         // --- out of range: no shot at all
         OcRtsEngine outside = combatEngine(content, blue, red);
         World outsideWorld = outside.world();
+        List<Events.ProjectileFired> outsideShots = new ArrayList<>();
+        outsideWorld.events().subscribe(Events.ProjectileFired.class, outsideShots::add);
         outsideWorld.spawnBuilding(tower, blue, new GridPos(20, 20));
         Unit distant = outsideWorld.spawnUnit(content.unit(DUMMY), red, new Vec2(30.5f, 21.5f));
         outside.tick(5);
         check.equal(30L, distant.health().current(), "a hostile unit outside the 5 tile range is never hit");
+        check.equal(0, outsideShots.size(), "and no projectile event is published for a shot out of range");
 
         // --- own and allied units are never targets; a neutral showroom player is not on a team
         OcRtsEngine safe = combatEngine(content, blue, red);
@@ -2361,6 +2404,15 @@ public final class RtsScenario {
                 "a fifth builder is capped at " + ConstructionSystem.MAX_BUILDERS_PER_SITE);
         check.equal(ConstructionSystem.MAX_BUILDERS_PER_SITE, ConstructionSystem.progressPerTick(9),
                 "progressPerTick depends only on min(builders, MAX_BUILDERS_PER_SITE)");
+        // --- the per-builder work rate: the rates sum, the cap counts workers
+        check.equal(2, ConstructionSystem.progressPerTick(java.util.List.of(2)),
+                "a rate-2 builder alone contributes two points per tick");
+        check.equal(4, ConstructionSystem.progressPerTick(java.util.List.of(2, 2)),
+                "two rate-2 builders contribute four points per tick");
+        check.equal(5, ConstructionSystem.progressPerTick(java.util.List.of(2, 2, 1)),
+                "mixed rates sum: 2 + 2 + 1");
+        check.equal(12, ConstructionSystem.progressPerTick(java.util.List.of(3, 3, 3, 3, 1)),
+                "the cap counts workers: four rate-3 builders sum to 12 and the fifth is dropped");
 
         // --- one builder takes the full build time; two take half; four equal five
         int[] builderCounts = {1, 2, 4, 5};
@@ -2745,6 +2797,8 @@ public final class RtsScenario {
     // ------------------------------------------------------------------ 17) repair and reclaim
 
     private static final String SERVICE_ENGINEER = "engineer";
+    private static final String SERVICE_FAST_ENGINEER = "fast_engineer";
+    private static final String SERVICE_ENGINEER_T2 = "engineer.t2";
     private static final String SERVICE_DEPOT = "depot";
     private static final String SERVICE_TOWER = "tower";
     private static final String SERVICE_SHED = "shed";
@@ -2823,6 +2877,7 @@ public final class RtsScenario {
                 "the full-health refusal says so: " + fullRepair.refusal());
         check.equal(goldAtFull, player.logistics().amount(gold),
                 "the refused full-health repair charges nothing");
+
 
         // Q16: the queue form appends the repair behind an existing order instead of replacing it.
         tower.health().damage(4);
@@ -2937,6 +2992,22 @@ public final class RtsScenario {
                 "a finished building cannot be reclaimed: " + finishedReclaim.refusal());
         check.equal(ItemBundle.EMPTY, finishedReclaim.refund(),
                 "the refused finished reclaim returns nothing");
+
+        // --- the unit's work rate multiplies the repair: a rate-2 engineer restores 8 per tick
+        Building fastTower = world.spawnBuilding(towerType, player, new GridPos(26, 10));
+        fastTower.health().damage(100);
+        Unit fastRepairer = world.spawnUnit(content.unit(SERVICE_FAST_ENGINEER), player,
+        world.dimensionOf(fastTower).entranceTile(fastTower));
+        check.equal(2, fastRepairer.type().buildRate(), "the fast engineer's content rate is 2");
+        Natural goldBeforeFast = player.logistics().amount(gold);
+        var fastRepair = engine.commands().tryRepair(fastRepairer, fastTower);
+        check.that(fastRepair.repairing(), "the fast engineer takes the repair order: " + fastRepair.refusal());
+        engine.tick();
+        check.equal(Natural.of(108), fastTower.health().current(),
+        "one standing tick of a rate-2 engineer restores "
+        + RepairOrder.REPAIR_POINTS_PER_TICK * 2 + " hit points (100 -> 108)");
+        check.equal(goldBeforeFast.subtractClamped(Natural.of(8)), player.logistics().amount(gold),
+        "that tick charged eight gold, one per restored hit point");
     }
 
     /** Content for the repair/reclaim checks: a repairable tower, a shed with no price and a hut. */
@@ -2946,6 +3017,12 @@ public final class RtsScenario {
                 .item("gold").name("Gold").maxStack(10_000)
                 .unit(SERVICE_ENGINEER).name("Engineer").role(UnitRole.WORKER).health(80).speed(10f)
                         .radius(0.3f).cargo(10).spriteSet("engineer").tag("builder")
+                        .upgradesTo(SERVICE_ENGINEER_T2).upgradeCost("gold", 10)
+                .unit(SERVICE_ENGINEER_T2).name("Engineer T2").role(UnitRole.WORKER).health(160)
+                        .speed(10f).radius(0.3f).cargo(20).spriteSet("engineer").tag("builder")
+                .unit(SERVICE_FAST_ENGINEER).name("Fast Engineer").role(UnitRole.WORKER).health(80)
+                        .speed(10f).radius(0.3f).cargo(10).spriteSet("engineer").tag("builder")
+                        .buildRate(2)
                 .building(SERVICE_DEPOT).name("Depot").size(2, 2).health(500).storage(24).warehouse()
                         .spriteSet("depot")
                 .building(SERVICE_TOWER).name("Tower").size(2, 2).health(200).cost("gold", 40)
@@ -2956,6 +3033,7 @@ public final class RtsScenario {
                         .buildTime(20).spriteSet("hut")
                 .build();
     }
+
 
     // ------------------------------------------------------------------ 18) waypoints and paths
 
@@ -3252,6 +3330,468 @@ public final class RtsScenario {
                 .build();
     }
 
+    // ------------------------------------------------------------------ 19) hell and variants
+
+    /**
+     * The content-declared hell dimension, dual upgrade variants and dimension-restricted buildings: a
+     * local {@link WorldContent} declares hell and a gateway pair, the engine builds it, a worker travels
+     * through the gate, the purgatory building may only stand in hell, and the fort's upgrade step offers
+     * two variants that price differently.
+     */
+    private static void checkHellAndVariants(Check check) {
+        check.section("19) a content-declared hell, dual upgrade variants and dimension-restricted buildings");
+        ContentRegistry content = ContentRegistry.builder("hellcheck")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .terrain("hell_ground").name("Hell Ground").buildable().sprite("terrain/hell_ground")
+                        .mapColor(0x5A1E1E)
+                .terrain("hell_ash").name("Hell Ash").buildable().moveCost(1.2f).sprite("terrain/hell_ash")
+                        .mapColor(0x6E5A66)
+                .terrain("hell_lava").name("Lava").impassable().sprite("terrain/hell_lava")
+                        .mapColor(0xE25822)
+                .terrain("hell_rock").name("Basalt").impassable().sprite("terrain/hell_rock")
+                        .mapColor(0x2C2C34)
+                .item("gold").name("Gold").maxStack(10_000)
+                .unit("worker").name("Worker").role(UnitRole.WORKER).health(80).speed(2f).radius(0.3f)
+                .cost("gold", 10).buildTime(10).cargo(50).spriteSet("worker").tag("builder")
+                .building("depot").name("Depot").size(2, 2).health(500).cost("gold", 5)
+                .storage(24).warehouse().spriteSet("depot")
+                .building("fort.t1").name("Fort T1").size(2, 2).health(100).level(1)
+                .cost("gold", 20).buildTime(10).storage(4).producer("fort").spriteSet("fort.t1")
+                .upgradeTo("fort.t2").upgradeCost("gold", 50)
+                .upgradeVariant("purgatory").upgradeCost("gold", 20)
+                .building("fort.t2").name("Fort T2").size(2, 2).health(200).level(2)
+                .cost("gold", 40).buildTime(10).storage(6).producer("fort").spriteSet("fort.t2")
+                .building("purgatory").name("Purgatory").size(2, 2).health(300).level(2)
+                .cost("gold", 90).buildTime(10).storage(6).producer("purgatory")
+                .dimensionsOnly("hell").spriteSet("purgatory")
+                .recipe("train.worker").name("Train Worker").producer("fort").requiredBuildingLevel(1)
+                .input("gold", 5).unitOutput("worker").duration(10)
+                .recipe("train.fiend").name("Train Fiend").producer("purgatory").requiredBuildingLevel(2)
+                .input("gold", 15).unitOutput("worker").duration(10)
+                .build();
+
+        // The seam itself: a WorldContent declaring hell and a gateway pair.
+        NoiseSettings hellSettings = NoiseSettings.defaults("hellcheck").withPaths(
+                content.key("hell_lava"), content.key("hell_ash"), content.key("hell_ground"),
+                content.key("hell_ground"), content.key("hell_ground"), content.key("hell_rock"));
+        DimensionContent hell = new DimensionContent(DimensionId.of("hell"), "Hell", hellSettings);
+        WorldContent hellGame = new WorldContent() {
+            @Override
+            public String id() {
+                return "hellcheck-game";
+            }
+
+            @Override
+            public String description() {
+                return "the hell seam check";
+            }
+
+            @Override
+            public String namespace() {
+                return "hellcheck";
+            }
+
+            @Override
+            public void populate(ContentRegistry.Builder registry) {
+                throw new UnsupportedOperationException("the check builds its catalogue directly");
+            }
+
+            @Override
+            public java.util.List<DimensionContent> dimensions() {
+                return java.util.List.of(hell);
+            }
+
+            @Override
+            public java.util.List<Gateway> gateways() {
+                return java.util.List.of(
+                        Gateway.of(DimensionId.overworld(), new GridPos(8, 8),
+                                DimensionId.of("hell"), new GridPos(4, 4)),
+                        Gateway.of(DimensionId.of("hell"), new GridPos(4, 4),
+                                DimensionId.overworld(), new GridPos(8, 8)));
+            }
+        };
+        check.equal(1, hellGame.dimensions().size(), "the content declares exactly one extra dimension");
+        check.equal("Hell", hellGame.dimensions().get(0).displayName(), "the dimension has a display name");
+        check.equal(2, hellGame.gateways().size(), "the gateway pair is declared in both directions");
+        check.that(hellGame.dimensions().get(0).settings().waterPath().equals(content.key("hell_lava")),
+                "the hell terrain paths point at the catalogue's lava as its water");
+
+        // The engine: flat grass overworld plus the content-declared hell.
+        OcRtsEngine engine = OcRtsEngine.builder(content)
+                .seed(9091L)
+                .generator(new FlatChunkGenerator(content.terrain("grass")))
+                .chunkSize(CHUNK_SIZE)
+                .viewRadiusChunks(3)
+                .directDelivery(true)
+                .dimension(hell.id(), DimensionProfile.of(hell.displayName()), hell.settings())
+                .build();
+        World world = engine.world();
+        DimensionId overworld = DimensionId.overworld();
+        DimensionId hellId = DimensionId.of("hell");
+        check.that(world.dimensions().stream().anyMatch(dimension -> dimension.id().equals(hellId)),
+                "the engine built the declared hell dimension");
+        check.equal("Hell", world.dimension(hellId).profile().displayName(),
+                "the hell profile carries the content's display name");
+        check.equal(content.terrain("hell_ground"), world.map(hellId).terrainAt(0, 0),
+                "the tile at the hell origin is the catalogue's hell ground, not overworld grass");
+        check.equal(content.terrain("grass"), world.map(overworld).terrainAt(0, 0),
+                "the overworld stays flat grass");
+
+        // The gateways from the content, registered by the host (here: the scenario).
+        for (Gateway gateway : hellGame.gateways()) {
+            world.addGateway(gateway);
+        }
+        check.that(world.route(overworld, hellId).isPresent(), "the route overworld -> hell resolves");
+        check.that(world.route(hellId, overworld).isPresent(), "the route hell -> overworld resolves too");
+
+        // Dimension restriction: the purgatory refuses the overworld and accepts hell.
+        check.that(!world.canPlace(overworld, content.building("purgatory"), new GridPos(10, 10)),
+                "the purgatory is refused on the overworld by the dimension rule");
+        check.that(world.canPlace(hellId, content.building("purgatory"), new GridPos(6, 6)),
+                "the same purgatory fits in hell, whose origin area is buildable");
+        check.that(world.canPlace(hellId, content.building("depot"), new GridPos(2, 2)),
+                "an unrestricted building stands anywhere");
+        Player blue = engine.players().get(0);
+
+        // A worker travels through the gate: overworld -> hell.
+        Unit worker = world.spawnUnit(overworld, content.unit("worker"), blue, new GridPos(8, 8));
+        world.director().travel(worker, hellId);
+        for (int i = 0; i < 400 && !worker.dimensionId().equals(hellId); i++) {
+            engine.tick();
+        }
+        check.equal("hell", worker.dimensionId().key(), "the worker travelled through the gate into hell");
+        check.equal(1, world.units(hellId).size(), "hell now holds the worker");
+
+        // Variant upgrades: fort.t1 offers two successors, priced differently.
+        BuildingType fortType = content.building("fort.t1");
+        check.equal(2, fortType.upgradeOptions().size(), "fort.t1 declares exactly two upgrade variants");
+        check.that(fortType.upgradeTo().orElseThrow().equals(content.key("fort.t2"))
+                        && fortType.upgradeCost().equals(ItemBundle.of(content.item("gold"), 50)),
+                "the single-target view still reads the first variant");
+        check.that(fortType.upgradeOptions().get(1).target().equals(content.key("purgatory")),
+                "the second variant is the purgatory");
+        Building fortOver = world.spawnBuilding(overworld, fortType, blue, new GridPos(20, 20));
+        Building depotOver = world.spawnBuilding(overworld, content.building("depot"), blue, new GridPos(14, 14));
+        depositStock(check, blue, depotOver, ItemBundle.of(content.item("gold"), 300),
+                "the variant checks start with 300 gold on the overworld");
+        Natural goldBefore = blue.logistics().amount(content.item("gold"));
+
+        var ambiguous = engine.commands().upgradeBuilding(fortOver);
+        check.that(!ambiguous.upgraded() && ambiguous.refusal().contains("2 variants"),
+                "an upgrade without a target is refused while the choice is ambiguous: " + ambiguous.refusal());
+        var wrong = engine.commands().upgradeBuilding(fortOver, content.key("fort.missing"));
+        check.that(!wrong.upgraded() && wrong.refusal().contains("does not offer"),
+                "a target outside the offered variants is refused: " + wrong.refusal());
+        var restricted = engine.commands().upgradeBuilding(fortOver, content.key("purgatory"));
+        check.that(!restricted.upgraded() && restricted.refusal().contains("restricts it to hell"),
+                "upgrading into the purgatory on the overworld is refused by the dimension rule: "
+                        + restricted.refusal());
+        check.that(blue.logistics().amount(content.item("gold")).equals(goldBefore),
+                "every refusal left the gold untouched");
+
+        var ordinary = engine.commands().upgradeBuilding(fortOver, content.key("fort.t2"));
+        check.that(ordinary.upgraded(), "choosing fort.t2 explicitly succeeds: " + ordinary.refusal());
+        check.equal(content.building("fort.t2"), ordinary.replacement().type(),
+                "the chosen variant is the type that replaced the fort");
+        check.equal(goldBefore.subtractClamped(Natural.of(50)),
+                blue.logistics().amount(content.item("gold")),
+                "the chosen variant's own price (50 gold) was charged");
+
+        // The same step succeeds in hell: the purgatory may rise there.
+        Building fortHell = world.spawnBuilding(hellId, fortType, blue, new GridPos(6, 6));
+        Building depotHell = world.spawnBuilding(hellId, content.building("depot"), blue, new GridPos(10, 10));
+        depositStock(check, blue, depotHell, ItemBundle.of(content.item("gold"), 300),
+                "hell's warehouse holds the gold for the purgatory step");
+        Natural goldBeforeHell = blue.logistics().amount(content.item("gold"));
+        var purgatory = engine.commands().upgradeBuilding(fortHell, content.key("purgatory"));
+        check.that(purgatory.upgraded(), "the purgatory variant succeeds in hell: " + purgatory.refusal());
+        check.equal(content.building("purgatory"), purgatory.replacement().type(),
+                "the replacement is the purgatory");
+        check.equal("hell", purgatory.replacement().dimensionId().key(),
+                "the purgatory stands in hell");
+        check.equal(goldBeforeHell.subtractClamped(Natural.of(20)),
+                blue.logistics().amount(content.item("gold")),
+                "the purgatory step charged its own price (20 gold), not the fort.t2 price");
+
+        // And back: the worker returns through the reversed gateway.
+        world.director().travel(worker, overworld);
+        for (int i = 0; i < 400 && worker.dimensionId().equals(hellId); i++) {
+            engine.tick();
+        }
+        check.equal("overworld", worker.dimensionId().key(), "the worker travelled back out of hell");
+        check.equal(0, world.units(hellId).size(),
+                "hell keeps only its buildings after the worker leaves");
+    }
+
+
+    // ------------------------------------------------------------------ 20) unit upgrades
+
+    /**
+     * The engineer ladder: one unit type replaced by its successor, in place and paid once.
+     *
+     * <p>The catalogue is the service check's own: the plain engineer names the tier two engineer as
+     * its successor and prices the step at ten gold. The happy path asserts that the replacement stands
+     * at the old unit's exact position, keeps the owner, the facing and the health fraction, carries the
+     * backpack over into its bigger cargo, and costs exactly the declared bundle once; the old unit is
+     * destroyed, its order queue cancelled through the ordinary cancel path, and its id gone from the
+     * world after the flush. Every refusal - an unknown target, a target the ladder does not offer, the
+     * top of the ladder, an unaffordable step - is free: nothing is charged, no reservation is left
+     * behind, and the old engineer keeps standing.
+     */
+    private static void checkUnitUpgrades(Check check) {
+        check.section("20) a unit upgrade replaces the unit, carries its cargo and is charged once");
+        ContentRegistry content = serviceContent();
+        ItemType gold = content.item("gold");
+        UnitType engineerType = content.unit(SERVICE_ENGINEER);
+        UnitType engineerT2Type = content.unit(SERVICE_ENGINEER_T2);
+
+        check.that(engineerType.canUpgrade()
+                        && engineerType.upgradeTo().orElseThrow().equals(content.key(SERVICE_ENGINEER_T2)),
+                "the engineer names the tier two engineer as its successor in the catalogue namespace");
+        check.equal(ItemBundle.of(gold, 10), engineerType.upgradeCost(),
+                "the engineer -> engineer.t2 step costs exactly ten gold");
+        check.that(!engineerT2Type.canUpgrade()
+                        && engineerT2Type.upgradeTo().isEmpty()
+                        && engineerT2Type.upgradeCost().isEmpty(),
+                "the tier two engineer is the top of its ladder: no target and no cost");
+
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 401L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building depot = world.spawnBuilding(content.building(SERVICE_DEPOT), player, new GridPos(10, 10));
+        depositStock(check, player, depot, ItemBundle.of(gold, 100),
+                "the unit upgrade check starts with 100 gold in the depot");
+        Vec2 position = new GridPos(20, 12).center();
+        Unit engineer = world.spawnUnit(engineerType, player, position);
+        Natural goldBefore = player.logistics().amount(gold);
+
+        // --- refusals: every one is free and leaves the engineer untouched
+        var unknown = engine.commands().upgradeUnit(engineer, content.key("engineer.missing"));
+        check.that(!unknown.upgraded() && unknown.refusal().contains("does not exist"),
+                "an upgrade whose target does not exist is refused: " + unknown.refusal());
+        var offLadder = engine.commands().upgradeUnit(engineer, content.key(SERVICE_ENGINEER));
+        check.that(!offLadder.upgraded() && offLadder.refusal().contains("does not offer"),
+                "a target the ladder does not offer - here the unit itself - is refused: "
+                        + offLadder.refusal());
+        check.equal(goldBefore, player.logistics().amount(gold),
+                "every refusal left the gold untouched");
+        check.equal(player.logistics().stored(), player.logistics().available(),
+                "every refusal left no reservation behind");
+        check.that(engineer.isAlive() && engineer.type().equals(engineerType),
+                "the refused upgrades leave the old engineer standing");
+
+        // --- the affordable upgrade: position, owner, facing, health fraction, cargo and one charge
+        engineer.health().damage(20);
+        check.close(0.75f, engineer.health().fraction(), 1e-6f,
+                "the engineer stands at three quarters of its 80 hit points before the upgrade");
+        engineer.motion().setFacing(1.25f);
+        check.equal(6L, engineer.cargo().insert(gold, 6),
+                "the engineer loads six gold into its ten unit backpack");
+        engine.commands().move(engineer, new GridPos(24, 14));
+        check.that(!engineer.orders().isEmpty(), "the engineer holds a move order before the upgrade");
+        EntityId oldId = engineer.id();
+
+        var upgraded = engine.commands().upgradeUnit(engineer, content.key(SERVICE_ENGINEER_T2));
+        check.that(upgraded.upgraded(), "an affordable unit upgrade succeeds: " + upgraded.refusal());
+        Unit replacement = upgraded.replacementUnit();
+        check.equal(engineerT2Type, replacement.type(), "the replacement has the type the ladder named");
+        check.close(0f, replacement.position().distance(position), 1e-6f,
+                "the replacement stands at the old unit's exact position");
+        check.equal(player, replacement.owner(), "the replacement keeps the same owner");
+        check.close(1.25f, replacement.motion().facing(), 1e-6f,
+                "the replacement faces the old unit's direction");
+        check.close(0.75f, replacement.health().fraction(), 1e-6f,
+                "the replacement keeps the old health fraction (not the absolute hit points)");
+        check.equal(120L, replacement.health().current(),
+                "three quarters of the new 160 hit points is 120");
+        check.equal(goldBefore.subtractClamped(Natural.of(10)), player.logistics().amount(gold),
+                "exactly the ten gold upgrade cost was charged, once");
+        check.equal(6L, replacement.cargo().amount(gold),
+                "the old engineer's backpack is carried over into the new one");
+        check.that(!engineer.isAlive(), "the old engineer was destroyed");
+        check.that(engineer.orders().isEmpty(), "the old engineer's order queue was cancelled");
+        check.that(replacement.orders().isEmpty(), "the replacement starts with no orders");
+        check.that(world.spatial().inRect(replacement.occupiedTiles()).stream()
+                        .noneMatch(entity -> entity.id().equals(oldId)),
+                "the spatial index no longer knows the old id");
+        check.that(world.spatial().inRect(replacement.occupiedTiles()).stream()
+                        .anyMatch(entity -> entity.id().equals(replacement.id())),
+                "the spatial index knows the replacement at the same tile");
+        world.flush();
+        check.that(world.findEntity(oldId).isEmpty(),
+                "after the flush the old id is gone from the world entirely");
+
+        var top = engine.commands().upgradeUnit(replacement, engineerT2Type.key());
+        check.that(!top.upgraded() && top.refusal().contains("top of its ladder"),
+                "the tier two engineer cannot be upgraded further: " + top.refusal());
+
+        // --- unaffordable: five gold cannot cover the ten gold step, and nothing is charged
+        OcRtsEngine poor = flatEngine(content, VisualLibrary.empty(), 402L);
+        Player poorPlayer = poor.players().get(0);
+        Building poorDepot = poor.world().spawnBuilding(content.building(SERVICE_DEPOT), poorPlayer,
+                new GridPos(10, 10));
+        depositStock(check, poorPlayer, poorDepot, ItemBundle.of(gold, 5),
+                "the unaffordable check starts with five gold");
+        Unit poorEngineer = poor.world().spawnUnit(engineerType, poorPlayer, new GridPos(20, 12).center());
+        var refused = poor.commands().upgradeUnit(poorEngineer, null);
+        check.that(!refused.upgraded(), "an unaffordable upgrade is refused");
+        check.that(refused.refusal() != null && refused.refusal().contains("cannot afford"),
+                "the unaffordable refusal says it cannot afford the cost: " + refused.refusal());
+        check.that(poorEngineer.isAlive() && poorEngineer.type().equals(engineerType),
+                "the refused upgrade leaves the old engineer standing");
+        check.equal(Natural.of(5), poorPlayer.logistics().amount(gold),
+                "the refused upgrade charges nothing");
+        check.equal(poorPlayer.logistics().stored(), poorPlayer.logistics().available(),
+                "the refused upgrade leaves no reservation behind");
+    }
+
+    // ------------------------------------------------------------------ 5f) the pre-stocked buffer
+
+    /**
+     * A buffer that was stocked by hand is consumed exactly once.
+     *
+     * <p>This is the regression test for the free-production leak: {@code beginMaterials} used to see a
+     * buffer that already held the recipe's inputs and start producing <em>without extracting them</em>,
+     * so the goods stayed in the buffer and served every later job for free. The mailbox rule is that a
+     * factory never owns materials: whoever put the goods there paid for them once, and the job that
+     * uses them consumes them.
+     */
+    private static void checkPreStockedProduction(Check check, ContentRegistry content) {
+        check.section("5f) a pre-stocked factory buffer is consumed exactly once");
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 17L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Logistics logistics = player.logistics();
+        ProductionSystem production = engine.production();
+
+        ItemType iron = content.item(ScenarioContent.IRON_INGOT);
+        ItemType plank = content.item(ScenarioContent.PLANK);
+        Building warehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(10, 10));
+        Building barracks = world.spawnBuilding(content.building(ScenarioContent.BARRACKS), player,
+                new GridPos(20, 10));
+        // The network holds one more soldier's worth of inputs; the buffer holds another one, placed
+        // there by hand - the way the classic AI pre-stocks its armory, or what an upgrade's
+        // carry-over leaves behind.
+        warehouse.inventory().insert(iron, 50);
+        warehouse.inventory().insert(plank, 20);
+        check.equal(50L, barracks.inventory().insert(iron, 50),
+                "the buffer accepted exactly one recipe's worth of iron");
+        check.equal(20L, barracks.inventory().insert(plank, 20),
+                "the buffer holds the recipe's plank input as well");
+        Natural ironBefore = logistics.amount(iron);
+        Natural plankBefore = logistics.amount(plank);
+        check.equal(Natural.of(50), ironBefore, "the warehouses hold exactly one further recipe's worth");
+
+        int unitsBefore = world.unitsOf(player).size();
+        production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
+        boolean trained = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 1, 3000);
+        check.that(trained, "a job whose inputs sit in the buffer starts without a delivery");
+        check.equal(unitsBefore + 1, world.unitsOf(player).size(), "the pre-stocked job produced its unit");
+        check.equal(Natural.ZERO, barracks.inventory().amount(iron),
+                "the job consumed the buffer's iron instead of leaving it for the next job");
+        check.equal(Natural.ZERO, barracks.inventory().amount(plank),
+                "the job consumed the buffer's planks as well");
+        check.equal(ironBefore, logistics.amount(iron),
+                "the warehouses were not charged: the buffer goods were the payment");
+        check.equal(plankBefore, logistics.amount(plank), "and the planks were not charged either");
+
+        // The next job finds an empty buffer and therefore pays the network, exactly like before.
+        production.enqueue(barracks, content.recipe(ScenarioContent.TRAIN_SOLDIER), 1);
+        boolean charged = engine.tickUntil(e -> world.unitsOf(player).size() >= unitsBefore + 2, 3000);
+        check.that(charged, "the follow-up job is supplied through the ordinary delivery path");
+        check.equal(unitsBefore + 2, world.unitsOf(player).size(), "the follow-up job produced its unit");
+        check.equal(Natural.ZERO, logistics.amount(iron),
+                "the follow-up job took its inputs from the warehouse network");
+        check.equal(Natural.ZERO, logistics.amount(plank), "and paid the planks too");
+        check.equal(Natural.ZERO, barracks.inventory().amount(iron),
+                "and consumed them from the buffer, leaving no free stock behind");
+    }
+
+    // ------------------------------------------------------------------ 21) inherit
+
+    /**
+     * The {@code inherit(...)} ladder helper: an upgrade tier that only spells out its own numbers
+     * still inherits the base tier's cargo, work rate and builder capability, and an explicit local
+     * declaration always wins over the inherited value.
+     */
+    private static void checkUnitInherit(Check check) {
+        check.section("21) inherit copies builder capability across an upgrade ladder");
+        ContentRegistry content = ContentRegistry.builder("inherit")
+                .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                .item("gold").name("Gold").maxStack(10_000).tag("currency")
+                .unit("sapper").name("Sapper").role(UnitRole.WORKER).health(70).speed(2.6f)
+                        .cargo(60).buildRate(3).spriteSet("sapper").tag("builder")
+                .unit("sapper.t2").name("Sapper T2").role(UnitRole.WORKER).health(110).speed(2.9f)
+                        .spriteSet("sapper.t2").inherit("sapper")
+                .unit("sapper.t3").name("Sapper T3").role(UnitRole.WORKER).health(160).speed(3.1f)
+                        .cargo(200).spriteSet("sapper.t3").inherit("sapper.t2")
+                .building("depot").name("Depot").size(3, 3).health(400).storage(24).warehouse()
+                        .spriteSet("depot")
+                .building("post").name("Post").size(1, 1).health(50).cost("gold", 25).buildTime(50)
+                        .spriteSet("post")
+                .build();
+
+        UnitType base = content.unit("sapper");
+        UnitType tierTwo = content.unit("sapper.t2");
+        UnitType tierThree = content.unit("sapper.t3");
+        check.that(tierTwo.hasTag(ContentRegistry.BUILDER_TAG),
+                "the tier that only inherits carries the builder capability tag");
+        check.equal(Natural.of(60), tierTwo.cargoCapacity(), "inherit copies the cargo capacity");
+        check.equal(3, tierTwo.buildRate(), "inherit copies the build rate");
+        check.equal(Natural.of(200), tierThree.cargoCapacity(),
+                "an explicit local cargo wins over the inherited one");
+        check.equal(3, tierThree.buildRate(),
+                "a field the tier leaves unset comes from its source, transitively up the chain");
+        check.that(tierThree.hasTag(ContentRegistry.BUILDER_TAG),
+                "the chain resolves through tier two up to the root's builder tag");
+        check.that(base.hasTag(ContentRegistry.BUILDER_TAG) && !base.upgradeTo().isPresent(),
+                "the base type itself is unchanged by its tiers' inheritance");
+
+        // A missing source and a cycle are content errors: the build fails with a readable message.
+        try {
+            ContentRegistry.builder("bad_inherit")
+                    .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                    .unit("loner").name("Loner").inherit("missing").build();
+            check.that(false, "an undefined inherit source fails the build");
+        } catch (IllegalStateException expected) {
+            check.that(expected.getMessage().contains("undefined"),
+                    "an undefined inherit source fails the build: " + expected.getMessage());
+        }
+        try {
+            ContentRegistry.builder("bad_cycle")
+                    .terrain("grass").name("Grass").buildable().sprite("terrain/grass")
+                    .unit("a").name("A").inherit("b")
+                    .unit("b").name("B").inherit("a")
+                    .build();
+            check.that(false, "an inheritance cycle fails the build");
+        } catch (IllegalStateException expected) {
+            check.that(expected.getMessage().contains("cycle"),
+                    "an inheritance cycle fails the build: " + expected.getMessage());
+        }
+
+        // Gameplay: the tier that only inherited its capability raises a site and pays the bill.
+        OcRtsEngine engine = flatEngine(content, VisualLibrary.empty(), 421L);
+        Player player = engine.players().get(0);
+        World world = engine.world();
+        Building depot = world.spawnBuilding(content.building("depot"), player, new GridPos(10, 10));
+        depositStock(check, player, depot, ItemBundle.of(content.item("gold"), 100),
+                "the inherit check starts with 100 gold in the depot");
+        Unit tierTwoUnit = world.spawnUnit(tierTwo, player, new GridPos(20, 12).center());
+        Natural goldBefore = player.logistics().amount(content.item("gold"));
+        var built = engine.commands().tryBuild(tierTwoUnit, content.building("post"),
+                new GridPos(20, 13));
+        check.that(built.placed(),
+                "a unit whose build capability comes only from inherit can place a site: "
+                        + built.refusal());
+        check.equal(goldBefore.subtractClamped(Natural.of(25)), player.logistics().amount(content.item("gold")),
+                "the site was charged exactly its placement cost, once");
+        engine.tick(60);
+        check.that(built.placed() && built.site().isConstructed(),
+                "the inherited build rate of three finished the small post quickly");
+    }
+
+
     /** Deposits a stock into one warehouse and asserts that all of it fits. */
     private static void depositStock(Check check, Player player, Building warehouse, ItemBundle bundle,
             String description) {
@@ -3289,6 +3829,8 @@ public final class RtsScenario {
                 .spriteSet(WEAKLING)
                 .unit(STATUE).name("Statue").role(UnitRole.COMBAT).health(50).speed(0.05f).radius(0.35f)
                 .attack(5f, 0f).spriteSet(STATUE)
+                .unit(SWORDSMAN).name("Swordsman").role(UnitRole.COMBAT).health(100).speed(0.05f)
+                        .radius(0.35f).attack(10f, 0.9f).attackCooldown(10).spriteSet(SWORDSMAN)
                 // Building targets: no armour (30 HP, three hits of 10), armour 5 (six hits) and a one
                 // tile post used by the mixed nearest-target tie break.
                 .building(WALL).name("Wall").size(3, 3).health(30).spriteSet(WALL)

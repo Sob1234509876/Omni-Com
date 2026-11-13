@@ -45,7 +45,13 @@ import java.util.Optional;
  */
 public final class RepairOrder implements Order {
 
-    /** Hit points one engineer standing at the entrance restores per tick. */
+    /**
+     * Base hit points one engineer standing at the entrance restores per tick.
+     *
+     * <p>The repairing unit's {@link io.github.sob1234509876.oc.rts.content.UnitType#buildRate()
+     * build rate} multiplies this base: a rate {@code 1} engineer restores {@code 4} per tick (the
+     * historical fixed rule), a rate {@code 3} war-king engineer restores {@code 12}.
+     */
     public static final int REPAIR_POINTS_PER_TICK = 4;
 
     /** Distance from the entrance within which the engineer counts as working. */
@@ -194,7 +200,8 @@ public final class RepairOrder implements Order {
      */
     private OrderState repairOneTick(OrderContext context, Building current) {
         Natural missing = current.missingHealth();
-        Natural amount = missing.min(Natural.of(REPAIR_POINTS_PER_TICK));
+        int points = REPAIR_POINTS_PER_TICK * context.unit().type().buildRate();
+        Natural amount = missing.min(Natural.of(points));
         ItemBundle perHealth = current.type().repairCostPerHealth();
         if (perHealth.isEmpty()) {
             failureReason = "the building type declares no repair cost";

@@ -2,11 +2,13 @@ package io.github.sob1234509876.oc.server.world;
 
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.OcRtsEngine;
+import io.github.sob1234509876.oc.rts.OcRtsEngineBuilder;
 import io.github.sob1234509876.oc.rts.Player;
 import io.github.sob1234509876.oc.rts.PlayerId;
 import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ContentRegistry;
+import io.github.sob1234509876.oc.rts.content.DimensionContent;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
@@ -16,10 +18,15 @@ import io.github.sob1234509876.oc.rts.content.StartingResources;
 import io.github.sob1234509876.oc.rts.content.TerrainType;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.content.WorldContent;
+import io.github.sob1234509876.oc.rts.core.ChunkPos;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
 import io.github.sob1234509876.oc.rts.core.Vec2;
+import io.github.sob1234509876.oc.rts.dimension.Dimension;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
+import io.github.sob1234509876.oc.rts.dimension.DimensionProfile;
+import io.github.sob1234509876.oc.rts.dimension.Gateway;
 import io.github.sob1234509876.oc.rts.economy.Inventory;
 import io.github.sob1234509876.oc.rts.economy.WarehouseLogistics;
 import io.github.sob1234509876.oc.rts.entity.Building;
@@ -214,6 +221,15 @@ public final class WorldHost {
      */
     public static final int MAX_PLAYERS = 8;
 
+    /** How many fired shots the snapshot keeps at once. */
+    private static final int PROJECTILE_LIMIT = 128;
+
+    /**
+     * Content tag that marks a building as a gateway whose row carries the {@code gateway} view target:
+     * the classic hell gate wears it, and any future passage building opts in with the same tag.
+     */
+    public static final String GATEWAY_TAG = "gateway";
+
     /**
      * Content tag that marks a unit as a builder.
      *
@@ -386,6 +402,19 @@ public final class WorldHost {
      */
     private final Map<EntityId, HaulPop> recentPops = new HashMap<>();
 
+    /**
+     * Shots fired since the last snapshot, kept exactly like {@link #recentPops}: the engine publishes
+     * {@link io.github.sob1234509876.oc.rts.event.Events.ProjectileFired} at the fire moment and forgets,
+     * so this list is the smallest server-side state that lets the client draw the arrow in flight. The
+     * damage itself was already applied instantly inside the tick; the arrow is presentation.
+     */
+    private final List<ShotFired> recentShots = new ArrayList<>();
+    private long nextShotId;
+
+    /** One in-flight arrow for the snapshot document. */
+    private record ShotFired(long id, double x, double y, double tx, double ty, long tick) {
+    }
+
     /** One unit's most recent haul pop: the wire kind and the simulation tick that produced it. */
     private record HaulPop(String kind, long tick) {
     }
@@ -492,7 +521,7 @@ public final class WorldHost {
         this.content = registryOf(this.worldContent);
         BiomeTable biomes = biomeTable(this.content, this.worldContent);
         this.player = Player.of(1, "Player 1", 0xFF4FC3F7);
-        this.engine = OcRtsEngine.builder(this.content)
+        OcRtsEngineBuilder engineBuilder = OcRtsEngine.builder(this.content)
                 .seed(seed)
                 .ticksPerSecond(TICKS_PER_SECOND)
                 .chunkSize(NoiseTerrainGenerator.DEFAULT_CHUNK_SIZE)
@@ -500,8 +529,18 @@ public final class WorldHost {
                 .generator(new NoiseTerrainGenerator(seed, biomes))
                 .infiniteTerrain(seed)
                 .maxLoadedChunks(chunkBudget)
-                .player(player)
-                .build();
+                .player(player);
+        // The dimensions and gateways belong to the content: a game that declares hell gets hell, and a
+        // single-world game builds exactly as before. Every dimension derives its own seed from the world
+        // seed and its key, so the same world seed reproduces the same maps.
+        for (DimensionContent dimension : this.worldContent.dimensions()) {
+            engineBuilder.dimension(dimension.id(),
+                    DimensionProfile.of(dimension.displayName()), dimension.settings());
+        }
+        this.engine = engineBuilder.build();
+        for (Gateway gateway : this.worldContent.gateways()) {
+            this.engine.world().addGateway(gateway);
+        }
         this.spawnAnchor = findSpawnAnchor(engine.world());
         // The server turns the engine's haul facts into one compact, per-unit snapshot field. The event
         // itself is momentary and the engine gives no history, so keeping the latest pop per unit here is
@@ -509,6 +548,14 @@ public final class WorldHost {
         engine.world().events().subscribe(Events.ItemsHauled.class,
                 event -> recentPops.put(event.unit().id(),
                         new HaulPop(event.action().id(), event.tick())));
+        engine.world().events().subscribe(Events.ProjectileFired.class, event -> {
+            nextShotId++;
+            recentShots.add(new ShotFired(nextShotId,
+                    event.from().x(), event.from().y(), event.to().x(), event.to().y(), event.tick()));
+            if (recentShots.size() > PROJECTILE_LIMIT) {
+                recentShots.subList(0, recentShots.size() - PROJECTILE_LIMIT).clear();
+            }
+        });
         // Player 1 is the sample-scene / human anchor. Its faction anchor is the tile the whole scene was
         // laid out around, so a snapshot can report where the human side started without inventing one.
         this.player.setAnchor(spawnAnchor);
@@ -648,6 +695,14 @@ public final class WorldHost {
         int originY = spawnAnchor.y() - SCENE_ORIGIN_OFFSET_Y;
         int index = 0;
         for (BuildingType type : content.buildings()) {
+            // A dimension-restricted building cannot stand in the default dimension at all - a purgatory
+            // factory bound to hell would make every sample-scene search fail - so the showroom skips it
+            // instead of treating the content statement as a broken catalogue. A gateway building is
+            // skipped for the opposite reason: a showroom hell gate would silently open the passage to
+            // hell before anybody built one.
+            if (!type.isAllowedIn(world.defaultDimensionId()) || type.hasTag(GATEWAY_TAG)) {
+                continue;
+            }
             GridPos preferred = new GridPos(
                     originX + (index % SCENE_COLUMNS) * SCENE_SPACING,
                     originY + (index / SCENE_COLUMNS) * SCENE_SPACING);
@@ -667,6 +722,11 @@ public final class WorldHost {
         List<Unit> units = new ArrayList<>();
         index = 0;
         for (UnitType type : content.units()) {
+            // Creatures that a hook spawns into the wild (the classic denizens) are not showroom
+            // material: their place is in the dimension that spawns them, not the starting scene.
+            if (type.hasTag("denizen")) {
+                continue;
+            }
             GridPos preferred = new GridPos(originX + index * 2, originY + SCENE_UNIT_OFFSET_Y);
             GridPos tile = scanFreeTile(world, preferred, SCENE_SEARCH_RADIUS, NO_TILES);
             if (tile == null) {
@@ -1581,16 +1641,17 @@ public final class WorldHost {
      * {@code kind} through the plugin manifest for the display name; a legacy client can ignore the whole
      * array and keep drawing the existing {@code 生产中 ×N} marker from {@code queue}.
      *
-     * <p><strong>Contents of a warehouse or a unit.</strong> A row describing a building whose content
-     * type is flagged as a warehouse also carries {@code contents}, a compact object of
-     * {@code path: amount} pairs for the items currently stored there, for example
-     * {@code "contents":{"gold":120,"wood":40}}. A row describing a unit whose cargo is non-empty carries
-     * the same object for the items it carries. Only non-zero amounts are written and an empty warehouse
-     * or an empty cargo hold omits the field; other buildings never carry it, because a producer's
-     * private buffer is not part of the logistics network. The field is additive: an older client
-     * ignores it, and a client that reads it can show the warehouse's stock or the unit's cargo in the
-     * selection HUD. It is read from {@link Building#inventory()} for a warehouse and
-     * {@link Unit#cargo()} for a unit, the same sources the logistics network uses, so the two cannot
+     * <p><strong>Contents of any stocked entity.</strong> A row describing a building whose inventory is
+     * non-empty carries {@code contents}, a compact object of {@code path: amount} pairs for the items
+     * currently stored there, for example {@code "contents":{"gold":120,"wood":40}} - a warehouse's
+     * stock, and now also a producer's buffer (an armory with staged materials) so the selection HUD can
+     * show what the building holds. A row describing a unit whose cargo is non-empty carries the same
+     * object for the items it carries. Only non-zero amounts are written and an empty inventory
+     * or an empty cargo hold omits the field; a producer buffer is still not part of the logistics
+     * network, so the spendable totals live only in the {@code players} rows. The field is additive: an
+     * older client ignores it, and a client that reads it can show the warehouse's stock, the buffer or
+     * the unit's cargo in the selection HUD. It is read from {@link Building#inventory()} and
+     * {@link Unit#cargo()}, the same sources the logistics network uses, so the two cannot
      * disagree about a stored or carried item.
      *
      * <p><strong>Warehouse capacity and inbound transfers.</strong> Every warehouse row also carries
@@ -1606,7 +1667,10 @@ public final class WorldHost {
      * to a total-only view.
      *
      * <p><strong>Combat identity and the order queue.</strong> A unit row always carries {@code role}
-     * ({@code combat} / {@code worker} / {@code support}); a unit or building whose content declares a weapon
+     * ({@code combat} / {@code worker} / {@code support}); a unit whose content type carries the
+     * {@code builder} tag also carries {@code "builder":true} - the capability flag a BUILD menu keys
+     * on, so an upgraded engineer tier is a builder even though its content path differs from the base
+     * {@code unit.engineer}. A unit or building whose content declares a weapon
      * also carries {@code attackDamage} and {@code attackRange}, the two numbers the selection panel prints
      * and the combat layer actually fires with. A unit with at least one order carries {@code orderQueue}, an
      * array of ready-to-show task labels in execution order ({@code 建造 兵工厂 @ (12,5)},
@@ -1615,15 +1679,20 @@ public final class WorldHost {
      * the document without bound; the engine queue itself keeps every order. All of these fields are additive
      * and presentational: an older client ignores them.
      *
-     * <p><strong>Upgrade offers.</strong> A finished building whose content type names a successor also
-     * carries {@code upgrade}, for example
-     * {@code "upgrade":{"to":"building.armory.t2","gold":140,"wood":40}}. {@code to} is the successor's
-     * content path and {@code gold} / {@code wood} are the two resources the command will charge. An
-     * unfinished site, a top-tier building, a type with no successor and a dangling successor reference all
-     * omit the field, so the client never offers an upgrade the command would refuse; the
-     * {@link #GOLD_ITEM_PATH gold and wood} item paths are the same ones the player rows use. The field is
-     * additive: an older client ignores it, and a client that reads it paints the 升级 entry and disables it
-     * from its own player row when the stock is short, which is why affordability is not encoded here.
+     * <p><strong>Upgrade offers.</strong> A finished building whose content type names at least one
+     * <em>applicable</em> successor also carries {@code upgrade}, for example
+     * {@code "upgrade":{"options":[{"to":"building.armory.t2","gold":140,"wood":40},{"to":...}]}} — one
+     * entry per variant the row actually meets: the target has to exist, to have the same footprint and
+     * to be {@linkplain BuildingType#isAllowedIn allowed in the dimension the building stands in}, so an
+     * overworld armory advertises only the taller armory while the same armory in hell advertises both of
+     * its variants. {@code to} is the successor's content path (sent back as the
+     * {@code UPGRADE <id> <variantPath>} token) and {@code gold} / {@code wood} are the two resources the
+     * command will charge for that variant. An unfinished site, a top-tier building, a type with no
+     * successor and a dangling successor reference all omit the field, so the client never offers an
+     * upgrade the command would refuse; the {@link #GOLD_ITEM_PATH gold and wood} item paths are the same
+     * ones the player rows use. The field is additive: an older client ignores it, and a client that
+     * reads it paints one 升级 entry per variant and disables it from its own player row when the stock
+     * is short, which is why affordability is not encoded here.
      *
      * <p><strong>Repair, reclaim and route fields.</strong> A finished damaged building whose content
      * declares a repair price also carries {@code "repair":{"gold":<cost>,"wood":<cost>}}, the total cost of
@@ -1709,6 +1778,27 @@ public final class WorldHost {
      * @return the snapshot as UTF-8 JSON text, never {@code null}
      */
     public String snapshotJson(int centreX, int centreY, int radius) {
+        return snapshotJson(engine.world().defaultDimensionId(), centreX, centreY, radius);
+    }
+
+    /**
+     * The snapshot of one dimension: the terrain, the streamed chunks and the entities all belong to that
+     * dimension, so two units standing on the same coordinates in different worlds never bleed into each
+     * other's documents. The document additionally carries {@code dimension}, {@code dimensionName}, the
+     * {@code dimensions} roster and the dimension's {@code loadedChunks}, which a client turns into the
+     * shadow over the tiles the streamer has not loaded yet.
+     *
+     * @param dimension the dimension to draw; it has to be one of {@link #dimensions()}
+     * @param centreX   window centre tile x, unbounded
+     * @param centreY   window centre tile y, unbounded
+     * @param radius    requested half side, in tiles; clamped to the documented range
+     * @return the snapshot as UTF-8 JSON text, never {@code null}
+     * @throws IllegalArgumentException when the dimension does not exist in this world
+     */
+    public String snapshotJson(DimensionId dimension, int centreX, int centreY, int radius) {
+        if (dimensions().stream().noneMatch(candidate -> candidate.id().equals(dimension))) {
+            throw new IllegalArgumentException("this world has no dimension " + dimension.key());
+        }
         int clampedRadius = clampSnapshotRadius(radius);
         int windowSize = clampedRadius * 2;
         // The terrain itself accepts any signed int. The window origin is computed in long and saturated
@@ -1721,9 +1811,38 @@ public final class WorldHost {
         int originY = (int) Math.max(lowestOrigin,
                 Math.min(highestOrigin, (long) centreY - clampedRadius));
         synchronized (stateLock) {
-            engine.focus(Vec2.of(originX + clampedRadius + 0.5f, originY + clampedRadius + 0.5f));
-            return buildSnapshotJson(originX, originY, windowSize);
+            // Streaming the requested dimension around the window is what keeps its chunks loading; the
+            // chunk radius matches the builder's view radius, which is what the default focus used.
+            engine.focus(dimension, Vec2.of(originX + clampedRadius + 0.5f, originY + clampedRadius + 0.5f),
+                    3);
+            return buildSnapshotJson(dimension, originX, originY, windowSize);
         }
+    }
+
+    /** The dimensions of this world, ordered by their keys. */
+    public List<Dimension> dimensions() {
+        List<Dimension> dimensions = new ArrayList<>(engine.world().dimensions());
+        dimensions.sort(Comparator.comparing(dimension -> dimension.id()));
+        return dimensions;
+    }
+
+    /**
+     * Resolves a dimension key from the HTTP query, for example {@code hell}. Empty for a missing or
+     * malformed key and for a key this world does not declare, which the route reports as a client error.
+     */
+    public Optional<DimensionId> dimensionByKey(String key) {
+        if (key == null || key.isBlank()) {
+            return Optional.empty();
+        }
+        DimensionId resolved;
+        try {
+            resolved = DimensionId.of(key.trim());
+        } catch (IllegalArgumentException malformed) {
+            return Optional.empty();
+        }
+        return dimensions().stream().anyMatch(dimension -> dimension.id().equals(resolved))
+                ? Optional.of(resolved)
+                : Optional.empty();
     }
 
     /**
@@ -1790,9 +1909,11 @@ public final class WorldHost {
      * There is no map to lie inside: the unbounded terrain answers every signed coordinate, and the origin
      * is saturated by {@link #snapshotJson(int, int, int)} so {@code origin + size} cannot overflow.
      */
-    private String buildSnapshotJson(int originX, int originY, int size) {
-        List<Entity> entities = new ArrayList<>(engine.world().entities());
-        entities.removeIf(entity -> !entity.isAlive());
+    private String buildSnapshotJson(DimensionId dimension, int originX, int originY, int size) {
+        World world = engine.world();
+        List<Entity> entities = new ArrayList<>(world.entities());
+        entities.removeIf(entity -> !entity.isAlive()
+                || entity.dimensionIfAny().filter(drawn -> !drawn.equals(dimension)).isPresent());
         entities.sort(Comparator.comparing(Entity::id));
 
         // The engine always installs a production system on the host's builder, so reading it once per
@@ -1800,6 +1921,7 @@ public final class WorldHost {
         ProductionSystem production = engine.world().production();
         long nowTick = engine.tickNumber();
         recentPops.entrySet().removeIf(entry -> nowTick - entry.getValue().tick() > POP_TTL_TICKS);
+        recentShots.removeIf(shot -> nowTick - shot.tick() > 4);
 
         ItemType goldItem = content.itemOrNull(content.key(GOLD_ITEM_PATH));
         ItemType woodItem = content.itemOrNull(content.key(WOOD_ITEM_PATH));
@@ -1818,7 +1940,7 @@ public final class WorldHost {
             }
         }
 
-        int capacity = 96 + size * size * 8 + entities.size() * 320;
+        int capacity = 96 + size * size * 8 + entities.size() * 320 + 4096;
         StringBuilder json = new StringBuilder(capacity);
         json.append("{\"tick\":").append(engine.tickNumber())
                 .append(",\"originX\":").append(originX)
@@ -1826,7 +1948,40 @@ public final class WorldHost {
                 .append(",\"width\":").append(size)
                 .append(",\"height\":").append(size)
                 .append(",\"tilePixels\":").append(TILE_PIXELS)
-                .append(",\"tiles\":[");
+                .append(",\"dimension\":");
+        appendJsonString(json, dimension.key());
+        json.append(",\"dimensionName\":");
+        appendJsonString(json, world.dimension(dimension).profile().displayName());
+        json.append(",\"dimensions\":[");
+        boolean firstDimension = true;
+        for (Dimension candidate : dimensions()) {
+            if (!firstDimension) {
+                json.append(',');
+            }
+            firstDimension = false;
+            json.append("{\"key\":");
+            appendJsonString(json, candidate.id().key());
+            json.append(",\"name\":");
+            appendJsonString(json, candidate.profile().displayName());
+            json.append('}');
+        }
+        json.append("],\"loadedChunks\":[");
+        // The streamed-chunk set is what the client shades: a tile whose chunk is absent sits under the
+        // shadow, and one whose chunk just loaded watches the shade disperse as the camera keeps moving.
+        // The cap keeps a pathological chunk budget from growing the document without bound; a normal
+        // view streams well under a hundred chunks.
+        int writtenChunks = 0;
+        for (ChunkPos chunk : world.map(dimension).loadedChunks()) {
+            if (writtenChunks >= 1024) {
+                break;
+            }
+            if (writtenChunks > 0) {
+                json.append(',');
+            }
+            json.append('[').append(chunk.x()).append(',').append(chunk.y()).append(']');
+            writtenChunks++;
+        }
+        json.append("],\"tiles\":[");
         for (int y = originY; y < originY + size; y++) {
             if (y > originY) {
                 json.append(',');
@@ -1836,7 +1991,7 @@ public final class WorldHost {
                 if (x > originX) {
                     json.append(',');
                 }
-                appendJsonString(json, engine.map().terrainAt(x, y).key().path());
+                appendJsonString(json, world.map(dimension).terrainAt(x, y).key().path());
             }
             json.append(']');
         }
@@ -1865,7 +2020,35 @@ public final class WorldHost {
             appendTask(json, entity);
             appendOrderQueue(json, entity);
             appendPop(json, entity);
+            appendTrains(json, entity, goldItem);
+            appendGatewayTarget(json, world, entity);
             json.append('}');
+        }
+        json.append("],\"projectiles\":[");
+        boolean firstShot = true;
+        for (ShotFired shot : recentShots) {
+            if (!firstShot) {
+                json.append(',');
+            }
+            firstShot = false;
+            json.append("{\"id\":").append(shot.id())
+                    .append(",\"x\":").append(oneDecimal((float) shot.x()))
+                    .append(",\"y\":").append(oneDecimal((float) shot.y()))
+                    .append(",\"tx\":").append(oneDecimal((float) shot.tx()))
+                    .append(",\"ty\":").append(oneDecimal((float) shot.ty()))
+                    .append('}');
+        }
+        json.append("],\"buildable\":[");
+        boolean firstBuildable = true;
+        for (BuildingType type : content.buildings()) {
+            if (!type.isBuildable()) {
+                continue;
+            }
+            if (!firstBuildable) {
+                json.append(',');
+            }
+            firstBuildable = false;
+            appendJsonString(json, type.key().path());
         }
         json.append("],\"players\":[");
         List<Player> players = new ArrayList<>(engine.world().players());
@@ -2043,18 +2226,19 @@ public final class WorldHost {
     }
 
     /**
-     * Appends the compact inventory of a warehouse row or a carrying unit row:
+     * Appends the compact inventory of any building or unit that holds something:
      * {@code ,"contents":{"gold":120,"wood":40}}.
      *
-     * <p>A building only qualifies when its type is flagged as a warehouse, because only then is its
-     * inventory part of the player's logistics network; a producer's private input or output buffer is
-     * deliberately not reported, since those goods are not spendable or stored in the same sense and
-     * mixing them into a "stored" summary would invent a logistics view the engine does not have. A unit
+     * <p>Every building whose {@linkplain Building#inventory() inventory} is non-empty qualifies -
+     * a warehouse's stock exactly as before, and since the content-driven HUD also a producer's buffer
+     * (an armory with staged materials, a factory mid-recipe), so the selection panel can show what the
+     * building actually holds. A producer buffer is still <em>not</em> part of the logistics network and
+     * the row does not pretend it is: the spendable totals live only in the {@code players} rows. A unit
      * qualifies when its cargo is non-empty, because its hold is what the HUD's 携带 line describes. The
      * object is read from {@link Building#inventory()} or {@link Unit#cargo()} respectively. Within the
      * object only components with a non-zero amount are written, in the inventory's own insertion order
      * (deterministic for a given command stream), and the field is omitted entirely for an empty
-     * warehouse or an empty cargo hold. Amounts saturate exactly like the player row's.
+     * inventory or an empty cargo hold. Amounts saturate exactly like the player row's.
      *
      * <p><strong>Warehouse capacity and inbound transfers.</strong> Every warehouse row - including an
      * empty one - additionally carries {@code storage}, the three slot numbers a logistics surface needs:
@@ -2069,10 +2253,10 @@ public final class WorldHost {
      */
     private static void appendContents(StringBuilder json, Entity entity, int inbound) {
         if (entity instanceof Building building) {
+            appendStoredContents(json, building.inventory().contents());
             if (!building.type().isWarehouse()) {
                 return;
             }
-            appendStoredContents(json, building.inventory().contents());
             Inventory inventory = building.inventory();
             json.append(",\"storage\":{\"slots\":").append(inventory.slotCount().toLongSaturated())
                     .append(",\"used\":").append(inventory.usedSlots().toLongSaturated())
@@ -2116,45 +2300,148 @@ public final class WorldHost {
     /**
      * Appends the optional {@code upgrade} offer of a finished building.
      *
-     * <p>The object is written only when the building's content type names a successor
-     * ({@link BuildingType#upgradeTo()}), that successor exists in the served catalogue and it has the same
-     * footprint, so the client never paints an 升级 entry the command would refuse as a missing target or a
-     * footprint mismatch. An unfinished site also
-     * omits it, because the engine only upgrades constructed buildings. The shape is
-     * {@code ,"upgrade":{"to":"building.armory.t2","gold":140,"wood":40}}: {@code to} is the target's
-     * content path, and {@code gold} / {@code wood} are the two resources this protocol already carries in
-     * its player rows. Costs of other item kinds are real engine data but have no wire field yet, so they
-     * are not invented here; classic upgrades are gold and wood only.
+     * <p>The object is written when the building's content type names at least one applicable successor:
+     * an option of {@link BuildingType#upgradeOptions()} whose target exists in the served catalogue, is
+     * not the building itself, has the same footprint and {@linkplain BuildingType#isAllowedIn is allowed
+     * to stand in the dimension the building is in}. That last rule is what keeps a dimension-restricted
+     * variant from being offered where the command would refuse it: an overworld armory advertises only
+     * the taller armory, while the same armory standing in hell advertises both of its variants. An
+     * unfinished site omits the whole object, because the engine only upgrades constructed buildings. The
+     * shape is an options array, one entry per advertised variant:
+     * {@code ,"upgrade":{"options":[{"to":"building.armory.t2","gold":140,"wood":40},{"to":...}]}} —
+     * {@code to} is the target's content path, the token a client sends back as
+     * {@code UPGRADE <id> <variantPath>}, and {@code gold} / {@code wood} are the two resources this
+     * protocol already carries in its player rows. Costs of other item kinds are real engine data but
+     * have no wire field yet, so they are not invented here; classic upgrades are gold and wood only.
      *
-     * <p>The cost belongs to the source type ({@link BuildingType#upgradeCost()}), not to the target: it is
-     * exactly what {@code UPGRADE <id>} will charge. Affordability is deliberately not encoded: the row says
-     * what the step costs, and the client compares it with the player's own row so the entry can be shown
-     * disabled instead of disappearing when the stock is short.
+     * <p>Each cost belongs to the source type's option ({@link BuildingType.UpgradeOption}), not to the
+     * target: it is exactly what {@code UPGRADE <id> <variantPath>} will charge. Affordability is
+     * deliberately not encoded: the row says what the step costs, and the client compares it with the
+     * player's own row so the entry can be shown disabled instead of disappearing when the stock is
+     * short.
      */
     private void appendUpgradeOffer(StringBuilder json, Entity entity, ItemType goldItem, ItemType woodItem) {
         if (!(entity instanceof Building building) || !building.isConstructed()) {
             return;
         }
-        Optional<ResourceKey> targetKey = building.type().upgradeTo();
-        if (targetKey.isEmpty()) {
+        List<BuildingType.UpgradeOption> options = building.type().upgradeOptions();
+        if (options.isEmpty()) {
             return;
         }
-        BuildingType target = content.buildingOrNull(targetKey.get());
-        if (target == null
-                || target.key().equals(building.type().key())
-                || target.sizeX() != building.type().sizeX()
-                || target.sizeY() != building.type().sizeY()) {
-            // A target with another footprint is refused by the command, so it is not advertised either.
+        DimensionId dimension = engine.world().dimensionOf(building).id();
+        StringBuilder entries = new StringBuilder();
+        int advertised = 0;
+        for (BuildingType.UpgradeOption option : options) {
+            BuildingType target = content.buildingOrNull(option.target());
+            if (target == null
+                    || target.key().equals(building.type().key())
+                    || target.sizeX() != building.type().sizeX()
+                    || target.sizeY() != building.type().sizeY()
+                    || !target.isAllowedIn(dimension)) {
+                // A target the catalogue lacks, one with another footprint, or one the content pins to
+                // another dimension is refused by the command, so it is not advertised either.
+                continue;
+            }
+            ItemBundle cost = option.cost();
+            long gold = goldItem == null ? 0L : cost.amount(goldItem).toLongSaturated();
+            long wood = woodItem == null ? 0L : cost.amount(woodItem).toLongSaturated();
+            if (advertised > 0) {
+                entries.append(',');
+            }
+            entries.append("{\"to\":");
+            appendJsonString(entries, target.key().path());
+            entries.append(",\"gold\":").append(gold)
+                    .append(",\"wood\":").append(wood)
+                    .append('}');
+            advertised++;
+        }
+        if (advertised == 0) {
             return;
         }
-        ItemBundle cost = building.type().upgradeCost();
-        long gold = goldItem == null ? 0L : cost.amount(goldItem).toLongSaturated();
-        long wood = woodItem == null ? 0L : cost.amount(woodItem).toLongSaturated();
-        json.append(",\"upgrade\":{\"to\":");
-        appendJsonString(json, target.key().path());
-        json.append(",\"gold\":").append(gold)
-                .append(",\"wood\":").append(wood)
-                .append('}');
+        json.append(",\"upgrade\":{\"options\":[").append(entries).append("]}");
+    }
+
+    /**
+     * Appends the optional {@code trains} menu of a finished producer building: every recipe the
+     * building's own level allows, drawn from the catalogue by producer tags. The shape is
+     * {@code ,"trains":[{"path":"unit.melee.t1","name":"普通","gold":20,"level":1},...]} - {@code path}
+     * is the TRAIN token, {@code name} the trained unit's display name, {@code gold} the input cost in
+     * the one currency the wire carries, and {@code level} the building level the recipe demands (the
+     * client disables the entry while the selected building is below it). An unfinished site or a
+     * building that cannot produce omits the field.
+     */
+    private void appendTrains(StringBuilder json, Entity entity, ItemType goldItem) {
+        if (!(entity instanceof Building building) || !building.isConstructed() || !building.type().canProduce()) {
+            return;
+        }
+        List<Recipe> allowed = content.recipesFor(building.type()).stream()
+                .filter(recipe -> recipe.isUnitRecipe()
+                        && recipe.requiredBuildingLevel() <= building.type().level())
+                .toList();
+        if (allowed.isEmpty()) {
+            return;
+        }
+        StringBuilder entries = new StringBuilder();
+        boolean first = true;
+        for (Recipe recipe : allowed) {
+            UnitType unit = recipe.unitOutput().orElse(null);
+            if (unit == null) {
+                continue;
+            }
+            long gold = goldItem == null ? 0L
+                    : recipe.inputs().amount(goldItem).toLongSaturated();
+            if (!first) {
+                entries.append(',');
+            }
+            first = false;
+            entries.append("{\"path\":");
+            appendJsonString(entries, unit.key().path());
+            entries.append(",\"name\":");
+            appendJsonString(entries, unit.displayName());
+            entries.append(",\"gold\":").append(gold)
+                    .append(",\"level\":").append(recipe.requiredBuildingLevel())
+                    .append('}');
+        }
+        if (first) {
+            return;
+        }
+        json.append(",\"trains\":[").append(entries).append(']');
+    }
+
+    /**
+     * Appends the optional {@code gateway} view target of a gateway-tagged building: the other dimension
+     * the link reaches and the tile a traveller stands on when they get there. The route is the world's
+     * own gateway graph, so the target always agrees with what {@code TRAVEL} will actually do; a gate
+     * whose passage is not open (no route to any other dimension) omits the field, and the client shows
+     * no jump button for it.
+     */
+    private void appendGatewayTarget(StringBuilder json, World world, Entity entity) {
+        if (!(entity instanceof Building building) || !building.type().hasTag(GATEWAY_TAG)) {
+            return;
+        }
+        DimensionId here = world.dimensionOf(building).id();
+        DimensionId target = null;
+        List<Gateway> route = null;
+        for (Dimension candidate : dimensions()) {
+            DimensionId there = candidate.id();
+            if (there.equals(here)) {
+                continue;
+            }
+            List<Gateway> candidateRoute = world.route(here, there).orElse(null);
+            if (candidateRoute != null && !candidateRoute.isEmpty()) {
+                target = there;
+                route = candidateRoute;
+                break;
+            }
+        }
+        if (target == null) {
+            return;
+        }
+        GridPos arrival = route.get(route.size() - 1).arrival();
+        json.append(",\"gateway\":{\"to\":");
+        appendJsonString(json, target.key());
+        json.append(",\"arrival\":[").append(arrival.x()).append(',').append(arrival.y())
+                .append("]}");
     }
 
     /**
@@ -2204,7 +2491,10 @@ public final class WorldHost {
      * {@code ,"role":"combat","attackDamage":18,"attackRange":7.5}.
      *
      * <p>A unit row carries its {@link UnitRole#id() role} always, because the client's marquee priority
-     * needs to tell a soldier from an engineer that also has a small attack. A unit or building that can
+     * needs to tell a soldier from an engineer that also has a small attack. A unit whose content type
+     * carries the {@code builder} tag also carries {@code "builder":true}: the capability flag, not the
+     * content path, is what a BUILD menu should key on, so an upgraded engineer tier (a different path
+     * than the base {@code unit.engineer}) still counts as a builder. A unit or building that can
      * attack carries the two numbers the selection panel prints; a worker without a weapon, a warehouse
      * and every non-combat building omit them. A building type's weapon is the same data the combat
      * system fires, so the HUD cannot promise a range the engine does not use. The fields are additive:
@@ -2215,6 +2505,9 @@ public final class WorldHost {
         if (entity instanceof Unit unit) {
             json.append(",\"role\":");
             appendJsonString(json, unit.role().id());
+            if (unit.type().hasTag(BUILDER_TAG)) {
+                json.append(",\"builder\":true");
+            }
             if (!unit.combat().canAttack()) {
                 return;
             }

@@ -78,12 +78,22 @@ public final class PlayerCommandCheck {
     private static final String WOOD = "wood";
 
     private static final String WORKER = "unit.worker";
+    private static final String WORKER_T2 = "unit.worker.t2";
     private static final String MELEE_T1 = "unit.melee.t1";
     private static final String MELEE_T4 = "unit.melee.t4";
 
     private static final String WAREHOUSE = "building.warehouse";
     private static final String ARMORY_T1 = "building.armory.t1";
     private static final String ARMORY_T2 = "building.armory.t2";
+
+    /**
+     * The command content's own upgrade variant, restricted to a dimension this test world does not even
+     * register: the dimension refusal therefore fires from the content rule alone, without a second map.
+     */
+    private static final String PURGATORY = "building.purgatory";
+
+    /** Gold cost of choosing the purgatory variant of the armory t1 step. */
+    private static final long PURGATORY_UPGRADE_GOLD = 60;
 
     private static final String TRAIN_T1 = "recipe.train.melee.t1";
     private static final String TRAIN_T4 = "recipe.train.melee.t4";
@@ -93,6 +103,9 @@ public final class PlayerCommandCheck {
 
     /** Wood cost of the command-content armory's upgrade. */
     private static final long ARMORY_UPGRADE_WOOD = 10;
+
+    /** Gold cost of the command-content worker's ladder step, charged once by {@code UPGRADEUNIT}. */
+    private static final long UNIT_UPGRADE_GOLD = 15;
 
     private PlayerCommandCheck() {
     }
@@ -314,18 +327,47 @@ public final class PlayerCommandCheck {
                 "UPGRADE 不存在的实体回答 ERR unknown entity");
         check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADE nope"),
                 "UPGRADE 非数字 id 回答 ERR bad arguments");
-        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADE 1 2"),
-                "UPGRADE 多余参数回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADE 1 2 3"),
+                "UPGRADE 三个参数回答 ERR bad arguments");
+        check.equal("ERR !bad! is not a content path",
+                run(dispatcher, host, first, "UPGRADE " + armory.id().value() + " !bad!"),
+                "UPGRADE 变体路径非法时回答专用的不是内容路径错误");
 
         // The snapshot has to advertise the option or the client cannot render it. Exactly one row carries
         // it: the finished t1 armory. The BUILD site from the previous section is also a t1 armory but is
-        // unfinished, so it must not offer an upgrade.
+        // unfinished, so it must not offer an upgrade. This world has no hell dimension, so the
+        // dimension-restricted purgatory variant is not advertised either: the row carries only the
+        // successor the UPGRADE command would actually accept here.
         String offer = host.snapshotJson();
-        String expectedOffer = "\"upgrade\":{\"to\":\"" + ARMORY_T2 + "\",\"gold\":"
-                + ARMORY_UPGRADE_GOLD + ",\"wood\":" + ARMORY_UPGRADE_WOOD + "}";
+        String expectedOffer = "\"upgrade\":{\"options\":[{\"to\":\"" + ARMORY_T2 + "\",\"gold\":"
+                + ARMORY_UPGRADE_GOLD + ",\"wood\":" + ARMORY_UPGRADE_WOOD + "}]}";
         String armoryRow = entityRow(offer, armory.id().value());
         check.that(armoryRow.contains(expectedOffer),
-                "快照里的完工 t1 兵营带 upgrade 对象: " + expectedOffer);
+                "快照里的完工 t1 兵营带单变体 upgrade.options 数组: " + expectedOffer);
+        check.that(!armoryRow.contains("\"to\":\"" + PURGATORY + "\""),
+                "维度受限的炼狱变体不在主世界兵营的 upgrade.options 里（发出来的升级命令都能成功）");
+
+        // Dimension metadata of the document: this content declares no extra dimension, so the roster
+        // has exactly the default one, and the streamed-chunk set is present for the shadow overlay.
+        String withMeta = host.snapshotJson();
+        check.that(withMeta.contains("\"dimension\":\"overworld\"")
+                        && withMeta.contains("\"dimensions\":[{\"key\":\"overworld\""),
+                "快照带 dimension 与 dimensions 字段（本内容只有默认维度）");
+        check.that(withMeta.contains("\"loadedChunks\":["),
+                "快照带 loadedChunks（阴影数据源）");
+        check.that(withMeta.contains("\"projectiles\":[]"),
+                "快照带 projectiles 通道（本内容全是近战，暂为空数组）");
+        check.that(host.dimensionByKey("hell").isEmpty()
+                        && host.dimensionByKey("overworld").isPresent(),
+                "dimensionByKey 解析已声明的维度、拒绝未声明的键");
+        String overworldSnapshot = host.snapshotJson(
+                host.dimensionByKey("overworld").orElseThrow(), 22, 16, 40);
+        check.that(overworldSnapshot.startsWith("{")
+                        && overworldSnapshot.contains("\"dimension\":\"overworld\""),
+                "按维度取快照的重载可以工作");
+        String ambiguous = run(dispatcher, host, first, "UPGRADE " + armory.id().value());
+        check.that(ambiguous.startsWith("ERR ") && ambiguous.contains("2 variants"),
+                "双变体的 t1 兵营不带变体令牌时回答 ERR choose among variants: " + ambiguous);
         check.that(site != null && !entityRow(offer, site.id().value()).contains("\"upgrade\""),
                 "未完工的工地没有 upgrade 对象（引擎只升级完工建筑）");
 
@@ -333,7 +375,9 @@ public final class PlayerCommandCheck {
         Building poorArmory = world.spawnBuilding(host.content().building(ARMORY_T1), poor,
                 new GridPos(46, 50));
         long poorArmoryId = poorArmory.id().value();
-        String poorUpgrade = run(dispatcher, host, second, "UPGRADE " + poorArmoryId);
+        // The ordinary t2 variant has no dimension rule, so the affordability refusal fires; the
+        // purgatory variant on the overworld is refused earlier, by the dimension statement itself.
+        String poorUpgrade = run(dispatcher, host, second, "UPGRADE " + poorArmoryId + " " + ARMORY_T2);
         check.that(poorUpgrade.startsWith("ERR ") && poorUpgrade.contains("cannot afford"),
                 "买不起的 UPGRADE 回答 ERR 并说明买不起: " + poorUpgrade);
         check.equal(Natural.of(10), poor.logistics().amount(gold),
@@ -352,7 +396,14 @@ public final class PlayerCommandCheck {
         armory.health().damage(300);
         check.that(Math.abs(armory.health().fraction() - 0.5f) < 1e-6f,
                 "UPGRADE 前兵营是半血（600 血中的 300）");
-        String upgraded = run(dispatcher, host, first, "UPGRADE " + oldArmoryId);
+        String restricted = run(dispatcher, host, first,
+                "UPGRADE " + oldArmoryId + " " + PURGATORY);
+        check.that(restricted.startsWith("ERR ") && restricted.contains("restricts it to hell"),
+                "升入地狱限定的炼狱工厂在主世界被拒绝: " + restricted);
+        check.equal(upgradeGoldBefore, human.logistics().amount(gold),
+                "被维度拒绝的升级没有扣钱");
+        String upgraded = run(dispatcher, host, first,
+                "UPGRADE " + oldArmoryId + " " + ARMORY_T2);
         boolean upgradeOk = upgraded.startsWith("OK ");
         check.that(upgradeOk, "买得起的 UPGRADE 成功并返回新建筑 id: " + upgraded);
         long newArmoryId = upgradeOk ? Long.parseLong(upgraded.substring("OK ".length())) : -1L;
@@ -390,6 +441,60 @@ public final class PlayerCommandCheck {
         check.that(newArmoryId > 0L
                         && !entityRow(host.snapshotJson(), newArmoryId).contains("\"upgrade\""),
                 "升级后的顶层 t2 兵营不再提供 upgrade 入口");
+
+        check.section("玩家命令：UPGRADEUNIT 的阶梯、成本与 BATCH 白名单");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADEUNIT"),
+                "UPGRADEUNIT 没有参数回答 ERR bad arguments");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "UPGRADEUNIT 1 2 3"),
+                "UPGRADEUNIT 三个参数回答 ERR bad arguments");
+        check.equal("ERR unknown entity", run(dispatcher, host, first, "UPGRADEUNIT 999999"),
+                "UPGRADEUNIT 不存在的单位回答 ERR unknown entity");
+        check.equal("ERR not yours", run(dispatcher, host, first,
+                        "UPGRADEUNIT " + enemyUnit.id().value()),
+                "UPGRADEUNIT 别人的单位回答 ERR not yours");
+        check.equal("ERR !bad! is not a content path",
+                run(dispatcher, host, first, "UPGRADEUNIT " + builder.id().value() + " !bad!"),
+                "UPGRADEUNIT 阶梯路径非法时回答专用的不是内容路径错误");
+        // The wrong-target refusal: a melee unit has no ladder, and a ladder step the source does not
+        // name is refused even when the catalogue contains it.
+        Unit ladderLess = world.spawnUnit(host.content().unit(MELEE_T1), human, new GridPos(46, 44));
+        check.that(run(dispatcher, host, first, "UPGRADEUNIT " + ladderLess.id().value())
+                        .startsWith("ERR "),
+                "没有阶梯的单位回答 ERR（已是阶梯顶端）");
+        Unit ladderWorker = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(48, 44));
+        long ladderWorkerId = ladderWorker.id().value();
+        check.equal("ERR cannot upgrade " + WORKER + ": it does not offer 'check:" + MELEE_T1
+                        + "' as an upgrade; it offers " + WORKER_T2,
+                run(dispatcher, host, first, "UPGRADEUNIT " + ladderWorkerId + " " + MELEE_T1),
+                "阶梯之外的路径被拒绝，并说明唯一可走的阶梯");
+        // The real thing: the ladder step is charged once and the replacement is a worker t2.
+        Natural unitUpgradeGoldBefore = human.logistics().amount(gold);
+        String unitUpgraded = run(dispatcher, host, first,
+                "UPGRADEUNIT " + ladderWorkerId + " " + WORKER_T2);
+        boolean unitUpgradeOk = unitUpgraded.startsWith("OK ");
+        check.that(unitUpgradeOk, "买得起的 UPGRADEUNIT 成功并返回新单位 id: " + unitUpgraded);
+        long newWorkerId = unitUpgradeOk
+                ? Long.parseLong(unitUpgraded.substring("OK ".length()))
+                : -1L;
+        Entity newWorkerEntity = newWorkerId > 0L
+                ? world.findEntity(EntityId.of(newWorkerId)).orElse(null)
+                : null;
+        Unit newWorker = newWorkerEntity instanceof Unit worker ? worker : null;
+        check.that(newWorker != null && newWorker.type().key().path().equals(WORKER_T2),
+                "UPGRADEUNIT 返回的是 unit.worker.t2");
+        check.that(newWorker != null && newWorker.owner().equals(human),
+                "UPGRADEUNIT 保持原所有者");
+        check.that(!ladderWorker.isAlive(), "旧的单位被替换掉（原地同名替换，id 更新）");
+        check.equal(unitUpgradeGoldBefore.subtractClamped(Natural.of(UNIT_UPGRADE_GOLD)),
+                human.logistics().amount(gold), "UPGRADEUNIT 恰好扣掉 15 金币一次");
+        // The batch whitelist: UPGRADEUNIT is batchable like UPGRADE, a nested identity command is not.
+        Unit batchWorker = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(48, 46));
+        check.equal("OK 1", run(dispatcher, host, first,
+                        "BATCH UPGRADEUNIT " + batchWorker.id().value() + " " + WORKER_T2),
+                "BATCH 里的 UPGRADEUNIT 被白名单接受并成功应用");
+        check.that(!batchWorker.isAlive(), "批量里的 UPGRADEUNIT 同样替换了单位");
+        check.equal("ERR bad arguments", run(dispatcher, host, first, "BATCH WHOAMI"),
+                "BATCH 里的身份命令仍被白名单拒绝");
 
         check.section("玩家命令：命令只在世界步的起点被应用");
         AtomicInteger applied = new AtomicInteger();
@@ -1066,6 +1171,10 @@ public final class PlayerCommandCheck {
                     .item(WOOD).name("Wood").maxStack(200).tag("material")
                     .unit(WORKER).name("Worker").role(UnitRole.WORKER).health(80).speed(2.8f).radius(0.32f)
                     .cost(GOLD, 10).buildTime(45).cargo(60).spriteSet(WORKER).tag("builder")
+                    .upgradesTo(WORKER_T2).upgradeCost(GOLD, UNIT_UPGRADE_GOLD)
+                    .unit(WORKER_T2).name("Worker T2").role(UnitRole.WORKER).health(120).speed(3.0f)
+                    .radius(0.32f).cost(GOLD, 25).buildTime(60).cargo(90).buildRate(2)
+                    .spriteSet(WORKER_T2).tag("builder")
                     .unit(MELEE_T1).name("Melee T1").role(UnitRole.COMBAT).health(100).speed(2.2f)
                     .radius(0.35f).cost(GOLD, 20).buildTime(60).attack(10f, 0.9f).attackCooldown(30)
                     .spriteSet(MELEE_T1)
@@ -1080,12 +1189,18 @@ public final class PlayerCommandCheck {
                     .buildTime(150).storage(6).producer("armory")
                     .upgradeTo(ARMORY_T2).upgradeCost(GOLD, ARMORY_UPGRADE_GOLD)
                     .upgradeCost(WOOD, ARMORY_UPGRADE_WOOD)
+                    .upgradeVariant(PURGATORY).upgradeCost(GOLD, PURGATORY_UPGRADE_GOLD)
                     .spriteSet(ARMORY_T1)
                     .building(ARMORY_T2).name("Armory T2").size(3, 3).health(900).level(2)
                     .cost(GOLD, 240).cost(WOOD, 60)
                     .repairCostPerHealth(GOLD, 1)
                     .buildTime(240).storage(8).producer("armory")
                     .spriteSet(ARMORY_T2)
+                    .building(PURGATORY).name("Purgatory").size(3, 3).health(900).level(2)
+                    .cost(GOLD, 240)
+                    .buildTime(240).storage(8).producer("purgatory")
+                    .dimensionsOnly("hell")
+                    .spriteSet(PURGATORY)
                     .recipe(TRAIN_T1).name("Train Melee T1").producer("armory").requiredBuildingLevel(1)
                     .input(GOLD, 20).unitOutput(MELEE_T1).duration(60)
                     .recipe(TRAIN_T4).name("Train Melee T4").producer("armory").requiredBuildingLevel(2)

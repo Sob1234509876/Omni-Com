@@ -66,4 +66,34 @@ public interface WorldContent {
     default StartingResources startingResources() {
         return StartingResources.EMPTY;
     }
+
+    /**
+     * Extra dimensions the game declares besides the overworld, in declaration order; the default is
+     * none.
+     *
+     * <p>Each spec carries a {@link io.github.sob1234509876.oc.rts.map.NoiseSettings} whose terrain
+     * paths point at terrain types {@link #populate} registers, so one catalogue defines both the hell
+     * it walks and the hell it builds. The host feeds these to the engine builder, which derives every
+     * dimension's own seed from the world seed and the dimension key.
+     *
+     * @return the extra dimensions, never {@code null}; an empty list is the ordinary single-world game
+     */
+    default java.util.List<DimensionContent> dimensions() {
+        return java.util.List.of();
+    }
+
+    /**
+     * Gateways between the dimensions of {@link #dimensions()}, declared explicitly in both directions
+     * (a gateway pair is two entries, each the {@link io.github.sob1234509876.oc.rts.dimension.Gateway
+     * reversed()} of the other). The default is none.
+     *
+     * <p>The host registers them on the world after the engine is built. Coordinates belong to the
+     * content: a place inside the origin guarantee of both dimensions is safe, because the noise terrain
+     * pins a walkable, buildable area around each origin.
+     *
+     * @return the gateways, never {@code null}
+     */
+    default java.util.List<io.github.sob1234509876.oc.rts.dimension.Gateway> gateways() {
+        return java.util.List.of();
+    }
 }

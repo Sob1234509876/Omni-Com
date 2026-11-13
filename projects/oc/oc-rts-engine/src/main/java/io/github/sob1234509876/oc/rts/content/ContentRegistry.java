@@ -1,6 +1,7 @@
 package io.github.sob1234509876.oc.rts.content;
 
 import io.github.sob1234509876.oc.googology.Natural;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -38,6 +39,16 @@ import java.util.Set;
  * same catalogue.
  */
 public final class ContentRegistry {
+
+    /**
+     * The content tag that marks a unit as a builder.
+     *
+     * <p>It is a convention, not a mechanic: the server reads it to pick a joining player's starting
+     * builder, the classic AI and its engineer pool read it to protect the faction's construction
+     * capacity, and {@link Builder#inherit(String)} copies it across an upgrade ladder. A catalogue that
+     * wants its units to be commandable builders tags them with exactly this value.
+     */
+    public static final String BUILDER_TAG = "builder";
 
     private final String namespace;
     private final TerrainType fallbackTerrain;
@@ -377,7 +388,9 @@ public final class ContentRegistry {
 
         /** How many item units the unit can carry; {@code 0} means it cannot haul. */
         public Builder cargo(Natural capacity) {
-            draft(UnitDraft.class, "unit").cargoCapacity = capacity;
+            UnitDraft unit = draft(UnitDraft.class, "unit");
+            unit.cargoCapacity = capacity;
+            unit.cargoSet = true;
             return this;
         }
 
@@ -468,6 +481,72 @@ public final class ContentRegistry {
             return this;
         }
 
+        /**
+         * Work rate of the current unit: construction points per tick at its build spot, and the
+         * multiplier on the repair rate. {@code 1} (the default) is the historical fixed rule.
+         *
+         * @throws IllegalArgumentException when the rate is below one
+         */
+        public Builder buildRate(int value) {
+            if (value < 1) {
+                throw new IllegalArgumentException("a build rate must be at least one, was " + value);
+            }
+            UnitDraft unit = draft(UnitDraft.class, "unit");
+            unit.buildRate = value;
+            unit.buildRateSet = true;
+            return this;
+        }
+
+        /**
+         * Copies the gameplay-relevant fields of another unit type into the current one: the
+         * {@linkplain #buildRate(int) work rate}, the {@linkplain #cargo(Natural) cargo capacity} and the
+         * {@linkplain #BUILDER_TAG builder capability tag}.
+         *
+         * <p>This is the upgrade-ladder helper: a tier that exists only because the previous tier was
+         * upgraded into it must keep the base tier's building capability even when its definition only
+         * spells out its own numbers. Every field the draft sets <em>itself</em> still wins - inherit
+         * fills the gaps, it never overwrites an explicit declaration, so a tier can carry a bigger
+         * backpack or a faster work rate than its base type and keep everything else. Chains are legal
+         * ({@code t3} inheriting from {@code t2} inheriting from {@code t1}) and resolved through the
+         * source's own effective values; a cycle is a content error and fails the build.
+         *
+         * <p>The reference is written like a recipe's {@code unitOutput} (a path of the catalogue
+         * namespace, or a full {@code namespace:path} key) and is resolved when the registry is built,
+         * so the base type may be declared after the tier that inherits from it. A path that names no
+         * unit of the catalogue fails the build, because a missing capability source is a content error
+         * rather than a command-time refusal.
+         *
+         * @param unitPath content path of the unit type to inherit from, for example {@code unit.engineer}
+         * @throws IllegalArgumentException when the path is blank
+         */
+        public Builder inherit(String unitPath) {
+            if (unitPath == null || unitPath.isBlank()) {
+                throw new IllegalArgumentException("an inherit source must be a non-blank content path");
+            }
+            draft(UnitDraft.class, "unit").inheritFrom = unitPath;
+            return this;
+        }
+
+        /**
+         * Declares the unit type this one upgrades into; no upgrade when never called.
+         *
+         * <p>The path is resolved in the catalogue namespace when the registry is built, exactly like a
+         * recipe's {@code unitOutput}; a path of the form {@code namespace:path} may name content of
+         * another namespace. The target is not required to exist at build time: a missing target is a
+         * command-time refusal with a readable message, which is also what the engine scenario asserts.
+         * Calling this again re-points the one step a unit ladder has; its cost is kept.
+         *
+         * @param unitPath content path of the successor type, for example {@code unit.engineer.t2}
+         * @throws IllegalArgumentException when the path is blank
+         */
+        public Builder upgradesTo(String unitPath) {
+            if (unitPath == null || unitPath.isBlank()) {
+                throw new IllegalArgumentException("an upgrade target must be a non-blank content path");
+            }
+            draft(UnitDraft.class, "unit").upgradeTo = unitPath;
+            return this;
+        }
+
         // ---------------------------------------------------------------- building properties
 
         public Builder size(int sizeX, int sizeY) {
@@ -549,23 +628,76 @@ public final class ContentRegistry {
             if (buildingPath == null || buildingPath.isBlank()) {
                 throw new IllegalArgumentException("an upgrade target must be a non-blank content path");
             }
-            draft(BuildingDraft.class, "building").upgradeTo = buildingPath;
+            BuildingDraft draft = draft(BuildingDraft.class, "building");
+            if (draft.upgradeVariants.isEmpty()
+                    || !draft.upgradeVariants.get(draft.upgradeVariants.size() - 1).cost.isEmpty()) {
+                draft.upgradeVariants.add(new UpgradeDraft(buildingPath));
+            } else {
+                // A second upgradeTo before any cost items is the historical overwrite: the content is
+                // re-pointing the one step it is writing, not opening a second one.
+                draft.upgradeVariants.get(draft.upgradeVariants.size() - 1).target = buildingPath;
+            }
             return this;
         }
 
         /**
-         * Adds one item to the cost of upgrading the current building into its {@link #upgradeTo(String)}
-         * target. The cost belongs to the source type: the step {@code t1 -> t2} is paid with
-         * {@code t1}'s bundle.
+         * Opens another upgrade variant of the current building: one footprint growing into more than one
+         * successor, each with its own cost. The variant's items are declared with the same
+         * {@link #upgradeCost(String, long)} calls, which always fill the most recently opened variant.
+         */
+        public Builder upgradeVariant(String buildingPath) {
+            if (buildingPath == null || buildingPath.isBlank()) {
+                throw new IllegalArgumentException("an upgrade target must be a non-blank content path");
+            }
+            draft(BuildingDraft.class, "building").upgradeVariants.add(new UpgradeDraft(buildingPath));
+            return this;
+        }
+
+        /**
+         * Adds one item to the cost of upgrading the current definition. On a building it fills the most
+         * recent upgrade target (the one {@link #upgradeTo(String)} or {@link #upgradeVariant(String)}
+         * opened last); on a unit it prices the step {@link #upgradesTo(String)} declared. The cost
+         * belongs to the source type: the step {@code t1 -> t2} is paid with {@code t1}'s bundle.
          */
         public Builder upgradeCost(String itemPath, Natural amount) {
-            draft(BuildingDraft.class, "building").upgradeCost.add(new ItemRef(itemPath, amount));
+            if (current instanceof BuildingDraft draft) {
+                if (draft.upgradeVariants.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "an upgrade cost needs an upgradeTo or upgradeVariant target declared first");
+                }
+                draft.upgradeVariants.get(draft.upgradeVariants.size() - 1).cost.add(new ItemRef(itemPath, amount));
+            } else {
+                UnitDraft draft = draft(UnitDraft.class, "unit");
+                if (draft.upgradeTo == null) {
+                    throw new IllegalArgumentException("an upgrade cost needs an upgradesTo target declared first");
+                }
+                draft.upgradeCost.add(new ItemRef(itemPath, amount));
+            }
             return this;
         }
 
         /** Convenience for {@link #upgradeCost(String, Natural)} with a small literal. */
         public Builder upgradeCost(String itemPath, long amount) {
             return upgradeCost(itemPath, Natural.of(amount));
+        }
+
+        /**
+         * Restricts the current building to the named dimensions, for example
+         * {@code .dimensionsOnly("hell")}; never calling it leaves the building free to stand anywhere.
+         *
+         * <p>Placement and upgrade checks refuse a site in a dimension that is not named here. The keys
+         * are resolved with {@link DimensionId#of(String)} when the catalogue is built, so a malformed key
+         * fails the build rather than the game.
+         */
+        public Builder dimensionsOnly(String... dimensionKeys) {
+            BuildingDraft draft = draft(BuildingDraft.class, "building");
+            for (String key : dimensionKeys) {
+                if (key == null || key.isBlank()) {
+                    throw new IllegalArgumentException("a dimension key must not be blank");
+                }
+                draft.allowedDimensions.add(key);
+            }
+            return this;
         }
 
         /**
@@ -690,8 +822,22 @@ public final class ContentRegistry {
                 }
             }
 
+            Map<ResourceKey, UnitDraft> unitDrafts = new LinkedHashMap<>();
             for (Draft draft : committed) {
                 if (draft instanceof UnitDraft unit) {
+                    unitDrafts.put(unit.key, unit);
+                }
+            }
+
+            for (Draft draft : committed) {
+                if (draft instanceof UnitDraft unit) {
+                    InheritedUnitFields inherited = effectiveUnitFields(unit, unitDrafts,
+                            new LinkedHashSet<>());
+                    Set<String> effectiveTags = unit.tags;
+                    if (!effectiveTags.contains(BUILDER_TAG) && inherited.builder()) {
+                        effectiveTags = new LinkedHashSet<>(effectiveTags);
+                        effectiveTags.add(BUILDER_TAG);
+                    }
                     UnitType type = new UnitType(
                             unit.key,
                             unit.name,
@@ -700,14 +846,17 @@ public final class ContentRegistry {
                             unit.speed,
                             unit.radius,
                             resolveItems(items, unit.cost, "unit " + unit.key),
+                            unit.upgradeTo == null ? null : resolveKey(unit.upgradeTo),
+                            resolveItems(items, unit.upgradeCost, "upgrade of unit " + unit.key),
                             unit.buildTimeTicks,
-                            unit.cargoCapacity,
+                            inherited.cargoCapacity(),
                             unit.spriteSet,
-                            unit.tags,
+                            effectiveTags,
                             unit.attackDamage,
                             unit.attackRange,
                             unit.attackCooldownTicks,
-                            unit.armour);
+                            unit.armour,
+                            inherited.buildRate());
                     if (type.speed() <= 0f) {
                         throw new IllegalStateException("unit " + type.key() + " must have a positive speed");
                     }
@@ -726,9 +875,20 @@ public final class ContentRegistry {
                         throw new IllegalStateException("building " + building.key
                                 + " is a warehouse and therefore needs storage slots");
                     }
-                    if (building.upgradeTo == null && !building.upgradeCost.isEmpty()) {
-                        throw new IllegalStateException("building " + building.key
-                                + " declares an upgrade cost without an upgradeTo target");
+                    List<BuildingType.UpgradeOption> upgradeOptions = new ArrayList<>();
+                    Set<String> seenUpgradeTargets = new LinkedHashSet<>();
+                    for (UpgradeDraft variant : building.upgradeVariants) {
+                        if (!seenUpgradeTargets.add(variant.target)) {
+                            throw new IllegalStateException("building " + building.key
+                                    + " declares the upgrade target " + variant.target + " twice");
+                        }
+                        upgradeOptions.add(new BuildingType.UpgradeOption(
+                                resolveKey(variant.target),
+                                resolveItems(items, variant.cost, "upgrade of building " + building.key)));
+                    }
+                    Set<DimensionId> allowedDimensions = new LinkedHashSet<>();
+                    for (String dimensionKey : building.allowedDimensions) {
+                        allowedDimensions.add(DimensionId.of(dimensionKey));
                     }
                     BuildingType type = new BuildingType(
                             building.key,
@@ -745,9 +905,8 @@ public final class ContentRegistry {
                             resolveItems(items, building.cost, "building " + building.key),
                             resolveItems(items, building.repairCostPerHealth,
                                     "repair cost per health point of building " + building.key),
-                            building.upgradeTo == null ? null : resolveKey(building.upgradeTo),
-                            resolveItems(items, building.upgradeCost,
-                                    "upgrade of building " + building.key),
+                            upgradeOptions,
+                            allowedDimensions,
                             building.storageSlots,
                             building.storageTags,
                             building.warehouse,
@@ -803,6 +962,35 @@ public final class ContentRegistry {
 
         private ResourceKey resolveKey(String reference) {
             return reference.indexOf(':') >= 0 ? ResourceKey.of(reference) : key(reference);
+        }
+
+        /**
+         * Resolves the effective inheritable fields of a draft: its own explicit declarations win, the
+         * gaps are filled from its {@code inherit} source, recursively. {@code visiting} guards against
+         * inheritance cycles; a cycle or an undefined source is a content error and fails the build.
+         */
+        private InheritedUnitFields effectiveUnitFields(UnitDraft draft,
+                Map<ResourceKey, UnitDraft> drafts, Set<ResourceKey> visiting) {
+            if (draft.inheritFrom == null) {
+                return new InheritedUnitFields(draft.buildRate, draft.cargoCapacity,
+                        draft.tags.contains(BUILDER_TAG));
+            }
+            ResourceKey sourceKey = resolveKey(draft.inheritFrom);
+            if (!visiting.add(sourceKey)) {
+                throw new IllegalStateException("unit " + draft.key
+                        + " takes part in an inheritance cycle at " + sourceKey);
+            }
+            UnitDraft source = drafts.get(sourceKey);
+            if (source == null) {
+                throw new IllegalStateException("unit " + draft.key
+                        + " inherits from undefined unit '" + sourceKey + "'");
+            }
+            InheritedUnitFields inherited = effectiveUnitFields(source, drafts, visiting);
+            visiting.remove(sourceKey);
+            return new InheritedUnitFields(
+                    draft.buildRateSet ? draft.buildRate : inherited.buildRate(),
+                    draft.cargoSet ? draft.cargoCapacity : inherited.cargoCapacity(),
+                    draft.tags.contains(BUILDER_TAG) || inherited.builder());
         }
 
         private ItemBundle resolveItems(Map<ResourceKey, ItemType> items, List<ItemRef> refs, String owner) {
@@ -897,6 +1085,16 @@ public final class ContentRegistry {
         }
     }
 
+    /**
+     * The gameplay-relevant fields an {@code inherit(...)} declaration resolves to.
+     *
+     * @param buildRate    the effective work rate after walking the inheritance chain
+     * @param cargoCapacity the effective cargo capacity after walking the chain
+     * @param builder      whether the effective tag set carries the builder capability tag
+     */
+    private record InheritedUnitFields(int buildRate, Natural cargoCapacity, boolean builder) {
+    }
+
     private static final class UnitDraft extends Draft {
 
         UnitRole role = UnitRole.COMBAT;
@@ -907,10 +1105,16 @@ public final class ContentRegistry {
         float attackRange;
         int attackCooldownTicks = 60;
         int armour;
+        int buildRate = 1;
         int buildTimeTicks = 100;
         Natural cargoCapacity = Natural.ZERO;
         String spriteSet = "unit/unknown";
         final List<ItemRef> cost = new ArrayList<>();
+        String upgradeTo;
+        final List<ItemRef> upgradeCost = new ArrayList<>();
+        String inheritFrom;
+        boolean buildRateSet;
+        boolean cargoSet;
 
         UnitDraft(ResourceKey key) {
             super(key);
@@ -933,7 +1137,8 @@ public final class ContentRegistry {
         int attackCooldownTicks = 60;
         int buildTimeTicks = 200;
         int level = 1;
-        String upgradeTo;
+        final List<UpgradeDraft> upgradeVariants = new ArrayList<>();
+        final Set<String> allowedDimensions = new LinkedHashSet<>();
         Natural storageSlots = Natural.ZERO;
         boolean warehouse;
         boolean buildable = true;
@@ -942,7 +1147,6 @@ public final class ContentRegistry {
         final Set<String> producerTags = new LinkedHashSet<>();
         final List<ItemRef> cost = new ArrayList<>();
         final List<ItemRef> repairCostPerHealth = new ArrayList<>();
-        final List<ItemRef> upgradeCost = new ArrayList<>();
 
         BuildingDraft(ResourceKey key) {
             super(key);
@@ -951,6 +1155,17 @@ public final class ContentRegistry {
         @Override
         String kind() {
             return "building";
+        }
+    }
+
+    /** One upgrade step under construction: a successor path and the items replacing costs. */
+    private static final class UpgradeDraft {
+
+        String target;
+        final List<ItemRef> cost = new ArrayList<>();
+
+        UpgradeDraft(String target) {
+            this.target = Objects.requireNonNull(target, "target");
         }
     }
 

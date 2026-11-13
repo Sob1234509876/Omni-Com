@@ -3,10 +3,12 @@ package io.github.sob1234509876.oc.rts.content;
 import io.github.sob1234509876.oc.googology.Natural;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.TileRect;
+import io.github.sob1234509876.oc.rts.dimension.DimensionId;
 import io.github.sob1234509876.oc.rts.entity.Building;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -22,11 +24,28 @@ import java.util.Set;
  * <p>{@link #level()} is the tier of the building. It gates recipes through
  * {@link Recipe#requiredBuildingLevel()}: a building only runs recipes whose required level it reaches, so
  * a tier one workshop cannot train the units a tier two one unlocks while both may still share a producer
- * tag. Content still spells out one building type per level; {@link #upgradeTo()} is the optional link
- * between those types, and {@link #upgradeCost()} is what the owner pays to replace this building with the
- * linked one.
+ * tag. Content still spells out one building type per level; {@link #upgradeOptions()} is the optional
+ * link between those types - one or more successor types, each with the price the owner pays to replace
+ * this building with it. More than one option makes the step a <em>variant choice</em>: the same
+ * footprint can grow into a taller tier or into a specialised building.
  */
 public final class BuildingType implements Comparable<BuildingType> {
+
+    /**
+     * One successor of an upgrade step: the building type this one turns into and the items the owner
+     * pays for the replacement. The cost belongs to the source type, exactly like the single-target
+     * ladder it generalises.
+     *
+     * @param target the successor's content key, resolved when the catalogue is built
+     * @param cost   items reserved and charged once per successful upgrade, possibly empty
+     */
+    public record UpgradeOption(ResourceKey target, ItemBundle cost) {
+
+        public UpgradeOption {
+            Objects.requireNonNull(target, "target");
+            cost = cost == null ? ItemBundle.EMPTY : cost;
+        }
+    }
 
     private final ResourceKey key;
     private final String displayName;
@@ -41,8 +60,8 @@ public final class BuildingType implements Comparable<BuildingType> {
     private final int level;
     private final ItemBundle cost;
     private final ItemBundle repairCostPerHealth;
-    private final ResourceKey upgradeTo;
-    private final ItemBundle upgradeCost;
+    private final List<UpgradeOption> upgradeOptions;
+    private final Set<DimensionId> allowedDimensions;
     private final Natural storageSlots;
     private final Set<String> storageTags;
     private final boolean warehouse;
@@ -65,8 +84,8 @@ public final class BuildingType implements Comparable<BuildingType> {
             int level,
             ItemBundle cost,
             ItemBundle repairCostPerHealth,
-            ResourceKey upgradeTo,
-            ItemBundle upgradeCost,
+            List<UpgradeOption> upgradeOptions,
+            Set<DimensionId> allowedDimensions,
             Natural storageSlots,
             Set<String> storageTags,
             boolean warehouse,
@@ -97,8 +116,10 @@ public final class BuildingType implements Comparable<BuildingType> {
         this.level = level;
         this.cost = cost;
         this.repairCostPerHealth = repairCostPerHealth == null ? ItemBundle.EMPTY : repairCostPerHealth;
-        this.upgradeTo = upgradeTo;
-        this.upgradeCost = upgradeCost == null ? ItemBundle.EMPTY : upgradeCost;
+        this.upgradeOptions = upgradeOptions == null ? List.of() : List.copyOf(upgradeOptions);
+        this.allowedDimensions = allowedDimensions == null
+                ? Set.of()
+                : Collections.unmodifiableSet(new LinkedHashSet<>(allowedDimensions));
         this.storageSlots = storageSlots;
         this.storageTags = Collections.unmodifiableSet(new LinkedHashSet<>(storageTags));
         this.warehouse = warehouse;
@@ -233,38 +254,65 @@ public final class BuildingType implements Comparable<BuildingType> {
     }
 
     /**
-     * The building type this one can be upgraded into, or empty when it is the top of its ladder.
+     * The successors this building can be upgraded into, in declaration order; empty when it is the top
+     * of its ladder.
      *
-     * <p>The reference is resolved against the catalogue namespace like a recipe's unit output, so content
-     * writes {@code .upgradeTo("building.mine.t2")}. It is deliberately not validated when the catalogue is
-     * built: a target that does not exist is a data error that
-     * {@link io.github.sob1234509876.oc.rts.order.UnitDirector#upgradeBuilding(Building)} refuses at command
-     * time with a readable message, and a scenario can assert exactly that failure.
+     * <p>Each reference is resolved against the catalogue namespace like a recipe's unit output, so
+     * content writes {@code .upgradeTo("building.mine.t2")} for the single-target ladder and adds
+     * {@code .upgradeVariant("building.purgatory.t1")} for a variant step. Targets are deliberately not
+     * validated when the catalogue is built: a target that does not exist is a data error that
+     * {@link io.github.sob1234509876.oc.rts.order.UnitDirector#upgradeBuilding(Building)} refuses at
+     * command time with a readable message, and a scenario can assert exactly that failure.
      *
      * <p>An upgrade link does not make a tier reachable by itself; the command still checks the owner's
      * warehouses, the site and the target, and the old building is replaced by the new type, not modified
-     * in place.
+     * in place. With more than one option the caller has to choose: a command without a target is refused
+     * when the choice is ambiguous.
      */
-    public Optional<ResourceKey> upgradeTo() {
-        return Optional.ofNullable(upgradeTo);
+    public List<UpgradeOption> upgradeOptions() {
+        return upgradeOptions;
     }
 
     /**
-     * Items the owner's warehouses have to provide to upgrade <em>this</em> type into
-     * {@link #upgradeTo()}.
-     *
-     * <p>The cost belongs to the source type, so the ladder reads as a sequence of steps:
-     * {@code t1.upgradeCost()} is charged for {@code t1 -> t2}, {@code t2.upgradeCost()} for
-     * {@code t2 -> t3}. It is empty for a type that cannot be upgraded, and is reserved and committed by
-     * the same logistics path a building placement uses, exactly once per successful upgrade.
+     * The single-target view of {@link #upgradeOptions()}: the first successor, or empty when this type
+     * cannot be upgraded. Content that declares one upgrade keeps reading exactly like before the variant
+     * step existed.
      */
-    public ItemBundle upgradeCost() {
-        return upgradeCost;
+    public Optional<ResourceKey> upgradeTo() {
+        return upgradeOptions.isEmpty() ? Optional.empty() : Optional.of(upgradeOptions.get(0).target());
     }
 
-    /** Whether this type names a successor; the target still has to exist in the catalogue. */
+    /**
+     * The cost of the first upgrade in {@link #upgradeOptions()}, or empty when this type cannot be
+     * upgraded. The cost belongs to the source type, so the ladder reads as a sequence of steps:
+     * {@code t1}'s option cost is charged for {@code t1 -> t2}, and is reserved and committed by the same
+     * logistics path a building placement uses, exactly once per successful upgrade.
+     */
+    public ItemBundle upgradeCost() {
+        return upgradeOptions.isEmpty() ? ItemBundle.EMPTY : upgradeOptions.get(0).cost();
+    }
+
+    /** Whether this type names at least one successor; each target still has to exist in the catalogue. */
     public boolean canUpgrade() {
-        return upgradeTo != null;
+        return !upgradeOptions.isEmpty();
+    }
+
+    /**
+     * The dimensions this building may stand in; empty means every dimension.
+     *
+     * <p>Placement (a {@code BUILD} command), upgrades and any other {@code canPlace} check refuse a site
+     * in a dimension the type does not allow, which is how content pins a specialised building to one
+     * world - a purgatory factory that may only rise in hell, for example. The restriction is a content
+     * statement, not a physics rule: spawning directly through the world is deliberately unrestricted, so
+     * a scenario can still set up its opening scene.
+     */
+    public Set<DimensionId> allowedDimensions() {
+        return allowedDimensions;
+    }
+
+    /** Whether a building of this type may stand in the given dimension. */
+    public boolean isAllowedIn(DimensionId dimension) {
+        return allowedDimensions.isEmpty() || allowedDimensions.contains(dimension);
     }
 
     /** Number of item slots of the storage this building provides; {@code 0} means it stores nothing. */

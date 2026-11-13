@@ -252,12 +252,11 @@ final class PluginAssets {
                         + PluginManifest.RESOURCE + ": " + invalid.getMessage());
                 continue;
             }
-            String atlasUrl = PREFIX + "/" + encodeSegment(pluginId) + "/"
-                    + encodeSegment(manifest.image());
+            String baseUrl = PREFIX + "/" + encodeSegment(pluginId) + "/";
             if (!first) {
                 json.append(',');
             }
-            json.append(manifest.toEntry(pluginId, atlasUrl));
+            json.append(manifest.toEntry(pluginId, baseUrl));
             first = false;
         }
         json.append(']');

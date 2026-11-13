@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.ResourceKey;
+import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Tick;
@@ -373,6 +374,11 @@ public final class CommandService implements UnitDirector {
             // instead of refusing an occupied tile or placing a duplicate site.
             return joinSite(unit, existing, append);
         }
+        if (!type.isAllowedIn(dimension)) {
+            return BuildResult.refused("cannot place " + type.key().path() + " in the "
+                    + dimension.key() + " dimension: the content restricts it to "
+                    + allowedDimensionNames(type));
+        }
         if (!world.canPlace(dimension, type, origin)) {
             return BuildResult.refused("cannot place " + type.key().path() + " at "
                     + origin.x() + "," + origin.y());
@@ -737,20 +743,63 @@ public final class CommandService implements UnitDirector {
         if (!building.isAlive()) {
             return UpgradeResult.refused("cannot upgrade building " + building.id().value() + ": it is gone");
         }
+        List<BuildingType.UpgradeOption> options = building.type().upgradeOptions();
+        if (options.isEmpty()) {
+            return UpgradeResult.refused("cannot upgrade " + building.type().key().path()
+                    + ": it is the top of its ladder");
+        }
+        if (options.size() > 1) {
+            return UpgradeResult.refused("cannot upgrade " + building.type().key().path()
+                    + " without choosing one of its " + options.size() + " variants: "
+                    + options.stream().map(option -> option.target().path())
+                            .collect(java.util.stream.Collectors.joining(", ")));
+        }
+        return upgradeBuilding(building, options.get(0).target());
+    }
+
+    @Override
+    public UpgradeResult upgradeBuilding(Building building, ResourceKey requestedTarget) {
+        if (building == null) {
+            return UpgradeResult.refused("no building to upgrade");
+        }
+        if (!building.isAlive()) {
+            return UpgradeResult.refused("cannot upgrade building " + building.id().value() + ": it is gone");
+        }
         BuildingType current = building.type();
         if (!building.isConstructed()) {
             return UpgradeResult.refused("cannot upgrade " + current.key().path()
                     + ": the building is still under construction");
         }
-        Optional<ResourceKey> upgradeKey = current.upgradeTo();
-        if (upgradeKey.isEmpty()) {
+        List<BuildingType.UpgradeOption> options = current.upgradeOptions();
+        if (options.isEmpty()) {
             return UpgradeResult.refused("cannot upgrade " + current.key().path()
                     + ": it is the top of its ladder");
         }
-        BuildingType target = world.content().buildingOrNull(upgradeKey.get());
+        BuildingType.UpgradeOption option;
+        if (requestedTarget == null) {
+            if (options.size() > 1) {
+                return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                        + " without choosing one of its " + options.size() + " variants: "
+                        + options.stream().map(candidate -> candidate.target().path())
+                                .collect(java.util.stream.Collectors.joining(", ")));
+            }
+            option = options.get(0);
+        } else {
+            option = options.stream()
+                    .filter(candidate -> candidate.target().equals(requestedTarget))
+                    .findFirst()
+                    .orElse(null);
+            if (option == null) {
+                return UpgradeResult.refused("cannot upgrade " + current.key().path() + ": it does not offer '"
+                        + requestedTarget + "' as an upgrade; it offers "
+                        + options.stream().map(candidate -> candidate.target().path())
+                                .collect(java.util.stream.Collectors.joining(", ")));
+            }
+        }
+        BuildingType target = world.content().buildingOrNull(option.target());
         if (target == null) {
             return UpgradeResult.refused("cannot upgrade " + current.key().path() + ": target '"
-                    + upgradeKey.get() + "' does not exist in the content registry");
+                    + option.target() + "' does not exist in the content registry");
         }
         if (target.key().equals(current.key())) {
             return UpgradeResult.refused("cannot upgrade " + current.key().path()
@@ -764,13 +813,18 @@ public final class CommandService implements UnitDirector {
         }
         DimensionId dimension = building.dimensionId();
         GridPos origin = building.origin();
+        if (!target.isAllowedIn(dimension)) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + " to "
+                    + target.key().path() + " in the " + dimension.key()
+                    + " dimension: the content restricts it to " + allowedDimensionNames(target));
+        }
         if (!world.canPlace(dimension, target, origin, building)) {
             return UpgradeResult.refused("cannot upgrade " + current.key().path() + " to "
                     + target.key().path() + ": the replacement site at " + origin.x() + "," + origin.y()
                     + " is not clear");
         }
 
-        ItemBundle cost = current.upgradeCost();
+        ItemBundle cost = option.cost();
         Logistics.Reservation charge = null;
         if (!cost.isEmpty()) {
             Player owner = building.owner();
@@ -824,6 +878,119 @@ public final class CommandService implements UnitDirector {
             insertInto(replacement.inventory(), leftover);
         }
         return UpgradeResult.upgraded(replacement);
+    }
+
+    /**
+     * Upgrades one unit in place, paying the source type's upgrade cost once.
+     *
+     * <p>The implementation is the transaction documented on
+     * {@link UnitDirector#upgradeUnit(Unit, ResourceKey)}. The same two ordering details as the building
+     * upgrade matter for safety: the replacement is spawned <em>before</em> the old unit is destroyed,
+     * so a failure while creating it releases the reservation and leaves the old unit standing, and the
+     * reservation is committed before the old unit disappears. No system tick runs inside this call, so
+     * the momentary overlap of the two units is never observed by the simulation.
+     *
+     * <p>The replacement keeps the health fraction, not the absolute hit points, and keeps the old
+     * unit's cargo up to what its own capacity holds; the remainder is deposited into the owner's
+     * warehouse network so an upgrade never deletes carried goods. The old unit's order queue is
+     * cancelled through the ordinary cancel path (a pending build order detaches from its site, a haul
+     * returns its claim and its cargo to storage), and the old id is cleared from every unit's combat
+     * target; the id leaves the spatial index with the destroyed unit.
+     */
+    @Override
+    public UpgradeResult upgradeUnit(Unit unit, ResourceKey requestedTarget) {
+        if (unit == null) {
+            return UpgradeResult.refused("no unit to upgrade");
+        }
+        if (!isCommandable(unit)) {
+            return UpgradeResult.refused("cannot upgrade unit " + unit.id().value()
+                    + ": it cannot be commanded");
+        }
+        UnitType current = unit.type();
+        Optional<ResourceKey> ladder = current.upgradeTo();
+        if (ladder.isEmpty()) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                    + ": it is the top of its ladder");
+        }
+        ResourceKey targetKey = requestedTarget == null ? ladder.get() : requestedTarget;
+        UnitType target = world.content().unitOrNull(targetKey);
+        if (target == null) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + ": target '"
+                    + targetKey + "' does not exist in the content registry");
+        }
+        if (!ladder.get().equals(targetKey)) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path() + ": it does not offer '"
+                    + targetKey + "' as an upgrade; it offers " + ladder.get().path());
+        }
+        if (target.key().equals(current.key())) {
+            return UpgradeResult.refused("cannot upgrade " + current.key().path()
+                    + ": it names itself as its own target");
+        }
+        ItemBundle cost = current.upgradeCost();
+        Logistics.Reservation charge = null;
+        if (!cost.isEmpty()) {
+            Player owner = unit.owner();
+            if (!owner.hasLogistics()) {
+                return UpgradeResult.refused("cannot pay for the upgrade of " + current.key().path()
+                        + " (needs " + describe(cost) + "): the player has no warehouse network");
+            }
+            Optional<Logistics.Reservation> reserved = owner.logistics().reserve(cost);
+            if (reserved.isEmpty()) {
+                return UpgradeResult.refused("cannot afford the upgrade of " + current.key().path()
+                        + " to " + target.key().path() + " (needs " + describe(cost) + ")");
+            }
+            charge = reserved.get();
+        }
+        Unit replacement;
+        try {
+            replacement = world.spawnUnit(unit.dimensionId(), target, unit.owner(), unit.position());
+        } catch (RuntimeException failure) {
+            if (charge != null && charge.active()) {
+                charge.release();
+            }
+            return UpgradeResult.refused("upgrading " + current.key().path() + " to "
+                    + target.key().path() + " failed: " + failure.getMessage());
+        }
+        if (charge != null) {
+            charge.commit();
+        }
+        // Scale the old unit's remaining share onto the new maximum: a full one stays full and a
+        // damaged one keeps exactly the share of hit points it had.
+        replacement.health().setCurrent(unit.health().currentFor(target.maxHealth()));
+        replacement.motion().setFacing(unit.motion().facing());
+        // The queue is cancelled, not silently dropped: a pending build order detaches from its site
+        // and a haul order hands its claim and its carried goods back to the warehouses on this path.
+        if (!unit.orders().isEmpty()) {
+            unit.orders().clear(context(unit));
+        }
+        // Carry the backpack over before the entity that owns it disappears, clamped to what the new
+        // capacity accepts.
+        ItemBundle carried = unit.cargo().extractAll();
+        ItemBundle leftover = ItemBundle.EMPTY;
+        if (!carried.isEmpty()) {
+            leftover = insertInto(replacement.cargo(), carried);
+        }
+        EntityId oldId = unit.id();
+        world.destroy(unit);
+        world.clearTargets(oldId);
+        // Whatever the replacement could not hold goes back into the owner's network instead of
+        // vanishing with the old backpack.
+        if (!leftover.isEmpty() && replacement.owner().hasLogistics()) {
+            leftover = replacement.owner().logistics().deposit(leftover, replacement.position());
+        }
+        if (!leftover.isEmpty()) {
+            insertInto(replacement.cargo(), leftover);
+        }
+        return UpgradeResult.upgraded(replacement);
+    }
+
+    /** The dimensions a restricted type allows, as a readable list for refusal sentences. */
+    private static String allowedDimensionNames(BuildingType type) {
+        if (type.allowedDimensions().isEmpty()) {
+            return "every dimension";
+        }
+        return type.allowedDimensions().stream().map(DimensionId::key)
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     /**

@@ -13,7 +13,7 @@
 - 跨维度送货：搬运工是"每张图"的，跨图的货走传送门链路，等待时间 = 直送延迟 × 跳数；**预约层本身可以给出别的维度的仓库（自校验断言了这一点），但生产端的请求链路还没跨图，所以这条链路端到端还没打通**（第 11 节把它记为待办）。
 - 按维度的快照：`SnapshotFactory.capture(DimensionId, ...)`、`WorldSnapshot.dimension()` / `dimensionName()`、文本地图的图例行。
 - 跨维度的区块流式：预算共享、余数怎么分、焦点互不影响。
-- 事件现在带着维度；自校验第 11 节的 28 条断言；以及一份诚实的"还没有实现"清单（只剩环境危害）。
+- 事件现在带着维度；自校验第 11 节的 34 条断言；以及一份诚实的"还没有实现"清单（只剩环境危害）。
 
 想把地形、区块与 A* 本身先看懂，见 [03-map-and-pathfinding.md](03-map-and-pathfinding.md)；想理解相位与系统约定，见 [09-architecture-and-tick-pipeline.md](09-architecture-and-tick-pipeline.md)。
 
@@ -384,7 +384,7 @@ engine.events().subscribe(Events.ChunkUnloaded.class, event ->
 
 ## 十四、自校验里的维度场景
 
-`./gradlew :projects:oc:oc-rts-engine:scenario` 的第 11 节有 **28 条断言**（`seed=90210`、`chunkSize=16`、`viewRadiusChunks=2`、`moonAndMars()`，再加上两条门），它逐条打印：
+`./gradlew :projects:oc:oc-rts-engine:scenario` 的第 11 节有 **34 条断言**（`seed=90210`、`chunkSize=16`、`viewRadiusChunks=2`、`moonAndMars()`，再加上两条门），它逐条打印：
 
 ```text
 == 11) dimensions: independent maps for the overworld, the Moon and Mars ==
@@ -418,10 +418,10 @@ engine.events().subscribe(Events.ChunkUnloaded.class, event ->
   [ok] the traveller left the overworld, which keeps its original unit
 ```
 
-整份场景目前是 **776 项断言**（其中第 11 节维度本身 34 项；第 1b 节噪声地形、1c 节无界地形、第 12/12b 节战斗、第 13-16 节的建造扣费、可达、升级与合作建造等其余小节也计入同一总数）：
+整份场景目前是 **886 项断言**（其中第 11 节维度本身 34 项；第 1b 节噪声地形、1c 节无界地形、第 12/12b 节战斗、第 13-16 节的建造扣费、可达、升级与合作建造等其余小节也计入同一总数）：
 
 ```text
-RTS engine scenario: all 776 checks passed.
+RTS engine scenario: all 886 checks passed.
 ```
 
 断言覆盖五件事：三张图确实存在且档案正确；同一格上的两个单位互不干扰（id 不同、全世界 2 个、各自索引各 1 个、地球索引看不到月球单位）；`findEntity` 能跨维度按 id 找到实体；给月球单位下移动命令后它留在月球、地球单位没被拖走，销毁月球单位也不影响地球的那个；**两跳路线 + 单向性 + 踩门判定 + 旅行后 id 不变 + 两次转移各一条事件 + 出发图少一个、火星多一个**。

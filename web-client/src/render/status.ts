@@ -7,6 +7,7 @@
  * `contents`; the snapshot may omit them (an older server), so every helper has to accept their absence.
  */
 
+import { t } from "../i18n.ts";
 import {
   isBuildingEntityKind,
   type EntityView,
@@ -49,13 +50,16 @@ export function queueMarkerText(
     producingNow.position >= 1 &&
     producingNow.length >= producingNow.position
   ) {
-    return `生产中 ${producingNow.position}/${producingNow.length}`;
+    return t("status.producingNow", {
+      position: producingNow.position,
+      length: producingNow.length,
+    });
   }
   if (queue === undefined || !Number.isFinite(queue)) {
     return "";
   }
   const count = Math.max(0, Math.trunc(queue));
-  return count === 0 ? "" : `生产中 ×${count}`;
+  return count === 0 ? "" : t("status.producingCount", { count });
 }
 
 /**
@@ -93,7 +97,7 @@ export function demandMissingText(
     const label = labelForPath(item.item).trim();
     parts.push(`${label === "" ? item.item : label} ${item.need}/${item.have}`);
   }
-  return parts.length === 0 ? "" : `缺：${parts.join(" · ")}`;
+  return parts.length === 0 ? "" : t("status.missingLabel", { items: parts.join(" · ") });
 }
 
 /** Total number of carried items, counting every positive `contents` amount. */
@@ -192,7 +196,7 @@ export function combatLabel(entity: EntityView): string | null {
     return null;
   }
   const rangeText = Number.isInteger(range) ? String(range) : range.toFixed(1);
-  return `攻击 ${damage} · 射程 ${rangeText}`;
+  return t("status.combatLabel", { damage, range: rangeText });
 }
 
 /**
@@ -205,7 +209,7 @@ export function unitTaskLabel(task: string | undefined): string | null {
   if (task === undefined || task.trim() === "") {
     return null;
   }
-  return `任务：${task.trim()}`;
+  return t("status.taskLabel", { task: task.trim() });
 }
 
 /**
@@ -219,7 +223,7 @@ export function incomeSuffix(rate: number | undefined): string {
   if (rate === undefined || !Number.isFinite(rate) || rate < 0) {
     return "";
   }
-  return ` (+${Math.trunc(rate)}/分)`;
+  return t("status.incomeSuffix", { rate: Math.trunc(rate) });
 }
 
 /**
@@ -259,14 +263,10 @@ export function queueItemNumber(index: number, count: number): string {
  */
 export function sizeLabel(entity: EntityView): string | null {
   const footprint = entity.footprint;
-  return footprint === undefined ? null : `尺寸：${footprint.width}×${footprint.height}`;
+  return footprint === undefined
+    ? null
+    : t("status.sizeLabel", { size: `${footprint.width}×${footprint.height}` });
 }
-
-/** Chinese HUD labels for the classic items; any other item path keeps its own name. */
-const ITEM_LABELS: Readonly<Record<string, string>> = {
-  gold: "金",
-  wood: "木",
-};
 
 /** Known items first, then unknown paths in plain lexicographic order, so the HUD line is stable. */
 const ITEM_ORDER: readonly string[] = ["gold", "wood"];
@@ -290,14 +290,15 @@ export function compareItemPaths(left: string, right: string): number {
 }
 
 /**
- * The display name of one resource item: `金` / `木` for the classic items, otherwise the path's own
- * name with any namespace prefix removed. The warehouse panel uses the same fallback for unknown
- * items, so the HUD chip and the panel cannot disagree about a known item.
+ * The display name of one resource item: the `item.gold` / `item.wood` UI label for the two wire
+ * currency paths (金 / 木 in zh-CN, gold / wood in en), otherwise the path's own name with any
+ * namespace prefix removed. The warehouse panel uses the same fallback for unknown items, so the HUD
+ * chip and the panel cannot disagree about a known item.
  */
 export function itemDisplayName(path: string): string {
   const separator = path.lastIndexOf(":");
   const name = separator < 0 ? path : path.slice(separator + 1);
-  return ITEM_LABELS[name] ?? name;
+  return name === "gold" || name === "wood" ? t(`item.${name}`) : name;
 }
 
 /**
@@ -321,7 +322,7 @@ export function warehouseContentsLabel(entity: EntityView): string | null {
     }
     parts.push(`${itemDisplayName(path)} ${amount}`);
   }
-  return parts.length === 0 ? null : `库存：${parts.join(" · ")}`;
+  return parts.length === 0 ? null : t("status.stockLabel", { items: parts.join(" · ") });
 }
 
 /**
@@ -352,5 +353,5 @@ export function unitCargoLabel(
     const label = labelForPath(path).trim();
     parts.push(`${label === "" ? path : label} ${amount}`);
   }
-  return parts.length === 0 ? null : `携带：${parts.join(" · ")}`;
+  return parts.length === 0 ? null : t("status.cargoLabel", { items: parts.join(" · ") });
 }

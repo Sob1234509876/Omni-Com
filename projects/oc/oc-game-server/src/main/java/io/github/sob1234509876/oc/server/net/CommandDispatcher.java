@@ -7,6 +7,7 @@ import io.github.sob1234509876.oc.rts.content.BuildingType;
 import io.github.sob1234509876.oc.rts.content.ItemBundle;
 import io.github.sob1234509876.oc.rts.content.ItemType;
 import io.github.sob1234509876.oc.rts.content.Recipe;
+import io.github.sob1234509876.oc.rts.content.ResourceKey;
 import io.github.sob1234509876.oc.rts.content.UnitType;
 import io.github.sob1234509876.oc.rts.core.EntityId;
 import io.github.sob1234509876.oc.rts.core.GridPos;
@@ -50,7 +51,8 @@ import java.util.function.Supplier;
  * ORDER STOP &lt;entityId&gt;              -&gt; OK | ERR &lt;reason&gt;
  * BUILD &lt;engineerId&gt; &lt;buildingPath&gt; &lt;x&gt; &lt;y&gt; [queue] -&gt; OK &lt;buildingId&gt; | ERR &lt;reason&gt;
  * TRAIN &lt;buildingId&gt; &lt;unitPath&gt;      -&gt; OK | ERR &lt;reason&gt;
- * UPGRADE &lt;buildingId&gt;              -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
+ * UPGRADE &lt;buildingId&gt; [variantPath]  -&gt; OK &lt;newBuildingId&gt; | ERR &lt;reason&gt;
+ * UPGRADEUNIT &lt;unitId&gt; [tierPath]     -&gt; OK &lt;newUnitId&gt; | ERR &lt;reason&gt;
  * REPAIR &lt;engineerId&gt; &lt;buildingId&gt; [queue] -&gt; OK | ERR &lt;reason&gt;
  * RECLAIM &lt;buildingId&gt;              -&gt; OK &lt;refund&gt; | ERR &lt;reason&gt;
  * TRANSFER &lt;sourceId&gt; &lt;targetId&gt; &lt;item&gt; &lt;amount|all&gt; -&gt; OK &lt;moved&gt; &lt;item&gt; | ERR &lt;reason&gt;
@@ -140,8 +142,8 @@ public final class CommandDispatcher {
 
     /** Commands whose answer can only be produced by the world thread. */
     private static final java.util.Set<String> GAMEPLAY_COMMANDS =
-            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM",
-                    "TRANSFER", "HAUL", "BATCH");
+            java.util.Set.of("WHOAMI", "ORDER", "BUILD", "TRAIN", "UPGRADE", "UPGRADEUNIT", "REPAIR",
+                    "RECLAIM", "TRANSFER", "HAUL", "BATCH");
 
     /**
      * Sub-commands one {@code BATCH} may carry.
@@ -154,7 +156,8 @@ public final class CommandDispatcher {
 
     /** The gameplay commands a {@code BATCH} may carry; identity commands such as {@code WHOAMI} cannot. */
     private static final java.util.Set<String> BATCHABLE_COMMANDS =
-            java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "REPAIR", "RECLAIM", "TRANSFER", "HAUL");
+            java.util.Set.of("ORDER", "BUILD", "TRAIN", "UPGRADE", "UPGRADEUNIT", "REPAIR", "RECLAIM",
+                    "TRANSFER", "HAUL");
 
     /**
      * The line written before a connection that sent {@code QUIT} is closed.
@@ -282,6 +285,7 @@ public final class CommandDispatcher {
             case "BUILD" -> build(rest, session);
             case "TRAIN" -> train(rest, session);
             case "UPGRADE" -> upgrade(rest, session);
+            case "UPGRADEUNIT" -> upgradeUnit(rest, session);
             case "REPAIR" -> repair(rest, session);
             case "RECLAIM" -> reclaim(rest, session);
             case "TRANSFER" -> transfer(rest, session);
@@ -562,34 +566,93 @@ public final class CommandDispatcher {
     }
 
     /**
-     * {@code UPGRADE <buildingId>}: replace an owned, finished building with its catalogue successor.
+     * {@code UPGRADE <buildingId> [variantPath]}: replace an owned, finished building with one of its
+     * catalogue successors.
      *
      * <p>Existence and ownership are the same rules as every other gameplay command; the actual transaction
-     * is {@link UnitDirector#upgradeBuilding(Building)}, so the tier link, the cost, the footprint, the
-     * health fraction and the cleanup of the old id all run on the world thread and inside the engine. The
-     * answer is {@code OK <newBuildingId>} on success - the replacement has a new id - or
-     * {@code ERR <reason>} with the engine's own refusal (top of the ladder, unknown target, unaffordable,
-     * unfinished, footprint mismatch, site not clear). A failure charges nothing, which the engine
-     * guarantees; this method only forwards the result.
+     * is {@link UnitDirector#upgradeBuilding(Building, ResourceKey)}, so the variant choice, the cost of the
+     * chosen variant, the footprint, the health fraction and the cleanup of the old id all run on the world
+     * thread and inside the engine. The variant path is the {@code to} token of the snapshot's
+     * {@code upgrade.options} entry the player picked; omitting it chooses the only successor of a
+     * single-option ladder and is refused with {@code ERR ... 2 variants: ...} when the type offers several.
+     * The answer is {@code OK <newBuildingId>} on success - the replacement has a new id - or
+     * {@code ERR <reason>} with the engine's own refusal (top of the ladder, unknown variant, unaffordable,
+     * unfinished, footprint mismatch, dimension restricted, site not clear). A failure charges nothing,
+     * which the engine guarantees; this method only forwards the result.
      */
     private PendingAnswer upgrade(String rest, Session session) {
         String[] tokens = split(rest);
-        if (tokens.length != 1) {
+        if (tokens.length < 1 || tokens.length > 2) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
         OptionalLong buildingId = parseId(tokens[0]);
         if (buildingId.isEmpty()) {
             return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
         }
+        String variantToken = tokens.length == 2 ? tokens[1] : null;
         return worldGameplay(session, (host, player) -> {
             BuildingRef ref = ownedBuilding(host.engine().world(), buildingId.getAsLong(), player);
             if (ref.error() != null) {
                 return ref.error();
             }
+            ResourceKey variant = null;
+            if (variantToken != null) {
+                try {
+                    variant = host.content().key(variantToken);
+                } catch (IllegalArgumentException malformed) {
+                    return "ERR " + variantToken + " is not a content path";
+                }
+            }
             UnitDirector.UpgradeResult result =
-                    host.engine().commands().upgradeBuilding(ref.building());
+                    host.engine().commands().upgradeBuilding(ref.building(), variant);
             return result.upgraded()
                     ? "OK " + result.replacement().id().value()
+                    : "ERR " + result.refusal();
+        });
+    }
+
+    /**
+     * {@code UPGRADEUNIT <unitId> [tierPath]}: replace an owned unit with the successor its content
+     * ladder names.
+     *
+     * <p>Existence and ownership are the same rules as every other gameplay command; the actual
+     * transaction is {@link UnitDirector#upgradeUnit(Unit, ResourceKey)}, so the cost of the step
+     * ({@code UnitType.upgradeCost()} of the source type), the health fraction, the carried cargo and
+     * the cleanup of the old id all run on the world thread and inside the engine. The optional
+     * {@code tierPath} is the {@code to} token of the snapshot unit row's {@code upgrade.options[0]}
+     * entry; omitting it chooses the ladder's single step, and a token that names a type the source
+     * does not offer is refused by the engine. The answer is {@code OK <newUnitId>} on success - the
+     * replacement has a new id - or {@code ERR <reason>} with the engine's own refusal (top of the
+     * ladder, unknown target, unaffordable, not commandable). A failure charges nothing, which the
+     * engine guarantees; this method only forwards the result.
+     */
+    private PendingAnswer upgradeUnit(String rest, Session session) {
+        String[] tokens = split(rest);
+        if (tokens.length < 1 || tokens.length > 2) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        OptionalLong unitId = parseId(tokens[0]);
+        if (unitId.isEmpty()) {
+            return PendingAnswer.immediate(ERR_BAD_ARGUMENTS);
+        }
+        String tierToken = tokens.length == 2 ? tokens[1] : null;
+        return worldGameplay(session, (host, player) -> {
+            UnitRef unit = ownedUnit(host.engine().world(), unitId.getAsLong(), player);
+            if (unit.error() != null) {
+                return unit.error();
+            }
+            ResourceKey tier = null;
+            if (tierToken != null) {
+                try {
+                    tier = host.content().key(tierToken);
+                } catch (IllegalArgumentException malformed) {
+                    return "ERR " + tierToken + " is not a content path";
+                }
+            }
+            UnitDirector.UpgradeResult result =
+                    host.engine().commands().upgradeUnit(unit.unit(), tier);
+            return result.upgraded()
+                    ? "OK " + result.replacementUnit().id().value()
                     : "ERR " + result.refusal();
         });
     }

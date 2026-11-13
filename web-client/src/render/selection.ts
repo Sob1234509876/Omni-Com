@@ -47,7 +47,7 @@ export function engineersForPlacement(
     return [];
   }
   for (const entity of selection) {
-    if (ownershipOf(entity.playerId, myPlayerId) !== "mine" || !isEngineerKind(entity.kind)) {
+    if (ownershipOf(entity.playerId, myPlayerId) !== "mine" || !isBuilderUnit(entity)) {
       return [];
     }
   }
@@ -73,11 +73,29 @@ export function engineerForPlacement(
  * Whether a kind is an engineer.
  *
  * The classic catalogue calls it `unit.engineer`, while the demo and legacy snapshots use the short
- * `engineer`. The namespace prefix is stripped first, so `oc:unit.engineer` matches too.
+ * `engineer`. The namespace prefix is stripped first, so `oc:unit.engineer` matches too. This is only
+ * the *name* half of the builder rule; the capability the server declares wins (see
+ * {@link isBuilderUnit}).
  */
 export function isEngineerKind(kind: string): boolean {
   const name = kindName(kind);
   return name === "engineer" || name.endsWith(".engineer");
+}
+
+/**
+ * Whether a unit row can build, by the capability the snapshot declares.
+ *
+ * The server marks every builder of any tier with `builder: true`, so an upgraded engineer tier
+ * (`unit.engineer.t2` and friends — content paths this client has never seen) qualifies without the
+ * client matching names it does not know. A row without the flag falls back to the classic
+ * {@link isEngineerKind} name rule, which is what the demo world and older snapshots rely on. A
+ * building is never a builder unit, whatever its row says: BUILD orders are given to units.
+ */
+export function isBuilderUnit(entity: EntityView): boolean {
+  if (isBuildingEntityKind(entity.kind)) {
+    return false;
+  }
+  return entity.builder === true || isEngineerKind(entity.kind);
 }
 
 /** Two entity kinds describe the same content path once their namespace prefix is stripped. */
@@ -86,24 +104,17 @@ function sameKind(left: string, right: string): boolean {
 }
 
 /**
- * The short kinds the demo world uses for attack-capable units.
- *
- * The real game names its melee line `unit.melee.t1` ... `unit.melee.t5`; the procedural demo uses
- * `soldier`. Both are combat units even though the current snapshot carries neither a `role` nor an
- * `attackDamage` field.
- */
-const COMBAT_KIND_NAMES: ReadonlySet<string> = new Set<string>(["soldier", "fighter", "warrior"]);
-
-/**
  * Whether a content path names an attack-capable unit.
  *
- * A unit is attack capable when its kind is the engine's `unit.melee.*` line or a known legacy combat
- * kind. A snapshot that does carry the optional `role` / `attackDamage` metadata is described by
- * {@link isCombatUnit} instead, so this is only the fallback for the current wire format.
+ * A unit is attack capable when its kind sits on one of the engine's combat content lines
+ * (`unit.melee.*`, `unit.ranged.*`) — a namespace convention, not a list of game kinds, so plugin tiers
+ * on those lines match without the client knowing them. A snapshot that carries the optional `role` /
+ * `attackDamage` metadata is described by {@link isCombatUnit} instead, which reads the capability
+ * first; the demo world declares `role` on its own few entities, so no short name list is needed here.
  */
 export function isCombatKind(kind: string): boolean {
   const name = kindName(kind);
-  return name.startsWith("unit.melee.") || COMBAT_KIND_NAMES.has(name);
+  return name.startsWith("unit.melee.") || name.startsWith("unit.ranged.");
 }
 
 /** Whether an entity belongs to the combat-unit group (ownership is checked by the caller). */
@@ -154,9 +165,7 @@ export function selectByPriority(entities: readonly EntityView[], myPlayerId?: n
   if (combat.length > 0) {
     return combat.map((entity) => entity.id);
   }
-  const builders = candidates.filter(
-    (entity) => !isBuildingEntityKind(entity.kind) && isEngineerKind(entity.kind),
-  );
+  const builders = candidates.filter(isBuilderUnit);
   if (builders.length > 0) {
     return builders.map((entity) => entity.id);
   }
@@ -232,6 +241,6 @@ function engineerQualifies(
   return (
     entityInWindow(world, entity) &&
     ownershipOf(entity.playerId, myPlayerId) === "mine" &&
-    isEngineerKind(entity.kind)
+    isBuilderUnit(entity)
   );
 }

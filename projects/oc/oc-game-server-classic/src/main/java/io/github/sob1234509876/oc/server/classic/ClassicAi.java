@@ -230,6 +230,13 @@ public final class ClassicAi implements WorldTickHook {
      */
     public static final int SITE_SEARCH_RADIUS_TILES = 64;
 
+    /**
+     * Site scan radius around the builder, in tiles. The BUILD command refuses sites further than 16
+     * path tiles from the builder, so a scan that reaches further can return origins the command then
+     * rejects forever; 14 keeps the whole scan inside that guarantee.
+     */
+    public static final int BUILDER_SITE_RADIUS_TILES = 14;
+
     /** Content tag that marks the units a builder: the engineer carries it. */
     private static final String BUILDER_TAG = "builder";
 
@@ -352,9 +359,16 @@ public final class ClassicAi implements WorldTickHook {
         List<Unit> units = unitsOf(world, ai);
         List<Building> buildings = buildingsOf(world, ai);
         List<Unit> intruders = intruders(world, ai, buildings);
+        // A stalled site outranks everything: it already consumed its placement cost and blocks the
+        // target count until somebody finishes it.
+        if (resumeStalledSite(world, ai, units, buildings)) {
+            return;
+        }
         mode = modeFor(units, buildings, intruders);
         if (mode == Mode.DEFEND) {
+            // Combat units defend; builders keep building, so a raid never halts the whole economy.
             defend(world, units, intruders);
+            upkeepBuildings(world, ai, units, buildings);
             return;
         }
         // Buildings first: an upgrade replaces the armory, so training in the same decision has to see the
@@ -448,7 +462,9 @@ public final class ClassicAi implements WorldTickHook {
             if (!idle) {
                 continue;
             }
-            director(world).upgradeBuilding(building);
+            // The bot walks the ordinary ladder: pass the first successor explicitly, because the
+            // armory t1 step now offers the purgatory variant as well and an ambiguous target is refused.
+            director(world).upgradeBuilding(building, building.type().upgradeTo().orElse(null));
             return true;
         }
         return false;
@@ -497,6 +513,11 @@ public final class ClassicAi implements WorldTickHook {
             }
         }
         if (type != null) {
+            // Pre-check the bill before waking anybody: a placement that would be refused for money
+            // used to waste the whole decision and re-select the same site every 20 ticks.
+            if (ai.hasLogistics() && !ai.logistics().hasAvailable(type.cost())) {
+                return;
+            }
             Unit builder = idleBuilder(units);
             if (builder == null) {
                 return;
@@ -554,7 +575,8 @@ public final class ClassicAi implements WorldTickHook {
             if (!idle) {
                 continue;
             }
-            director(world).upgradeBuilding(building);
+            // Same rule as the armory: an explicit target, here the turret ladder's single successor.
+            director(world).upgradeBuilding(building, building.type().upgradeTo().orElse(null));
             return true;
         }
         return false;
@@ -721,6 +743,10 @@ public final class ClassicAi implements WorldTickHook {
             if (!unit.isAlive() || !unit.orders().isEmpty()) {
                 continue;
             }
+            // The builders stay at their posts: a defender that runs off dies with the site unfinished.
+            if (unit.type().hasTag(BUILDER_TAG)) {
+                continue;
+            }
             Unit target = nearestUnit(unit.position(), intruders);
             if (target != null) {
                 director.attack(unit, target.id());
@@ -803,7 +829,14 @@ public final class ClassicAi implements WorldTickHook {
         if (base == null) {
             return null;
         }
-        return scanOrigin(world, type, base, SITE_SEARCH_RADIUS_TILES, List.of(), dimension);
+        // Scan around the BUILDER within a radius safely inside the command's 16 tile build path, so a
+        // site the scan returns can never be refused with "out of reach" and stall the AI forever.
+        GridPos centre = builder.position().tile();
+        GridPos site = scanOrigin(world, type, centre, BUILDER_SITE_RADIUS_TILES, List.of(), dimension);
+        if (site == null && !centre.equals(base)) {
+            site = scanOrigin(world, type, base, BUILDER_SITE_RADIUS_TILES, List.of(), dimension);
+        }
+        return site;
     }
 
     /** The origin of the AI's oldest living building in the dimension, or {@code null} when there is none. */
@@ -1082,11 +1115,50 @@ public final class ClassicAi implements WorldTickHook {
     private static int countTag(List<Building> buildings, String tag) {
         int count = 0;
         for (Building building : buildings) {
-            if (building.isAlive() && building.type().hasTag(tag)) {
+            if (building.isAlive() && building.isConstructed() && building.type().hasTag(tag)) {
                 count++;
             }
         }
         return count;
+    }
+
+    /**
+     * Resumes a stalled site: an unfinished own building with no builder attached gets the first idle
+     * builder and an ordinary BUILD command, which joins the existing site without charging again.
+     * Returns whether this decision was spent on the resume.
+     */
+    private boolean resumeStalledSite(World world, Player ai, List<Unit> units, List<Building> buildings) {
+        for (Building building : buildings) {
+            if (!building.isAlive() || building.isConstructed() || building.builderCount() > 0) {
+                continue;
+            }
+            Unit builder = idleBuilder(units);
+            if (builder == null) {
+                return false;
+            }
+            director(world).build(builder, building.type(), building.origin());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * The entity id of the oldest living engineer of a player - the builder the hauling policy leaves
+     * alone. Both this class and {@link ClassicEngineerPool} compute the same convention independently:
+     * the smallest entity id among living builders, or {@code -1} when the player has none.
+     */
+    public static long oldestBuilderId(World world, Player player) {
+        long oldest = -1L;
+        for (Unit unit : world.unitsOf(player)) {
+            if (!unit.isAlive() || !unit.type().hasTag(BUILDER_TAG)) {
+                continue;
+            }
+            long id = unit.id().value();
+            if (oldest == -1L || id < oldest) {
+                oldest = id;
+            }
+        }
+        return oldest;
     }
 
     /** The first living builder without an order, in entity id order. */

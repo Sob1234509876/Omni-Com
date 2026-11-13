@@ -285,9 +285,30 @@ public final class World {
 
     // ------------------------------------------------------------------ gateways and travel
 
-    /** Registers a one way link between two dimensions. */
+    /**
+     * Registers a one way link between two dimensions; a byte-identical link already present is left as
+     * it is instead of being registered twice, so repeated sync passes are idempotent.
+     */
     public void addGateway(Gateway gateway) {
-        gateways.add(Objects.requireNonNull(gateway, "gateway"));
+        Gateway link = Objects.requireNonNull(gateway, "gateway");
+        if (!gateways.contains(link)) {
+            gateways.add(link);
+        }
+    }
+
+    /**
+     * Removes one gateway link; nothing happens when it is not registered. This is what keeps a
+     * dimension pair's links in step with the world: a policy layer (a plugin tick hook that syncs
+     * gateways with living gateway buildings) computes the desired set, adds the missing links and
+     * removes the stale ones through this method.
+     */
+    public void removeGateway(Gateway gateway) {
+        gateways.remove(Objects.requireNonNull(gateway, "gateway"));
+    }
+
+    /** Removes every registered gateway. */
+    public void clearGateways() {
+        gateways.clear();
     }
 
     /** Every gateway, in registration order. */
@@ -577,11 +598,11 @@ public final class World {
 
     /** Whether a building fits on the terrain of the default dimension at that position. */
     public boolean canPlace(BuildingType type, GridPos origin) {
-        return defaultDimension().canPlace(type, origin);
+        return type.isAllowedIn(defaultDimensionId) && defaultDimension().canPlace(type, origin);
     }
 
     public boolean canPlace(DimensionId id, BuildingType type, GridPos origin) {
-        return dimension(id).canPlace(type, origin);
+        return type.isAllowedIn(id) && dimension(id).canPlace(type, origin);
     }
 
     /**
@@ -591,7 +612,7 @@ public final class World {
      * the site. See {@link Dimension#canPlace(BuildingType, GridPos, Entity)}.
      */
     public boolean canPlace(DimensionId id, BuildingType type, GridPos origin, Entity replaced) {
-        return dimension(id).canPlace(type, origin, replaced);
+        return type.isAllowedIn(id) && dimension(id).canPlace(type, origin, replaced);
     }
 
     /** Marks an entity dead; it is removed from its dimension during the next {@link #flush()}. */

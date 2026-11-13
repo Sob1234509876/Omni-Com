@@ -18,9 +18,9 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (651 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (739 checks) |
 | World content | `oc-classic` |
-| Art | `assets/manifest.json` and a 96x160 `assets/atlas.png` |
+| Art | `assets/manifest.json` plus **one PNG per material** under `assets/tiles/` and `assets/entities/` (animated entities are vertical strips) |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
 
 ## The five melee tiers
@@ -370,10 +370,10 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 651 checks passed.
+classic plugin self check: all 739 checks passed.
 ```
 
-651 is the sum of the same sixteen sections plus the turret and queued-requirements checks, with the
+739 is the sum of the same sixteen sections plus the turret and queued-requirements checks, with the
 regressions added after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
 STOP must be followed by an applicable move and build against a real `CommandService`, each of the twelve
@@ -406,9 +406,9 @@ known starting position, not a fog-of-war reveal.
 | `src/main/java/.../classic/BotStrategy.java` | the per-bot strategy record, its ranges and the deterministic deriver |
 | `src/main/java/.../classic/ClassicPlugin.java` | the plugin: registers the content and the three hooks, reads `--bots` from the plugin options |
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
-| `src/main/resources/assets/manifest.json` | the atlas manifest the server merges |
-| `src/main/resources/assets/atlas.png` | the 96x160 unit and building atlas (one 32x32 cell per building kind, three turret cells on the new row) |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 651 check self check program |
+| `src/main/resources/assets/manifest.json` | the asset manifest the server merges (relative image paths) |
+| `src/main/resources/assets/tiles/*.png`, `assets/entities/*.png` | one image per terrain and per unit/building kind (vertical frames inside one file) |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 739 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related
