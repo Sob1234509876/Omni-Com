@@ -3,105 +3,105 @@
   "tilePixels": 16,
   "tiles": {
     "grass": {
-      "image": "tiles/grass.png",
+      "image": "tiles/grass.svg",
       "name": "草地"
     },
     "dirt": {
-      "image": "tiles/dirt.png",
+      "image": "tiles/dirt.svg",
       "name": "泥土"
     },
     "stone": {
-      "image": "tiles/stone.png",
+      "image": "tiles/stone.svg",
       "name": "石头"
     },
     "cobblestone": {
-      "image": "tiles/cobblestone.png",
+      "image": "tiles/cobblestone.svg",
       "name": "圆石"
     },
     "sand": {
-      "image": "tiles/sand.png",
+      "image": "tiles/sand.svg",
       "name": "沙地"
     },
     "gravel": {
-      "image": "tiles/gravel.png",
+      "image": "tiles/gravel.svg",
       "name": "沙砾"
     },
     "water": {
-      "image": "tiles/water.png",
+      "image": "tiles/water.svg",
       "name": "水域"
     },
     "bedrock": {
-      "image": "tiles/bedrock.png",
+      "image": "tiles/bedrock.svg",
       "name": "基岩"
     },
     "planks": {
-      "image": "tiles/planks.png",
+      "image": "tiles/planks.svg",
       "name": "木板"
     },
     "log": {
-      "image": "tiles/log.png",
+      "image": "tiles/log.svg",
       "name": "原木"
     },
     "leaves": {
-      "image": "tiles/leaves.png",
+      "image": "tiles/leaves.svg",
       "name": "树叶"
     },
     "snow": {
-      "image": "tiles/snow.png",
+      "image": "tiles/snow.svg",
       "name": "雪地"
     },
     "clay": {
-      "image": "tiles/clay.png",
+      "image": "tiles/clay.svg",
       "name": "黏土"
     },
     "coal_ore": {
-      "image": "tiles/coal_ore.png",
+      "image": "tiles/coal_ore.svg",
       "name": "煤矿"
     },
     "iron_ore": {
-      "image": "tiles/iron_ore.png",
+      "image": "tiles/iron_ore.svg",
       "name": "铁矿"
     },
     "mossy_cobblestone": {
-      "image": "tiles/mossy_cobblestone.png",
+      "image": "tiles/mossy_cobblestone.svg",
       "name": "苔石"
     },
     "forest": {
-      "image": "tiles/forest.png",
+      "image": "tiles/forest.svg",
       "name": "森林"
     },
     "hill": {
-      "image": "tiles/hill.png",
+      "image": "tiles/hill.svg",
       "name": "丘陵"
     },
     "rock": {
-      "image": "tiles/rock.png",
+      "image": "tiles/rock.svg",
       "name": "岩石"
     },
     "void": {
-      "image": "tiles/void.png",
+      "image": "tiles/void.svg",
       "name": "虚空"
     },
     "hell_ground": {
-      "image": "tiles/hell_ground.png",
+      "image": "tiles/hell_ground.svg",
       "name": "狱土"
     },
     "hell_ash": {
-      "image": "tiles/hell_ash.png",
+      "image": "tiles/hell_ash.svg",
       "name": "狱灰"
     },
     "hell_lava": {
-      "image": "tiles/hell_lava.png",
+      "image": "tiles/hell_lava.svg",
       "name": "熔岩"
     },
     "hell_rock": {
-      "image": "tiles/hell_rock.png",
+      "image": "tiles/hell_rock.svg",
       "name": "玄武岩"
     }
   },
   "entities": {
     "unit.melee.t1": {
-      "image": "entities/unit.melee.t1.png",
+      "image": "entities/unit.melee.t1.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -112,7 +112,7 @@
       "name": "普通"
     },
     "unit.melee.t2": {
-      "image": "entities/unit.melee.t2.png",
+      "image": "entities/unit.melee.t2.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -123,7 +123,7 @@
       "name": "强化"
     },
     "unit.melee.t3": {
-      "image": "entities/unit.melee.t3.png",
+      "image": "entities/unit.melee.t3.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -134,7 +134,7 @@
       "name": "精英"
     },
     "unit.melee.t4": {
-      "image": "entities/unit.melee.t4.png",
+      "image": "entities/unit.melee.t4.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -145,7 +145,7 @@
       "name": "将领"
     },
     "unit.melee.t5": {
-      "image": "entities/unit.melee.t5.png",
+      "image": "entities/unit.melee.t5.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -156,7 +156,7 @@
       "name": "战王"
     },
     "unit.engineer": {
-      "image": "entities/unit.engineer.png",
+      "image": "entities/unit.engineer.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -167,7 +167,7 @@
       "name": "工程师"
     },
     "building.armory.t1": {
-      "image": "entities/building.armory.t1.png",
+      "image": "entities/building.armory.t1.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -178,7 +178,7 @@
       "name": "兵工厂 1 级"
     },
     "building.armory.t2": {
-      "image": "entities/building.armory.t2.png",
+      "image": "entities/building.armory.t2.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -189,7 +189,7 @@
       "name": "兵工厂 2 级"
     },
     "building.mine.t1": {
-      "image": "entities/building.mine.t1.png",
+      "image": "entities/building.mine.t1.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -200,7 +200,7 @@
       "name": "矿井 普通"
     },
     "building.mine.t2": {
-      "image": "entities/building.mine.t2.png",
+      "image": "entities/building.mine.t2.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -211,7 +211,7 @@
       "name": "矿井 强化"
     },
     "building.mine.t3": {
-      "image": "entities/building.mine.t3.png",
+      "image": "entities/building.mine.t3.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -222,7 +222,7 @@
       "name": "矿井 精英"
     },
     "building.lumbercamp.t1": {
-      "image": "entities/building.lumbercamp.t1.png",
+      "image": "entities/building.lumbercamp.t1.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -233,7 +233,7 @@
       "name": "伐木场 普通"
     },
     "building.lumbercamp.t2": {
-      "image": "entities/building.lumbercamp.t2.png",
+      "image": "entities/building.lumbercamp.t2.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -244,7 +244,7 @@
       "name": "伐木场 强化"
     },
     "building.lumbercamp.t3": {
-      "image": "entities/building.lumbercamp.t3.png",
+      "image": "entities/building.lumbercamp.t3.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -255,7 +255,7 @@
       "name": "伐木场 精英"
     },
     "building.warehouse": {
-      "image": "entities/building.warehouse.png",
+      "image": "entities/building.warehouse.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -266,7 +266,7 @@
       "name": "仓库"
     },
     "building.turret.t1": {
-      "image": "entities/building.turret.t1.png",
+      "image": "entities/building.turret.t1.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -277,7 +277,7 @@
       "name": "哨塔 普通"
     },
     "building.turret.t2": {
-      "image": "entities/building.turret.t2.png",
+      "image": "entities/building.turret.t2.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -288,7 +288,7 @@
       "name": "哨塔 强化"
     },
     "building.turret.t3": {
-      "image": "entities/building.turret.t3.png",
+      "image": "entities/building.turret.t3.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -299,7 +299,7 @@
       "name": "哨塔 精英"
     },
     "building.purgatory": {
-      "image": "entities/building.purgatory.png",
+      "image": "entities/building.purgatory.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -310,7 +310,7 @@
       "name": "炼狱工厂"
     },
     "unit.hell.t1": {
-      "image": "entities/unit.hell.t1.png",
+      "image": "entities/unit.hell.t1.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -321,7 +321,7 @@
       "name": "地狱·普通"
     },
     "unit.hell.t2": {
-      "image": "entities/unit.hell.t2.png",
+      "image": "entities/unit.hell.t2.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -332,7 +332,7 @@
       "name": "地狱·强化"
     },
     "unit.hell.t3": {
-      "image": "entities/unit.hell.t3.png",
+      "image": "entities/unit.hell.t3.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -343,7 +343,7 @@
       "name": "地狱·精英"
     },
     "unit.hell.t4": {
-      "image": "entities/unit.hell.t4.png",
+      "image": "entities/unit.hell.t4.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -354,7 +354,7 @@
       "name": "地狱·将领"
     },
     "unit.hell.t5": {
-      "image": "entities/unit.hell.t5.png",
+      "image": "entities/unit.hell.t5.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -365,7 +365,7 @@
       "name": "地狱·战王"
     },
     "building.turret.t4": {
-      "image": "entities/building.turret.t4.png",
+      "image": "entities/building.turret.t4.svg",
       "frames": 1,
       "fps": 1,
       "anchor": [
@@ -376,7 +376,7 @@
       "name": "战王炮塔"
     },
     "building.hell_gate": {
-      "image": "entities/building.hell_gate.png",
+      "image": "entities/building.hell_gate.svg",
       "frames": 1,
       "fps": 2,
       "anchor": [
@@ -387,7 +387,7 @@
       "name": "地狱门"
     },
     "unit.engineer.t2": {
-      "image": "entities/unit.engineer.t2.png",
+      "image": "entities/unit.engineer.t2.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -398,7 +398,7 @@
       "name": "工程师·强化"
     },
     "unit.engineer.t3": {
-      "image": "entities/unit.engineer.t3.png",
+      "image": "entities/unit.engineer.t3.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -409,7 +409,7 @@
       "name": "工程师·精英"
     },
     "unit.engineer.t4": {
-      "image": "entities/unit.engineer.t4.png",
+      "image": "entities/unit.engineer.t4.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -420,7 +420,7 @@
       "name": "工程师·将领"
     },
     "unit.engineer.t5": {
-      "image": "entities/unit.engineer.t5.png",
+      "image": "entities/unit.engineer.t5.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -431,7 +431,7 @@
       "name": "工程师·战王"
     },
     "unit.hell_hound": {
-      "image": "entities/unit.hell_hound.png",
+      "image": "entities/unit.hell_hound.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -442,7 +442,7 @@
       "name": "地狱犬"
     },
     "unit.abyss_brute": {
-      "image": "entities/unit.abyss_brute.png",
+      "image": "entities/unit.abyss_brute.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -453,7 +453,7 @@
       "name": "深渊魔"
     },
     "unit.ranged.t1": {
-      "image": "entities/unit.ranged.t1.png",
+      "image": "entities/unit.ranged.t1.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -464,7 +464,7 @@
       "name": "弓手·普通"
     },
     "unit.ranged.t2": {
-      "image": "entities/unit.ranged.t2.png",
+      "image": "entities/unit.ranged.t2.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -475,7 +475,7 @@
       "name": "弓手·强化"
     },
     "unit.ranged.t3": {
-      "image": "entities/unit.ranged.t3.png",
+      "image": "entities/unit.ranged.t3.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -486,7 +486,7 @@
       "name": "弓手·精英"
     },
     "unit.ranged.t4": {
-      "image": "entities/unit.ranged.t4.png",
+      "image": "entities/unit.ranged.t4.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [
@@ -497,7 +497,7 @@
       "name": "弓手·将领"
     },
     "unit.ranged.t5": {
-      "image": "entities/unit.ranged.t5.png",
+      "image": "entities/unit.ranged.t5.svg",
       "frames": 2,
       "fps": 4,
       "anchor": [

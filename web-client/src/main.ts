@@ -124,16 +124,14 @@ import {
 import {
   EMPTY_RESOURCE_MARKS,
   clearResourceMarks,
-  fullResourceList,
   inventoryTotals,
   isWarehouseRow,
   markAllResources,
-  markedSummaryLabel,
   toggleResourceMark,
   type ResourceMarks,
-  type WarehouseTotals,
 } from "./render/resources";
 import {
+  genericContentLabel,
   initI18n,
   resolveLanguage,
   t,
@@ -160,7 +158,6 @@ import {
   demandMissingText,
   combatLabel,
   formatProgressPercent,
-  incomeSuffix,
   itemDisplayName,
   progressBarRatio,
   queueItemNumber,
@@ -288,8 +285,6 @@ const markerRows = required<HTMLUListElement>("#marker-rows");
 const markerEmpty = required<HTMLParagraphElement>("#marker-empty");
 const markerClearButton = required<HTMLButtonElement>("#marker-clear");
 const markerCloseButton = required<HTMLButtonElement>("#marker-close");
-const hudResources = required<HTMLSpanElement>("#hud-resources");
-const hudMarked = required<HTMLSpanElement>("#hud-marked");
 const hudTile = required<HTMLSpanElement>("#hud-tile");
 const hudZoom = required<HTMLSpanElement>("#hud-zoom");
 const hudFps = required<HTMLSpanElement>("#hud-fps");
@@ -319,10 +314,6 @@ const inventorySummary = required<HTMLParagraphElement>("#inventory-summary");
 const inventoryItems = required<HTMLUListElement>("#inventory-items");
 const inventoryTotal = required<HTMLParagraphElement>("#inventory-total");
 const inventoryEmpty = required<HTMLParagraphElement>("#inventory-empty");
-const openResourcesButton = required<HTMLButtonElement>("#open-resources");
-const resourcesOverlay = required<HTMLDivElement>("#resources-overlay");
-const resourcesCloseButton = required<HTMLButtonElement>("#resources-close");
-const resourcesList = required<HTMLUListElement>("#resources-list");
 const tooltipElement = required<HTMLDivElement>("#entity-tooltip");
 const toggleViewButton = required<HTMLButtonElement>("#toggle-view");
 const connectionToggle = required<HTMLButtonElement>("#connection-toggle");
@@ -481,6 +472,9 @@ function applyLanguage(): void {
   updateSettingsView();
   updateHud(true);
   updateGameplayPanel();
+  // The BUILD rail's buttons survive a same-catalogue rebuild (the signature skip inside
+  // `rebuildBuildButtons`), so their labels have to be re-resolved for the new language explicitly.
+  refreshContentLabels();
 }
 
 // The UI language resolves once at boot from the stored setting (default `auto`) and the browser; the
@@ -545,7 +539,6 @@ openSettingsButton.addEventListener("click", () => {
   const opening = settingsOverlay.hidden === true;
   if (opening) {
     setConnectionOpen(false, false);
-    setResourcesOpen(false, false);
     setConsoleOpen(false, false);
     setHelpOpen(false, false);
     if (musicPlayer.isOpen) {
@@ -570,7 +563,6 @@ openMusicButton.addEventListener("click", () => {
     // The player is a small floating panel; close the other dialogs so only one owns the keyboard.
     setSettingsOpen(false, false);
     setConnectionOpen(false, false);
-    setResourcesOpen(false, false);
   }
   musicPlayer.toggleOpen();
 });
@@ -779,7 +771,6 @@ connectionToggle.addEventListener("click", () => {
   const opening = connectionOverlay.hidden === true;
   if (opening) {
     setSettingsOpen(false, false);
-    setResourcesOpen(false, false);
     setConsoleOpen(false, false);
     setHelpOpen(false, false);
     if (musicPlayer.isOpen) {
@@ -831,7 +822,6 @@ openConsoleButton.addEventListener("click", () => {
       setConnectionOpen(false, false);
     }
     setSettingsOpen(false, false);
-    setResourcesOpen(false, false);
     setHelpOpen(false, false);
     if (musicPlayer.isOpen) {
       musicPlayer.close();
@@ -885,7 +875,6 @@ openHelpButton.addEventListener("click", () => {
       setConnectionOpen(false, false);
     }
     setSettingsOpen(false, false);
-    setResourcesOpen(false, false);
     setConsoleOpen(false, false);
     if (musicPlayer.isOpen) {
       musicPlayer.close();
@@ -2100,11 +2089,14 @@ function flashNewSelection(
 }
 
 /**
- * The human label for one content path: the manifest display name when the atlas defines one,
- * otherwise the raw path. The wire commands always keep the path itself.
+ * The human label for one content path: the manifest display name when the atlas defines one, else
+ * the client's generic label for the paths the fallback catalogue ships, else the raw path. Served
+ * names are never translated — a manifest name wins as sent, and the generic i18n labels only cover
+ * the client's own fallback BUILD/TRAIN catalogue. The wire commands always keep the path itself.
  */
 function contentLabel(path: string): string {
-  return entityDisplayName(atlas, path);
+  const fromManifest = entityDisplayName(atlas, path);
+  return fromManifest !== path ? fromManifest : genericContentLabel(path) ?? path;
 }
 
 /** `普通 (unit.melee.t1)` when named, plain `unit.melee.t1` when the manifest has no name. */
@@ -2161,8 +2153,8 @@ let lastWarehouseModel: WarehousePanelModel | null = null;
  * The panel follows the requirement's two views: exactly one own warehouse selected shows that building's
  * own contents plus its capacity / used / free slots and its inbound transfer count, and the
  * `全部/总计` toggle returns to the sum. The totals half is still computed in both views because the
- * marked HUD line is item-level and always reads the all-warehouse total; the single-view note says so.
- * Checkboxes therefore keep working in both views, and "mark all" marks what is currently listed.
+ * marks are item-level; the single-view note says the marks belong to this panel. Checkboxes therefore
+ * keep working in both views, and "mark all" marks what is currently listed.
  */
 function updateWarehousePanel(model: WarehousePanelModel): void {
   lastWarehouseModel = model;
@@ -2198,7 +2190,7 @@ function renderWarehouseRows(model: WarehousePanelModel): void {
     box.dataset["path"] = item.path;
     box.checked = resourceMarks.has(item.path);
     box.title =
-      `标记 ${item.name}：只在客户端记住这个物品，HUD 的已标记行显示全部仓库合计`;
+      `标记 ${item.name}：只在客户端记住这个物品，勾选的物品在本面板保持高亮`;
     box.setAttribute("aria-label", `标记 ${item.name}`);
     box.addEventListener("change", () => {
       resourceMarks = toggleResourceMark(resourceMarks, item.path);
@@ -2335,12 +2327,6 @@ function syncWarehouseMarkBoxes(): void {
   }
 }
 
-/** The compact marked-resource HUD line, always derived from the all-warehouse totals. */
-function updateMarkedHud(totals: WarehouseTotals): void {
-  void renderLatexInto(hudMarked, markedSummaryLabel(resourceMarks, totals, itemLabel));
-  hudMarked.classList.toggle("has-marks", resourceMarks.size > 0);
-}
-
 /** Rebuilds the panel model from the current snapshot, selection and scope preference. */
 function currentWarehouseModel(): WarehousePanelModel {
   return warehousePanelModel(world, myPlayerId, selectedEntities(), warehouseScope, itemLabel);
@@ -2349,13 +2335,9 @@ function currentWarehouseModel(): WarehousePanelModel {
 /** Refreshes every surface that shows the marks after one checkbox / button action. */
 function refreshMarkViews(): void {
   const model = currentWarehouseModel();
-  updateMarkedHud(model.total);
   syncWarehouseMarkBoxes();
   warehouseMarkAllButton.disabled = model.rows.length === 0;
   warehouseClearMarksButton.disabled = resourceMarks.size === 0;
-  if (!resourcesOverlay.hidden) {
-    updateResourcePage();
-  }
 }
 
 /** Last rendered inventory list; the panel is rebuilt only when its rows or selection count change. */
@@ -2410,103 +2392,6 @@ function updateInventoryPanel(): void {
   inventoryEmpty.hidden = !(totals.unitCount > 0 && rows.length === 0);
 }
 
-/** Last rendered full-resource list; the page is rebuilt only when its rows actually change. */
-let resourcePageSignature = "";
-
-/**
- * Rebuilds the full resource page.
- *
- * `fullResourceList` merges the manifest's item definitions, every item in the local player's buildings
- * and units' cargo, and the two currencies; it de-duplicates by path, sorts by display name and keeps
- * explicit zeros. The page therefore lists a resource the player does not own instead of hiding it.
- * The location column names the own buildings that hold an item, which is the "where it sits" answer
- * for a building-only item.
- */
-function updateResourcePage(): void {
-  const manifestItems = atlas === null ? [] : [...atlas.names.items.keys()];
-  const rows = fullResourceList(world, myPlayerId, manifestItems, itemLabel);
-  const signature = rows
-    .map(
-      (row) =>
-        `${row.path}:${row.name}:${row.amount}:` +
-        `${row.buildingIds.join(",")}:${row.unitIds.join(",")}`,
-    )
-    .join("|");
-  if (signature === resourcePageSignature) {
-    return;
-  }
-  resourcePageSignature = signature;
-
-  const nodes = rows.map((row) => {
-    const item = document.createElement("li");
-    item.className = "resources-row";
-    item.dataset["path"] = row.path;
-    const name = document.createElement("span");
-    name.className = "resources-name";
-    void renderLatexInto(name, row.name);
-    const amount = document.createElement("span");
-    amount.className = "resources-amount";
-    amount.textContent = String(row.amount);
-    const where = document.createElement("span");
-    where.className = "resources-where";
-    if (row.buildingIds.length > 0) {
-      where.textContent = `位置：建筑 ${row.buildingIds.map((id) => `#${id}`).join(" · ")}`;
-    } else if (row.unitIds.length > 0) {
-      where.textContent = `携带：单位 ${row.unitIds.map((id) => `#${id}`).join(" · ")}`;
-    }
-    item.append(name, amount, where);
-    return item;
-  });
-  resourcesList.replaceChildren(...nodes);
-}
-
-/**
- * Opens or closes the full resource page.
- *
- * The container is transparent and takes no pointer input, so opening the page never dims the canvas;
- * only the panel itself is darkened. The 资源 button, the panel's 关闭 button and Escape all close it.
- */
-function setResourcesOpen(open: boolean, moveFocus = true): void {
-  resourcesOverlay.hidden = !open;
-  openResourcesButton.setAttribute("aria-expanded", open ? "true" : "false");
-  openResourcesButton.classList.toggle("armed", open);
-  if (open) {
-    updateResourcePage();
-    resourcesCloseButton.focus({ preventScroll: true });
-  } else if (moveFocus) {
-    openResourcesButton.focus({ preventScroll: true });
-  }
-}
-
-openResourcesButton.addEventListener("click", () => {
-  const opening = resourcesOverlay.hidden === true;
-  if (opening) {
-    setSettingsOpen(false, false);
-    if (musicPlayer.isOpen) {
-      musicPlayer.close();
-    }
-  }
-  setResourcesOpen(opening);
-});
-
-resourcesCloseButton.addEventListener("click", () => {
-  setResourcesOpen(false);
-});
-
-// Capture phase so Escape closes the resource page before the canvas turns it into "cancel"; the log
-// overlay keeps its own priority, so an Escape with the log open only closes that overlay.
-document.addEventListener(
-  "keydown",
-  (event) => {
-    if (event.key === "Escape" && logOverlay.hidden && !resourcesOverlay.hidden) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setResourcesOpen(false);
-    }
-  },
-  true,
-);
-
 warehouseMarkAllButton.addEventListener("click", () => {
   const model = currentWarehouseModel();
   resourceMarks = markAllResources(
@@ -2529,7 +2414,6 @@ warehouseScopeButton.addEventListener("click", () => {
   warehouseScope = warehouseScope === "single" ? "total" : "single";
   const model = currentWarehouseModel();
   updateWarehousePanel(model);
-  updateMarkedHud(model.total);
   setStatus(
     model.scope === "single" ? "仓库面板：只看选中的仓库" : "仓库面板：全部仓库合计",
     "idle",
@@ -2591,7 +2475,6 @@ function focusWarehouseTransfer(): void {
   warehouseScope = "single";
   const model = currentWarehouseModel();
   updateWarehousePanel(model);
-  updateMarkedHud(model.total);
   warehouseTransferItem.focus({ preventScroll: true });
   if (!model.transferReady) {
     setWarehouseTransferStatus(model.transferReason, "error", false);
@@ -2976,18 +2859,6 @@ function updateHud(force = false, now = performance.now()): void {
   if (markerPanelOpen) {
     updateMarkerRows(focus);
   }
-  const resources = myPlayerRow();
-  const goldLabel = t("item.gold");
-  const woodLabel = t("item.wood");
-  void renderLatexInto(
-    hudResources,
-    resources === undefined
-      ? `${t("hud.resources")}：${goldLabel} — · ${woodLabel} —`
-      : `${t("hud.resources")}：${resources.name} · ${goldLabel} ${resources.gold}` +
-          `${incomeSuffix(resources.goldPerMinute)} · ${woodLabel} ${resources.wood}` +
-          incomeSuffix(resources.woodPerMinute),
-  );
-  hudResources.classList.toggle("unavailable", resources === undefined);
   void renderLatexInto(
     hudTile,
     hoverTile === null ? `${t("hud.tile")}：—` : `${t("hud.tile")}：${hoverTile.x}, ${hoverTile.y}`,
@@ -3062,9 +2933,9 @@ function updateHud(force = false, now = performance.now()): void {
   renderOrderQueue(only);
   // The context zone has a panel background only while it has a TRAIN/BUILD section or queue rows.
   updateCommandContextVisibility();
-  // One warehouse aggregation per HUD tick feeds the item rows, the marked line and the resource page,
-  // so those surfaces cannot disagree about an amount. The panel model adds the single-warehouse view
-  // (capacity / used / free / inbound) on top of the same totals.
+  // One warehouse aggregation per HUD tick feeds the item rows of the resource panel (the one
+  // resource surface the page keeps), so its rows cannot disagree with an amount anywhere else. The
+  // panel model adds the single-warehouse view (capacity / used / free / inbound) on top of the totals.
   const warehouseModel = warehousePanelModel(
     world,
     myPlayerId,
@@ -3073,13 +2944,9 @@ function updateHud(force = false, now = performance.now()): void {
     itemLabel,
   );
   updateWarehousePanel(warehouseModel);
-  updateMarkedHud(warehouseModel.total);
   warehouseMarkAllButton.disabled = warehouseModel.rows.length === 0;
   warehouseClearMarksButton.disabled = resourceMarks.size === 0;
   updateInventoryPanel();
-  if (!resourcesOverlay.hidden) {
-    updateResourcePage();
-  }
   // While a BUILD is armed the status line belongs to the placement ghost: it names the reason for the
   // tile under the cursor (可建造 / 地形不可建 / ...). Without a hovered tile it restores the reminder.
   updatePlacementStatus();
@@ -5323,7 +5190,6 @@ function setViewVisible(visible: boolean): void {
   toggleViewButton.setAttribute("aria-pressed", viewHidden ? "true" : "false");
   if (viewHidden) {
     hideTooltip();
-    setResourcesOpen(false, false);
     // The marker list is part of the game view chrome; hiding the view closes it without deleting a
     // single marker, exactly like Escape.
     setMarkerPanelOpen(false, false);
@@ -5405,10 +5271,16 @@ function rebuildBuildButtons(paths: readonly string[]): void {
   for (const buildingPath of paths) {
     const button = document.createElement("button");
     button.type = "button";
-    // The catalogue is content paths; the manifest display name is applied by refreshContentLabels
-    // once the atlas arrives, and no client-side price is invented (costs are the server's content).
+    // The catalogue is content paths; no client-side price is invented (costs are the server's
+    // content). The display name is resolved immediately — the manifest name when the atlas has one,
+    // else the generic i18n label of the fallback catalogue — so a served catalogue arriving after
+    // the atlas never paints raw paths. refreshContentLabels re-runs this once the atlas arrives.
     button.textContent = buildingPath;
-    button.title = `BUILD ${buildingPath}`;
+    const label = contentLabel(buildingPath);
+    if (label !== buildingPath) {
+      void renderLatexInto(button, label);
+    }
+    button.title = label === buildingPath ? `BUILD ${buildingPath}` : `BUILD ${label} (${buildingPath})`;
     button.disabled = true;
     button.setAttribute("aria-pressed", "false");
     button.dataset["path"] = buildingPath;
@@ -5462,10 +5334,11 @@ function rebuildVariantUpgradeButtons(count: number): void {
 }
 
 /**
- * Re-labels the gameplay buttons from the atlas display names.
+ * Re-labels the gameplay buttons from the atlas display names (or the generic i18n labels).
  *
- * The buttons are built once, before the atlas arrives; this runs again after `loadArtwork`. A path
- * with no name keeps showing the raw path, which is also what the page showed before names existed.
+ * The buttons are built once, before the atlas arrives; this runs again after `loadArtwork` and on a
+ * language switch, so every button reads the current best name. A path neither the manifest nor the
+ * dictionaries name keeps showing the raw path.
  */
 function refreshContentLabels(): void {
   for (const button of trainButtons) {

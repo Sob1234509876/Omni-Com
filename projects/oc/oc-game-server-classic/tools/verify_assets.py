@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""Snapshot and verify the classic game plugin's material PNGs.
+"""Verify the classic game plugin's material SVGs against assets/manifest.json.
 
 Usage:
-    python verify_assets.py snapshot   # record sha256 + dimensions of every
-                                       # manifest-referenced file (run BEFORE
-                                       # redraw_assets.py)
-    python verify_assets.py verify     # check existence, dimensions, manifest
-                                       # frame geometry, content sanity, and
-                                       # that every file changed since the
-                                       # snapshot
+    python verify_assets.py verify
+
+Every manifest-referenced file must be a well-formed SVG whose root carries
+width/height attributes equal to its viewBox (the explicit intrinsic size the
+browser needs to decode the file into an image element):
+    * terrain tiles  : 16 x 16, an opaque full-cover base rect;
+    * unit strips    : 16 wide, height = frames x 16, each frame a clipped
+      16 px band and the frames not identical;
+    * building sheets: 32 x 32.
+No pixel hashing: SVG is vector text, so the checks validate structure and
+geometry instead of a snapshot. (The old PIL snapshot flow is gone together
+with the PNG assets; tools/before_hashes.json was deleted.)
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
-
-from PIL import Image
 
 TOOLS = Path(__file__).resolve().parent
 ASSETS = TOOLS.parent / "src" / "main" / "resources" / "assets"
-SNAPSHOT_PATH = TOOLS / "before_hashes.json"
+SVG_NS = "{http://www.w3.org/2000/svg}"
+
+SHAPE_TAGS = {"rect", "circle", "ellipse", "path", "line", "polygon", "polyline"}
 
 
 def load_manifest() -> dict:
@@ -35,46 +40,56 @@ def manifest_images(manifest: dict) -> list[str]:
     return sorted(images)
 
 
-def hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
-def pixel_tuples(img: Image.Image) -> list[tuple[int, int, int, int]]:
-    """RGBA pixel list without the deprecated Image.getdata()."""
-    data = img.convert("RGBA").tobytes()
-    return [tuple(data[i : i + 4]) for i in range(0, len(data), 4)]  # type: ignore[misc]
+def attr_of(element: ET.Element, name: str) -> str | None:
+    """Reads an attribute regardless of namespace prefix."""
+    value = element.get(name)
+    if value is not None:
+        return value
+    for key, candidate in element.attrib.items():
+        if local_name(key) == name:
+            return candidate
+    return None
 
 
-def snapshot() -> None:
-    manifest = load_manifest()
-    out = {}
-    for rel in manifest_images(manifest):
-        path = ASSETS / rel
-        if not path.exists():
-            sys.exit(f"snapshot error: missing file {rel}")
-        with Image.open(path) as img:
-            width, height = img.size
-        out[rel] = {"sha256": hash_file(path), "width": width, "height": height}
-    SNAPSHOT_PATH.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
-    print(f"snapshot: recorded {len(out)} files -> {SNAPSHOT_PATH.name}")
+def parse_svg(path: Path) -> tuple[ET.Element, float, float, tuple[float, float, float, float] | None] | None:
+    """Parses one SVG file; returns (root, width, height, viewBox) or None."""
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError):
+        return None
+    if local_name(root.tag) != "svg":
+        return None
+    try:
+        width = float(attr_of(root, "width") or "")
+        height = float(attr_of(root, "height") or "")
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    view_box: tuple[float, float, float, float] | None = None
+    raw_view_box = attr_of(root, "viewBox")
+    if raw_view_box:
+        parts = raw_view_box.replace(",", " ").split()
+        if len(parts) == 4:
+            try:
+                view_box = tuple(float(part) for part in parts)  # type: ignore[assignment]
+            except ValueError:
+                view_box = None
+    return root, width, height, view_box
 
 
-def expected_dimensions(key: str, spec: dict, tile_pixels: int) -> tuple[int, int]:
-    """Expected pixel dimensions from the manifest alone."""
-    frames = int(spec["frames"])
-    if key.startswith("building."):
-        return 2 * tile_pixels, 2 * tile_pixels  # single-frame square building sheet
-    return tile_pixels, tile_pixels * frames  # unit strip: square frames
+def iter_shapes(element: ET.Element):
+    for child in element.iter():
+        name = local_name(child.tag)
+        if name in SHAPE_TAGS:
+            yield name, child
 
 
 def verify() -> None:
-    if not SNAPSHOT_PATH.exists():
-        sys.exit("verify error: no snapshot found; run 'verify_assets.py snapshot' first")
-    snapshot_data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
     manifest = load_manifest()
     tile_pixels = int(manifest["tilePixels"])
 
@@ -83,16 +98,22 @@ def verify() -> None:
 
     referenced = set(manifest_images(manifest))
 
-    # 1. Every manifest-referenced file exists; no unexpected extra files.
+    # 1. Every manifest-referenced file exists, is an .svg, and there are no
+    #    unexpected extra files (the old PNGs must be gone too).
     for sub in ("tiles", "entities"):
         actual = {f"{sub}/{p.name}" for p in (ASSETS / sub).iterdir() if p.is_file()}
         for extra in sorted(actual - referenced):
             errors.append(f"unexpected extra file in assets/{sub}: {extra}")
+        stale = sorted(name for name in actual - referenced if name.endswith(".png"))
+        for name in stale:
+            errors.append(f"stale PNG left in assets/{sub}: {name}")
     for rel in sorted(referenced):
+        if not rel.endswith(".svg"):
+            errors.append(f"manifest image is not an .svg: {rel}")
         if not (ASSETS / rel).exists():
             errors.append(f"missing manifest file: {rel}")
 
-    # 2/3. Dimensions + frame geometry.
+    # 2/3. Root element: width/height == viewBox, and the dims the manifest needs.
     for kind_group, entries in (("tiles", manifest["tiles"]), ("entities", manifest["entities"])):
         for key, spec in entries.items():
             rel = spec["image"]
@@ -100,116 +121,158 @@ def verify() -> None:
             if not path.exists():
                 continue
             checked += 1
-            with Image.open(path) as img:
-                width, height = img.size
-                mode = img.mode
+            parsed = parse_svg(path)
+            if parsed is None:
+                errors.append(f"{rel}: not a well-formed SVG with numeric width/height")
+                continue
+            root, width, height, view_box = parsed
+            if view_box is None or view_box != (0, 0, width, height):
+                errors.append(
+                    f"{rel}: viewBox does not match width/height {width}x{height}"
+                )
+                continue
+            shapes = list(iter_shapes(root))
+            if not shapes:
+                errors.append(f"{rel}: SVG has no drawing content")
+                continue
+            frames = int(spec.get("frames", 1))
             if kind_group == "tiles":
-                want = (tile_pixels, tile_pixels)
+                want = (float(tile_pixels), float(tile_pixels))
+            elif key.startswith("building."):
+                want = (2.0 * tile_pixels, 2.0 * tile_pixels)  # square building sheet
             else:
-                want = expected_dimensions(key, spec, tile_pixels)
+                want = (float(tile_pixels), float(tile_pixels) * frames)  # unit strip
             if (width, height) != want:
-                errors.append(f"{rel}: dimensions {width}x{height}, expected {want[0]}x{want[1]}")
-            if kind_group == "entities":
-                frames = int(spec["frames"])
-                if height % frames != 0:
-                    errors.append(f"{rel}: height {height} not divisible by frames {frames}")
+                errors.append(
+                    f"{rel}: dimensions {fmt_dim(width, height)}, expected {fmt_dim(want[0], want[1])}"
+                )
+            if kind_group == "entities" and frames >= 2:
+                # each frame must be its own clipped band; frames must differ
+                groups = [
+                    child
+                    for child in root
+                    if local_name(child.tag) == "g" and attr_of(child, "clip-path")
+                ]
+                if len(groups) != frames:
+                    errors.append(f"{rel}: expected {frames} clipped frame groups, found {len(groups)}")
                 else:
-                    frame_h = height // frames
-                    if frame_h != width:
-                        errors.append(f"{rel}: frame {width}x{frame_h} is not square")
+                    texts = [ET.tostring(group, encoding="unicode") for group in groups]
+                    if len(set(texts)) != frames:
+                        errors.append(f"{rel}: animation frames are identical")
 
-    # 4. Every file changed vs the snapshot; dimensions unchanged.
-    for rel, before in sorted(snapshot_data.items()):
-        path = ASSETS / rel
-        if not path.exists():
-            errors.append(f"{rel}: existed at snapshot time but is now missing")
-            continue
-        checked += 1
-        now_hash = hash_file(path)
-        if now_hash == before["sha256"]:
-            errors.append(f"{rel}: unchanged since snapshot (art did not change)")
-        with Image.open(path) as img:
-            now_dims = img.size
-        if (before["width"], before["height"]) != now_dims:
-            errors.append(
-                f"{rel}: dimensions changed from "
-                f"{before['width']}x{before['height']} to {now_dims[0]}x{now_dims[1]}"
-            )
-
-    # 5. Content sanity.
+    # 4. Content sanity.
     for key, spec in manifest["tiles"].items():
         rel = spec["image"]
         path = ASSETS / rel
         if not path.exists():
             continue
-        with Image.open(path) as img:
-            rgba_img = img.convert("RGBA")
-        pixels = pixel_tuples(rgba_img)
-        alphas = {p[3] for p in pixels}
-        if alphas and max(alphas) != 255:
-            errors.append(f"{rel}: terrain tile must be fully opaque, max alpha {max(alphas)}")
+        parsed = parse_svg(path)
+        if parsed is None:
+            continue
+        root, width, height, _view_box = parsed
+        shapes = list(iter_shapes(root))
+        if not shapes:
+            continue
+        # terrain tiles must be fully opaque: the first shape is the base and
+        # must cover the whole tile with a solid, untransparent fill.
+        name, base = shapes[0]
+        fill = attr_of(base, "fill")
+        fill_opacity = attr_of(base, "fill-opacity") or "1"
+        covers = False
+        try:
+            covers = (
+                name == "rect"
+                and float(attr_of(base, "x") or "0") <= 0
+                and float(attr_of(base, "y") or "0") <= 0
+                and float(attr_of(base, "width") or "0") >= width
+                and float(attr_of(base, "height") or "0") >= height
+            )
+        except ValueError:
+            covers = False
+        if not covers or fill in (None, "none") or float(fill_opacity) < 1.0:
+            errors.append(f"{rel}: terrain tile must start with an opaque full-cover base rect")
         # "void" is flat by design: drawTerrainTile returns before any detail
         # and paints exactly the palette colour #0b1016.
         if key == "void":
-            if {p[:3] for p in pixels} != {(11, 16, 22)}:
-                errors.append(f"{rel}: void tile must be the single palette colour #0b1016")
-        elif len({p[:3] for p in pixels}) < 6:
-            errors.append(f"{rel}: tile looks flat (<6 distinct colours)")
+            if len(shapes) != 1 or (fill or "").lower() != "#0b1016":
+                errors.append(f"{rel}: void tile must be a single #0b1016 rect")
+        elif len(shapes) < 2:
+            errors.append(f"{rel}: tile looks flat (only {len(shapes)} shape(s))")
 
     for key, spec in manifest["entities"].items():
         rel = spec["image"]
         path = ASSETS / rel
         if not path.exists():
             continue
-        with Image.open(path) as img:
-            rgba_img = img.convert("RGBA")
-            width, height = img.size
-        pixels = pixel_tuples(rgba_img)
-        if len({p[:3] for p in pixels if p[3] > 0}) < 4:
-            errors.append(f"{rel}: sprite looks flat (<4 distinct visible colours)")
-        frames = int(spec["frames"])
-        frame_h = height // frames
-        opaque = sum(1 for p in pixels if p[3] > 200)
-        if opaque == 0:
-            errors.append(f"{rel}: no opaque pixels at all")
-        if opaque > len(pixels) * 0.95:
-            errors.append(f"{rel}: sprite fills the whole canvas; transparent background lost")
-        # corners of every frame must be transparent
-        for frame in range(frames):
-            y0 = frame * frame_h
-            for cx, cy in ((0, y0), (width - 1, y0), (0, y0 + frame_h - 1), (width - 1, y0 + frame_h - 1)):
-                if rgba_img.getpixel((cx, cy))[3] != 0:
-                    errors.append(f"{rel}: frame {frame} corner ({cx},{cy}) is not transparent")
-                    break
-        # frames must actually differ
-        if frames >= 2:
-            frame0 = rgba_img.crop((0, 0, width, frame_h))
-            frame1 = rgba_img.crop((0, frame_h, width, 2 * frame_h))
-            if frame0.tobytes() == frame1.tobytes():
+        parsed = parse_svg(path)
+        if parsed is None:
+            continue
+        root, width, height, _view_box = parsed
+        shapes = list(iter_shapes(root))
+        inks = {
+            value.lower()
+            for _name, child in shapes
+            for attr in ("fill", "stroke")
+            for value in (attr_of(child, attr),)
+            if value not in (None, "none")
+        }
+        if len(inks) < 4:
+            errors.append(f"{rel}: sprite looks flat (<4 distinct ink colours)")
+        # sprites must not paint their whole canvas: no full-cover opaque rect
+        for _name, child in shapes:
+            if local_name(child.tag) != "rect" or (attr_of(child, "fill") or "") == "none":
+                continue
+            try:
+                full = (
+                    float(attr_of(child, "x") or "0") <= 0
+                    and float(attr_of(child, "y") or "0") <= 0
+                    and float(attr_of(child, "width") or "0") >= width
+                    and float(attr_of(child, "height") or "0") >= height
+                    and float(attr_of(child, "fill-opacity") or "1") >= 1.0
+                )
+            except ValueError:
+                full = False
+            if full:
+                errors.append(f"{rel}: sprite fills the whole canvas; transparent background lost")
+                break
+        # frames must actually differ (strips); single-frame buildings skip this
+        if int(spec.get("frames", 1)) >= 2:
+            groups = [
+                child
+                for child in root
+                if local_name(child.tag) == "g" and attr_of(child, "clip-path")
+            ]
+            texts = [ET.tostring(group, encoding="unicode") for group in groups]
+            if len(texts) >= 2 and texts[0] == texts[1]:
                 errors.append(f"{rel}: animation frames 0 and 1 are identical")
 
     total = len(referenced)
+    on_disk = len(list((ASSETS / "tiles").iterdir())) + len(list((ASSETS / "entities").iterdir()))
     print(f"files referenced by manifest : {total}")
-    print(f"files on disk                : {len(list((ASSETS / 'tiles').iterdir())) + len(list((ASSETS / 'entities').iterdir()))}")
-    print(f"snapshot entries compared    : {len(snapshot_data)}")
+    print(f"files on disk                : {on_disk}")
     print(f"checks run                   : {checked}")
     if errors:
         print(f"FAIL: {len(errors)} problem(s)")
         for err in errors:
             print(f"  - {err}")
         sys.exit(1)
-    print("OK: all manifest files exist, dimensions and frame geometry match,")
-    print("    every file differs from the pre-redraw snapshot, content sane.")
+    print("OK: all manifest files exist as well-formed SVGs, viewBox/width/height")
+    print("    geometry matches the manifest frame math, content sane.")
+
+
+def fmt_dim(width: float, height: float) -> str:
+    def part(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else str(value)
+
+    return f"{part(width)}x{part(height)}"
 
 
 def main() -> None:
     command = sys.argv[1] if len(sys.argv) > 1 else ""
-    if command == "snapshot":
-        snapshot()
-    elif command == "verify":
+    if command == "verify":
         verify()
     else:
-        sys.exit("usage: verify_assets.py snapshot|verify")
+        sys.exit("usage: verify_assets.py verify")
 
 
 if __name__ == "__main__":

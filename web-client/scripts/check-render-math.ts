@@ -244,6 +244,7 @@ import {
   DICTIONARIES,
   LANGUAGES,
   currentI18nLanguage,
+  genericContentLabel,
   initI18n,
   resolveLanguage,
   t,
@@ -2420,11 +2421,13 @@ if (classicAtlas.ok) {
     `${classicAtlas.data.entities.size} entities parsed`,
   );
 
-  // Every referenced file must exist on disk next to the manifest and start with the PNG signature
-  // bytes 89 50 4E 47, so a typo'd path or a stub file fails here instead of on the player's screen.
+  // Every referenced file must exist on disk next to the manifest and be a loadable image: either a
+  // PNG (89 50 4E 47 signature) or an SVG whose root carries explicit width/height (the intrinsic
+  // size browsers need for naturalWidth). A typo'd path or a stub file fails here instead of on the
+  // player's screen.
   const assetsDir = new URL(".", CLASSIC_MANIFEST_URL);
   const missing: string[] = [];
-  const notPng: string[] = [];
+  const notImage: string[] = [];
   for (const imagePath of classicAtlas.images) {
     let bytes: Uint8Array;
     try {
@@ -2433,20 +2436,20 @@ if (classicAtlas.ok) {
       missing.push(imagePath);
       continue;
     }
-    const signature = bytes.subarray(0, 4);
-    if (
-      signature[0] !== 0x89 ||
-      signature[1] !== 0x50 ||
-      signature[2] !== 0x4e ||
-      signature[3] !== 0x47
-    ) {
-      notPng.push(imagePath);
+    const isPng =
+      bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const text = isPng ? "" : new TextDecoder("utf-8").decode(bytes);
+    const svg = text.match(/<svg\b[^>]*>/)?.[0] ?? "";
+    const dimensioned = /(^|\s)width\s*=\s*"\d+(\.\d+)?"/.test(svg) &&
+      /(^|\s)height\s*=\s*"\d+(\.\d+)?"/.test(svg);
+    if (!isPng && !dimensioned) {
+      notImage.push(imagePath);
     }
   }
   check(
-    "经典清单引用的每个材质文件都存在且是 PNG（89 50 4E 47 签名）",
-    missing.length === 0 && notPng.length === 0,
-    `missing=[${missing.join(", ")}] notPng=[${notPng.join(", ")}]`,
+    "经典清单引用的每个材质文件都存在且可加载（PNG 签名，或带显式 width/height 的 SVG 根）",
+    missing.length === 0 && notImage.length === 0,
+    `missing=[${missing.join(", ")}] notImage=[${notImage.join(", ")}]`,
   );
 } else {
   console.info(
@@ -7808,6 +7811,89 @@ check(
     return enOk && zhOk;
   })(),
   "language switch repaints labels",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Resource HUD consolidation, BUILD rail labels and the rail spacing rhythm
+// ---------------------------------------------------------------------------------------------
+
+const mainTsText = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+
+// The playtester kept one resource surface: the right-edge warehouse panel that marks items. The
+// top HUD resource chips and the full resource page overlay are gone from the DOM, the CSS and the
+// page wiring, while the kept panel and its mark controls stay referenced.
+check(
+  "资源显示只保留最右侧的仓库面板：#hud-resources / #hud-marked / #resources-overlay 从 DOM 与 main.ts 移除，#warehouse-panel 与其标记控件保留",
+  !indexHtml.includes('id="hud-resources"') &&
+    !indexHtml.includes('id="hud-marked"') &&
+    !indexHtml.includes('id="resources-overlay"') &&
+    !indexHtml.includes('id="open-resources"') &&
+    !indexHtml.includes("#hud-resources") &&
+    !indexHtml.includes("#hud-marked") &&
+    !indexHtml.includes(".resources-overlay") &&
+    !mainTsText.includes("#hud-resources") &&
+    !mainTsText.includes("#hud-marked") &&
+    !mainTsText.includes("#resources-overlay") &&
+    !mainTsText.includes("setResourcesOpen") &&
+    indexHtml.includes('id="warehouse-panel"') &&
+    indexHtml.includes('id="warehouse-mark-all"') &&
+    indexHtml.includes('id="warehouse-clear-marks"') &&
+    mainTsText.includes("warehouseMarkAllButton") &&
+    mainTsText.includes("toggleResourceMark"),
+  "resource panels kept/removed",
+);
+
+// Every path of the client's own fallback BUILD/TRAIN catalogue resolves to a display name, never
+// a raw path, in both languages; the zh-CN wording matches the classic plugin's served names so an
+// offline demo world reads exactly like a connected one. A served manifest name still wins first —
+// asserted through the same resolution the page uses (manifest label first, generic label second).
+check(
+  "BUILD/TRAIN 回退目录的每个路径都能解析出名称而不是裸路径：清单名优先，i18n 兜底，双语皆有",
+  (() => {
+    const catalogue = [...FALLBACK_BUILD_PATHS, ...FALLBACK_TRAIN_PATHS];
+    initI18n("zh-CN");
+    const zhOk = catalogue.every((path) => {
+      const label = genericContentLabel(path);
+      return label !== undefined && label !== "" && label !== path;
+    }) && genericContentLabel("building.armory.t1") === "兵工厂 1 级"
+      && genericContentLabel("unit.melee.t1") === "普通";
+    initI18n("en");
+    const enOk = catalogue.every((path) => {
+      const label = genericContentLabel(path);
+      return label !== undefined && label !== "" && label !== path;
+    }) && genericContentLabel("building.armory.t1") === "Armory T1";
+    const keysInBoth = catalogue.every(
+      (path) =>
+        DICTIONARIES.en[`content.${path}`] !== undefined &&
+        DICTIONARIES["zh-CN"][`content.${path}`] !== undefined,
+    );
+    initI18n("zh-CN");
+    return zhOk && enOk && keysInBoth;
+  })(),
+  "fallback catalogue labels resolve",
+);
+
+// The BUILD rail buttons are relabelled the moment they are rebuilt (a served catalogue arriving
+// after the atlas no longer flashes raw paths) and the language switch re-resolves existing ones.
+check(
+  "BUILD 按钮重建时就地应用显示名（contentLabel），语言切换会重绘既有按钮标签",
+  mainTsText.includes("const label = contentLabel(buildingPath);") &&
+    mainTsText.includes("button.textContent = buildingPath;") &&
+    /refreshContentLabels\(\);\n\}/.test(mainTsText),
+  "build buttons relabelled",
+);
+
+// The rail follows the 14px edge rhythm: offset 14px from the window edges (pinned above) and the
+// section carries 14px inner padding, so the heading and the vertical button list never touch the
+// panel chrome or the screen edge.
+const buildRailSectionRule =
+  /(?:^|\n)\s*\.build-rail \.build-rail-section\s*\{[^}]*\}/.exec(indexHtml)?.[0] ?? "";
+check(
+  "BUILD 面板内外间距符合 14px 节奏：section 内边距 14px，按钮列表是带间距的垂直列表",
+  buildRailSectionRule.includes("padding: 14px") &&
+    /\.build-rail-buttons\s*\{[^}]*gap:\s*8px/.test(indexHtml) &&
+    /\.build-rail-buttons button\s*\{[^}]*padding:\s*10px 12px/.test(indexHtml),
+  "build rail spacing",
 );
 
 // ---------------------------------------------------------------------------------------------

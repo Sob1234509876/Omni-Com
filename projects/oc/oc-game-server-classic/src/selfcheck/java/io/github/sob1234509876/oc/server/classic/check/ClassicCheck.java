@@ -77,6 +77,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.stream.Stream;
@@ -109,6 +111,13 @@ public final class ClassicCheck {
 
     /** Width of the bundled atlas, in pixels. */
     private static final int TILE_IMAGE_PIXELS = 16;
+
+    /** Reads one attribute out of the SVG root tag that {@link #svgDimensions} scans. */
+    private static final Pattern SVG_ATTRIBUTE = Pattern.compile("(width|height|viewBox)\\s*=\\s*\"([^\"]*)\"");
+
+    /** One drawing element an asset SVG must contain to not be an empty shell. */
+    private static final Pattern SVG_SHAPE_TAG = Pattern.compile(
+            "<\\s*(rect|circle|ellipse|path|line|polygon|polyline)\\b");
 
     /**
      * Height of the bundled atlas, in pixels.
@@ -1015,7 +1024,7 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
                 continue;
             }
         }
-        check.that(bad.length() == 0, "每个 image 引用都安全且对应的 PNG 真实存在、尺寸正确（共 "
+        check.that(bad.length() == 0, "每个 image 引用都安全且对应的 SVG 真实存在、尺寸正确（共 "
                 + imageFiles.size() + " 个文件）" + (bad.length() == 0 ? "" : ": " + bad));
         check.that(sharedImages.isEmpty(), "每个建筑都有自己的贴图文件: " + sharedImages);
         check.that(unnamedTiles.isEmpty(), "每个地块都有非空的 name: " + unnamedTiles);
@@ -3484,37 +3493,36 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
      *
      * <p>The reference must be a non-empty relative path (no leading slash, no backslash, no {@code ..},
      * no control characters, at most 255 characters) whose file exists in the jar under the assets tree,
-     * carries a PNG signature, and has the IHDR dimensions the reference needs. Returns whether the file
-     * passed; a failure appends a readable reason to {@code bad}.
+     * parses as a vector SVG root carrying explicit {@code width}/{@code height} attributes equal to its
+     * {@code viewBox} (the intrinsic size a browser needs to decode the file), and has the dimensions the
+     * reference needs. Returns whether the file passed; a failure appends a readable reason to {@code bad}.
      */
     private static boolean checkImageReference(StringBuilder bad, String label, Object image,
             Set<String> seenFiles, long expectedWidth, long expectedHeight) {
-        byte[] bytes = safePng(bad, label, image, seenFiles);
-        if (bytes == null) {
+        long[] dims = safeSvg(bad, label, image, seenFiles);
+        if (dims == null) {
             return false;
         }
-        long width = intAt(bytes, 16) & 0xFFFFFFFFL;
-        long height = intAt(bytes, 20) & 0xFFFFFFFFL;
-        if (width != expectedWidth || height != expectedHeight) {
+        if (dims[0] != expectedWidth || dims[1] != expectedHeight) {
             bad.append(label).append(" expects ").append(expectedWidth).append('x').append(expectedHeight)
-                    .append(" but its file is ").append(width).append('x').append(height).append("; ");
+                    .append(" but its file is ").append(dims[0]).append('x').append(dims[1]).append("; ");
             return false;
         }
         return true;
     }
 
     /**
-     * Validates one entity image reference: a safe path to a real PNG whose width stays in one to four
+     * Validates one entity image reference: a safe path to a real SVG whose width stays in one to four
      * tiles and whose height divides evenly by the frame count, leaving a frame at least one tile tall.
      */
     private static boolean checkEntityImage(StringBuilder bad, String label, Object image,
             Set<String> seenFiles, long frames) {
-        byte[] bytes = safePng(bad, label, image, seenFiles);
-        if (bytes == null) {
+        long[] dims = safeSvg(bad, label, image, seenFiles);
+        if (dims == null) {
             return false;
         }
-        long width = intAt(bytes, 16) & 0xFFFFFFFFL;
-        long height = intAt(bytes, 20) & 0xFFFFFFFFL;
+        long width = dims[0];
+        long height = dims[1];
         if (width < TILE_IMAGE_PIXELS || width > TILE_IMAGE_PIXELS * 4) {
             bad.append(label).append(" has an out-of-range width ").append(width).append("; ");
             return false;
@@ -3527,8 +3535,8 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
         return true;
     }
 
-    /** The path-safety and file-existence half shared by both image checks; bytes of the PNG, or null. */
-    private static byte[] safePng(StringBuilder bad, String label, Object image, Set<String> seenFiles) {
+    /** The path-safety and file-existence half shared by both image checks; intrinsic dims, or null. */
+    private static long[] safeSvg(StringBuilder bad, String label, Object image, Set<String> seenFiles) {
         if (image == null || String.valueOf(image).isBlank()) {
             bad.append(label).append(" has no image; ");
             return null;
@@ -3546,16 +3554,82 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             }
         }
         byte[] bytes = resourceBytes("/assets/" + file);
-        if (bytes == null || bytes.length <= 24) {
+        if (bytes == null || bytes.length == 0) {
             bad.append(label).append(" names a file that is not in the jar: ").append(file).append("; ");
             return null;
         }
-        if (!isPng(bytes)) {
-            bad.append(label).append(" names a file that is not a PNG: ").append(file).append("; ");
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        long[] dims = svgDimensions(text);
+        if (dims == null) {
+            bad.append(label).append(" names a file whose root is not an SVG with matching")
+                    .append(" width/height and viewBox: ").append(file).append("; ");
+            return null;
+        }
+        if (!hasDrawingElement(text)) {
+            bad.append(label).append(" names an SVG without drawing elements: ").append(file).append("; ");
             return null;
         }
         seenFiles.add(file);
-        return bytes;
+        return dims;
+    }
+
+    /**
+     * Reads the intrinsic dimensions out of an SVG root tag.
+     *
+     * <p>The generated files always write {@code width} and {@code height} as plain numbers equal to the
+     * last two numbers of {@code viewBox}, so a shallow attribute scan keeps the same guarantee the old
+     * PNG IHDR read gave: the manifest's frame math is checked against the bytes the jar actually ships.
+     * Returns {@code null} when the root is not an SVG, an attribute is missing, not a plain positive
+     * number, or the two do not agree.
+     */
+    private static long[] svgDimensions(String text) {
+        int start = text.indexOf("<svg");
+        if (start < 0) {
+            return null;
+        }
+        int end = text.indexOf('>', start);
+        if (end < 0) {
+            return null;
+        }
+        String tag = text.substring(start, end + 1);
+        Map<String, String> attributes = new LinkedHashMap<>();
+        Matcher attribute = SVG_ATTRIBUTE.matcher(tag);
+        while (attribute.find()) {
+            attributes.put(attribute.group(1), attribute.group(2).trim());
+        }
+        String width = attributes.get("width");
+        String height = attributes.get("height");
+        String viewBox = attributes.get("viewBox");
+        if (width == null || height == null || viewBox == null
+                || !width.matches("\\d+(\\.\\d+)?") || !height.matches("\\d+(\\.\\d+)?")) {
+            return null;
+        }
+        String[] parts = viewBox.trim().split("[\\s,]+");
+        if (parts.length != 4) {
+            return null;
+        }
+        try {
+            double minX = Double.parseDouble(parts[0]);
+            double minY = Double.parseDouble(parts[1]);
+            double boxWidth = Double.parseDouble(parts[2]);
+            double boxHeight = Double.parseDouble(parts[3]);
+            double parsedWidth = Double.parseDouble(width);
+            double parsedHeight = Double.parseDouble(height);
+            if (minX != 0 || minY != 0 || boxWidth <= 0 || boxHeight <= 0) {
+                return null;
+            }
+            if (boxWidth != parsedWidth || boxHeight != parsedHeight) {
+                return null;
+            }
+            return new long[] {(long) parsedWidth, (long) parsedHeight};
+        } catch (NumberFormatException malformed) {
+            return null;
+        }
+    }
+
+    /** Whether the document draws anything: at least one shape element anywhere in the file. */
+    private static boolean hasDrawingElement(String text) {
+        return SVG_SHAPE_TAG.matcher(text).find();
     }
 
     private static Map<String, Object> object(Object value) {
@@ -3594,25 +3668,6 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
     private static String resourceText(String resource) {
         byte[] bytes = resourceBytes(resource);
         return bytes == null ? null : new String(bytes, StandardCharsets.UTF_8);
-    }
-
-    private static boolean isPng(byte[] bytes) {
-        byte[] signature = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-        if (bytes.length < signature.length) {
-            return false;
-        }
-        for (int index = 0; index < signature.length; index++) {
-            if (bytes[index] != signature[index]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** Reads the big endian 32 bit integer at an offset; used for the PNG IHDR width and height. */
-    private static int intAt(byte[] bytes, int offset) {
-        return ((bytes[offset] & 0xFF) << 24) | ((bytes[offset + 1] & 0xFF) << 16)
-                | ((bytes[offset + 2] & 0xFF) << 8) | (bytes[offset + 3] & 0xFF);
     }
 
     private static void deleteRecursively(Path root) {

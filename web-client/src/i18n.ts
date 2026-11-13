@@ -40,6 +40,21 @@ export const EN: Dictionary = {
   // Currency / item labels (wire paths, translated display labels).
   "item.gold": "gold",
   "item.wood": "wood",
+  // Generic content labels for the client's own fallback BUILD/TRAIN catalogue. These are UI, not
+  // served content: the manifest/snapshot display name always wins first, and a served name the
+  // client cannot translate stays exactly as sent. The zh-CN wording matches the classic plugin's
+  // served names so an offline demo world reads the same as a connected one.
+  "content.building.armory.t1": "Armory T1",
+  "content.building.mine.t1": "Mine",
+  "content.building.lumbercamp.t1": "Lumber camp",
+  "content.building.warehouse": "Warehouse",
+  "content.building.turret.t1": "Turret",
+  "content.unit.melee.t1": "Melee T1",
+  "content.unit.melee.t2": "Melee T2",
+  "content.unit.melee.t3": "Melee T3",
+  "content.unit.melee.t4": "Melee T4",
+  "content.unit.melee.t5": "Melee T5",
+  "content.unit.engineer": "Engineer",
   // Command bar actions.
   "action.stop": "Stop",
   "action.attackMove": "Attack-move",
@@ -98,7 +113,7 @@ export const EN: Dictionary = {
   "logistics.scopeTotal": "This warehouse",
   "logistics.scopeTitleToTotal": "Show the total across all warehouses",
   "logistics.scopeTitleToSingle": "Show only this selected warehouse",
-  "logistics.markNote": "Marks are kept per item on this page; the marked line shows the all-warehouse total",
+  "logistics.markNote": "Marks are kept per item on this page: ticked items stay highlighted here",
   "logistics.transferAll": "All",
   "logistics.summaryNone": "No warehouses of yours found",
   "logistics.summaryNoStock": " · no stock yet",
@@ -173,7 +188,6 @@ export const EN: Dictionary = {
   "chrome.console": "Console",
   "chrome.settings": "Settings",
   "chrome.music": "Music",
-  "chrome.resources": "Resources",
   "chrome.hideView": "Hide game view",
   "chrome.showView": "Show game view",
   "chrome.connect": "Connect",
@@ -183,7 +197,6 @@ export const EN: Dictionary = {
   "hud.player": "Player",
   "hud.off": "not logged in",
   "hud.pending": "resolving id…",
-  "hud.resources": "Resources",
   "hud.windowLine": "at: {x},{y} · window: {wx},{wy}",
   "hud.tile": "Tile",
   "hud.zoom": "Zoom",
@@ -234,8 +247,6 @@ export const EN: Dictionary = {
   // Log overlay.
   "log.title": "Log",
   "log.clear": "Clear",
-  // Resources overlay.
-  "resources.title": "Resources",
   // Help overlay.
   "help.title": "Help",
   "help.guideTitle": "Gameplay tips",
@@ -261,6 +272,17 @@ export const ZH_CN: Dictionary = {
   "owner.loggedOut": "未登录",
   "item.gold": "金",
   "item.wood": "木",
+  "content.building.armory.t1": "兵工厂 1 级",
+  "content.building.mine.t1": "矿井 普通",
+  "content.building.lumbercamp.t1": "伐木场 普通",
+  "content.building.warehouse": "仓库",
+  "content.building.turret.t1": "哨塔 普通",
+  "content.unit.melee.t1": "普通",
+  "content.unit.melee.t2": "强化",
+  "content.unit.melee.t3": "精英",
+  "content.unit.melee.t4": "将领",
+  "content.unit.melee.t5": "战王",
+  "content.unit.engineer": "工程师",
   "action.stop": "停止",
   "action.attackMove": "攻击移动",
   "action.upgrade": "升级",
@@ -307,7 +329,7 @@ export const ZH_CN: Dictionary = {
   "logistics.scopeTotal": "单个仓库",
   "logistics.scopeTitleToTotal": "显示全部仓库的合计",
   "logistics.scopeTitleToSingle": "只看选中的这一座仓库",
-  "logistics.markNote": "标记按物品记在本页：已标记行显示全部仓库的合计",
+  "logistics.markNote": "标记按物品记在本页：勾选的物品会在这里保持高亮",
   "logistics.transferAll": "全部",
   "logistics.summaryNone": "未发现自己的仓库",
   "logistics.summaryNoStock": " · 暂无库存",
@@ -376,7 +398,6 @@ export const ZH_CN: Dictionary = {
   "chrome.console": "控制台",
   "chrome.settings": "设置",
   "chrome.music": "音乐",
-  "chrome.resources": "资源",
   "chrome.hideView": "隐藏游戏画面",
   "chrome.showView": "显示游戏画面",
   "chrome.connect": "连接",
@@ -385,7 +406,6 @@ export const ZH_CN: Dictionary = {
   "hud.player": "玩家",
   "hud.off": "未登录",
   "hud.pending": "获取 id 中…",
-  "hud.resources": "资源",
   "hud.windowLine": "坐标：{x},{y} · 窗口：{wx},{wy}",
   "hud.tile": "瓦片",
   "hud.zoom": "缩放",
@@ -431,7 +451,6 @@ export const ZH_CN: Dictionary = {
     "设置已重置：服务器地址与记住的账号已清空，消息筛选与界面开关恢复默认。",
   "log.title": "日志",
   "log.clear": "清空",
-  "resources.title": "资源",
   "help.title": "帮助",
   "help.guideTitle": "游戏操作提示",
   "music.title": "音乐",
@@ -519,4 +538,23 @@ export function t(key: string, params?: I18nParams): string {
   const localized = DICTIONARIES[currentLanguage][key];
   const text = localized ?? EN[key] ?? key;
   return interpolate(text, params);
+}
+
+/**
+ * The client-side generic label for one content path, or `undefined` when the dictionaries do not
+ * name it.
+ *
+ * The client's own fallback BUILD/TRAIN catalogues (`FALLBACK_BUILD_PATHS` / `FALLBACK_TRAIN_PATHS`
+ * in `commandbar.ts`) are UI, not served content: the page ships a display name for each of those
+ * paths so a demo world or an offline start never prints a raw path. Served content is *not*
+ * translated here — a manifest/snapshot name always wins before this lookup, and a served name with
+ * no client translation stays exactly as sent. The chain is the same as `t()`: current language,
+ * then the complete `en` dictionary.
+ */
+export function genericContentLabel(path: string): string | undefined {
+  if (path === "") {
+    return undefined;
+  }
+  const key = `content.${path}`;
+  return DICTIONARIES[currentLanguage][key] ?? EN[key];
 }

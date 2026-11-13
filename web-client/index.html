@@ -875,7 +875,9 @@
         flex: 1 1 auto;
         min-height: 0;
         margin: 0;
-        padding: 12px;
+        /* The 14px edge rhythm: the rail is offset 14px from the window edges and the section keeps
+           the same 14px inner padding, so the heading and buttons never touch the panel chrome. */
+        padding: 14px;
         border-color: #303030;
         background: #202020;
         display: flex;
@@ -992,31 +994,12 @@
       }
       #hud-window,
       #hud-player,
-      #hud-resources,
-      #hud-marked,
       #hud-tile,
       #hud-zoom,
       #hud-fps,
       #hud-selected,
       #hud-building {
         color: #e0e0e0;
-      }
-
-      /* An unavailable resource row stays fully readable; italic marks it as "no data". */
-      #hud-resources.unavailable {
-        color: #e0e0e0;
-        font-style: italic;
-      }
-
-      /* The marked-resource line: the same grey chip as the HUD, showing the warehouse totals of the
-         items ticked in the warehouse panel. It starts as `已标记：—`. */
-      #hud-marked {
-        color: #e0e0e0;
-      }
-
-      #hud-marked.has-marks {
-        color: #e0e0e0;
-        font-weight: 500;
       }
 
       /* The enemy anchor line and the home line: one clickable chip each under the HUD. The enemy line
@@ -1799,115 +1782,6 @@
         }
       }
 
-      /* The full resource page: one square panel over the game view. Its container is fully
-         transparent and takes no pointer input, so it never adds a scrim and clicks outside the panel
-         still reach the canvas; only the panel itself is darkened and interactive. */
-      .resources-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 45;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        background: transparent;
-        pointer-events: none;
-      }
-
-      .resources-overlay[hidden] {
-        display: none;
-      }
-
-      .resources-panel {
-        display: flex;
-        flex-direction: column;
-        width: min(560px, 100%);
-        max-height: min(82vh, 760px);
-        overflow: hidden;
-        padding: 0;
-        border: 1px solid #303030;
-        background: #202020;
-        color: #e0e0e0;
-        font: 12px/1.45 "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-        pointer-events: auto;
-      }
-
-      .resources-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 14px;
-        border-bottom: 1px solid #303030;
-      }
-
-      .resources-head h2 {
-        margin: 0;
-        color: #e0e0e0;
-        font-size: 14px;
-        letter-spacing: 0.08em;
-      }
-
-      .resources-head button {
-        padding: 3px 9px;
-        font-size: 11px;
-      }
-
-      .resources-note {
-        margin: 0;
-        padding: 8px 14px;
-        border-bottom: 1px solid #303030;
-        color: #b0b0b0;
-        font-size: 11px;
-      }
-
-      .resources-list {
-        flex: 1 1 auto;
-        min-height: 0;
-        margin: 0;
-        padding: 6px 14px 10px;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        list-style: none;
-      }
-
-      .resources-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(4ch, auto) minmax(0, auto);
-        align-items: baseline;
-        gap: 10px;
-        padding: 3px 0;
-        border-bottom: 1px solid #303030;
-      }
-
-      .resources-row:last-child {
-        border-bottom: 0;
-      }
-
-      .resources-name {
-        min-width: 0;
-        overflow: hidden;
-        color: #e0e0e0;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .resources-amount {
-        color: #e0e0e0;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .resources-where {
-        min-width: 0;
-        overflow: hidden;
-        color: #b0b0b0;
-        font-size: 11px;
-        text-align: right;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
       /* ---------------------------------------------------------------------
          Settings panel and music player. Both are grouped #202020 surfaces with
          1px #303030 borders; they float over the canvas without a scrim so the
@@ -2328,8 +2202,6 @@
             <span id="hud-world">世界：demo</span>
             <span id="hud-window">坐标：22,16 · 窗口：0,0</span>
             <span id="hud-player">玩家：—</span>
-            <span id="hud-resources">资源：金 — · 木 —</span>
-            <span id="hud-marked">已标记：—</span>
             <span id="hud-tile">瓦片：—</span>
             <span id="hud-zoom">缩放：1.00×</span>
             <span id="hud-fps">FPS：—</span>
@@ -2449,14 +2321,6 @@
               title="音乐：只播放本机音频文件，不上传、不联网（Esc 关闭）"
               data-i18n="chrome.music"
             >音乐</button>
-            <button
-              id="open-resources"
-              type="button"
-              aria-expanded="false"
-              aria-controls="resources-overlay"
-              title="查看世界里的全部资源：清单物品 + 仓库库存 + 单位携带 + 金/木（Esc 关闭）"
-              data-i18n="chrome.resources"
-            >资源</button>
             <button id="toggle-view" type="button" aria-pressed="false">隐藏游戏画面</button>
             <button
               id="connection-toggle"
@@ -2839,24 +2703,6 @@
           </div>
         </header>
         <pre id="log" class="log" aria-live="polite"></pre>
-      </section>
-    </div>
-
-    <div id="resources-overlay" class="resources-overlay" hidden>
-      <section
-        class="resources-panel"
-        role="dialog"
-        aria-modal="false"
-        aria-labelledby="resources-title"
-      >
-        <header class="resources-head">
-          <h2 id="resources-title" data-i18n="resources.title">资源</h2>
-          <button id="resources-close" type="button" data-i18n="ui.close">关闭</button>
-        </header>
-        <p class="resources-note">
-          清单物品 + 我的仓库库存 + 我的单位携带 + 金/木货币；按名称排序，数量为 0 也保留。
-        </p>
-        <ul id="resources-list" class="resources-list" aria-live="polite"></ul>
       </section>
     </div>
 

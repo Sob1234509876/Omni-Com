@@ -2,12 +2,13 @@
  * The per-material texture contract, published by plugins.
  *
  * Textures are no longer a folder the page ships, and they no longer share one packed atlas page. Every
- * loaded plugin may put `assets/manifest.json` inside its own jar listing **one PNG per material**: one
- * single-frame file per terrain tile (`tilePixels × tilePixels`) and one vertical frame strip per entity
- * kind (its height is `frames` times the frame height). The server merges those manifests into
- * `GET /plugin-assets/manifest.json` - a JSON array of `{ plugin, baseUrl, tilePixels, tiles, entities }`
- * - and serves every file under the entry's `baseUrl` (`/plugin-assets/<plugin>/...`). The client fetches
- * that array on start, downloads each referenced PNG exactly once, and turns every file into its own
+ * loaded plugin may put `assets/manifest.json` inside its own jar listing **one image file per material**
+ * (raster PNG or vector SVG): one single-frame file per terrain tile (`tilePixels × tilePixels`) and one
+ * vertical frame strip per entity kind (its height is `frames` times the frame height). The server merges
+ * those manifests into `GET /plugin-assets/manifest.json` - a JSON array of
+ * `{ plugin, baseUrl, tilePixels, tiles, entities }` - and serves every file under the entry's `baseUrl`
+ * (`/plugin-assets/<plugin>/...`). The client fetches that array on start, downloads each referenced
+ * image exactly once, and turns every file into its own
  * `AtlasSource`: a tile's rect is the whole image, an entity's frames are equal vertical slices of it.
  * Nothing else changes for the renderer - every tile and entity still resolves to a `SpriteRect` plus the
  * image it must be drawn from, so a frame can mix art from several plugins without any of them sharing a
@@ -63,7 +64,7 @@ export interface EntitySprite {
 
 /** One tile parsed out of a manifest: the file it lives in plus its label. */
 export interface TileEntry {
-  /** Image path relative to the entry's `baseUrl`, for example `tiles/grass.png`. */
+  /** Image path relative to the entry's `baseUrl`, for example `tiles/grass.svg`. */
   readonly image: string;
   /** Display name written in the manifest; empty when the entry has none. */
   readonly name: string;
@@ -108,7 +109,7 @@ export interface AtlasData {
 
 /** One material file, decoded, with the tiles and entities it hosts. */
 export interface AtlasSource {
-  /** The PNG this source draws from; one file per material, never a shared page. */
+  /** The image file this source draws from (PNG or SVG); one file per material, never a shared page. */
   readonly image: HTMLImageElement;
   /** The plugin's recommended tile size, used to normalise art scale to the camera. */
   readonly tilePixels: number;
@@ -677,6 +678,17 @@ export function atlasLabel(plugins: readonly string[]): string {
   return `atlas · ${ids.length} plugins`;
 }
 
+/**
+ * Loads one material file.
+ *
+ * Format-agnostic: the browser decodes PNG and SVG alike through `new Image()`.
+ * An SVG file must carry explicit `width`/`height` attributes equal to its
+ * viewBox, or `naturalWidth`/`naturalHeight` stay 0 (or default to 300x150) and
+ * the strip slicing below would tear; the classic plugin's generator
+ * (`tools/redraw_assets_svg.py`) always emits them. The `naturalWidth > 0`
+ * guard below rejects such a file and drops exactly the materials that
+ * reference it, never the whole atlas.
+ */
 function loadImage(url: string): Promise<HTMLImageElement | null> {
   return new Promise<HTMLImageElement | null>((resolve) => {
     const image = new Image();
