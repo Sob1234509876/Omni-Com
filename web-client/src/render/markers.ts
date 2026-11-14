@@ -198,6 +198,22 @@ export function markerInDrawnDimension(
   return marker.dimension === worldDimensionKey(world);
 }
 
+/**
+ * Whether the snapshot's faction anchor (a player row's `anchor` pair) belongs to the dimension
+ * `world` is currently drawing.
+ *
+ * <p>The server's player row carries no dimension of its own: the host spawns every faction — the
+ * sample scene, the human base slots, the bot — in the engine's **default dimension** (the overworld),
+ * and it sends the same player rows with every dimension's snapshot. Drawing the home cross and the
+ * hostile anchor arrows while the view is in another dimension (hell) therefore painted two phantom
+ * points at overworld coordinates, which is the defect this predicate removes: the faction anchors are
+ * drawn only while the default dimension is the drawn one. A marker the user placed carries its own
+ * dimension key and is filtered separately, by {@link markerInDrawnDimension}.
+ */
+export function factionAnchorInDrawnDimension(world: Pick<WorldView, "dimension">): boolean {
+  return worldDimensionKey(world) === "overworld";
+}
+
 /** The outcome of one placement attempt, with the unchanged list on every refusal path. */
 export type MarkerPlacement =
   | { readonly kind: "placed"; readonly marker: Marker; readonly markers: readonly Marker[] }

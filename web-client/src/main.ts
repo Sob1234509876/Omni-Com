@@ -2142,14 +2142,18 @@ function flashNewSelection(
 }
 
 /**
- * The human label for one content path: the manifest display name when the atlas defines one, else
- * the client's generic label for the paths the fallback catalogue ships, else the raw path. Served
- * names are never translated — a manifest name wins as sent, and the generic i18n labels only cover
- * the client's own fallback BUILD/TRAIN catalogue. The wire commands always keep the path itself.
+ * The human label for one content path, resolving "client dictionary first, served name as fallback":
+ * the client's own `content.*` translation wins for every path it keys (so an English UI stays English
+ * for the classic catalogue), then the atlas manifest's display name shows exactly as the server sent
+ * it, and the raw path is the last resort. The wire commands always keep the path itself.
  */
 function contentLabel(path: string): string {
+  const fromClient = genericContentLabel(path);
+  if (fromClient !== undefined && fromClient !== "") {
+    return fromClient;
+  }
   const fromManifest = entityDisplayName(atlas, path);
-  return fromManifest !== path ? fromManifest : genericContentLabel(path) ?? path;
+  return fromManifest !== path ? fromManifest : path;
 }
 
 /** `普通 (unit.melee.t1)` when named, plain `unit.melee.t1` when the manifest has no name. */
@@ -3509,7 +3513,7 @@ function updateGameplayPanel(): void {
   );
   // The train menu comes from the building row's `trains` (content-driven); rebuild the buttons when
   // the menu itself changes, then refresh affordability per frame from the local player's row.
-  const menu = trainMenu(trainBuilding, myPlayerRow());
+  const menu = trainMenu(trainBuilding, myPlayerRow(), { labelForPath: contentLabel });
   rebuildTrainButtons(menu);
   const trainAffordable = menu.every((entry) => entry.affordable);
   for (const button of trainButtons) {

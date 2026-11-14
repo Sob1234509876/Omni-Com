@@ -29,7 +29,7 @@ import {
   type EnemyAnchorEntry,
 } from "./enemy.ts";
 import { terrainColor } from "./fallback.ts";
-import { markerInDrawnDimension } from "./markers.ts";
+import { factionAnchorInDrawnDimension, markerInDrawnDimension } from "./markers.ts";
 import type { WindowBounds } from "./stream.ts";
 import { entityInWindow, ownershipColor, tileInWindow, type WorldView } from "./view.ts";
 
@@ -293,8 +293,10 @@ export function minimapEdgeArrow(
 /**
  * The nearest hostile edge arrow, or `null` when every known hostile anchor is inside the window.
  *
- * <p>Nearest first, so two hostile bases on opposite sides do not fight over the single edge arrow; the
- * top-chrome line still names both.
+ * <p>The hostile anchors are overworld spawn tiles the server sends with every dimension's snapshot
+ * (see {@link factionAnchorInDrawnDimension}), so in any other dimension this answers `null` instead of
+ * painting a phantom arrow at overworld coordinates. Otherwise: nearest first, so two hostile bases on
+ * opposite sides do not fight over the single edge arrow; the top-chrome line still names both.
  */
 export function minimapNearestEdgeArrow(
   world: WorldView,
@@ -302,6 +304,9 @@ export function minimapNearestEdgeArrow(
   myPlayerId: number | null,
   panelSize = MINIMAP_PANEL_SIZE,
 ): MinimapEdgeArrow | null {
+  if (!factionAnchorInDrawnDimension(world)) {
+    return null;
+  }
   const entries = enemyAnchorEntries(world.players, myPlayerId, camera.centerTile());
   for (const entry of entries) {
     const arrow = minimapEdgeArrow(world, camera, entry, panelSize);
@@ -523,7 +528,11 @@ export class MinimapRenderer {
     // The personal layer sits above the dots and the camera rectangle: a marker square is chrome, not an
     // entity, and must never be read as one. My base anchor is a white cross - achromatic, tiny and
     // clearly unlike both the 2x2 ownership dots and a marker's hollow square.
-    if (overlay.homeAnchor !== null && tileInWindow(world, overlay.homeAnchor.x, overlay.homeAnchor.y)) {
+    if (
+      overlay.homeAnchor !== null &&
+      factionAnchorInDrawnDimension(world) &&
+      tileInWindow(world, overlay.homeAnchor.x, overlay.homeAnchor.y)
+    ) {
       this.drawHomeMarker(world, panelSize, overlay.homeAnchor);
     }
     for (const marker of overlay.markers) {
@@ -547,7 +556,7 @@ export class MinimapRenderer {
         t("minimap.arrowDistance", { distance: arrow.distance }),
       );
     }
-    if (overlay.homeAnchor !== null) {
+    if (overlay.homeAnchor !== null && factionAnchorInDrawnDimension(world)) {
       const home = minimapEdgeGeometry(world, camera, overlay.homeAnchor, panelSize);
       if (home !== null) {
         this.drawEdgeArrow(

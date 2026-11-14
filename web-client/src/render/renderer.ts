@@ -81,7 +81,7 @@ import {
   followRingAlpha,
   followRingScale,
 } from "./follow.ts";
-import { queueMarkerText, stockTagVisible, unitStockTagLabel } from "./status";
+import { cargoTagVisible, queueMarkerText, unitStockTagLabel } from "./status";
 import {
   popAlpha,
   popProgress,
@@ -986,12 +986,22 @@ export class WorldRenderer {
           );
         }
       } else {
-        // A loaded unit gets a stock tag when it is selected (wherever it stands) or within the
-        // settings radius of the pointer. Q9: "any unit near the mouse and every selected unit".
+        // A loaded unit's cargo tag: every own carrier shows it always (the load is at-a-glance
+        // information, not a hover secret); other units keep the Q9 rule — selected, or within the
+        // settings radius of the pointer.
         const selected = entity.selected === true || selectedIds.has(entity.id);
         const pointerX = options.hoverTile === null ? null : options.hoverTile.x + 0.5;
         const pointerY = options.hoverTile === null ? null : options.hoverTile.y + 0.5;
-        if (stockTagVisible(entity, selected, pointerX, pointerY, options.inventoryRadiusTiles)) {
+        if (
+          cargoTagVisible(
+            entity,
+            ownershipOf(entity.playerId, options.myPlayerId) === "mine",
+            selected,
+            pointerX,
+            pointerY,
+            options.inventoryRadiusTiles,
+          )
+        ) {
           const tag = unitStockTagLabel(entity);
           if (tag !== null) {
             drawUnitStockTag(

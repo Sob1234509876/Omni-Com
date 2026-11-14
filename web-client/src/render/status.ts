@@ -182,6 +182,29 @@ export function stockTagVisible(
 }
 
 /**
+ * Whether a unit's cargo tag should be drawn this frame.
+ *
+ * <p>The playtester rule on top of Q9: an **own** unit that carries anything shows its tag always — a
+ * hauler's load is information the operator reads at a glance, not a hover secret. Every other unit
+ * (enemy, neutral) keeps the Q9 rule — selected, or within `radiusTiles` of the pointer — so the tag
+ * never turns into clutter over somebody else's army. A building never gets the tag (its stock belongs
+ * to the warehouse panel) and an empty hold never draws one.
+ */
+export function cargoTagVisible(
+  entity: EntityView,
+  own: boolean,
+  selected: boolean,
+  pointerX: number | null,
+  pointerY: number | null,
+  radiusTiles: number,
+): boolean {
+  if (own) {
+    return !isBuildingEntityKind(entity.kind) && carriedTotal(entity.contents) > 0;
+  }
+  return stockTagVisible(entity, selected, pointerX, pointerY, radiusTiles);
+}
+
+/**
  * The combat chip of a unit or building: `攻击 18 · 射程 6`, or `null` when the row has no weapon.
  *
  * <p>A snapshot sends `attackDamage` and `attackRange` for any attacking entity; a building without a

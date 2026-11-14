@@ -56,7 +56,7 @@ export function trainPathsFor(building: EntityView | undefined): readonly string
 export interface TrainMenuEntry {
   /** Content path the `TRAIN <buildingId> <unitPath>` line carries. */
   readonly path: string;
-  /** Server display name, present only on a served `trains` entry. */
+  /** Display name of the trainable unit: the client label when it keys the path, the served row name otherwise. */
   readonly name?: string;
   /** Input cost, present only on a served `trains` entry. */
   readonly gold?: number;
@@ -70,17 +70,31 @@ export interface TrainMenuEntry {
   readonly title: string;
 }
 
+/** Optional display resolver so the train menu can name a path the way the page does. */
+export interface TrainMenuOptions {
+  /**
+   * Display name for one content path, resolved exactly like the page's `contentLabel` (client
+   * dictionary first, served names as fallback). A path the resolver cannot name — it answers the raw
+   * path — keeps the served `trains` row's own name.
+   */
+  readonly labelForPath?: (path: string) => string;
+}
+
 /**
  * The TRAIN menu of one selected building, one entry per recipe the row offers.
  *
- * A served `trains` row is rendered verbatim (`训练<name> · 金<n>`), and affordability is the client's
- * own comparison against the local player's gold; a missing player row counts as not affordable, which
- * shows the entry disabled instead of hiding it. A row without the field has no menu at all — the
- * served `trains` array is the only source, so no invented placeholder entry can appear.
+ * A served `trains` row is rendered as `{name} · 金<n>`, and affordability is the client's own
+ * comparison against the local player's gold; a missing player row counts as not affordable, which
+ * shows the entry disabled instead of hiding it. The entry's name follows the page's label rule when
+ * the caller supplies a resolver: the client dictionary wins for a path it keys, and the served row
+ * name shows verbatim only for a path the client cannot name. A row without the `trains` field has no
+ * menu at all — the served `trains` array is the only source, so no invented placeholder entry can
+ * appear.
  */
 export function trainMenu(
   building: EntityView | undefined,
   player: PlayerView | undefined,
+  options: TrainMenuOptions = {},
 ): TrainMenuEntry[] {
   const trains = building?.trains;
   if (trains === undefined) {
@@ -89,18 +103,23 @@ export function trainMenu(
     return [];
   }
   return trains.map((train): TrainMenuEntry => {
+    const fromResolver = options.labelForPath?.(train.path);
+    const name =
+      fromResolver !== undefined && fromResolver !== train.path
+        ? fromResolver
+        : train.name ?? train.path;
     const affordable =
       player !== undefined && Number.isFinite(player.gold) && player.gold >= train.gold;
     return {
       path: train.path,
-      name: train.name,
+      name,
       gold: train.gold,
       level: train.level,
       affordable,
-      label: t("train.menuLabel", { name: train.name, gold: train.gold }),
+      label: t("train.menuLabel", { name, gold: train.gold }),
       title: affordable
         ? t("train.example", { path: train.path })
-        : t("train.affordFail", { name: train.name, gold: train.gold }),
+        : t("train.affordFail", { name, gold: train.gold }),
     };
   });
 }

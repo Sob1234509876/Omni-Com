@@ -11,7 +11,7 @@
  * Run: `node scripts/check-render-math.ts` (or `pnpm check:render`).
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import {
   MAX_BATCH_COMMANDS,
   MAX_MOVE_POINTS,
@@ -139,6 +139,7 @@ import {
   queueProgressRatio,
   sizeLabel,
   stockTagVisible,
+  cargoTagVisible,
   unitCargoLabel,
   unitStockTagLabel,
   unitTaskLabel,
@@ -227,6 +228,7 @@ import {
   windowTileIndex,
   worldViewFromSnapshot,
   type EntityView,
+  type PlayerView,
   type TerrainId,
   type WorldView,
 } from "../src/render/view.ts";
@@ -338,6 +340,7 @@ import {
   minimapCameraTarget,
   minimapEdgeGeometry,
   minimapLayout,
+  minimapNearestEdgeArrow,
   minimapPointForTile,
   minimapTileAt,
 } from "../src/render/minimap.ts";
@@ -360,6 +363,7 @@ import {
   ownAnchorOf,
   placeMarker,
   removeLastMarker,
+  factionAnchorInDrawnDimension,
   markerInDrawnDimension,
   worldDimensionKey,
   type Marker,
@@ -7728,6 +7732,158 @@ check(
     );
   })(),
   "playtester round: content keys, marker dimensions, trails, gateway jump, login pending state",
+);
+
+// ---------------------------------------------------------------------------------------------
+// Playtester round: the t()-key regression net, client-dictionary-wins label resolution, the
+// always-on cargo tag decision and the faction-anchor dimension filter (phantom hell markers).
+// One combined section: every rule below guards a fix that a half-round previously missed.
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "反回归网：src 里每个 t(\"字面量\") 同时存在于 en 与 zh-CN；contentLabel 客户端字典优先、清单名兜底；TRAIN 菜单路径名走同一解析；己方载货单位常显货物标签；阵营锚点只画在默认维度",
+  (() => {
+    // 1. The t()-key audit: every string literal handed to t() must resolve in BOTH shipped
+    //    dictionaries, so a deleted key can never again print itself (the train.menuLabel bug).
+    const sourceFiles: URL[] = [];
+    const collect = (dir: URL): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, dir);
+        if (entry.isDirectory()) {
+          collect(child);
+        } else if (entry.name.endsWith(".ts")) {
+          sourceFiles.push(child);
+        }
+      }
+    };
+    collect(new URL("../src/", import.meta.url));
+    const tLiteral = /\bt\(\s*("(?:[^"\\]|\\.)*")/g;
+    const missingKeys: string[] = [];
+    for (const file of sourceFiles) {
+      for (const match of readFileSync(file, "utf8").matchAll(tLiteral)) {
+        const key = JSON.parse(match[1]!) as string;
+        if (DICTIONARIES.en[key] === undefined || DICTIONARIES["zh-CN"][key] === undefined) {
+          missingKeys.push(key);
+        }
+      }
+    }
+
+    // 2. Client-dictionary-wins ordering: the page's contentLabel consults the generic label before
+    //    the served manifest name, and the TRAIN menu feeds the same resolver into its row names.
+    const contentLabelSource = mainTsText.slice(
+      mainTsText.indexOf("function contentLabel"),
+      mainTsText.indexOf("function labelledContent"),
+    );
+    const contentLabelOrder =
+      contentLabelSource.includes("genericContentLabel(path)") &&
+      contentLabelSource.indexOf("genericContentLabel(path)") <
+        contentLabelSource.indexOf("entityDisplayName(atlas, path)");
+    const trainMenuWired = mainTsText.includes(
+      "trainMenu(trainBuilding, myPlayerRow(), { labelForPath: contentLabel })",
+    );
+    const previousLanguage = currentI18nLanguage();
+    const richPlayer = { id: 3, name: "owner1", gold: 1000, wood: 0 };
+    initI18n("en");
+    const enMenu = trainMenu(
+      commandBuilding(21),
+      richPlayer as PlayerView,
+      { labelForPath: (path: string) => (path === "unit.melee.t1" ? "Melee T1" : path) },
+    );
+    const enClientWins = enMenu[0]?.name === "Melee T1" && enMenu[0]?.label === "Melee T1 · 20 gold";
+    const enServedFallback =
+      enMenu[1]?.name === "强化" && enMenu[1]?.label === "强化 · 45 gold";
+    initI18n("zh-CN");
+    const zhMenu = trainMenu(
+      commandBuilding(21),
+      richPlayer as PlayerView,
+      { labelForPath: (path: string) => (path === "unit.melee.t1" ? "普通" : path) },
+    );
+    const zhClientWins = zhMenu[0]?.name === "普通" && zhMenu[0]?.label === "普通 · 金20";
+    const zhServedFallback = zhMenu[1]?.name === "强化" && zhMenu[1]?.label === "强化 · 金45";
+    initI18n(previousLanguage);
+
+    // 3. The cargo tag decision: an own unit with cargo shows it always (no hover, no selection);
+    //    empty holds and buildings never; other owners keep the Q9 hover/selection rule.
+    const cargoUnit = {
+      id: 9,
+      kind: "unit.engineer",
+      x: 10,
+      y: 10,
+      playerId: 3,
+      contents: { gold: 80, wood: 40 },
+    } as EntityView;
+    const emptyUnit = { id: 10, kind: "unit.engineer", x: 10, y: 10, playerId: 3 } as EntityView;
+    const enemyHauler = {
+      id: 11,
+      kind: "unit.melee.t1",
+      x: 10,
+      y: 10,
+      playerId: 2,
+      contents: { gold: 5 },
+    } as EntityView;
+    const cargoBuilding = {
+      id: 12,
+      kind: "building.warehouse",
+      x: 10,
+      y: 10,
+      playerId: 3,
+      contents: { gold: 5 },
+    } as EntityView;
+    const rendererTsText = readFileSync(
+      new URL("../src/render/renderer.ts", import.meta.url),
+      "utf8",
+    );
+    const cargoRules =
+      cargoTagVisible(cargoUnit, true, false, null, null, 10) === true &&
+      cargoTagVisible(emptyUnit, true, true, null, null, 10) === false &&
+      cargoTagVisible(cargoBuilding, true, true, null, null, 10) === false &&
+      cargoTagVisible(enemyHauler, false, false, 10.5, 10.5, 1) === true &&
+      cargoTagVisible(enemyHauler, false, false, 50, 50, 1) === false &&
+      cargoTagVisible(enemyHauler, false, true, null, null, 10) === true &&
+      rendererTsText.includes("cargoTagVisible(") &&
+      rendererTsText.includes('ownershipOf(entity.playerId, options.myPlayerId) === "mine"');
+
+    // 4. Faction anchors (player-row `anchor`) are overworld spawn tiles the server sends with every
+    //    dimension's snapshot: drawn only while the default dimension is the drawn one, so hell no
+    //    longer paints the white home arrow and the red hostile arrow at overworld coordinates.
+    const overworldDim = { dimension: "overworld" } as WorldView;
+    const hellDim = { dimension: "hell" } as WorldView;
+    const defaultDim = {} as WorldView;
+    const hellWindow = worldViewFromSnapshot({
+      ...validSnapshot,
+      dimension: "hell",
+      originX: 0,
+      originY: 0,
+      width: 64,
+      height: 64,
+      tiles: Array.from({ length: 64 }, () => Array<string>(64).fill("grass")),
+      players: [
+        { id: 2, name: "Enemy", gold: 0, wood: 0, anchor: [192, 192] },
+        { id: 3, name: "owner1", gold: 300, wood: 60, anchor: [40, 40] },
+      ],
+    });
+    const anchorRules =
+      factionAnchorInDrawnDimension(overworldDim) === true &&
+      factionAnchorInDrawnDimension(hellDim) === false &&
+      factionAnchorInDrawnDimension(defaultDim) === true &&
+      hellWindow !== null &&
+      minimapNearestEdgeArrow(hellWindow, arrowCamera, 3, MINIMAP_PANEL_SIZE) === null &&
+      homeWorld !== null &&
+      minimapNearestEdgeArrow(homeWorld, arrowCamera, 3, MINIMAP_PANEL_SIZE) !== null;
+
+    return (
+      missingKeys.length === 0 &&
+      contentLabelOrder &&
+      trainMenuWired &&
+      enClientWins &&
+      enServedFallback &&
+      zhClientWins &&
+      zhServedFallback &&
+      cargoRules &&
+      anchorRules
+    );
+  })(),
+  `t 键/标签解析/货物标签/锚点维度`,
 );
 
 // ---------------------------------------------------------------------------------------------

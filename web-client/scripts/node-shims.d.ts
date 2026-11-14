@@ -16,4 +16,12 @@ declare module "node:fs" {
    * only uses it for the PNG signature bytes of the classic plugin's material files.
    */
   export function readFileSync(path: string | URL): Uint8Array;
+  /**
+   * Lists one directory's entries. The t()-key audit walks `src/` with it; only the members the walk
+   * reads are declared, and `withFileTypes` is the one supported option shape.
+   */
+  export function readdirSync(
+    path: string | URL,
+    options: { withFileTypes: true },
+  ): Array<{ name: string; isDirectory(): boolean }>;
 }
