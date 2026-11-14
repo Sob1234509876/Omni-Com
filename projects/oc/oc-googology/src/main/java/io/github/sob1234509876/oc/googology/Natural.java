@@ -117,6 +117,19 @@ public final class Natural implements NaturalNumber {
      */
     public static final int COMPARISON_DESCENT_DEPTH = 24;
 
+    /**
+     * How many ladder-descent steps {@link #hyperInverse(Natural, int)} may spend peeling one tower layer
+     * per step before it gives up and reports the answer as unprovable.
+     *
+     * <p>One descent step replaces the value {@code b↑^(k-1) H} with its height {@code H}, so the steps
+     * consumed are the layers of the height chain: {@code 10↑↑(10↑↑(10↑↑10))} needs three. The chain is
+     * finite by construction (each step recurses on a strict subterm), so the budget is not needed for
+     * termination - it caps the recursion against adversarially nested towers and keeps the cost of one
+     * inverse query bounded, the same lean the comparison budgets take. A chain deeper than the budget
+     * stays unprovable rather than guessed at.
+     */
+    public static final int HYPER_INVERSE_DESCENT_DEPTH = 24;
+
     /** How far two base ten logarithms must differ before the distance certificate decides: a factor of ten. */
     private static final double COMPARISON_LOG_MARGIN = 1d;
 
@@ -1442,8 +1455,10 @@ public final class Natural implements NaturalNumber {
      * <p>The exact range iterates the operation while it evaluates exactly, which for three arrows and up
      * terminates after a step or two. Structural values answer the matching tower exactly (the largest
      * height of {@code base ↑^arrows} not exceeding {@code base ↑^arrows h} is {@code h}), one arrow above
-     * the asked level through {@code inv_a(b↑^(a+1) h) = b↑^(a+1) (h-1)} for an exact height, and are
-     * empty otherwise; a transfinite level is reduced first, as in {@link #log(Natural)}.
+     * the asked level through {@code inv_a(b↑^(a+1) h) = b↑^(a+1) (h-1)} for an exact height, and one
+     * arrow <em>below</em> the asked level through the ladder descent described in
+     * {@link #hyperInverseDescent(Natural, Natural, int, int)}; everything else is empty. A transfinite
+     * level is reduced first, as in {@link #log(Natural)}.
      *
      * @throws IllegalArgumentException when the arrow count is below one, this value is zero, or the base
      *     is zero or one
@@ -1465,36 +1480,63 @@ public final class Natural implements NaturalNumber {
         if (base.isZero() || base.isOne()) {
             throw new IllegalArgumentException("the hyperoperation base must be at least two, was " + base);
         }
-        if (isBeyond()) {
-            return Optional.empty();
-        }
-        if (isExact()) {
+        return hyperInverseDescent(this, base, arrows, HYPER_INVERSE_DESCENT_DEPTH);
+    }
+
+    /**
+     * {@link #hyperInverse(Natural, int)} for three arrows and up, on exact and structural values alike,
+     * with the ladder descent that makes a tower over the level below the asked one provable:
+     *
+     * <p>For a value {@code v = b↑^(k-1) H} over the <em>same</em> base, the identity
+     * {@code b↑^k h = b↑^(k-1) (b↑^k (h-1))} and the strict monotonicity of {@code b↑^(k-1)} in its height
+     * give {@code b↑^k h <= b↑^(k-1) H} if and only if {@code b↑^k (h-1) <= H} (for {@code h >= 2}, while
+     * {@code h = 1} always holds because {@code b↑^(k-1) H >= b}). So the largest such {@code h} is exactly
+     * {@code 1 + inv_k(H)} - one layer of the tower peeled per step, the same shape the super-logarithm's
+     * one-arrow recursion takes. The equality edge is preserved by the arithmetic rather than special-cased:
+     * {@code 10↑↑↑3 = 10↑↑(10↑↑10)} descends to {@code inv_3(10↑↑10) = 2} and answers {@code 3}, exactly.
+     *
+     * <p>Termination: each step recurses on the value's own height, a strict subterm of the immutable tree,
+     * so the descent is well-founded; {@code budget} only caps the depth against adversarially nested
+     * towers, and a chain it cannot finish stays unprovable rather than guessed at. Every remaining rule is
+     * the one from before: the matching level reads its height off directly, the level above with an exact
+     * height answers one height lower, exact values iterate the operation, and a different base has no rule
+     * relating the two sides - honest emptiness, not a guess.
+     */
+    private static Optional<Natural> hyperInverseDescent(Natural value, Natural base, int arrows, int budget) {
+        if (value.isExact()) {
             if (!base.isExact()) {
                 return Optional.of(ZERO);   // base ↑^arrows 1 = base already exceeds every exact value
             }
-            return exactHyperInverse(base, arrows);
+            return value.exactHyperInverse(base, arrows);
         }
-        if (kind == Kind.TOWER) {
-            Natural current = this;
-            while (current.kind == Kind.TOWER && current.level != null) {
-                Natural reduced = TransfiniteHyperoperation.apply(current.base, current.level, current.height,
-                        COMPARISON_REDUCTION_BUDGET);
-                if (reduced.equals(current)) {
-                    return Optional.empty();   // the level walk did not finish, so no identity applies
-                }
-                current = reduced;
+        if (value.isBeyond() || value.kind != Kind.TOWER || budget <= 0) {
+            return Optional.empty();
+        }
+        Natural current = value;
+        while (current.kind == Kind.TOWER && current.level != null) {
+            Natural reduced = TransfiniteHyperoperation.apply(current.base, current.level, current.height,
+                    COMPARISON_REDUCTION_BUDGET);
+            if (reduced.equals(current)) {
+                return Optional.empty();   // the level walk did not finish, so no identity applies
             }
-            if (current.isExact()) {
-                return base.isExact() ? exactHyperInverse(base, arrows) : Optional.of(ZERO);
-            }
-            if (current.base.equals(base)) {
-                if (current.finiteLevel.equals(of(arrows))) {
-                    return Optional.of(current.height);
-                }
-                if (current.finiteLevel.equals(of(arrows + 1)) && current.height.isExact()) {
-                    return Optional.of(arrow(base, arrows + 1, current.height.subtractClamped(ONE)));
-                }
-            }
+            current = reduced;
+        }
+        if (current.isExact()) {
+            return base.isExact() ? current.exactHyperInverse(base, arrows) : Optional.of(ZERO);
+        }
+        if (!current.base.equals(base)) {
+            return Optional.empty();   // no rule relates two different bases at tower resolution
+        }
+        if (current.finiteLevel.equals(of(arrows))) {
+            return Optional.of(current.height);
+        }
+        if (current.finiteLevel.equals(of(arrows + 1)) && current.height.isExact()) {
+            return Optional.of(arrow(base, arrows + 1, current.height.subtractClamped(ONE)));
+        }
+        if (current.finiteLevel.equals(of(arrows - 1))) {
+            // The ladder descent: b↑^k h <= b↑^(k-1) H iff b↑^k (h-1) <= H, so the answer is
+            // 1 + the same inverse asked of the height - one tower layer peeled per step.
+            return hyperInverseDescent(current.height, base, arrows, budget - 1).map(h -> h.add(ONE));
         }
         return Optional.empty();
     }

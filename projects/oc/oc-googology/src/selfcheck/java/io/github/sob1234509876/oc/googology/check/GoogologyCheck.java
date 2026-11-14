@@ -1142,6 +1142,37 @@ public final class GoogologyCheck {
                 throwsIllegalArgument(() -> Natural.of(5).hyperInverse(Natural.TWO, 0))
                         && Natural.of(1024).hyperInverse(Natural.TWO, 1).equals(Natural.of(1024).log(Natural.TWO))
                         && Natural.of(65536).hyperInverse(Natural.TWO, 2).equals(Natural.of(65536).superLog(Natural.TWO)));
+
+        // The ladder-descent battery, one combined section: b↑^(k-1)H 靠逐层剥塔变得可证。
+        Natural ownerCase = Natural.tetration(Natural.TEN, Natural.tetration(Natural.TEN, Natural.TEN));
+        Natural fourLayer = Natural.arrow(Natural.TEN, 3, Natural.arrow(Natural.TEN, 3, Natural.TEN));
+        Natural nestedPentation = Natural.arrow(Natural.TEN, 4, Natural.of(2));   // 折叠成 10↑↑↑10
+        Natural chain = Natural.TEN;
+        for (int layer = 0; layer < 12; layer++) {
+            chain = Natural.tetration(Natural.TEN, chain);
+        }
+        Natural tooDeep = chain;
+        for (int layer = 12; layer < 30; layer++) {
+            tooDeep = Natural.tetration(Natural.TEN, tooDeep);
+        }
+        check("梯子下降：hyperInverse(10,3) 对 10↑↑(10↑↑10) 给精确的 3（10↑↑↑3 的相等边缘不许滑到 2），"
+                        + "对 10↑↑10 给精确的 2（10↑↑↑2 的相等边缘）",
+                ownerCase.hyperInverse(Natural.TEN, 3).orElseThrow().equals(Natural.of(3))
+                        && Natural.tetration(Natural.TEN, Natural.TEN).hyperInverse(Natural.TEN, 3)
+                                .orElseThrow().equals(Natural.of(2)));
+        equal("梯子下降族：hyperInverse(10,4) 对 10↑↑↑(10↑↑↑10) 给精确的 3（h=3 时逐层相等）",
+                Natural.of(3), fourLayer.hyperInverse(Natural.TEN, 4).orElseThrow());
+        check("同级别读出与高一箭头族：hyperInverse(10,3) 对 10↑↑↑10（10↑⁴2 的折叠形）给 10，"
+                        + "hyperInverse(10,4) 对 10↑↑↑4 给 1（10↑⁴2 = 10↑↑↑10 已超出）",
+                nestedPentation.hyperInverse(Natural.TEN, 3).orElseThrow().equals(Natural.of(10))
+                        && Natural.arrow(Natural.TEN, 3, Natural.of(4)).hyperInverse(Natural.TEN, 4)
+                                .orElseThrow().isOne());
+        check("深度链在预算内给精确答案（12 层塔给 13），超出 HYPER_INVERSE_DESCENT_DEPTH 的 30 层链诚实给空",
+                chain.hyperInverse(Natural.TEN, 3).orElseThrow().equals(Natural.of(13))
+                        && tooDeep.hyperInverse(Natural.TEN, 3).isEmpty());
+        check("诚实不可证：跨底 hyperInverse(2,3) 对 10↑↑(10↑↑10) 给空，低两级的 hyperInverse(10,5) 对 10↑↑↑4 给空",
+                ownerCase.hyperInverse(Natural.TWO, 3).isEmpty()
+                        && Natural.arrow(Natural.TEN, 3, Natural.of(4)).hyperInverse(Natural.TEN, 5).isEmpty());
         equal("√(10^100) = 10^50", Natural.power(Natural.TEN, Natural.of(50)),
                 Natural.power(Natural.TEN, Natural.of(100)).root(Natural.TWO).orElseThrow());
         equal("10^99 的三次方根是 10^33（floor）", Natural.power(Natural.TEN, Natural.of(33)),
@@ -1281,6 +1312,9 @@ public final class GoogologyCheck {
         check("精确值的根算成精确数字：(10^99)^(1/3) 是 33 位的一",
                 engine.execute("root 3 10^99").contains("100000000000000000000000000000000"));
         check("hyperInverse(2, 3) 对 65536 给 3", engine.execute("hyperinv 3 2 65536").contains("3"));
+        check("hyperinv：梯子下降判 10^^10^^10 = 10↑↑↑3 为精确的 3，跨底仍诚实给空",
+                engine.execute("hyperinv 3 10 10^^10^^10").startsWith("3")
+                        && engine.execute("hyperinv 3 2 10^^10^^10").contains("不可证"));
 
         String hyp = engine.execute("hyp 2 (0)(1) 3");
         check("hyp：2{ω}3 = 16，级别显示为 ω", hyp.contains("16") && hyp.contains("级别：ω"));
