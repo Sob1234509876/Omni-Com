@@ -120,6 +120,14 @@ public final class Natural implements NaturalNumber {
     /** How far two base ten logarithms must differ before the distance certificate decides: a factor of ten. */
     private static final double COMPARISON_LOG_MARGIN = 1d;
 
+    /**
+     * Relative margin the distance certificate additionally requires, on top of the absolute factor of ten:
+     * the logarithm estimates carry a few ulps of double rounding, and at double-range magnitudes those
+     * ulps dwarf the absolute margin, so a difference smaller than this share of the larger logarithm
+     * escalates to {@link ComparisonResult#UNKNOWN} instead of pretending to decide.
+     */
+    private static final double COMPARISON_LOG_RELATIVE_MARGIN = 1.0e-12d;
+
     /** Relative margin the floor lemma must clear a bound by, to keep double rounding out of the proof. */
     private static final double COMPARISON_BOUND_MARGIN = 1.05d;
 
@@ -734,10 +742,12 @@ public final class Natural implements NaturalNumber {
 
     /**
      * Distance certificate: both values are put on the one scale every base shares, the base ten logarithm,
-     * and a difference larger than a factor of ten decides the pair. Ten is large enough that the estimate's
-     * own error - the logarithm of an exact value is worked out from its bit length - can never flip a
-     * decision, and bases therefore stop mattering. Values whose logarithms are too close, or clamped at the
-     * top of the double range, stay undetermined.
+     * and a difference larger than a factor of ten decides the pair. The margin carries a relative term on
+     * top of that factor: at double-range magnitudes a few ulps of estimation error are themselves larger
+     * than the absolute margin, and a difference the error could traverse decides nothing - it escalates to
+     * {@link ComparisonResult#UNKNOWN}, as the certificate's contract demands. Bases therefore stop
+     * mattering; values whose logarithms are too close, or clamped at the top of the double range, stay
+     * undetermined.
      */
     private static ComparisonResult compareByLogDistance(Natural left, Natural right) {
         double leftLog = left.log10Approx();
@@ -745,10 +755,12 @@ public final class Natural implements NaturalNumber {
         if (Double.isNaN(leftLog) || Double.isNaN(rightLog)) {
             return ComparisonResult.UNKNOWN;
         }
-        if (leftLog - rightLog > COMPARISON_LOG_MARGIN) {
+        double margin = COMPARISON_LOG_MARGIN
+                + Math.max(Math.abs(leftLog), Math.abs(rightLog)) * COMPARISON_LOG_RELATIVE_MARGIN;
+        if (leftLog - rightLog > margin) {
             return ComparisonResult.GREATER;
         }
-        if (rightLog - leftLog > COMPARISON_LOG_MARGIN) {
+        if (rightLog - leftLog > margin) {
             return ComparisonResult.LESS;
         }
         return ComparisonResult.UNKNOWN;
@@ -758,8 +770,11 @@ public final class Natural implements NaturalNumber {
      * Whether this value is provably at least {@code 2^log2Bound}. Exact values are compared directly when
      * the bound is exact too. A structural value is when its base already clears the bound, or when the
      * floor lemma does: a tower of level three or more is at least {@code base^height}, a level two tower
-     * {@code base·height} and a lower one at least its base. The estimate is a lower bound in log space and
-     * is required to clear the bound by a relative margin, so the answer is a proof and never a guess.
+     * {@code base·height} and a lower one at least its base. The logarithm estimate is accurate to a few
+     * ulps and is required to clear the bound by a relative margin plus an absolute slack, both of which
+     * dwarf that rounding - and the base shortcut is safe because a tower of height two or more is at
+     * least its base squared, which absorbs an ulp of slack in {@code log2(base)} - so the answer is a
+     * proof and never a guess.
      */
     private boolean provablyAtLeastLog2(double log2Bound) {
         if (kind == Kind.BEYOND) {
@@ -791,6 +806,27 @@ public final class Natural implements NaturalNumber {
     /** {@code log2} of an exact value, which is small enough for a double. */
     private static double log2OfExact(BigInteger value) {
         return value.signum() <= 0 ? 0d : log2Of(value.doubleValue());
+    }
+
+    /**
+     * An accurate base ten logarithm of an exact value, as a double. The top of the value is shifted into
+     * double range and logged at full double precision; the shifted-out exponent rides in through the bit
+     * length.
+     *
+     * <p>The former estimate {@code (bitLength - 1) * log10(2)} answered the logarithm of the largest
+     * power of two below the value: it treated ten as eight, because it floors {@code log2(10) = 3.3219}
+     * to 3, and so understated every base ten magnitude that is not a power of two - {@code log10(10)}
+     * came out as {@code log10(8) = 0.903}. Through {@link #log10OfBase()} that error multiplied into
+     * every tower estimate, which is what once reported {@code log_10((10↑↑3)^10)} as
+     * {@code 3·10^11·log10(2)} instead of the exact {@code 10^11}.
+     */
+    private static double exactLog10Estimate(BigInteger value) {
+        int bits = value.bitLength();
+        if (bits <= 53) {
+            return Math.log10(value.doubleValue());
+        }
+        BigInteger top = value.shiftRight(bits - 53);
+        return Math.log10(top.doubleValue()) + (bits - 53) * LOG10_OF_TWO;
     }
 
     /** {@code log2} of a positive double; zero stays zero. */
@@ -914,7 +950,8 @@ public final class Natural implements NaturalNumber {
      * Base ten logarithm of the magnitude, clamped to {@code 1.0e300} so ratios of two huge values stay
      * computable. Zero reports zero.
      *
-     * <p>The tower cases follow the definition of the operations: {@code log10(base^height)} is
+     * <p>Exact values are logged to double precision (see {@link #exactLog10Estimate(BigInteger)}), and the
+     * tower cases follow the definition of the operations: {@code log10(base^height)} is
      * {@code height * log10(base)}, and {@code log10(base↑↑height)} is {@code (base↑↑(height-1)) *
      * log10(base)}. That second product is computed from the lower tower as a double, which is why the
      * clamp exists: beyond a double's range the exact magnitude no longer matters for a ratio.
@@ -925,7 +962,7 @@ public final class Natural implements NaturalNumber {
                 if (value.signum() == 0) {
                     return 0d;
                 }
-                return Math.min(1.0e300, (value.bitLength() - 1) * LOG10_OF_TWO);
+                return Math.min(1.0e300, exactLog10Estimate(value));
             case TOWER:
                 if (level != null) {
                     // A transfinite level dwarfs every double, so the clamp is the honest answer.
@@ -956,14 +993,12 @@ public final class Natural implements NaturalNumber {
     }
 
     /**
-     * {@code log10} of a small exact value as an accurate double, falling back to the bit-length
-     * estimate for an exact value too large for a double. Used by the single-arrow division and root
-     * rules, whose results are rounded magnitudes and therefore tolerate the fallback's coarser scale.
+     * {@code log10} of a value as an accurate double: exact values through
+     * {@link #exactLog10Estimate(BigInteger)}, structural ones through {@link #log10Approx()}. Used by the
+     * single-arrow logarithm, division and root rules, whose floors and roundings are only as good as
+     * this estimate - which is why the estimate must be accurate and not merely a bound.
      */
     private static double exactLog10(Natural value) {
-        if (value.kind == Kind.EXACT && value.value.bitLength() <= 53) {
-            return Math.log10(value.value.doubleValue());
-        }
         return value.log10Approx();
     }
 
@@ -1241,26 +1276,29 @@ public final class Natural implements NaturalNumber {
      * {@code base^e <= this}. Two exact values always have an exact floor, computed from bit lengths and
      * a guarded binary search.
      *
-     * <p>A structural value is logarithmised by first changing the base to ten (the logarithm rules move
-     * every base onto the one scale) and then applying the rule of the value's own arrow count:
+     * <p>A structural value is logarithmised by the rule of its own arrow count, keeping its own base
+     * wherever the rules can resolve exactly:
      *
      * <ul>
-     *   <li><b>one arrow</b>: {@code log_10(10^n) = n} - the height itself. Same base exact; another
-     *       exact base gives {@code floor(n·log_base(10))} from doubles, off by at most one near the
-     *       double precision limit;</li>
-     *   <li><b>two arrows</b>: {@code log_10(10↑↑(n+1)) = 10↑↑n} - one level of the tower peeled. The
-     *       change of base contributes only a constant factor, which folds at tower resolution, so the
-     *       rule holds for any exact base;</li>
+     *   <li><b>one arrow</b>: {@code log_10(10^n) = n} - the height itself. Same base exact. A tower
+     *       built from powers of the base is peeled exactly ({@code log_b(b↑↑k)^n} answers
+     *       {@code n·b↑↑(k-1)}); another exact base has an irrational logarithm, and the double estimate
+     *       {@code floor(n·log_base(c))} is answered only when it proves its own floor - a magnitude too
+     *       close to an integer, or too large for the doubles to carry digits, stays empty rather than
+     *       presenting a rounded conversion as exact;</li>
+     *   <li><b>two arrows</b>: {@code log_10(10↑↑(n+1)) = 10↑↑n} - one level of the tower peeled. For a
+     *       base distinct from the asked base the change of base contributes a constant factor that no
+     *       rule here writes down; the peeled tower is the documented tower-resolution answer;</li>
      *   <li><b>three arrows and up</b>: the answer is the value itself. The true logarithm is the tower
      *       with one stripped from a height the notation cannot decrement ({@code log_10(10↑↑↑3)} is
      *       {@code 10↑↑(10↑↑10 - 1)}), and rounding at this resolution leaves the value unchanged;</li>
      *   <li>a structural height under a one-arrow value answers the height (a constant factor folds), a
-     *       transfinite level is reduced at its own height first, and a level that does not reduce - or a
-     *       structural base - is empty.</li>
+     *       transfinite level is reduced at its own height first, and a level that does not reduce is
+     *       empty.</li>
      * </ul>
      *
      * <p>So {@code log_10(10↑1233)} is exactly {@code 1233}, {@code log_10(10↑↑10)} exactly
-     * {@code 10↑↑9}, {@code log_2(10↑↑10)} approximately {@code 10↑↑9}, and {@code log_10(10↑↑↑3)} the
+     * {@code 10↑↑9}, {@code log_10((10↑↑3)^10)} exactly {@code 10^11}, and {@code log_10(10↑↑↑3)} the
      * tower itself. See also {@link #log10Approx()} for the double-scale estimate that always answers.
      *
      * @throws IllegalArgumentException when this value is zero (the logarithm of zero is undefined) or the
@@ -1779,15 +1817,23 @@ public final class Natural implements NaturalNumber {
             if (current.base.equals(base)) {
                 return Optional.of(current.height);           // log_b(b^h) = h, exact
             }
+            Optional<Natural> peeled = exactLogOfValue(current, base);
+            if (peeled.isPresent()) {
+                return peeled;   // the tower is built from powers of the base, so the rules resolve exactly
+            }
             if (!current.height.isExact()) {
                 return Optional.of(current.height);           // h·const ≈ h at tower resolution
             }
             if (current.height.value.bitLength() <= 45) {
-                // Change of base into doubles: floor(h·log_base(c)), off by at most one for tall heights.
+                // Change of base into doubles: floor(h·log_base(c)). Answered only when the estimate
+                // proves its own floor - a magnitude this close to an integer, or beyond double reach,
+                // proves nothing and stays empty rather than presenting a rounded conversion as exact.
                 double scaled = current.height.toDoubleApprox() * exactLog10(current.base) / exactLog10(base);
-                return Optional.of(of(Math.max(0L, (long) Math.floor(scaled))));
+                if (floorProvable(scaled)) {
+                    return Optional.of(of(Math.max(0L, (long) Math.floor(scaled))));
+                }
             }
-            return Optional.empty();   // the floor lies in the exact range but its digits are not derivable
+            return Optional.empty();   // no exact rule applies, and the double estimate proves no floor
         }
         if (current.finiteLevel.equals(TWO)) {
             // log_b(c↑↑h) = c↑↑(h-1)·log_b(c): the constant factor folds, and subtractClamped keeps a
@@ -1795,6 +1841,86 @@ public final class Natural implements NaturalNumber {
             return Optional.of(arrow(current.base, 2, current.height.subtractClamped(ONE)));
         }
         return Optional.of(current);   // from three arrows up the logarithm is the value itself
+    }
+
+    /**
+     * The exact logarithm {@code log_base(value)} when the value's own construction proves it, structural
+     * forms included; empty when no rule proves it. This is the change-of-base path that keeps a tower in
+     * its own base instead of converting it:
+     *
+     * <ul>
+     *   <li>an exact value that is an integer power of the base answers the exponent, decided by the
+     *       guarded binary search and verified by materialising the power (which stays inside the value's
+     *       own bit length, so it cannot allocate unboundedly);</li>
+     *   <li>a one-arrow tower answers {@code log_b(c^h) = h·log_b(c)}: the recursion peels the base down to
+     *       an exact power of the asked base, and the height multiplies in exactly - which is what makes
+     *       {@code log_10((10↑↑3)^10)} exactly {@code 10·10↑↑2 = 10^11} instead of a rounded conversion.
+     *       A product that leaves the writable range, or a structural factor, is not representable here
+     *       and stays empty;</li>
+     *   <li>a two-arrow tower over the base itself peels one level: {@code log_b(b↑↑h) = b↑↑(h-1)}, the
+     *       constant factor {@code log_b(b) = 1} folding exactly.</li>
+     * </ul>
+     *
+     * <p>A base that is not a power of the asked base has an irrational logarithm, which no rule here
+     * writes down - the caller falls through to the guarded double floor instead of pretending the
+     * conversion was exact.
+     */
+    private static Optional<Natural> exactLogOfValue(Natural value, Natural base) {
+        if (value.isBeyond() || !base.isExact()) {
+            return Optional.empty();
+        }
+        if (value.isExact()) {
+            if (value.isZero()) {
+                return Optional.empty();   // the logarithm of zero is undefined
+            }
+            if (value.isOne()) {
+                return Optional.of(ZERO);
+            }
+            long exponent = exactFloorLog(value.value, base.value);
+            return base.value.pow((int) exponent).equals(value.value)
+                    ? Optional.of(of(exponent)) : Optional.empty();
+        }
+        if (value.kind != Kind.TOWER || value.level != null) {
+            return Optional.empty();   // BEYOND, or a transfinite level whose reduction did not finish
+        }
+        if (value.finiteLevel.isOne()) {
+            Optional<Natural> inner = exactLogOfValue(value.base, base);
+            if (inner.isEmpty()) {
+                return Optional.empty();
+            }
+            Natural factor = inner.get();
+            if (value.height.isOne()) {
+                return Optional.of(factor);   // c^1 is c
+            }
+            if (!value.height.isExact() || !factor.isExact()) {
+                return Optional.empty();   // h·(structural tower) is not writable, and h is not known
+            }
+            BigInteger product = value.height.value.multiply(factor.value);
+            if (product.bitLength() > EXACT_BIT_LIMIT) {
+                return Optional.empty();   // the exact answer leaves the writable range
+            }
+            return Optional.of(canonicalExact(product));
+        }
+        if (value.finiteLevel.equals(TWO) && value.base.equals(base) && value.height.isExact()) {
+            return Optional.of(arrow(base, 2, value.height.subtractClamped(ONE)));   // log_b(b↑↑h)
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether a floor read off a double is provable: the computed magnitude must clear both neighbouring
+     * integers by more than the estimation error could traverse. Sixteen ulps cover the compounded
+     * rounding of the three-double product {@code height · log10(c) / log10(b)} with room to spare, and a
+     * small absolute floor keeps tiny magnitudes honest; a magnitude this close to an integer, or beyond
+     * the double range where the digits are not derivable at all, proves nothing.
+     */
+    private static boolean floorProvable(double scaled) {
+        if (Double.isNaN(scaled) || Double.isInfinite(scaled) || scaled >= 9.0e15d) {
+            return false;
+        }
+        double error = Math.max(1.0e-9d, Math.ulp(scaled) * 16d);
+        double distance = scaled - Math.floor(scaled);
+        return distance >= error && 1d - distance >= error;
     }
 
     /**

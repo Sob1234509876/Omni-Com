@@ -1037,6 +1037,35 @@ public final class GoogologyCheck {
         }
         check("500 个随机 floor 对数满足 b^e ≤ x < b^(e+1) 且恰好等于 e（" + logPairs + "/500）",
                 logHolds && logPairs == 500);
+
+        // Regression (2026-11): log10 of an exact value was read off its bit length as
+        // (bitLength - 1) · log10(2), i.e. ten was logged as eight, because the estimate floors
+        // log2(10) = 3.3219 to 3. Through log10OfBase() the error multiplied into every tower estimate,
+        // and out through the one-arrow change of base, which reported log_10((10↑↑3)^10) as
+        // 3·10^11·log10(2) = 90308998699 (presented as exact) and let log_2((10↑↑↑3)^5) answer the
+        // long overflow 9223372036854775807. The same floored multiplier let the log distance
+        // certificate prove 10^(5·10^18) < 2^(1.55·10^19), whose true base ten logarithms are 5·10^18
+        // and 1.55·10^19·log10(2) ≈ 4.666·10^18 - the reverse. The peeling identity below is the
+        // fix's proof: log_10(10↑↑3) = 10↑↑2 exactly, so the answer is 10·10↑↑2 = 10^11.
+        equal("换底先精确剥落：log_10((10↑↑3)^10) = 10·log_10(10↑↑3) = 10^11",
+                Natural.of(new java.math.BigInteger("100000000000")),
+                Natural.power(Natural.tetration(Natural.TEN, Natural.of(3)), Natural.of(10))
+                        .log(Natural.TEN).orElseThrow());
+        check("结构形底没有可证的换底规则时不拿双精度溢出充数：log_2((10↑↑↑3)^5) 给空",
+                Natural.power(Natural.arrow(Natural.TEN, 3, Natural.of(3)), Natural.of(5))
+                        .log(Natural.TWO).isEmpty());
+        Natural tenHuge = Natural.power(Natural.TEN,
+                Natural.of(new java.math.BigInteger("5000000000000000000")));
+        Natural twoHuge = Natural.power(Natural.TWO,
+                Natural.of(new java.math.BigInteger("15500000000000000000")));
+        check("跨底对数距离不再被 log10(10)≈log10(8) 翻转：10^(5·10^18) > 2^(1.55·10^19)",
+                tenHuge.compareMagnitude(twoHuge) == ComparisonResult.GREATER
+                        && twoHuge.compareMagnitude(tenHuge) == ComparisonResult.LESS
+                        && tenHuge.compareWithLean(twoHuge) == ComparisonResult.GREATER);
+        check("对数距离的相对余量把双精度决定不了的近距对升级为 UNKNOWN：2^k 的真 log10 与 5·10^18 相差小于一个浮点尾数",
+                tenHuge.compareMagnitude(Natural.power(Natural.TWO,
+                        Natural.of(new java.math.BigInteger("16609640474436811739"))))
+                        == ComparisonResult.UNKNOWN);
     }
 
     // ------------------------------------------------------------------ 18) hyperoperation inverses
