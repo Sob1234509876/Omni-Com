@@ -1126,9 +1126,9 @@ public final class GoogologyCheck {
         check("四箭头也有恒等式：slog_10(10↑↑↑↑3) = 10↑↑↑↑2",
                 Natural.arrow(Natural.TEN, 4, Natural.of(3)).superLog(Natural.TEN).orElseThrow()
                         .equals(Natural.arrow(Natural.TEN, 4, Natural.of(2))));
-        check("跨底超对数按同一恒等式给近似（迭代次数对每步常数因子不敏感）：slog_2(10↑↑10) = 10",
-                Natural.tetration(Natural.TEN, Natural.TEN).superLog(Natural.TWO).orElseThrow()
-                        .equals(Natural.of(10)));
+        equal("跨底超对数由塔三明治给精确解：slog_2(10↑↑10) = 12（2↑↑12 ≤ 10↑↑10 < 2↑↑13，夹紧两侧都是整高度）",
+                Natural.of(12),
+                Natural.tetration(Natural.TEN, Natural.TEN).superLog(Natural.TWO).orElseThrow());
         equal("hyperInverse(2,3)(65536) = 3（2↑↑↑3 = 65536）", Natural.of(3),
                 Natural.of(65536).hyperInverse(Natural.TWO, 3).orElseThrow());
         equal("hyperInverse(10,7)(10↑^7 12) = 12（同级别匹配塔给高度）", Natural.of(12),
@@ -1170,9 +1170,39 @@ public final class GoogologyCheck {
         check("深度链在预算内给精确答案（12 层塔给 13），超出 HYPER_INVERSE_DESCENT_DEPTH 的 30 层链诚实给空",
                 chain.hyperInverse(Natural.TEN, 3).orElseThrow().equals(Natural.of(13))
                         && tooDeep.hyperInverse(Natural.TEN, 3).isEmpty());
-        check("诚实不可证：跨底 hyperInverse(2,3) 对 10↑↑(10↑↑10) 给空，低两级的 hyperInverse(10,5) 对 10↑↑↑4 给空",
-                ownerCase.hyperInverse(Natural.TWO, 3).isEmpty()
-                        && Natural.arrow(Natural.TEN, 3, Natural.of(4)).hyperInverse(Natural.TEN, 5).isEmpty());
+        check("诚实不可证：低两级的 hyperInverse(10,5) 对 10↑↑↑4 给空（同底行为不变）",
+                Natural.arrow(Natural.TEN, 3, Natural.of(4)).hyperInverse(Natural.TEN, 5).isEmpty());
+
+        // The cross-base tower-sandwich battery, one combined section: b < c 的超运算逆靠夹紧逐层剥塔。
+        // 三明治引理（纯整数归纳，见 pairSandwichOffset 的 javadoc）：对精确底 2 <= b < c，记
+        // d = slog_b(c^c) - 2，则对每个 Y >= 2 有 b↑↑(Y+d) <= c↑↑Y < b↑↑(Y+d+1)，于是
+        // slog_b(c↑↑Y) = Y + d 恰好，且 0 <= w <= d 时 b↑↑s <= c↑↑Y + w 当且仅当 s <= Y + d。
+        // (2,10) 的 d = 2：2↑↑(Y+2) < 10↑↑Y < 2↑↑(Y+3)，b=1 时 10 在 2↑↑2 与 2↑↑3 之间、
+        // b=2,3,4 逐个手验，归纳步只需 c >= b 与 c <= b^K。
+        equal("跨底塔三明治：hyperInverse(2,3) 对 10↑↑(10↑↑10) 给精确的 4"
+                        + "（2↑↑↑4 = 2↑↑65536 ≤ 10↑↑(10↑↑10)，因 65536 ≤ 10↑↑10 + 2；"
+                        + "2↑↑↑5 = 2↑↑(2↑↑65536) 超出，因 2↑↑65536 > 10↑↑10 + 3）",
+                Natural.of(4), ownerCase.hyperInverse(Natural.TWO, 3).orElseThrow());
+        check("跨底家族：hyperInverse(2,3) 对 10↑↑10 给 3（2↑↑↑3 = 65536 ≤ 10↑↑10 < 2↑↑↑4 = 2↑↑65536），"
+                        + "对 10↑↑↑4 给 5（10↑↑↑4 = 10↑↑(10↑↑(10↑↑10))，剥到 2↑↑↑4 ≤ 10↑↑(10↑↑10) + 2 可证）",
+                Natural.arrow(Natural.TEN, 2, Natural.TEN).hyperInverse(Natural.TWO, 3).orElseThrow()
+                        .equals(Natural.of(3))
+                        && Natural.arrow(Natural.TEN, 3, Natural.of(4)).hyperInverse(Natural.TWO, 3)
+                                .orElseThrow().equals(Natural.of(5)));
+        check("跨底超对数：slog_2(10↑↑3) = 5（2↑↑5 ≈ 10^19728 < 10^(10^10) < 2↑↑6 ≈ 10^(10^19728)），"
+                        + "slog_2(3↑↑10) = 11（对 (2,3) 偏移为 1：2↑↑(Y+1) ≤ 3↑↑Y < 2↑↑(Y+2)）",
+                Natural.arrow(Natural.TEN, 2, Natural.of(3)).superLog(Natural.TWO).orElseThrow()
+                        .equals(Natural.of(5))
+                        && Natural.arrow(Natural.of(3), 2, Natural.of(10)).superLog(Natural.TWO).orElseThrow()
+                                .equals(Natural.of(11)));
+        check("跨底诚实升级：反方向底 hyperInverse(10,3) 对 2↑↑(2↑↑5) 给空（引理只证较小的问底），"
+                        + "外族高度链 hyperInverse(2,3) 对 10↑↑(2↑↑5) 给空（高度链离开值自己的底数族），"
+                        + "c^c 超出精确范围的 slog_2(1000↑↑3) 给空（对偶常数不可算，不拿近似充数）",
+                Natural.arrow(Natural.TWO, 2, Natural.arrow(Natural.TWO, 2, Natural.of(5)))
+                        .hyperInverse(Natural.TEN, 3).isEmpty()
+                        && Natural.arrow(Natural.TEN, 2, Natural.arrow(Natural.TWO, 2, Natural.of(5)))
+                                .hyperInverse(Natural.TWO, 3).isEmpty()
+                        && Natural.arrow(Natural.of(1000), 2, Natural.of(3)).superLog(Natural.TWO).isEmpty());
         equal("√(10^100) = 10^50", Natural.power(Natural.TEN, Natural.of(50)),
                 Natural.power(Natural.TEN, Natural.of(100)).root(Natural.TWO).orElseThrow());
         equal("10^99 的三次方根是 10^33（floor）", Natural.power(Natural.TEN, Natural.of(33)),
@@ -1312,9 +1342,14 @@ public final class GoogologyCheck {
         check("精确值的根算成精确数字：(10^99)^(1/3) 是 33 位的一",
                 engine.execute("root 3 10^99").contains("100000000000000000000000000000000"));
         check("hyperInverse(2, 3) 对 65536 给 3", engine.execute("hyperinv 3 2 65536").contains("3"));
-        check("hyperinv：梯子下降判 10^^10^^10 = 10↑↑↑3 为精确的 3，跨底仍诚实给空",
+        check("hyperinv：梯子下降判 10^^10^^10 为精确的 3（同底不变），跨底塔三明治判 "
+                        + "hyperinv 3 2 10^^10^^10 为精确的 4、10^^^2 为 3、10^^^4 为 5，跨底超对数 "
+                        + "hyperinv 2 2 10^^3 为精确的 5",
                 engine.execute("hyperinv 3 10 10^^10^^10").startsWith("3")
-                        && engine.execute("hyperinv 3 2 10^^10^^10").contains("不可证"));
+                        && engine.execute("hyperinv 3 2 10^^10^^10").startsWith("4")
+                        && engine.execute("hyperinv 3 2 10^^^2").startsWith("3")
+                        && engine.execute("hyperinv 3 2 10^^^4").startsWith("5")
+                        && engine.execute("hyperinv 2 2 10^^3").startsWith("5"));
 
         String hyp = engine.execute("hyp 2 (0)(1) 3");
         check("hyp：2{ω}3 = 16，级别显示为 ω", hyp.contains("16") && hyp.contains("级别：ω"));

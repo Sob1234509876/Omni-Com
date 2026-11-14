@@ -13,7 +13,7 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（774 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（878 项检查，无测试框架，无网络） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
@@ -455,8 +455,8 @@ CardinalRung.ICARUS.isVerified();                    // false
 | `divide` | 精确商（向下取整） | 单箭头：同底按高度相减（`10^a / 10^b = 10^(a-b)`），跨底按数量级四舍五入；双箭头及以上：被除数（或一、或零） |
 | `remainder` | 精确余数 | 同底单箭头的幂恒为零（整除）；其余给空——余数藏在被丢掉的低位里 |
 | `log` | 精确 floor（带保护的二分搜索） | 单箭头：高度本身；双箭头：剥落一层（`log_10(10↑↑(n+1)) = 10↑↑n`）；三箭头起：自身；换底只差常数因子（折叠） |
-| `superLog` | 精确（迭代精确对数） | 单箭头：`1 + slog(高度)`；双箭头：高度；三箭头起：`c↑^a(h-1)`，高度为结构形时即自身 |
-| `hyperInverse` | 精确迭代该运算 | 一、二箭头分别委托 `log`/`superLog`；三箭头起按同级匹配塔给出高度 |
+| `superLog` | 精确（迭代精确对数） | 单箭头：`1 + slog(高度)`；双箭头：高度（较小的跨底按塔三明治给 `h + slog_b(c^c) - 2`）；三箭头起：`c↑^a(h-1)`，高度为结构形时即自身 |
+| `hyperInverse` | 精确迭代该运算 | 一、二箭头分别委托 `log`/`superLog`；三箭头起按同级匹配塔给出高度，较小的跨底则由跨底塔三明治判四箭头以下的塔（`hyperInverse(2,3)` 对 `10↑↑(10↑↑10)` 恰为 `4`） |
 | `root` | 精确牛顿开方 | 单箭头：`10^(n/m)`（底为十时精确）；双箭头及以上：自身；结构形次数只留 `c^(h/D)` 可写 |
 | `min`、`max`、`compareTo` | 整数比较 | 双方先按值归约（预算 `COMPARISON_REDUCTION_BUDGET = 32`），然后比较等级、底数、高度 |
 | `toString` | 十进制数字 | 箭头记法（`10↑↑10`），超限层级则为 `base{level}height` |
@@ -505,7 +505,7 @@ help/abstract-ordinals.md        BMS 之上名册的中文指南
 help/ordinal-ladder.md           阶段一至阶段三序数阶梯（含 Q7b 迭代下标）的中文指南
 help/cardinal-register.md        阶段四基数寄存器的中文指南
 help/inaccessible-extension.md   阶段五不可达扩展的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    774 项检查的自检程序
+src/selfcheck/java/.../check/GoogologyCheck.java    878 项检查的自检程序
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）

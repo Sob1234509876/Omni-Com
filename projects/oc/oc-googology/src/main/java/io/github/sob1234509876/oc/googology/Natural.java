@@ -5,6 +5,7 @@ import io.github.sob1234509876.oc.googology.bms.BmsOrdinalNotation;
 import java.math.BigInteger;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.regex.Pattern;
 
 /**
@@ -1409,17 +1410,13 @@ public final class Natural implements NaturalNumber {
      * base, one up to {@code base ↑↑ 2}, and so on.
      *
      * <p>The exact range iterates the exact floor logarithm, which terminates after a handful of steps.
-     * A structural value answers by the same level rules as {@link #log(Natural)}, and they hold for any
-     * exact base - the iteration count is insensitive to a constant factor per step, so a foreign base
-     * costs at most an additive constant:
-     *
-     * <ul>
-     *   <li>one arrow: {@code slog_b(c^h) = 1 + slog_b(h)}, recursing on the height;</li>
-     *   <li>two arrows: {@code slog_b(c↑↑h) = h}, the height itself;</li>
-     *   <li>three arrows and up with an exact height: {@code c ↑^k (h-1)}, the tower one height lower;</li>
-     *   <li>three arrows and up with a structural height: the value itself, because {@code h-1} is not
-     *       writable and subtracting one changes nothing at this resolution.</li>
-     * </ul>
+     * A structural value answers by the level rules of {@link #superLogStructural(Natural)}: the matching
+     * tetration reads its height off directly, one-arrow towers recurse on their height, and a tower over
+     * a <em>smaller</em> foreign base is answered exactly by the cross-base tower sandwich
+     * ({@code slog_b(c↑↑h) = h + slog_b(c^c) - 2}, see {@link #pairSandwichOffset(Natural, Natural)}).
+     * Where no rule proves an answer - a foreign base at or above the value's own, a base whose {@code c^c}
+     * leaves the exact range, a peel chain the sandwich cannot certify - the result is empty rather than a
+     * rounded conversion presented as exact.
      *
      * <p>A transfinite level is reduced first, as in {@link #log(Natural)}; a structural base has no
      * rule and is empty.
@@ -1455,9 +1452,11 @@ public final class Natural implements NaturalNumber {
      * <p>The exact range iterates the operation while it evaluates exactly, which for three arrows and up
      * terminates after a step or two. Structural values answer the matching tower exactly (the largest
      * height of {@code base ↑^arrows} not exceeding {@code base ↑^arrows h} is {@code h}), one arrow above
-     * the asked level through {@code inv_a(b↑^(a+1) h) = b↑^(a+1) (h-1)} for an exact height, and one
+     * the asked level through {@code inv_a(b↑^(a+1) h) = b↑^(a+1) (h-1)} for an exact height, one
      * arrow <em>below</em> the asked level through the ladder descent described in
-     * {@link #hyperInverseDescent(Natural, Natural, int, int)}; everything else is empty. A transfinite
+     * {@link #hyperInverseDescent(Natural, Natural, int, int)}, and - over a smaller foreign base - the
+     * tetration and pentation towers through the cross-base tower sandwich
+     * ({@link #crossBaseHyperInverse}); everything else is empty. A transfinite
      * level is reduced first, as in {@link #log(Natural)}.
      *
      * @throws IllegalArgumentException when the arrow count is below one, this value is zero, or the base
@@ -1499,8 +1498,9 @@ public final class Natural implements NaturalNumber {
      * so the descent is well-founded; {@code budget} only caps the depth against adversarially nested
      * towers, and a chain it cannot finish stays unprovable rather than guessed at. Every remaining rule is
      * the one from before: the matching level reads its height off directly, the level above with an exact
-     * height answers one height lower, exact values iterate the operation, and a different base has no rule
-     * relating the two sides - honest emptiness, not a guess.
+     * height answers one height lower, exact values iterate the operation, and a different base is decided
+     * by the cross-base tower sandwich where it can reach ({@link #crossBaseHyperInverse}) and honest
+     * emptiness where it cannot.
      */
     private static Optional<Natural> hyperInverseDescent(Natural value, Natural base, int arrows, int budget) {
         if (value.isExact()) {
@@ -1525,7 +1525,7 @@ public final class Natural implements NaturalNumber {
             return base.isExact() ? current.exactHyperInverse(base, arrows) : Optional.of(ZERO);
         }
         if (!current.base.equals(base)) {
-            return Optional.empty();   // no rule relates two different bases at tower resolution
+            return crossBaseHyperInverse(current, base, budget);   // the cross-base tower sandwich
         }
         if (current.finiteLevel.equals(of(arrows))) {
             return Optional.of(current.height);
@@ -1539,6 +1539,197 @@ public final class Natural implements NaturalNumber {
             return hyperInverseDescent(current.height, base, arrows, budget - 1).map(h -> h.add(ONE));
         }
         return Optional.empty();
+    }
+
+    /**
+     * {@link #hyperInverse(Natural, int)} across bases: the asked base is smaller than the value's own,
+     * and the cross-base tower sandwich reduces the question to tower-height bookkeeping.
+     *
+     * <p>The pair lemma ({@link #pairSandwichOffset(Natural, Natural)}): for exact bases {@code 2 <= b < c}
+     * whose constant is certifiable here, with {@code d = slog_b(c^c) - 2}, every tower satisfies
+     * {@code b↑↑(Y+d) <= c↑↑Y < b↑↑(Y+d+1)} for every {@code Y >= 2}. Hence {@code slog_b(c↑↑Y) = Y + d}
+     * exactly, and for {@code 0 <= w <= d} the sandwich decides the mixed comparison by heights alone:
+     * {@code b↑↑s <= c↑↑Y + w} if and only if {@code s <= Y + d}. The value is read as a tetration tower
+     * over its own base ({@code c↑↑H} directly, a pentation {@code c↑↑↑h} through
+     * {@code c↑↑↑h = c↑↑(c↑↑↑(h-1))}), and the pentation inverse descends one tower layer per step:
+     * {@code b↑↑↑h <= c↑↑Y + d} iff {@code b↑↑↑(h-1) <= Y + d}, until exact small arithmetic decides the
+     * last {@code h}. So {@code hyperInverse(2, 3)} of {@code 10↑↑(10↑↑10)} is exactly {@code 4}:
+     * {@code 2↑↑↑4 = 2↑↑65536 <= 10↑↑(10↑↑10)} because {@code 65536 <= 10↑↑10 + 2}, while
+     * {@code 2↑↑↑5 = 2↑↑(2↑↑65536)} exceeds it because {@code 2↑↑65536 > 10↑↑10 + 2}.
+     *
+     * <p>Termination: each step recurses on the height chain's strict subterm, and {@code budget} caps the
+     * recursion and the answer search exactly as the same-base descent does. Everything the sandwich
+     * cannot reach stays unprovable: an asked base at or above the value's own (the lemma points the other
+     * way), a height chain that leaves the value's own base family, a base whose {@code c^c} leaves the
+     * exact range so the constant is not computable, a seed the exact arithmetic cannot certify, or a
+     * budget that runs out.
+     */
+    private static Optional<Natural> crossBaseHyperInverse(Natural value, Natural base, int budget) {
+        if (!base.isExact() || value.level != null || value.finiteLevel == null || !value.base.isExact()) {
+            return Optional.empty();
+        }
+        Natural c = value.base;
+        if (base.compareTo(c) >= 0) {
+            return Optional.empty();   // the lemma is proved for the smaller asked base only
+        }
+        OptionalLong offset = pairSandwichOffset(base, c);
+        if (offset.isEmpty()) {
+            return Optional.empty();
+        }
+        int arrows = value.finiteArrowCount();
+        if (arrows != 2 && arrows != 3) {
+            return Optional.empty();
+        }
+        if (arrows == 3 && (!value.height.isExact() || value.height.compareTo(of(2)) < 0)) {
+            return Optional.empty();   // c↑↑↑h = c↑↑(c↑↑↑(h-1)) needs a writable h-1
+        }
+        // the tetration height the value is read at: c↑↑H itself, or c↑↑(c↑↑↑(h-1)) for a pentation value
+        Natural height = arrows == 2 ? value.height : arrow(c, 3, value.height.subtractClamped(ONE));
+        // the answer is the first j with b↑↑↑j > height + d, counted from j = 0 (b↑↑↑0 = 1 always fits);
+        // the largest fitting h is that j minus one, so the count itself is the answer
+        int j = 0;
+        while (j <= budget) {
+            Optional<Boolean> fits = pentationFits(base, c, offset.getAsLong(), j, height, budget);
+            if (fits.isEmpty()) {
+                return Optional.empty();
+            }
+            if (!fits.get()) {
+                return Optional.of(of(j));
+            }
+            j++;
+        }
+        return Optional.empty();   // the search did not terminate inside the budget
+    }
+
+    /**
+     * One descent step of {@link #crossBaseHyperInverse}: decides whether {@code b↑↑↑j <= height + d},
+     * where {@code height} is an exact number or a tetration tower over {@code c} (a pentation tower over
+     * {@code c} is first unfolded through {@code c↑↑↑h = c↑↑(c↑↑↑(h-1))}). A structural height peels by
+     * the sandwich: {@code b↑↑↑j <= c↑↑Y + d} iff {@code b↑↑↑(j-1) <= Y + d} - one layer of the height
+     * chain per step, a strict subterm, so the descent terminates and {@code budget} only caps it. An
+     * exact height decides by exact arithmetic: the candidate {@code b↑↑↑j} is built and compared, and a
+     * candidate that left the exact range exceeds every exact target, which is a proof and not a guess.
+     */
+    private static Optional<Boolean> pentationFits(Natural b, Natural c, long d, int j, Natural height,
+            int budget) {
+        if (j == 0) {
+            return Optional.of(Boolean.TRUE);   // b↑↑↑0 = 1 <= height + d: height >= 2 and d >= 0
+        }
+        if (budget <= 0) {
+            return Optional.empty();
+        }
+        Natural current = height;
+        int budgetLeft = budget;
+        while (current.kind == Kind.TOWER && current.level == null) {
+            if (!current.base.equals(c)) {
+                return Optional.empty();   // the height chain left the value's own base family
+            }
+            int arrows = current.finiteArrowCount();
+            if (arrows == 2) {
+                break;   // a tetration tower over c: the sandwich peel applies
+            }
+            if (arrows == 3 && current.height.isExact() && current.height.compareTo(of(2)) >= 0
+                    && budgetLeft > 0) {
+                // c↑↑↑h = c↑↑(c↑↑↑(h-1)): the same number, read as a tetration tower
+                current = arrow(c, 2, arrow(c, 3, current.height.subtractClamped(ONE)));
+                budgetLeft--;
+                continue;
+            }
+            return Optional.empty();   // four arrows and up, or an unwritable unfold: no rule here
+        }
+        if (current.isExact()) {
+            Natural target = current.add(of(d));
+            if (!target.isExact()) {
+                return Optional.empty();   // the sum left the exact range at the 4096-bit edge
+            }
+            Natural candidate = arrow(b, 3, of(j));
+            if (candidate.isExact()) {
+                return Optional.of(candidate.compareTo(target) <= 0);
+            }
+            return Optional.of(Boolean.FALSE);   // a structural candidate exceeds every exact target
+        }
+        if (current.level != null || current.finiteArrowCount() != 2) {
+            return Optional.empty();   // unreachable after the normalization above; kept defensive
+        }
+        Natural inner = current.height;
+        if (inner.isExact()) {
+            Natural target = inner.add(of(d));
+            if (!target.isExact()) {
+                return Optional.empty();
+            }
+            Natural candidate = arrow(b, 3, of(j - 1));
+            if (candidate.isExact()) {
+                return Optional.of(candidate.compareTo(target) <= 0);
+            }
+            return Optional.of(Boolean.FALSE);
+        }
+        // the sandwich peel: b↑↑↑j <= c↑↑Y + d iff b↑↑↑(j-1) <= Y + d
+        return pentationFits(b, c, d, j - 1, inner, budgetLeft - 1);
+    }
+
+    /**
+     * The cross-base tower sandwich, certified for one pair of exact bases {@code 2 <= b < c}: the offset
+     * {@code d} with {@code b↑↑(Y+d) <= c↑↑Y < b↑↑(Y+d+1)} for every {@code Y >= 2}, or empty when this
+     * implementation cannot certify the pair.
+     *
+     * <p>{@code d = slog_b(c^c) - 2}, read off the exact value {@code c^c}, so the lower seed
+     * {@code b↑↑(2+d) <= c^c} holds by the definition of the super-logarithm. The upper seed with slack,
+     * {@code K^2 · c^c + 2 <= b↑↑(3+d)} for {@code K = ceil(log_b c)}, is verified by exact comparison -
+     * and both seeds then carry to every {@code Y >= 2} by induction in pure integer arithmetic: the
+     * lower step is {@code c↑↑(Y+1) = c^(c↑↑Y) >= b^(c↑↑Y) >= b^(b↑↑(Y+d)) = b↑↑(Y+d+1)} (here
+     * {@code c >= b} and the lower claim at {@code Y}), and the upper step is
+     * {@code K^2·c↑↑(Y+1) + 2 = K^2·c^(c↑↑Y) + 2 <= b^(K·c↑↑Y)·K^2 + 2 <= b^(2K·c↑↑Y) <= b^(K^2·c↑↑Y)
+     * <= b^(b↑↑(Y+d+1)) = b↑↑(Y+d+2)} (here {@code c <= b^K}, {@code K >= 2} because {@code c > b},
+     * {@code 2K <= K^2}, and {@code K^2 <= b^(K·c↑↑Y)} since {@code K <= 9} for any certifiable pair while
+     * {@code K·c↑↑Y >= K·c^2 >= 18}), which is the upper claim at {@code Y + 1}. Empty when {@code c^c}
+     * leaves the exact range, so {@code d} is not computable here, or when a seed comparison fails to
+     * produce a proof. For every certifiable pair {@code d} sits in {@code \{0, 1, 2\}}: {@code c^c} fits
+     * the exact range only below roughly 460, whose logarithms never reach {@code b↑↑5}, and the exact
+     * seeds decide - which is why the checks below compare exact values or demand a comparison proof.
+     */
+    private static OptionalLong pairSandwichOffset(Natural b, Natural c) {
+        if (!b.isExact() || !c.isExact() || b.compareTo(TWO) < 0 || b.compareTo(c) >= 0) {
+            return OptionalLong.empty();
+        }
+        Natural cc = arrow(c, 2, TWO);
+        if (!cc.isExact()) {
+            return OptionalLong.empty();   // the constant d = slog_b(c^c) - 2 is not computable here
+        }
+        long d = exactSuperLog(cc.value, b.value) - 2L;
+        if (d < 0L || d > 2L) {
+            return OptionalLong.empty();   // defensive: d sits in {0, 1, 2} for every certifiable pair
+        }
+        // lower seed: b↑↑(2+d) <= c^c - exact on both sides (2+d <= 4 stays inside the exact range)
+        Natural lower = arrow(b, 2, of((int) (2 + d)));
+        if (!lower.isExact() || lower.value.compareTo(cc.value) > 0) {
+            return OptionalLong.empty();
+        }
+        // upper seed with slack: K^2 * c^c + 2 <= b↑↑(3+d), K = ceil(log_b c)
+        long k = 1L;
+        BigInteger power = b.value;
+        while (power.compareTo(c.value) < 0) {
+            k++;
+            if (k > 64L) {
+                return OptionalLong.empty();   // defensive bound on the search; K <= 9 in practice
+            }
+            power = power.multiply(b.value);
+        }
+        BigInteger seed = cc.value.multiply(power.multiply(power)).add(BigInteger.TWO);
+        Natural upper = arrow(b, 2, of((int) (3 + d)));
+        if (!seedAtMostTower(seed, upper)) {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(d);
+    }
+
+    /** Whether the exact seed clears the tower - a proof from the comparison channels, never a lean. */
+    private static boolean seedAtMostTower(BigInteger seed, Natural tower) {
+        Natural wrapped = canonicalExact(seed);
+        if (wrapped.isExact() && tower.isExact()) {
+            return wrapped.value.compareTo(tower.value) <= 0;
+        }
+        ComparisonResult proof = wrapped.compareMagnitude(tower);
+        return proof == ComparisonResult.LESS || proof == ComparisonResult.EQUAL;
     }
 
     /**
@@ -2047,12 +2238,32 @@ public final class Natural implements NaturalNumber {
     }
 
     /**
-     * {@link #superLog(Natural)} on a structural value, by the same level rules; {@code extra} carries
-     * the {@code 1 +}s of the one-arrow recursion.
+     * {@link #superLog(Natural)} on a structural value. A transfinite level is reduced at its own height
+     * first. What remains is a finite tower, answered through the one-arrow recursion
+     * {@code slog_b(c^h) = 1 + slog_b(h·log_b c)} - exact as written for the asked base itself, where the
+     * constant factor is {@code log_b(b) = 1}, and exact for a uniform chain of foreign powers of one
+     * base {@code c} because the whole value is then the single tetration tower {@code c↑↑(h + extra)},
+     * to which the tetration rule applies directly:
+     *
+     * <ul>
+     *   <li>two arrows over the asked base: {@code slog_b(b↑↑h) = h}, the height itself;</li>
+     *   <li>two arrows over a smaller foreign base: the cross-base tower sandwich answers
+     *       {@code h + slog_b(c^c) - 2} exactly (see {@link #pairSandwichOffset(Natural, Natural)});</li>
+     *   <li>three arrows over the asked base, exact height: {@code c ↑^a (h-1)}, one level peeled;</li>
+     *   <li>three arrows over a smaller foreign base, exact height: the pentation tower unfolds through
+     *       {@code c↑↑↑h = c↑↑(c↑↑↑(h-1))} and the tetration rule answers for it;</li>
+     * </ul>
+     *
+     * <p>Everything else - a foreign base at or above the value's own, a base whose {@code c^c} leaves
+     * the exact range so the sandwich constant is not computable, a peel chain mixing foreign bases, four
+     * arrows and up over a foreign base - is honest emptiness rather than a rounded conversion presented
+     * as exact. The {@code extra} counter rides along exactly where the rules above certify it.
      */
     private Optional<Natural> superLogStructural(Natural base) {
-        Natural extra = ZERO;   // the "1 +"s accumulated from slog_b(c^h) = 1 + slog_b(h)
+        Natural extra = ZERO;   // the "1 +"s accumulated from slog_b(c^h) = 1 + slog_b(h·log_b c)
         Natural current = this;
+        Natural chainBase = null;       // the uniform foreign base of the one-arrow peels, once one appears
+        boolean chainProvable = true;   // false once a peel leaves the uniform chain
         while (true) {
             if (current.isExact()) {
                 if (!base.isExact()) {
@@ -2077,19 +2288,70 @@ public final class Natural implements NaturalNumber {
                 return Optional.empty();   // no rule relates a structural value to a structural base
             }
             if (current.finiteLevel.equals(TWO)) {
-                return Optional.of(current.height.add(extra));   // slog_b(c↑↑h) = h, any exact base
+                if (current.base.equals(base)) {
+                    return Optional.of(current.height.add(extra));   // slog_b(b↑↑h) = h, the height itself
+                }
+                return crossBaseSuperLog(current, base, extra, chainBase, chainProvable);
             }
             if (current.finiteLevel.isOne()) {
-                extra = extra.add(ONE);                          // slog_b(c^h) = 1 + slog_b(h·const) ≈ 1 + slog_b(h)
+                if (!current.base.isExact()) {
+                    chainProvable = false;   // a structural base: the absorbed 1 + is not provable
+                } else if (!current.base.equals(base)) {
+                    if (chainBase == null) {
+                        chainBase = current.base;
+                    } else if (!chainBase.equals(current.base)) {
+                        chainProvable = false;   // mixed foreign bases: no single sandwich certifies the chain
+                    }
+                }
+                extra = extra.add(ONE);                          // slog_b(c^h) = 1 + slog_b(h·log_b c)
                 current = current.height;
                 continue;
             }
             if (current.height.isExact()) {
+                if (!current.base.equals(base)) {
+                    // cross-base, three arrows and up: only the pentation tower unfolds into the tetration
+                    // rule, and only over the chain's own uniform base with a certifiable sandwich
+                    if (current.finiteLevel.equals(of(3)) && current.height.compareTo(of(2)) >= 0
+                            && chainProvable && (chainBase == null || chainBase.equals(current.base))) {
+                        OptionalLong offset = pairSandwichOffset(base, current.base);
+                        if (offset.isPresent()) {
+                            // c↑↑↑h = c↑↑(c↑↑↑(h-1)), so slog_b = c↑↑↑(h-1) + d + extra
+                            return Optional.of(arrow(current.base, 3, current.height.subtractClamped(ONE))
+                                    .add(of(offset.getAsLong())).add(extra));
+                        }
+                    }
+                    return Optional.empty();   // no provable rule: honest emptiness, not a rounded peel
+                }
                 return Optional.of(towerWithArrowCount(current.base, current.finiteLevel,
                         current.height.subtractClamped(ONE), true).add(extra));   // c ↑^a (h-1)
             }
-            return Optional.of(current.add(extra));   // h-1 is not writable, and h-1 ≈ h: the value itself
+            return current.base.equals(base)
+                    ? Optional.of(current.add(extra))   // h-1 is not writable, and h-1 ≈ h: the value itself
+                    : Optional.empty();   // a foreign base has no provable rule at this resolution
         }
+    }
+
+    /**
+     * The cross-base tetration terminal of {@link #superLogStructural}: the value is {@code c↑↑h} over an
+     * exact base {@code c} larger than the asked base {@code b}, and the cross-base tower sandwich gives
+     * {@code slog_b(c↑↑h) = h + slog_b(c^c) - 2} exactly for {@code h >= 2} (see
+     * {@link #pairSandwichOffset(Natural, Natural)}). An exact height answers exactly; a structural
+     * height absorbs the small constant into the documented structural channel, the same resolution
+     * {@link #add(Natural)} uses. The {@code 1 +}s of leading one-arrow peels ride along provably only
+     * when every foreign peel was a power of that same {@code c} - the whole value is then the single
+     * tetration tower {@code c↑↑(h + extra)} and the rule applies to it directly.
+     */
+    private static Optional<Natural> crossBaseSuperLog(Natural tower, Natural base, Natural extra,
+            Natural chainBase, boolean chainProvable) {
+        if (!chainProvable || (chainBase != null && !chainBase.equals(tower.base))
+                || !tower.base.isExact() || base.compareTo(tower.base) >= 0) {
+            return Optional.empty();
+        }
+        OptionalLong offset = pairSandwichOffset(base, tower.base);
+        if (offset.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(tower.height.add(of(offset.getAsLong())).add(extra));
     }
 
     /** The largest {@code h} with {@code base ↑^arrows h <= this}, for an exact value and exact base. */
