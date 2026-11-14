@@ -204,16 +204,19 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   a refusal reserves nothing and changes no order. (This command replaces the old forced `HAUL`, which was
   its haul branch with the decision made by the client; the old verb is gone.)
 - `TRAVEL <unitId> [<unitId> ...] <gatewayBuildingId|dimension>` sends one to eight owned units through a
-  gateway. The last token is the destination: either a numeric building id - which must exist, be alive
-  and carry the `gateway` tag, and resolves to the first dimension its dimension has an open route to - or
-  a dimension key (for example `hell`). The destination must be **linked** (the world's gateway graph must
-  have a route), otherwise the command answers `ERR dimension not linked` without touching any unit; an
-  unknown dimension key answers `ERR unknown dimension` and a non-gateway building answers
-  `ERR building is not a gateway`. Every unit follows the ordinary existence/ownership rules and must have
-  a route from its own dimension. On success each unit is given a travel order that walks it to the first
-  gateway on its route and hands it across on arrival (the same mechanic a denizen invasion uses), and the
-  answer is `OK <count>` naming how many units were dispatched. The movement itself is asynchronous: the
-  units arrive over the following ticks.
+  gateway. The last token is the destination: either a numeric building id - which must exist, be alive,
+  carry the `gateway` tag and be **finished** (an unfinished gate site opens no passage and answers
+  `ERR gate not finished`), and which must be a gate the route actually passes through: the route's first
+  hop has to start at that gate's resolved entrance (within one tile), so a gate whose entrance is not
+  the link's tile answers `ERR dimension not linked` even when another, finished gate in the same
+  dimension holds the only open route - or a dimension key (for example `hell`). The destination must be
+  **linked** (the world's gateway graph must have a route), otherwise the command answers
+  `ERR dimension not linked` without touching any unit; an unknown dimension key answers
+  `ERR unknown dimension` and a non-gateway building answers `ERR building is not a gateway`. Every unit
+  follows the ordinary existence/ownership rules and must have a route from its own dimension. On success
+  each unit is given a travel order that walks it to the first gateway on its route and hands it across
+  on arrival (the same mechanic a denizen invasion uses), and the answer is `OK <count>` naming how many
+  units were dispatched. The movement itself is asynchronous: the units arrive over the following ticks.
 - The command word is case-insensitive like every other command word; the `ORDER` sub-word is
   case-insensitive too (`MOVE` and `move` mean the same thing). Content paths and arguments are not folded.
 
@@ -283,7 +286,7 @@ Each command is validated when the world applies it, and a rejection names the r
 | `ASSIST` unit has no `builder` tag or no cargo hold, or the building needs nothing | `ERR <unit> is not a builder / cannot carry goods / nothing to assist at ...` |
 | `ASSIST` build join is out of the unit's reach, or the repair is unaffordable | The ordinary `BUILD` / `REPAIR` refusal sentences |
 | `TRAVEL` destination dimension is not declared | `ERR unknown dimension` |
-| `TRAVEL` names a building that is not a gateway, or the destination has no open route | `ERR building is not a gateway` / `ERR dimension not linked` |
+| `TRAVEL` names a building that is not a gateway, an unfinished gate, or a gate the route does not pass through, or the destination has no open route | `ERR building is not a gateway` / `ERR gate not finished` / `ERR dimension not linked` |
 
 ### Cost, production and the world step
 
@@ -314,9 +317,13 @@ Each command is validated when the world applies it, and a rejection names the r
   switcher's entries) moved to the one-time bootstrap document, see the snapshot section. A gateway-tagged building row carries
   `gateway:{"to":"<dimensionKey>","arrival":[x,y]}`, the same jump a `TRAVEL` would take, which the
   client turns into a fast view switch; the field is omitted while no route is open. The route is the
-  world's own gateway graph, so an unfinished gate site never opens one and never carries the field:
-  the classic world pairs *finished* gates per owner and, when a finished overworld gate has no hell
-  partner, the server raises a finished return gate of the same player at the hell arrival pad. Both
+  world's own gateway graph, so an unfinished gate site never opens one and never carries the field,
+  and a *finished* gate whose entrance is not the route's first hop (another gate in the same dimension
+  holds the passage) carries no field either - the row must never promise the jump the command would
+  refuse: the classic world pairs *finished* gates per owner and, when a finished overworld gate has no
+  hell partner, the server raises a finished return gate of the same player at the hell arrival pad
+  (moved to the nearest walkable tile when the pad itself is impassable, and the fallback closes when
+  even the neighbourhood is not standable). Both
   ends of a pairing measure from the gate's resolved entrance tile, so `arrival` names a tile a unit
   can actually stand on, never a tile inside a footprint.
 - `UPGRADEUNIT <unitId> [tierPath]` is the unit counterpart of `UPGRADE`: it replaces an owned unit with
@@ -679,7 +686,7 @@ The document is built **once per host** and then served byte for byte from the h
   - `contentVersion` is the version of the static per-world payload; see the version semantics below.
   - `dimensions` is the roster `[{key, name}]` in the server's declared key order, the entries the client renders as its dimension switcher.
   - `buildable` is the **top-level BUILD catalogue**: the content paths a builder may place directly with `BUILD <engineerId> <path> <x> <y>`, in the server's declared button order. Upgrade-only tiers are **not** in the array, because the command refuses a direct placement of them; the buildable hell gate is, because it is the only passage to hell.
-  - `content` is the **raw content catalogue** (the server-provided key-value pairs of the i18n scheme): `"dimensions"` (the per-key display names), `"items"`, `"buildings"`, `"units"` and `"recipes"`, each keyed by content path, with the same fields and the same "omit when it carries no information" rules the snapshot documented before the move.
+  - `content` is the **raw content catalogue** (the server-provided key-value pairs of the i18n scheme): `"dimensions"` (the per-key display names), `"items"`, `"terrains"`, `"buildings"`, `"units"` and `"recipes"`, each keyed by content path, with the same fields and the same "omit when it carries no information" rules the snapshot documented before the move. The `"terrains"` table publishes per terrain kind `"name"`, `"buildable"` (the flag the engine's placement rule consults) and - only when false - `"passable"`. A client's placement ghost must build its buildable-terrain set from this table instead of hardcoding terrain names: the classic hell's `hell_ground` and `hell_ash` are buildable, and a hardcoded grass/sand set wrongly refuses every placement in hell.
 - A successful answer is `200` with `Content-Type: application/json; charset=utf-8`, `Cache-Control: public, no-cache` and an `ETag` over the exact bytes served; a request whose `If-None-Match` names the current ETag is answered `304 Not Modified` with no body. Only `GET` and `HEAD` are allowed, other methods answer `405` with `Allow: GET, HEAD`.
 - **Why `no-cache` instead of the former `max-age=31536000, immutable`:** the document is static *until a dimension is added*, and the old year-long immutable promise would have let a browser serve a dimension roster that has silently gone stale and never refetch it. `public, no-cache` keeps caching useful while dropping the immutability claim: a browser may still store the document but must revalidate it with the `ETag` before every use, so an unchanged world costs one small `304` per page load instead of a full re-download, and a version bump changes the bytes, which changes the `ETag`, which turns the next revalidation into a fresh `200` with the new roster. The `contentVersion` handshake below is the application layer of the same contract and does not depend on cache timing at all.
 - **`contentVersion` semantics.** The version starts at `1` when the host is built and increments by exactly `1` each time a dimension is registered on a world that is already running (the engine publishes a `DimensionAdded` event at that moment; the dimensions the content declares at server start do not bump it, because they are part of the document's first build). There is no removal API, so the version never decreases. Everything else in the document - the catalogue, the BUILD array, `tilePixels` - is registry-immutable and never contributes to the version. A bump is additionally announced to the connected WebSocket sessions with a server-initiated `NOTIFY {"type":"contentVersion",...}` push frame (see "Server-initiated NOTIFY frames"), but that frame is only a latency hint; this snapshot-based handshake remains the contract that correctness rests on.

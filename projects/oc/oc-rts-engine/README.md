@@ -55,7 +55,7 @@ raising one site faster, three Shift-queued builds running in order, a turret sh
 unit, and an ASCII picture of the world. A successful run ends with:
 
 ```text
-RTS engine scenario: all 407 checks passed.
+RTS engine scenario: all 412 checks passed.
 ```
 
 The self check is a program rather than a framework based test suite, so it lives in its own
@@ -88,6 +88,7 @@ What the scenario actually proves, section by section:
 | 15 building upgrades | an affordable upgrade replaces the type at the same origin with the same owner and health fraction, charges the cost once, cancels the old production queue, clears the old id from a unit's combat target and from the spatial index, and leaves the replacement finished; unaffordable, missing-target and footprint-mismatch upgrades are refused with a readable reason, charge nothing and leave the old building standing; a type without `upgradeTo()` is not upgradable |
 | 16 cooperative construction | one builder finishes a 40 tick hut on tick 40, two on tick 20, four and five on tick 10 because the speed is capped at `min(builders, 4)`; each builder claims its own free approach-ring tile; the placement is charged once and every join is free; all attached orders report `COMPLETED` on the completion tick and leave every builder idle with no site reference; stopping one builder detaches it and the site keeps progressing at two points per tick; destroying the site fails every attached order on the destruction tick and charges nothing again; the same three builder script twice gives identical ticks, progress and order events |
 | 16c queued builds | three `tryQueueBuild` calls put three sites and three orders in one engineer's queue in click order, charge all three placements at once and finish all three; the snapshot's `orderQueue` lists `建造 Hut @ (16,10)` ... in order; destroying the middle site after queueing makes that order fail while the first and third still complete, because the next pending order starts on the following tick; a ten order queue is capped at eight entries and ends with `… 还有 3 项` |
+| 25 march past buildings | a mover ordered across a passive enemy building reaches the far side instead of parking at its face and grinding there, with no run of near-zero movement longer than 12 ticks, and a diagonal march rounds the building corner the same way; an `enqueue` into an unfinished producer is refused by the engine and a queue forced into one stays untouched |
 
 A real preview of the generated world, terrain only, one character per tile
 (`~` water, `:` sand, `.` grass, `f` forest, `^` hill, `#` rock; units are drawn as `C`, `W`, `S`):

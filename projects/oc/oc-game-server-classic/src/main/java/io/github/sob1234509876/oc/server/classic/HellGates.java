@@ -31,7 +31,9 @@ import java.util.TreeSet;
  * ({@link #HELL_PAD} - inside the origin guarantee, so the ground there is buildable), scanning outward
  * in rings when the pad itself is taken. Only when no space is found at all does the overworld gate fall
  * back to the plain pad as its arrival tile, and a hell gate whose opposite side has no partner (its
- * overworld sibling was destroyed) arrives on the overworld pad ({@link #OVERWORLD_PAD}). Links that the
+ * overworld sibling was destroyed) arrives on the overworld pad ({@link #OVERWORLD_PAD}); both fallback
+ * pads are moved to the nearest walkable tile first, and a pad that is impassable for several tiles
+ * around closes the fallback instead of aiming a traveller at lava. Links that the
  * current gates do not justify are removed: a destroyed gate closes its passage within one sync interval,
  * and a world without gates has
  * no route to hell at all, which is the expedition arc the content promises.
@@ -53,6 +55,18 @@ public final class HellGates implements WorldTickHook {
 
     /** Largest ring searched around the hell pad for room for the return gate, in tiles. */
     public static final int RETURN_GATE_SEARCH_RADIUS = 8;
+
+    /**
+     * Largest ring searched around the pad for a walkable fallback arrival tile.
+     *
+     * <p>The pad sits inside the origin guarantee on every seed this content has served so far, but the
+     * guarantee is a blend, not a wall: a patch of raw low elevation inside it can classify as lava. A
+     * fallback link that names an impassable tile would aim every hell-side traveller at a tile nobody
+     * can stand on - the travel order would grind at the lava edge until it timed out - so the fallback
+     * moves the arrival to the nearest walkable tile instead, and a pad that is lava for several tiles
+     * around closes the fallback passage entirely rather than dropping a traveller into the sea.
+     */
+    public static final int FALLBACK_ARRIVAL_SEARCH_RADIUS = 4;
 
     /** Creates the hook; it is stateless. */
     public HellGates() {
@@ -173,6 +187,11 @@ public final class HellGates implements WorldTickHook {
      */
     private static Set<Gateway> desiredLinks(World world, List<Building> overworldGates, List<Building> hellGates) {
         Set<Gateway> desired = new LinkedHashSet<>();
+        // The plain pads of the two fallbacks have to be standable: a link whose arrival (or whose
+        // hell-side gate tile) is lava aims travellers at a tile nobody can stand on. One walkable tile
+        // near the pad serves both fallback directions; none closes the fallback instead of lying.
+        GridPos hellArrival = walkableNear(world, HELL_PAD, FALLBACK_ARRIVAL_SEARCH_RADIUS);
+        GridPos overworldArrival = walkableNear(world, OVERWORLD_PAD, FALLBACK_ARRIVAL_SEARCH_RADIUS);
         for (Player owner : ownersOf(overworldGates)) {
             List<Building> ownOverworld = gatesOf(overworldGates, owner);
             List<Building> ownHell = gatesOf(hellGates, owner);
@@ -185,18 +204,47 @@ public final class HellGates implements WorldTickHook {
                             hell(), entranceOf(world, hellGate));
                     link(desired, hell(), entranceOf(world, hellGate),
                             DimensionId.overworld(), entranceOf(world, overworldGate));
-                } else {
-                    link(desired, DimensionId.overworld(), entranceOf(world, overworldGate), hell(), HELL_PAD);
-                    link(desired, hell(), HELL_PAD, DimensionId.overworld(), entranceOf(world, overworldGate));
+                } else if (hellArrival != null) {
+                    link(desired, DimensionId.overworld(), entranceOf(world, overworldGate),
+                            hell(), hellArrival);
+                    link(desired, hell(), hellArrival,
+                            DimensionId.overworld(), entranceOf(world, overworldGate));
                 }
             }
             for (int i = pairs; i < ownHell.size(); i++) {
                 Building hellGate = ownHell.get(i);
-                link(desired, hell(), entranceOf(world, hellGate), DimensionId.overworld(), OVERWORLD_PAD);
-                link(desired, DimensionId.overworld(), OVERWORLD_PAD, hell(), entranceOf(world, hellGate));
+                if (overworldArrival != null) {
+                    link(desired, hell(), entranceOf(world, hellGate), DimensionId.overworld(), overworldArrival);
+                    link(desired, DimensionId.overworld(), overworldArrival, hell(), entranceOf(world, hellGate));
+                }
             }
         }
         return desired;
+    }
+
+    /**
+     * The nearest walkable tile to the pad within the given radius, searched in fixed square rings; the
+     * pad itself when it is walkable, {@code null} when the whole search area is impassable.
+     */
+    private static GridPos walkableNear(World world, GridPos pad, int radius) {
+        DimensionId hell = hell();
+        if (world.dimension(hell).map().isPassable(pad)) {
+            return pad;
+        }
+        for (int ring = 1; ring <= radius; ring++) {
+            for (int dy = -ring; dy <= ring; dy++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos candidate = new GridPos(pad.x() + dx, pad.y() + dy);
+                    if (world.dimension(hell).map().isPassable(candidate)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**

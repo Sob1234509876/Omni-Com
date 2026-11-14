@@ -1984,6 +1984,8 @@ public final class WorldHost {
      * <pre>{@code
      * {"dimensions":{"overworld":{"name":"Earth"},"hell":{"name":"地狱"}},
      *  "items":{"gold":{"name":"金币"},"wood":{"name":"木材"}},
+     *  "terrains":{"grass":{"name":"草地","buildable":true,"passable":true},
+     *              "water":{"name":"水域","passable":false}},
      *  "buildings":{"building.armory.t1":{"name":"兵营·普通","size":[3,3],"health":600,
      *      "cost":{"gold":100,"wood":20},"buildTime":150,"level":1,"storage":6,
      *      "buildable":true,"income":0,"woodIncome":0,
@@ -2003,6 +2005,14 @@ public final class WorldHost {
      * {@code gold} / {@code wood} are the two resources the wire carries; other item kinds stay out as
      * everywhere else on the wire. Recipes are keyed by their content path and name their producer
      * <em>tags</em> - the catalogue selects recipes by tag plus level, not by a concrete building.
+     *
+     * <p>The {@code terrains} table exists so a client's placement ghost does not have to guess which
+     * terrain kinds a building may stand on: the snapshot's tile rows and every terrain key here are
+     * content paths, and {@code buildable} is exactly the {@link TerrainType#isBuildable()} flag the
+     * engine's placement rule consults. A client that hardcodes "grass and sand are buildable" refuses
+     * every placement a plugin catalogue legally offers (the classic hell's {@code hell_ground} and
+     * {@code hell_ash}), which is the failure this table replaces. {@code passable} is omitted when true,
+     * matching the engine's omission convention for default-valued flags.
      */
     private String contentCatalogueJson() {
         if (contentCatalogueJson == null) {
@@ -2125,6 +2135,22 @@ public final class WorldHost {
             appendJsonString(json, item.key().path());
             json.append(":{\"name\":");
             appendJsonString(json, item.displayName());
+            json.append('}');
+        }
+        json.append("},\"terrains\":{");
+        first = true;
+        for (TerrainType terrain : content.terrains()) {
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            appendJsonString(json, terrain.key().path());
+            json.append(":{\"name\":");
+            appendJsonString(json, terrain.displayName());
+            json.append(",\"buildable\":").append(terrain.buildable());
+            if (!terrain.passable()) {
+                json.append(",\"passable\":false");
+            }
             json.append('}');
         }
         json.append("},\"buildings\":{");
@@ -2859,12 +2885,22 @@ public final class WorldHost {
      * own gateway graph, so the target always agrees with what {@code TRAVEL} will actually do; a gate
      * whose passage is not open (no route to any other dimension) omits the field, and the client shows
      * no jump button for it.
+     *
+     * <p>Two rules keep the button honest. The building has to be {@linkplain Building#isConstructed()
+     * finished}: a construction site carries the gateway tag but opens no passage, so it must not offer
+     * one - a route that happens to exist through a <em>different</em> finished gate in the same
+     * dimension would otherwise paint a jump button on a half raised site. And the route's first hop has
+     * to start at this building's resolved entrance (within one tile, so a link recorded before a flush
+     * placement nudged the entrance still matches): a gateway row that names a passage the unit would
+     * cross somewhere else is a lie the client cannot detect.
      */
     private void appendGatewayTarget(StringBuilder json, World world, Entity entity) {
-        if (!(entity instanceof Building building) || !building.type().hasTag(GATEWAY_TAG)) {
+        if (!(entity instanceof Building building) || !building.type().hasTag(GATEWAY_TAG)
+                || !building.isConstructed()) {
             return;
         }
         DimensionId here = world.dimensionOf(building).id();
+        GridPos entrance = world.dimensionOf(building).entranceTile(building);
         DimensionId target = null;
         List<Gateway> route = null;
         for (Dimension candidate : dimensions()) {
@@ -2873,7 +2909,8 @@ public final class WorldHost {
                 continue;
             }
             List<Gateway> candidateRoute = world.route(here, there).orElse(null);
-            if (candidateRoute != null && !candidateRoute.isEmpty()) {
+            if (candidateRoute != null && !candidateRoute.isEmpty()
+                    && candidateRoute.get(0).at().chebyshevDistance(entrance) <= 1) {
                 target = there;
                 route = candidateRoute;
                 break;

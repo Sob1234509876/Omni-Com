@@ -895,11 +895,39 @@ public final class PlayerCommandCheck {
                 "参数不足回答 ERR bad arguments，用别人的单位回答 ERR not yours");
 
         check.section("玩家命令：TRAVEL 把单位派过门进入另一个维度");
-        Building portal = world.spawnBuilding(host.content().building(PORTAL), human, new GridPos(56, 56));
+        // The portal that owns the passage stands so that its resolved entrance (origin + (1,2) for the
+        // 2x2 footprint) is exactly the declared link pad (60, 60); a portal whose entrance is not the
+        // route's first hop is not the gate a traveller would cross, so the command refuses it.
+        Building portal = world.spawnBuilding(host.content().building(PORTAL), human, new GridPos(59, 58));
+        Building strayPortal = null;
+        for (int ring = 1; ring <= 30 && strayPortal == null; ring++) {
+            for (int dy = -ring; dy <= ring && strayPortal == null; dy++) {
+                for (int dx = -ring; dx <= ring && strayPortal == null; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != ring) {
+                        continue;
+                    }
+                    GridPos origin = new GridPos(59 + dx, 58 + dy);
+                    int entranceX = origin.x() + 1;
+                    int entranceY = origin.y() + 2;
+                    boolean onRoute = Math.max(Math.abs(entranceX - 60), Math.abs(entranceY - 60)) <= 1;
+                    if (world.canPlace(host.content().building(PORTAL), origin) && !onRoute) {
+                        strayPortal = world.spawnBuilding(host.content().building(PORTAL), human, origin);
+                    }
+                }
+            }
+        }
+        Building gateSite = world.placeBuilding(host.content().building(PORTAL), human, new GridPos(52, 56));
         Unit traveller = world.spawnUnit(host.content().unit(WORKER), human, new GridPos(58, 58));
         check.equal("ERR unknown dimension", run(dispatcher, host, first,
                         "TRAVEL " + traveller.id().value() + " nope"),
                 "未声明的维度回答 ERR unknown dimension");
+        check.equal("ERR gate not finished", run(dispatcher, host, first,
+                        "TRAVEL " + traveller.id().value() + " " + gateSite.id().value()),
+                "未完工的门工地不开通路，网关建筑形式回答 ERR gate not finished");
+        check.that(run(dispatcher, host, first,
+                        "TRAVEL " + traveller.id().value() + " " + strayPortal.id().value())
+                        .startsWith("ERR dimension not linked"),
+                "入口不在链路上的门回答 ERR dimension not linked（旅行的门必须是路由第一跳）");
         String portalTravel = run(dispatcher, host, first,
                 "TRAVEL " + traveller.id().value() + " " + portal.id().value());
         check.that(portalTravel.startsWith("OK 1"),
@@ -930,6 +958,14 @@ public final class PlayerCommandCheck {
                         && contentJson.contains("\"unit.worker\""),
                 "引导文档的 content 目录带维度、建筑（名称/脚印/造价/工时）、配方（生产标签/输入/产出/时长/等级）"
                         + "与单位");
+        check.that(contentJson.contains("\"terrains\":{")
+                        && contentJson.contains("\"grass\":{\"name\":\"Grass\",\"buildable\":true}"),
+                "content 目录带 terrains 表：每格地形发布 buildable（不可走行再加 passable:false），"
+                        + "客户端的放置绿块不再硬编码 grass/sand（经典地狱的 hell_ground/hell_ash "
+                        + "因此在浏览器里被误判为不可建）");
+        check.that(!entityRow(host.snapshotJson(), gateSite.id().value()).contains("\"gateway\"")
+                        && entityRow(host.snapshotJson(), portal.id().value()).contains("\"gateway\""),
+                "完工门行带 gateway 跳转目标，未完工工地行不带（半座门不开通路）");
         check.that(entityRow(host.snapshotJson(), investedSite.id().value()).contains("\"invested\":{"),
                 "未完工工地行带 invested 原始字段（配合目录造价即可自算建造进度）");
 

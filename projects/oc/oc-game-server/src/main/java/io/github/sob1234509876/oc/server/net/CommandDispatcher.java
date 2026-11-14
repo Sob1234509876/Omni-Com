@@ -873,11 +873,15 @@ public final class CommandDispatcher {
      * gate into another dimension.
      *
      * <p>The last token is the destination and may be either a numeric building id - which must exist,
-     * be alive and carry the {@code gateway} tag - or a dimension key such as {@code hell}. In both
-     * forms the destination has to be linked: the world's gateway graph must have a route, otherwise the
-     * command answers {@code ERR dimension not linked} without touching any unit. Every unit id before
-     * the destination follows the ordinary existence and ownership rules; at most eight units may travel
-     * in one command.
+     * be alive, carry the {@code gateway} tag and be {@linkplain Building#isConstructed() finished} - or
+     * a dimension key such as {@code hell}. In both forms the destination has to be linked: the world's
+     * gateway graph must have a route, otherwise the command answers {@code ERR dimension not linked}
+     * without touching any unit. A gateway building form additionally has to be a gate the route
+     * actually passes through: the route's first hop must start at the gate's resolved entrance (within
+     * one tile), so a half raised site or a gate whose passage runs somewhere else cannot be travelled
+     * "through" while another, finished gate in the same dimension holds the only link. Every unit id
+     * before the destination follows the ordinary existence and ownership rules; at most eight units may
+     * travel in one command.
      *
      * <p>The transaction is {@link UnitDirector#travel}: each unit is given a travel order that walks it
      * to the first gateway on its route and hands it across on arrival, the same mechanics a denizen
@@ -911,14 +915,20 @@ public final class CommandDispatcher {
                 if (!gate.type().hasTag(WorldHost.GATEWAY_TAG)) {
                     return "ERR building is not a gateway";
                 }
+                if (!gate.isConstructed()) {
+                    return "ERR gate not finished";
+                }
                 DimensionId here = world.dimensionOf(gate).id();
+                GridPos entrance = world.dimensionOf(gate).entranceTile(gate);
                 target = null;
                 for (var dimension : world.dimensions()) {
                     if (dimension.id().equals(here)) {
                         continue;
                     }
-                    if (world.route(here, dimension.id())
-                            .filter(route -> !route.isEmpty()).isPresent()) {
+                    Optional<List<io.github.sob1234509876.oc.rts.dimension.Gateway>> route =
+                            world.route(here, dimension.id());
+                    if (route.isPresent() && !route.get().isEmpty()
+                            && route.get().get(0).at().chebyshevDistance(entrance) <= 1) {
                         target = dimension.id();
                         break;
                     }

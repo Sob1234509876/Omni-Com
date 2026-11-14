@@ -100,20 +100,25 @@ public final class ProductionSystem implements SimulationSystem {
     /**
      * Queues the recipe a number of times in the given building.
      *
-     * <p>Two things are checked before anything is queued: the recipe's producer tags have to match the
+     * <p>Three things are checked before anything is queued: the building has to be
+     * {@linkplain Building#isConstructed() finished}, the recipe's producer tags have to match the
      * building, and the building's {@link io.github.sob1234509876.oc.rts.content.BuildingType#level()} has
      * to reach the recipe's
-     * {@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}. A basic building
-     * therefore cannot be talked into running work an upgraded one unlocks, even by a caller that has the
-     * recipe object in hand.
+     * {@link io.github.sob1234509876.oc.rts.content.Recipe#requiredBuildingLevel()}. A construction site
+     * cannot be talked into training - an unfinished producer must not perform its function even by a
+     * caller that has the recipe object in hand - and a basic building cannot run work an upgraded one
+     * unlocks.
      *
-     * @throws IllegalArgumentException when the building cannot produce at all, when the recipe's
-     *     producer tags do not match the building, when the building's level is too low, or when the count
-     *     is not positive
+     * @throws IllegalArgumentException when the building is unfinished, when it cannot produce at all,
+     *     when the recipe's producer tags do not match the building, when the building's level is too
+     *     low, or when the count is not positive
      */
     public void enqueue(Building building, Recipe recipe, int count) {
         Objects.requireNonNull(building, "building");
         Objects.requireNonNull(recipe, "recipe");
+        if (!building.isConstructed()) {
+            throw new IllegalArgumentException(building.type().key() + " is still under construction");
+        }
         if (!building.type().canProduce()) {
             throw new IllegalArgumentException(building.type().key() + " cannot produce anything");
         }

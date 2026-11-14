@@ -288,6 +288,15 @@ public final class MovementSystem implements SimulationSystem {
      * unit whose body already overlaps a footprint (a building completed on top of it) keeps the
      * historical escape hatch: every step away is an improvement, so the body rule is skipped until the
      * unit is clear again.
+     *
+     * <p>When the direct step is blocked, the slide tries the step's two axes at <em>full step speed</em>
+     * before falling back to the axis components of the blocked step. The component slide of a step that
+     * runs almost parallel to a wall is almost zero - a unit rounding a building corner with a mostly
+     * downward desire crept sideways by a fraction of a tile per tick and visibly ground against the
+     * corner for over a second before the slide carried it clear - while the full-length axis slide walks
+     * the same direction at marching speed, which is what "slide along the wall" should look like. The
+     * component slides stay as the fallback for the rare geometry where a full-length axis step hits a
+     * second obstacle a shorter one would have missed.
      */
     private Vec2 resolveStep(io.github.sob1234509876.oc.rts.dimension.Dimension dimension, Vec2 from, Vec2 step,
             float radius) {
@@ -304,13 +313,22 @@ public final class MovementSystem implements SimulationSystem {
         if (isStepClear(dimension, radius, from, candidate)) {
             return candidate;
         }
-        Vec2 slideX = new Vec2(candidate.x(), from.y());
-        if (isStepClear(dimension, radius, from, slideX)) {
+        float length = step.length();
+        Vec2 slideX = step.x() != 0f ? new Vec2(from.x() + Math.signum(step.x()) * length, from.y()) : null;
+        if (slideX != null && isStepClear(dimension, radius, from, slideX)) {
             return slideX;
         }
-        Vec2 slideY = new Vec2(from.x(), candidate.y());
-        if (isStepClear(dimension, radius, from, slideY)) {
+        Vec2 slideY = step.y() != 0f ? new Vec2(from.x(), from.y() + Math.signum(step.y()) * length) : null;
+        if (slideY != null && isStepClear(dimension, radius, from, slideY)) {
             return slideY;
+        }
+        Vec2 slideXComponent = new Vec2(candidate.x(), from.y());
+        if (slideXComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideXComponent)) {
+            return slideXComponent;
+        }
+        Vec2 slideYComponent = new Vec2(from.x(), candidate.y());
+        if (slideYComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideYComponent)) {
+            return slideYComponent;
         }
         return from;
     }

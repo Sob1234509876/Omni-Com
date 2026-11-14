@@ -189,12 +189,15 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   东西、不改动任何订单。（本命令取代旧的强制 `HAUL`——那只是本命令由客户端替服务器做决定的搬运分支；
   旧动词已删除。）
 - `TRAVEL <unitId> [<unitId> ...] <gatewayBuildingId|dimension>` 派 1..8 个己方单位穿过传送门。最后一个
-  token 是目的地：既可以是数字建筑 id——必须存在、存活且带 `gateway` 标记，并解析为其所在维度第一条
-  开放路线的目的维度——也可以是维度键（例如 `hell`）。目的地必须**已链接**（世界网关图存在路线），否则回答
-  `ERR dimension not linked` 且不触碰任何单位；未声明的维度键回答 `ERR unknown dimension`，非门建筑回答
-  `ERR building is not a gateway`。每个单位都按普通的存在性/所有权规则校验，且必须存在从它自己维度出发
-  的路线。成功时每个单位获得一条旅行订单，走向路线上第一扇门并在到达时跨入（与魔物入侵同一机制），回答
-  `OK <count>` 标明派出多少个单位。移动本身是异步的：单位在之后的 tick 里陆续到达。
+  token 是目的地：既可以是数字建筑 id——必须存在、存活、带 `gateway` 标记且**已完工**（未完工的门工地
+  不开通路，回答 `ERR gate not finished`），并且必须是路线真正经过的那扇门：路线的第一跳必须从该门的
+  已解析入口瓦片起算（一瓦片容差），入口不在链路上的门回答 `ERR dimension not linked`，即使同一维度里
+  另一座完工门持有唯一开放的路线——也可以是维度键（例如 `hell`）。目的地必须**已链接**（世界网关图存在
+  路线），否则回答 `ERR dimension not linked` 且不触碰任何单位；未声明的维度键回答
+  `ERR unknown dimension`，非门建筑回答 `ERR building is not a gateway`。每个单位都按普通的存在性/
+  所有权规则校验，且必须存在从它自己维度出发的路线。成功时每个单位获得一条旅行订单，走向路线上第一扇门
+  并在到达时跨入（与魔物入侵同一机制），回答 `OK <count>` 标明派出多少个单位。移动本身是异步的：单位在
+  之后的 tick 里陆续到达。
 - 命令字与其它命令一样大小写不敏感；`ORDER` 的子命令也大小写不敏感（`MOVE` 与 `move` 等价）。
   内容路径与参数不做大小写折叠。
 
@@ -258,7 +261,7 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
 | `ASSIST` 的单位没有 `builder` 标记或没有货舱，或建筑无活可干 | `ERR <unit> is not a builder / cannot carry goods / nothing to assist at ...` |
 | `ASSIST` 的加入建造超出射程，或修理买不起 | 按普通 `BUILD` / `REPAIR` 的拒绝文案 |
 | `TRAVEL` 的目的维度未声明 | `ERR unknown dimension` |
-| `TRAVEL` 指向非门建筑，或目的地没有开放路线 | `ERR building is not a gateway` / `ERR dimension not linked` |
+| `TRAVEL` 指向非门建筑、未完工的门、或路线不经过的门，或目的地没有开放路线 | `ERR building is not a gateway` / `ERR gate not finished` / `ERR dimension not linked` |
 
 ### 成本、生产与世界步
 
@@ -277,9 +280,11 @@ BATCH <command>; <command>; ...             -> OK <count> | ERR <index>/<count> 
   的条目）已移到一次性的引导文档，见世界快照一节。带 `gateway` 标签的建筑行携带
   `gateway:{"to":"<维度键>","arrival":[x,y]}`（与 `TRAVEL` 会走的同一跳），客户端把它变成一次快速的
   视角切换；路由未打开时省略该字段。路由取自世界自己的门户图，因此未完工的门工地永远不会打开路由、
-  也永远不会带这个字段：经典世界按 owner 配对**完工**的门，并且当主世界的完工门在地狱没有配对门时，
-  服务器会在地狱落点旁生成一座同主玩家拥有的完工回程门。配对的两端都从门的已解析入口瓦片起算，
-  所以 `arrival` 指向一个单位真正站得上去的瓦片，而不是脚印内部的瓦片。
+  也永远不会带这个字段，而且**完工**但入口不是路线第一跳的门（同一维度里另一扇门持有通路）同样不带
+  该字段——这一行绝不允许许诺命令会拒绝的跳转：经典世界按 owner 配对**完工**的门，并且当主世界的完工门
+  在地狱没有配对门时，服务器会在地狱落点旁生成一座同主玩家拥有的完工回程门（落点瓦片不可站时先移到
+  最近的可行走瓦片，连周边都站不了人就关闭兜底通路而不是把旅行者扔进岩浆）。配对的两端都从门的已解析
+  入口瓦片起算，所以 `arrival` 指向一个单位真正站得上去的瓦片，而不是脚印内部的瓦片。
 - `UPGRADEUNIT <unitId> [tierPath]` 是 `UPGRADE` 的单位版本：把一座属于自己的单位替换成其内容阶梯的
   后继（`UnitType.upgradeTo()` / `upgradeCost()`）。费用是**源**类型的打包物资，走同一套仓库预留路径，
   并且只在替换单位存在之后**扣一次**。替换单位在旧单位的原坐标出生，保持所有者、朝向与**血量比例**，
@@ -599,7 +604,7 @@ timestamp 是信封里唯一防重放的东西，读方必须检查**两个方�
   - `contentVersion` 是静态世界载荷的版本号；语义见下文。
   - `dimensions` 是 `[{key, name}]` 花名册，按服务器声明的键序排列，就是客户端渲染成维度切换器的条目。
   - `buildable` 是**顶层的 BUILD 目录**：建造者可以用 `BUILD <engineerId> <path> <x> <y>` 直接放置的内容路径数组，顺序就是服务器声明的按钮顺序。只能通过升级到达的等级**不在**数组里，因为命令会拒绝直接放置；可建造的地狱门**在**数组里，因为它是通往地狱的唯一通道。
-  - `content` 是**原始内容目录**（i18n 方案里"服务端提供的键值对"）：`"dimensions"`（各键的显示名）、`"items"`、`"buildings"`、`"units"` 与 `"recipes"`，各按内容路径为键，字段与"默认无信息的字段一律省略"的规则与迁移前快照所记载的完全一致。
+  - `content` 是**原始内容目录**（i18n 方案里"服务端提供的键值对"）：`"dimensions"`（各键的显示名）、`"items"`、`"terrains"`、`"buildings"`、`"units"` 与 `"recipes"`，各按内容路径为键，字段与"默认无信息的字段一律省略"的规则与迁移前快照所记载的完全一致。`"terrains"` 表按地形发布 `"name"`、`"buildable"`（引擎放置规则所查询的那个标志）以及——仅在 false 时——`"passable"`。客户端的放置绿块必须以这张表构建"可建地形"集合，而不是硬编码地形名：经典地狱的 `hell_ground` 与 `hell_ash` 都可建，硬编码 grass/sand 的集合会在地狱里错误地拒绝每一次放置。
 - 成功回答是 `200`，`Content-Type: application/json; charset=utf-8`，`Cache-Control: public, no-cache`，并带对所发送字节计算的 `ETag`；`If-None-Match` 命中当前 ETag 的请求会得到没有正文的 `304 Not Modified`。只允许 `GET` 与 `HEAD`，其它方法回 `405` 并带 `Allow: GET, HEAD`。
 - **为什么是 `no-cache` 而不是原来的 `max-age=31536000, immutable`：**文档在*添加维度之前*是静态的，而长达一年的 immutable 承诺会让浏览器一直端着一个悄悄过期的维度花名册、永远不再重新拉取。`public, no-cache` 保留了缓存的价值，同时放弃了不可变声明：浏览器仍然可以存储文档，但每次使用前必须用 `ETag` 重新验证——世界不变时每次页面加载只花一个小小的 `304`，而不是完整重下；版本变化会改变字节、字节改变 ETag，下一次重验证就变成带着新花名册的全新 `200`。下文的 `contentVersion` 握手是同一份契约的应用层，完全不依赖缓存时机。
 - **`contentVersion` 语义。**宿主构建时版本从 `1` 开始；每当有人向*已经在运行*的世界注册一个维度，版本恰好加 `1`（引擎会在那一刻发布 `DimensionAdded` 事件；内容在服务器启动时声明的维度不会让版本加一，因为它们本来就属于文档的首次构建）。没有移除维度的 API，所以版本永远不会减少。文档里的其它一切——目录、BUILD 数组、`tilePixels`——都是注册表级不可变的，从不参与版本。版本提升还会以服务端主动的 `NOTIFY {"type":"contentVersion",...}` 推送帧告知已连接的 WebSocket 会话（见"服务端主动推送的 NOTIFY 帧"一节），但那一帧只是延迟提示；正确性所依赖的契约仍是这条基于快照的握手。

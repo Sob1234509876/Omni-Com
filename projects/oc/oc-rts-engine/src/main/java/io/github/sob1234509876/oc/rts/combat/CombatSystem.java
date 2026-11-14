@@ -13,6 +13,7 @@ import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.movement.Motion;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
+import io.github.sob1234509876.oc.rts.order.AttackOrder;
 import io.github.sob1234509876.oc.rts.sim.SimulationSystem;
 import io.github.sob1234509876.oc.rts.visual.VisualState;
 
@@ -53,15 +54,21 @@ import java.util.Objects;
  * {@link Events.EntityDestroyed} and the end of tick flush follow. The id of the dead unit or building is
  * then cleared from every unit's target, so no survivor is left aiming at a removed entity.
  *
- * <p><strong>Movement.</strong> A unit with a target in range stops where it stands: its velocity is
- * zeroed and the movement system is told through the motion's combat pause to stop steering, while the
- * goal, the route and the order queue stay untouched. The one exception is {@link AttackMoveOrder},
- * which is allowed to keep steering so the order itself can decide when to halt for a fight and when to
- * resume the march. Once no enemy is in reach any more the pause lifts and a plain
- * {@link io.github.sob1234509876.oc.rts.order.MoveOrder} (or a formation move, or a build job) resumes
- * exactly where it stopped, which is the classic "a soldier defends itself, then carries on" stance. A
- * stop command or a fresh order clears the goal, and clearing the goal clears the pause, so an explicit
- * order still replaces whatever the unit was doing.
+     * <p><strong>Movement.</strong> A unit with a target in range stops where it stands: its velocity is
+     * zeroed and the movement system is told through the motion's combat pause to stop steering, while the
+     * goal, the route and the order queue stay untouched. Two exceptions keep a march alive. An
+     * {@link AttackMoveOrder} is allowed to keep steering so the order itself can decide when to halt for
+     * a fight and when to resume the march. And a march never engages an enemy <em>building</em> at all:
+     * a passive wall, warehouse or outpost in melee reach used to park any unit whose path passed its
+     * face - the unit stood there grinding at the wall for the minutes a melee hit needs to level it -
+     * so target selection of a moving unit under a non-attack order ignores buildings entirely (see
+     * {@link #nearestEnemyUnitTarget(World, Unit)}), and the marcher neither stops nor swings. An enemy
+     * unit in reach still pauses the march, which is the classic "a soldier defends itself, then carries
+     * on" stance; buildings are hit by {@code ATTACK} and {@code ATTACKMOVE} orders and by idle and
+     * holding units. Once no such enemy is in reach any more the pause lifts and a plain
+     * {@link io.github.sob1234509876.oc.rts.order.MoveOrder} (or a formation move, or a build job) resumes
+     * exactly where it stopped. A stop command or a fresh order clears the goal, and clearing the goal
+     * clears the pause, so an explicit order still replaces whatever the unit was doing.
  *
  * <p><strong>Determinism.</strong> Nothing here draws a random number or reads a clock. The nearest
  * enemy - unit or building - is chosen by squared distance and ties are broken by entity id, so the
@@ -114,7 +121,8 @@ public final class CombatSystem implements SimulationSystem {
                 unit.clearTarget();
                 continue;
             }
-            Entity target = nearestEnemyInRange(world, unit);
+            Entity target = marchingAcquisition(world, unit) ? nearestEnemyUnitTarget(world, unit)
+                    : nearestEnemyInRange(world, unit);
             if (target == null) {
                 unit.clearTarget();
                 resumeMovement(unit);
@@ -122,7 +130,7 @@ public final class CombatSystem implements SimulationSystem {
             }
             unit.setTargetId(target.id());
             face(unit, target.position());
-            holdPosition(unit);
+            holdPosition(unit, target);
             if (unit.attackCooldown() > 0) {
                 continue;
             }
@@ -183,6 +191,42 @@ public final class CombatSystem implements SimulationSystem {
      * @return the nearest enemy unit or building, never {@code null} only when one is in reach
      */
     public static Entity nearestEnemyInRange(World world, Unit unit) {
+        return nearestEnemy(world, unit, true);
+    }
+
+    /**
+     * The nearest living enemy <em>unit</em> inside the unit's attack range, buildings excluded, or
+     * {@code null}.
+     *
+     * <p>This is the acquisition rule of a march: a unit that is going somewhere under an order that is
+     * neither an attack nor an attack-move neither stops at nor swings at a passive enemy building. The
+     * old full rule made every mover that passed within melee reach of a wall or an outpost park at its
+     * face and grind there for as long as the building stood - the "walks to the building face and
+     * grinds" playtester repro - and even after the stop rule was relaxed the marcher still chipped the
+     * building on the way past. A march therefore engages only enemy units ("defend yourself, then carry
+     * on"); a building is hit by an {@code ATTACK} order, an {@code ATTACKMOVE} order and by idle and
+     * holding units, which all use {@link #nearestEnemyInRange(World, Unit)}.
+     *
+     * @return the nearest enemy unit, never {@code null} only when one is in reach
+     */
+    public static Entity nearestEnemyUnitTarget(World world, Unit unit) {
+        return nearestEnemy(world, unit, false);
+    }
+
+    /**
+     * Whether this unit is on a march that buildings must not interrupt: it is moving under an order
+     * that is neither an {@code ATTACK} nor an {@code ATTACKMOVE}, whose halting and targeting rules own
+     * the building cases themselves.
+     */
+    private static boolean marchingAcquisition(World world, Unit unit) {
+        io.github.sob1234509876.oc.rts.order.Order current = unit.orders().current();
+        return unit.motion().isMoving()
+                && !(current instanceof io.github.sob1234509876.oc.rts.order.AttackOrder)
+                && !(current instanceof io.github.sob1234509876.oc.rts.order.AttackMoveOrder);
+    }
+
+    /** Shared acquisition body; {@code includeBuildings} selects the march or the standing rule. */
+    private static Entity nearestEnemy(World world, Unit unit, boolean includeBuildings) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(unit, "unit");
         CombatStats stats = unit.combat();
@@ -196,6 +240,9 @@ public final class CombatSystem implements SimulationSystem {
         for (int i = 0; i < candidates.size(); i++) {
             Entity candidate = candidates.get(i);
             if (!(candidate instanceof Unit) && !(candidate instanceof Building)) {
+                continue;
+            }
+            if (candidate instanceof Building && !includeBuildings) {
                 continue;
             }
             if (!candidate.isAlive() || !isEnemy(unit, candidate) || !inRange(unit, candidate)) {
@@ -402,18 +449,26 @@ public final class CombatSystem implements SimulationSystem {
 
     /**
      * Stops a unit that is fighting without throwing its orders away. An attack-move keeps steering
-     * itself: that order halts and resumes on its own, so it is left untouched. Everything else pauses:
-     * the movement goal, the route and the order queue stay exactly as they were, and the movement
-     * system stands the unit still while the pause lasts, so when the target dies or walks out of reach
-     * the unit picks its previous order back up - a soldier that defended itself resumes the march
-     * instead of forgetting where it was going. A stop command or any new order clears the goal, which
-     * clears the pause with it.
+     * itself: that order halts and resumes on its own, so it is left untouched. A march also never
+     * fights a passive enemy building - the march acquisition above ignores buildings, so this method
+     * only sees one for a standing unit, which still zeroes its velocity so it does not drift while it
+     * swings. Everything else pauses: the movement goal, the route and the order queue stay exactly as
+     * they were, and the movement system stands the unit still while the pause lasts, so when the target
+     * dies or walks out of reach the unit picks its previous order back up - a soldier that defended
+     * itself resumes the march instead of forgetting where it was going. A stop command or any new order
+     * clears the goal, which clears the pause with it.
      */
-    private static void holdPosition(Unit unit) {
+    private static void holdPosition(Unit unit, Entity target) {
         if (unit.orders().current() instanceof AttackMoveOrder) {
             return;
         }
         Motion motion = unit.motion();
+        if (target instanceof Building && !(unit.orders().current() instanceof AttackOrder)) {
+            // A standing unit that swings at a building: no pause is needed (there is no march to
+            // resume), but the velocity still has to go so separation cannot shove it off its feet.
+            motion.setVelocity(Vec2.ZERO);
+            return;
+        }
         if (motion.hasGoal()) {
             motion.setCombatPaused(true);
         }

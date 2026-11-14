@@ -134,6 +134,7 @@ public final class RtsScenario {
         checkBuildingAnchors(check);
         checkObstacleDetourAndBody(check);
         checkOrderResumeAndRamp(check);
+        checkMarchPastBuildings(check);
         checkHellAndVariants(check);
         checkUnitUpgrades(check);
         checkPreStockedProduction(check, content);
@@ -3448,6 +3449,109 @@ public final class RtsScenario {
         check.that(cruise > 0.05f && steps.get(0) < cruise * 0.5f && steps.get(5) > cruise * 0.8f,
                 "a marching unit starts clearly below cruise speed and holds cruise within half a second "
                         + "(first step " + steps.get(0) + ", sixth " + steps.get(5) + ", cruise " + cruise + ")");
+    }
+
+    // ------------------------------------------------------------------ 25) marches and buildings
+
+    /**
+     * The two rules that keep a march alive next to buildings, both born from the same playtester repro
+     * "the unit walks to the building face and grinds":
+     *
+     * <ul>
+     *   <li>a passive enemy building in melee reach never stops a march. The old combat rule paused any
+     *       unit that had any enemy - a wall or warehouse included - in reach, so a mover that passed an
+     *       outpost stood at its face and ground there for as long as the building stood. The march now
+     *       walks on (it may still swing while in reach, and it still stops for enemy units);</li>
+     *   <li>a slide along a building wall keeps marching speed. The old axis-component slide of a step
+     *       that ran almost parallel to the wall was almost zero, so a unit rounding a building corner
+     *       visibly ground against it for over a second before carrying on.</li>
+     * </ul>
+     *
+     * <p>Both are asserted through the worst run of consecutive near-zero movement ticks of a real march:
+     * an acceleration ramp or a goal brake dips below the threshold for a handful of ticks, but a grind
+     * against a face runs for seconds.
+     */
+    private static void checkMarchPastBuildings(Check check) {
+        check.section("25) a march passes buildings: no combat stop at a wall face, no corner grind");
+        ContentRegistry combat = combatContent();
+        Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
+        Player red = Player.of(2, "Red", 0xFFEF5350);
+        OcRtsEngine engine = combatEngine(combat, blue, red);
+        World world = engine.world();
+        BuildingType wall = combat.building(WALL);
+
+        // An enemy wall directly on the march line: the old rule parked the walker at its west face.
+        Building obstacle = world.spawnBuilding(wall, red, new GridPos(20, 9));
+        Unit walker = world.spawnUnit(combat.unit(BRAWLER), blue, new Vec2(10.5f, 10.5f));
+        Vec2 destination = new Vec2(30.5f, 10.5f);
+        world.director().move(walker, destination);
+        int[] worstRun = {0};
+        int[] run = {0};
+        boolean arrived = marchWatchingStalls(engine, walker, worstRun, run, 1200);
+        check.that(arrived && obstacle.isAlive(),
+                "a mover ordered across an enemy building reaches the far side instead of grinding at "
+                        + "its face, and the pass cannot level the wall (worst no-progress run "
+                        + worstRun[0] + " ticks)");
+        check.that(worstRun[0] <= 12,
+                "the march never grinds: no run of near-zero movement longer than 12 ticks (worst "
+                        + worstRun[0] + ")");
+
+        // The same march with the corner slide: a diagonal route around a wall corner keeps speed.
+        Building cornerWall = world.spawnBuilding(wall, red, new GridPos(20, 7));
+        Unit diagonal = world.spawnUnit(combat.unit(BRAWLER), blue, new Vec2(14.5f, 5.5f));
+        world.director().move(diagonal, new Vec2(26.5f, 12.5f));
+        int[] cornerWorst = {0};
+        int[] cornerRun = {0};
+        boolean rounded = marchWatchingStalls(engine, diagonal, cornerWorst, cornerRun, 1200);
+        check.that(rounded && cornerWorst[0] <= 12,
+                "a diagonal march rounds the building corner without a grind run (worst " + cornerWorst[0]
+                        + " ticks, arrived " + rounded + ")");
+
+        // An unfinished producer refuses work: the engine-level gate behind the server's TRAIN refusal.
+        ContentRegistry content = ScenarioContent.omniCom();
+        OcRtsEngine production = costEngine(content);
+        World productionWorld = production.world();
+        Player builder = production.players().get(0);
+        BuildingType warehouse = content.building(ScenarioContent.WAREHOUSE);
+        Building depot = productionWorld.spawnBuilding(warehouse, builder, new GridPos(10, 10));
+        depot.inventory().insert(content.item(ScenarioContent.IRON_INGOT), 400);
+        Building site = productionWorld.placeBuilding(content.building(ScenarioContent.BARRACKS), builder,
+                new GridPos(20, 10));
+        Recipe recruit = content.recipe(ScenarioContent.TRAIN_SOLDIER);
+        boolean refused = false;
+        try {
+            production.production().enqueue(site, recruit, 1);
+        } catch (IllegalArgumentException expected) {
+            refused = true;
+        }
+        check.that(refused, "enqueue into an unfinished producer is refused by the engine");
+        int unitsBefore = productionWorld.unitsOf(builder).size();
+        production.production().queueOf(site).enqueue(recruit, 1);
+        production.tick(600);
+        check.that(productionWorld.unitsOf(builder).size() == unitsBefore && !site.isConstructed(),
+                "a queue forced into an unfinished site stays untouched: no unit spawns while the site "
+                        + "is under construction");
+    }
+
+    /** Ticks until the unit arrives, counting the worst run of consecutive near-zero movement ticks. */
+    private static boolean marchWatchingStalls(OcRtsEngine engine, Unit walker, int[] worstRun, int[] run,
+            int maxTicks) {
+        Vec2 previous = walker.position();
+        for (int i = 0; i < maxTicks; i++) {
+            engine.tick(1);
+            float step = previous.distance(walker.position());
+            previous = walker.position();
+            if (walker.motion().isArrived()) {
+                return true;
+            }
+            if (step < 0.02f) {
+                run[0]++;
+                worstRun[0] = Math.max(worstRun[0], run[0]);
+            } else {
+                run[0] = 0;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ 19) hell and variants
