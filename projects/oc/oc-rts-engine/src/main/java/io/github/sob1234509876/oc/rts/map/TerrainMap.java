@@ -30,10 +30,18 @@ public interface TerrainMap {
     /** Changes the terrain of a single tile, for example when a road is built. */
     void setTerrain(GridPos tile, TerrainType terrain);
 
+    /**
+     * Whether the tile can be walked on. The tile form of the question must answer exactly like the
+     * coordinate form, which is why it delegates: a decorating view such as the obstacle aware map that
+     * pathfinding and stepping see overrides the coordinate form to refuse building footprint tiles, and
+     * a caller passing a {@link GridPos} used to bypass that decoration silently - the route planning
+     * and the goal adjustment then treated a warehouse as plain grass.
+     */
     default boolean isPassable(GridPos tile) {
-        return terrainAt(tile.x(), tile.y()).passable();
+        return isPassable(tile.x(), tile.y());
     }
 
+    /** Whether the tile can be walked on; the form decorating views override. */
     default boolean isPassable(int x, int y) {
         return terrainAt(x, y).passable();
     }

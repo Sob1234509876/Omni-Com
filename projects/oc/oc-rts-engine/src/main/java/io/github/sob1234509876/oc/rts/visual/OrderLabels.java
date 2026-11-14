@@ -16,23 +16,36 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The capped, player-readable list of a unit's queued tasks, in execution order.
+ * The capped, client-parseable list of a unit's queued tasks, in execution order.
  *
  * <p>The snapshot cannot send an unbounded queue: a player can Shift-click without limit, and a wire
  * array that grows with every click would make the document unbounded. The list is therefore capped at
  * {@value #MAX_ORDER_LABELS} entries. When the queue is longer, the first
- * {@code MAX_ORDER_LABELS - 1} labels are sent and the last entry is a marker such as
- * {@code … 还有 5 项}, so the client can show both the head of the queue and the fact that more exists.
+ * {@code MAX_ORDER_LABELS - 1} entries are sent and the last entry is the truncation marker
+ * {@code more <n>}, so the client can show both the head of the queue and the fact that more exists.
  * The cap is a presentation rule only: the engine's queue keeps every order.
  *
- * <p>The labels are short and deterministic, built from the order's own references:
+ * <p>Every entry is a <strong>stable ASCII token</strong> followed by numeric arguments, never a
+ * rendered sentence. The engine used to emit Chinese display text here, which forced every client to
+ * parse one fixed language; the token vocabulary below instead lets a client map
+ * {@code order.<token>} through its own dictionary and resolve the referenced entity's name from the
+ * same snapshot. An old client that renders the raw string shows the readable token, and a Chinese
+ * client gets its own words back from the dictionary.
  *
  * <ul>
- *   <li>{@code 建造 兵工厂 @ (12,5)} for a build order (the site's display name and origin);</li>
- *   <li>{@code 修理 #42} for a repair order;</li>
- *   <li>{@code 搬运 → 仓库} for a haul order (its delivery target);</li>
- *   <li>{@code 移动 → (12,5)}, {@code 攻击 #42}, {@code 攻击移动 → (12,5)} and
- *       {@code 原地待命} for the other orders.</li>
+ *   <li>{@code build <siteId> <x> <y>} - build order on the site with that entity id at that origin
+ *       tile; bare {@code build} when the order already dropped its site reference;</li>
+ *   <li>{@code repair <buildingId>} - repair order, bare {@code repair} without a reference;</li>
+ *   <li>{@code haul <buildingId>} - haul order towards its delivery target, bare {@code haul}
+ *       without one;</li>
+ *   <li>{@code move <x> <y>} - plain move to the destination tile;</li>
+ *   <li>{@code attack <entityId>} - attack order on one entity;</li>
+ *   <li>{@code attackMove <entityId>} or bare {@code attackMove} - attack move onto an entity or
+ *       towards a point;</li>
+ *   <li>{@code guard} - hold position;</li>
+ *   <li>{@code more <n>} - truncation marker, always the last entry when present;</li>
+ *   <li>any order the vocabulary does not list falls back to its engine name, which is already a
+ *       lowercase ASCII token.</li>
  * </ul>
  *
  * <p>Only a unit has an order queue; a building answers an empty list. The class is DOM-free, draws no
@@ -43,17 +56,28 @@ public final class OrderLabels {
     /** Largest number of entries one snapshot carries, including the truncation marker. */
     public static final int MAX_ORDER_LABELS = 8;
 
-    /** Prefix of the entry that says how many labels did not fit. */
-    public static final String TRUNCATION_PREFIX = "… 还有 ";
-
-    /** Suffix of the truncation marker. */
-    public static final String TRUNCATION_SUFFIX = " 项";
+    /** Token of a build order; arguments are the site id and the site origin tile. */
+    public static final String TOKEN_BUILD = "build";
+    /** Token of a repair order; the argument is the building's entity id. */
+    public static final String TOKEN_REPAIR = "repair";
+    /** Token of a haul order; the argument is the delivery target's entity id. */
+    public static final String TOKEN_HAUL = "haul";
+    /** Token of a plain move; the arguments are the destination tile coordinates. */
+    public static final String TOKEN_MOVE = "move";
+    /** Token of an attack order; the argument is the target's entity id. */
+    public static final String TOKEN_ATTACK = "attack";
+    /** Token of an attack move; optional argument is a chased entity's id. */
+    public static final String TOKEN_ATTACK_MOVE = "attackMove";
+    /** Token of a hold order; it carries no argument. */
+    public static final String TOKEN_GUARD = "guard";
+    /** Token of the truncation marker; the argument is how many labels did not fit. */
+    public static final String TOKEN_MORE = "more";
 
     private OrderLabels() {
     }
 
     /**
-     * The labels of one unit's queue, capped at {@value #MAX_ORDER_LABELS} entries.
+     * The entries of one unit's queue, capped at {@value #MAX_ORDER_LABELS} entries.
      *
      * @param unit the unit whose queue is read; {@code null} answers an empty list
      * @return an immutable list, never {@code null}
@@ -63,7 +87,7 @@ public final class OrderLabels {
     }
 
     /**
-     * The labels of one order queue, capped at {@value #MAX_ORDER_LABELS} entries.
+     * The entries of one order queue, capped at {@value #MAX_ORDER_LABELS} entries.
      *
      * @param queue the queue to read; {@code null} answers an empty list
      * @return an immutable list, never {@code null}
@@ -85,39 +109,43 @@ public final class OrderLabels {
         for (int index = 0; index < shown; index++) {
             labels.add(label(orders.get(index)));
         }
-        labels.add(TRUNCATION_PREFIX + (orders.size() - shown) + TRUNCATION_SUFFIX);
+        labels.add(TOKEN_MORE + " " + (orders.size() - shown));
         return List.copyOf(labels);
     }
 
-    /** One short label of one order; an order with no reference falls back to its stable name. */
+    /** One token entry of one order; an order with no reference sends the bare token. */
     public static String label(Order order) {
         Objects.requireNonNull(order, "order");
         if (order instanceof BuildOrder build) {
             return build.site() == null
-                    ? "建造（已完成）"
-                    : "建造 " + build.site().displayName() + " @ (" + build.site().origin().x() + ","
-                            + build.site().origin().y() + ")";
+                    ? TOKEN_BUILD
+                    : TOKEN_BUILD + " " + build.site().id().value() + " " + build.site().origin().x()
+                            + " " + build.site().origin().y();
         }
         if (order instanceof RepairOrder repair) {
-            return repair.building() == null ? "修理（已完成）" : "修理 #" + repair.building().id().value();
+            return repair.building() == null
+                    ? TOKEN_REPAIR
+                    : TOKEN_REPAIR + " " + repair.building().id().value();
         }
         if (order instanceof HaulOrder haul) {
-            return haul.job() == null ? "搬运" : "搬运 → " + haul.job().target().displayName();
+            return haul.job() == null
+                    ? TOKEN_HAUL
+                    : TOKEN_HAUL + " " + haul.job().target().id().value();
         }
         if (order instanceof MoveOrder move) {
-            return "移动 → (" + move.destination().tile().x() + "," + move.destination().tile().y() + ")";
+            return TOKEN_MOVE + " " + move.destination().tile().x() + " " + move.destination().tile().y();
         }
         if (order instanceof AttackOrder attack) {
-            return "攻击 #" + attack.targetId().value();
+            return TOKEN_ATTACK + " " + attack.targetId().value();
         }
         if (order instanceof AttackMoveOrder attackMove) {
             if (attackMove.isTargeted() && attackMove.targetId().isPresent()) {
-                return "攻击 #" + attackMove.targetId().orElseThrow().value();
+                return TOKEN_ATTACK_MOVE + " " + attackMove.targetId().orElseThrow().value();
             }
-            return "攻击移动";
+            return TOKEN_ATTACK_MOVE;
         }
         if (order instanceof HoldOrder) {
-            return "原地待命";
+            return TOKEN_GUARD;
         }
         return order.name();
     }

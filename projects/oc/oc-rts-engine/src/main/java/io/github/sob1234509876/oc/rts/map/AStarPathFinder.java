@@ -91,7 +91,11 @@ public final class AStarPathFinder implements PathFinder {
         Objects.requireNonNull(goal, "goal");
         Objects.requireNonNull(options, "options");
 
-        if (!map.isPassable(start)) {
+        // The start is judged by the terrain only: a unit standing on ground a building later covered
+        // (it spawned there, or the footprint grew over it) must still get a route out, and the search
+        // below refuses footprint tiles for every step after the first, so the route immediately
+        // leaves the footprint. Ground the unit cannot walk on at all - water, lava - has no route.
+        if (!map.terrainAt(start.x(), start.y()).passable()) {
             return Optional.empty();
         }
         if (start.equals(goal)) {

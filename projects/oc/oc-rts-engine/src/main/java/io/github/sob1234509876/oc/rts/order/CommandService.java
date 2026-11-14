@@ -1170,8 +1170,9 @@ public final class CommandService implements UnitDirector {
     }
 
     /**
-     * The haul branch of an assist: fetch the missing inputs of the first waiting recipe from the
-     * nearest own warehouse that can cover them, and give the job to the assisting unit.
+     * The haul branch of an assist: hand the assisting unit the first staged-but-uncarried delivery of
+     * the building, and otherwise fetch the missing inputs of the first waiting recipe from the nearest
+     * own warehouse that can cover them.
      */
     private AssistResult assistHaul(Unit unit, Building building) {
         WarehouseLogistics network = WarehouseLogistics.of(unit.owner());
@@ -1183,6 +1184,25 @@ public final class CommandService implements UnitDirector {
         if (hauling == null) {
             return AssistResult.refused("cannot assist " + unit.owner().name()
                     + ": no hauling system is attached to the warehouse network");
+        }
+        // The production system stages a claim the moment a recipe starts waiting: the job is already
+        // DELIVERING with the goods reserved, and in a policy-driven world it may sit without a carrier
+        // until the hauling policy picks one. That staged job is exactly the "short first job" a player
+        // right-clicks, so it is handed over whole instead of being answered with "nothing to assist"
+        // and instead of reserving the same shelf a second time.
+        for (DeliveryJob staged : hauling.jobs()) {
+            if (!staged.isPending() || staged.target() != building
+                    || staged.state() != DeliveryJob.State.WAITING_HAULER) {
+                continue;
+            }
+            if (!unit.orders().isEmpty()) {
+                unit.orders().clear(context(unit));
+            }
+            if (!hauling.assignHauler(staged, unit)) {
+                return AssistResult.refused(
+                        "the unit cannot take the haul (it may already carry another job)");
+            }
+            return AssistResult.hauled(building, staged.bundle());
         }
         ItemBundle missing = waitingInputs(building);
         if (missing.isEmpty()) {

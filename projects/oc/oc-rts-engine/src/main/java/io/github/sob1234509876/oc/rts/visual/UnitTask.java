@@ -10,12 +10,17 @@ import io.github.sob1234509876.oc.rts.content.UnitRole;
 import java.util.Optional;
 
 /**
- * One short, deterministic line describing what an engineer is doing.
+ * One short, deterministic line describing what an engineer is doing, as a stable ASCII token.
  *
  * <p>The line is derived from the head of the unit's order queue, never from its movement: a builder
- * that is walking to its site is already "建造中", and an engineer with no economic order is "空闲"
- * even if a plain move order happens to be running. That keeps the label honest about the task the
- * order queue is executing rather than inventing one from a position change.
+ * that is walking to its site is already {@code build <siteId>}, and an engineer with no economic order
+ * is {@code idle} even if a plain move order happens to be running. That keeps the line honest about
+ * the task the order queue is executing rather than inventing one from a position change.
+ *
+ * <p>Like the {@link OrderLabels} vocabulary this is a token, not a rendered sentence: the wire used to
+ * carry fixed Chinese display text here, which no client could translate. A client maps
+ * {@code task.<token>} through its own dictionary and resolves the acting building's name from the
+ * entity id in the same snapshot; an old client that renders the raw string shows the readable token.
  *
  * <p>Only engineers get a task. An engineer is a unit whose type carries the {@code builder} tag, or a
  * unit with the {@link UnitRole#WORKER worker} role (the scenario catalogue's builder has the role but no
@@ -24,8 +29,8 @@ import java.util.Optional;
  */
 public final class UnitTask {
 
-    /** The one-line task of an engineer with no build, repair or haul order. */
-    public static final String IDLE = "空闲";
+    /** The task token of an engineer with no build, repair or haul order. */
+    public static final String IDLE = "idle";
 
     /** Content tag that marks a unit as a builder. */
     public static final String BUILDER_TAG = "builder";
@@ -48,21 +53,24 @@ public final class UnitTask {
     }
 
     /**
-     * The task line of one order, or {@link #IDLE} when it is {@code null} or not an economic task.
+     * The task token of one order, or {@link #IDLE} when it is {@code null} or not an economic task.
      *
-     * <p>The three task orders each name the building they act on, using the building's own display name
-     * so the line stays short. An order that has already dropped its building reference (finished or
-     * cancelled) counts as idle instead of printing a dangling arrow.
+     * <p>The three task orders each name the building they act on by its entity id, using the same
+     * {@code build} / {@code repair} / {@code haul} tokens as the {@code orderQueue}. An order that has
+     * already dropped its building reference (finished or cancelled) counts as idle instead of sending
+     * a dangling reference.
      */
     public static String describe(Order order) {
         if (order instanceof BuildOrder build) {
-            return build.site() == null ? IDLE : "建造中 → " + build.site().displayName();
+            return build.site() == null ? IDLE : OrderLabels.TOKEN_BUILD + " " + build.site().id().value();
         }
         if (order instanceof RepairOrder repair) {
-            return repair.building() == null ? IDLE : "修理中 → " + repair.building().displayName();
+            return repair.building() == null
+                    ? IDLE
+                    : OrderLabels.TOKEN_REPAIR + " " + repair.building().id().value();
         }
         if (order instanceof HaulOrder haul) {
-            return haul.job() == null ? IDLE : "搬运中 → " + haul.job().target().displayName();
+            return haul.job() == null ? IDLE : OrderLabels.TOKEN_HAUL + " " + haul.job().target().id().value();
         }
         return IDLE;
     }

@@ -1694,9 +1694,9 @@ public final class WorldHost {
      * {@code unit.engineer}. A unit or building whose content declares a weapon
      * also carries {@code attackDamage} and {@code attackRange}, the two numbers the selection panel prints
      * and the combat layer actually fires with. A unit with at least one order carries {@code orderQueue}, an
-     * array of ready-to-show task labels in execution order ({@code 建造 兵工厂 @ (12,5)},
-     * {@code 修理 #42}, {@code 搬运 → 仓库}) built by the engine's {@code OrderLabels}. The array is capped
-     * at eight entries including a `… 还有 N 项` marker, so a player who Shift-queues twenty sites cannot grow
+     * array of stable ASCII tokens with numeric arguments in execution order ({@code build 12 20 5},
+     * {@code repair 42}, {@code haul 1}) built by the engine's {@code OrderLabels}. The array is capped
+     * at eight entries including a {@code more <n>} marker, so a player who Shift-queues twenty sites cannot grow
      * the document without bound; the engine queue itself keeps every order. All of these fields are additive
      * and presentational: an older client ignores them.
      *
@@ -3073,7 +3073,7 @@ public final class WorldHost {
     }
 
     /**
-     * Appends the optional one-line task of an engineer: {@code ,"task":"搬运中 → 兵工厂"}.
+     * Appends the optional task token of an engineer: {@code ,"task":"haul 1"}.
      *
      * <p>The value comes from {@link UnitTask}, which reads the head of the unit's order queue and never
      * invents a task from movement. The field is absent for every non-engineer, so a combat unit or a

@@ -284,10 +284,15 @@ public final class MovementSystem implements SimulationSystem {
      * behaviour on open ground, in water and on one tile wide terrain corridors is unchanged. The body
      * rule closes the asymmetry where a unit's radius let it clip a building edge with half of its
      * diameter while its centre tile was still walkable - which slipped vertically along a bottom edge
-     * but ground to a halt along a side wall, depending on which tile the centre happened to enter. A
-     * unit whose body already overlaps a footprint (a building completed on top of it) keeps the
-     * historical escape hatch: every step away is an improvement, so the body rule is skipped until the
-     * unit is clear again.
+     * but ground to a halt along a side wall, depending on which tile the centre happened to enter.
+     *
+     * <p>A unit standing on an impossible tile (a map edit under the unit, a building placed on it)
+     * keeps the historical escape hatch in a bounded form: the terrain check is skipped, because any
+     * step off such a tile is an improvement, but the body rule still applies. That is what keeps the
+     * hatch from becoming a tunnel - under the old rule the unchecked step carried a unit whose centre
+     * tile sat on a footprint in a straight line across every footprint between it and its goal, which
+     * is the playtester's "crawls over our own buildings" - while a buried unit can still walk out
+     * through the tiles its body already overlaps and never enters a new one.
      *
      * <p>When the direct step is blocked, the slide tries the step's two axes at <em>full step speed</em>
      * before falling back to the axis components of the blocked step. The component slide of a step that
@@ -305,37 +310,42 @@ public final class MovementSystem implements SimulationSystem {
             return from;
         }
         Vec2 candidate = from.plus(step);
-        if (!isWalkable(map, from.x(), from.y())) {
-            // Standing on an impossible tile (a map edit under a unit, a spawned building): any step that
-            // leads away is an improvement, so the check is skipped until the unit is back on ground.
-            return candidate;
-        }
-        if (isStepClear(dimension, radius, from, candidate)) {
+        // Standing on an impossible tile (a map edit under a unit, a building placed on it): the terrain
+        // part of the step check is skipped until the unit is back on walkable ground, but the body rule
+        // keeps applying, so the escape stays a walk out and never becomes a walk across.
+        boolean buried = !isWalkable(map, from.x(), from.y());
+        if (isStepClear(dimension, radius, from, candidate, buried)) {
             return candidate;
         }
         float length = step.length();
         Vec2 slideX = step.x() != 0f ? new Vec2(from.x() + Math.signum(step.x()) * length, from.y()) : null;
-        if (slideX != null && isStepClear(dimension, radius, from, slideX)) {
+        if (slideX != null && isStepClear(dimension, radius, from, slideX, buried)) {
             return slideX;
         }
         Vec2 slideY = step.y() != 0f ? new Vec2(from.x(), from.y() + Math.signum(step.y()) * length) : null;
-        if (slideY != null && isStepClear(dimension, radius, from, slideY)) {
+        if (slideY != null && isStepClear(dimension, radius, from, slideY, buried)) {
             return slideY;
         }
         Vec2 slideXComponent = new Vec2(candidate.x(), from.y());
-        if (slideXComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideXComponent)) {
+        if (slideXComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideXComponent,
+                buried)) {
             return slideXComponent;
         }
         Vec2 slideYComponent = new Vec2(from.x(), candidate.y());
-        if (slideYComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideYComponent)) {
+        if (slideYComponent.distanceSquared(from) > 0f && isStepClear(dimension, radius, from, slideYComponent,
+                buried)) {
             return slideYComponent;
         }
         return from;
     }
 
-    /** Samples the step so a fast unit cannot tunnel through the corner of an obstacle. */
+    /**
+     * Samples the step so a fast unit cannot tunnel through the corner of an obstacle. With {@code
+     * ignoreTerrain} the terrain centre rule is skipped (the escape hatch of a buried unit); the body
+     * rule against building footprints always applies.
+     */
     private static boolean isStepClear(io.github.sob1234509876.oc.rts.dimension.Dimension dimension, float radius,
-            Vec2 from, Vec2 to) {
+            Vec2 from, Vec2 to, boolean ignoreTerrain) {
         TerrainMap map = dimension.pathTerrain();
         float dx = to.x() - from.x();
         float dy = to.y() - from.y();
@@ -345,7 +355,7 @@ public final class MovementSystem implements SimulationSystem {
             float t = i / (float) samples;
             float x = from.x() + dx * t;
             float y = from.y() + dy * t;
-            if (!isWalkable(map, x, y)) {
+            if (!ignoreTerrain && !isWalkable(map, x, y)) {
                 return false;
             }
             if (bodyEntersObstacle(dimension, radius, from, x, y)) {
@@ -357,8 +367,11 @@ public final class MovementSystem implements SimulationSystem {
 
     /**
      * Whether the disc of the given radius around {@code (x, y)} overlaps a building footprint tile that
-     * the body around {@code from} does not overlap already. The bounding tiles of the disc are checked,
-     * which is exact for the axis aligned footprints the obstacle layer stores.
+     * the body around {@code from} does not overlap already. Both questions are answered with the exact
+     * circle versus tile rectangle test, not with the bounding tiles of the disc: a bounding box of the
+     * current position reaches a footprint tile a step before the disc does, and reading that box as
+     * "already overlapping" let a unit walking diagonally into a building corner carry its centre
+     * straight onto the footprint one exempted step at a time.
      */
     private static boolean bodyEntersObstacle(io.github.sob1234509876.oc.rts.dimension.Dimension dimension,
             float radius, Vec2 from, float x, float y) {
@@ -373,17 +386,24 @@ public final class MovementSystem implements SimulationSystem {
                 }
                 // A tile the body already overlaps at the current position cannot block the step, or a
                 // unit standing with its edge inside a footprint could never move at all.
-                int fromMinX = floor(from.x() - radius);
-                int fromMaxX = floor(from.x() + radius);
-                int fromMinY = floor(from.y() - radius);
-                int fromMaxY = floor(from.y() + radius);
-                if (tx >= fromMinX && tx <= fromMaxX && ty >= fromMinY && ty <= fromMaxY) {
+                if (discOverlapsTile(from, radius, tx, ty)) {
                     continue;
                 }
-                return true;
+                if (discOverlapsTile(new Vec2(x, y), radius, tx, ty)) {
+                    return true;
+                }
             }
         }
         return false;
+    }
+
+    /** Whether the disc around the position overlaps the tile rectangle, circle versus rectangle exact. */
+    private static boolean discOverlapsTile(Vec2 position, float radius, int tx, int ty) {
+        float cx = Math.max(tx, Math.min(position.x(), tx + 1f));
+        float cy = Math.max(ty, Math.min(position.y(), ty + 1f));
+        float dx = position.x() - cx;
+        float dy = position.y() - cy;
+        return dx * dx + dy * dy < radius * radius;
     }
 
     private static boolean isWalkable(TerrainMap map, float x, float y) {

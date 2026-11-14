@@ -54,6 +54,14 @@ public final class AttackMoveOrder implements Order {
     private final Vec2 destination;
 
     /**
+     * The destination resolved through {@link MoveOrder#walkableGoal} when the order started: a point
+     * that lies on a building footprint resolves to the nearest standable tile, because the body can
+     * never reach the raw point and the march would grind at the wall face without ever arriving.
+     * {@code null} until the order starts and for entity targeted orders.
+     */
+    private Vec2 resolvedDestination;
+
+    /**
      * Entity this order chases when it was given an id instead of a point; {@code null} for a point
      * order.
      */
@@ -145,7 +153,9 @@ public final class AttackMoveOrder implements Order {
         Motion motion = context.unit().motion();
         motion.clearFormation();
         if (destination != null) {
-            motion.setGoal(destination);
+            this.resolvedDestination = MoveOrder.walkableGoal(context.world(), context.unit().dimensionId(),
+                    destination);
+            motion.setGoal(resolvedDestination);
         }
     }
 
@@ -174,17 +184,18 @@ public final class AttackMoveOrder implements Order {
             return OrderState.RUNNING;
         }
         fighting = false;
+        Vec2 walkGoal = resolvedDestination != null ? resolvedDestination : destination;
         Vec2 goal = motion.goalOrNull();
         if (goal == null) {
             // Either the goal was just dropped to fight or something else cleared it; resume the march
             // unless the unit already stands on the destination.
-            if (unit.position().distance(destination) <= ARRIVAL_TOLERANCE + unit.radius()) {
+            if (unit.position().distance(walkGoal) <= ARRIVAL_TOLERANCE + unit.radius()) {
                 return OrderState.COMPLETED;
             }
-            motion.setGoal(destination);
-        } else if (!goal.equals(destination)) {
+            motion.setGoal(walkGoal);
+        } else if (!goal.equals(walkGoal)) {
             // The order owns the destination for as long as it runs.
-            motion.setGoal(destination);
+            motion.setGoal(walkGoal);
         }
         if (motion.isArrived()) {
             return OrderState.COMPLETED;

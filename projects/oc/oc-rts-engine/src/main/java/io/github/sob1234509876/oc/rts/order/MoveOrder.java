@@ -1,8 +1,10 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.core.GridPos;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.movement.Motion;
+import io.github.sob1234509876.oc.rts.movement.PathService;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -106,7 +108,7 @@ public final class MoveOrder implements Order {
         Motion motion = context.unit().motion();
         // A plain move is an individual order, so it also ends any formation the unit took part in.
         motion.clearFormation();
-        motion.setGoal(route.get(0));
+        motion.setGoal(walkableGoal(context.world(), context.unit().dimensionId(), route.get(0)));
     }
 
     @Override
@@ -121,7 +123,7 @@ public final class MoveOrder implements Order {
             legIndex++;
             startTick = context.tick().number();
             stalledTicks = 0;
-            motion.setGoal(route.get(legIndex));
+            motion.setGoal(walkableGoal(context.world(), context.unit().dimensionId(), route.get(legIndex)));
             return OrderState.RUNNING;
         }
         if (!motion.hasGoal()) {
@@ -183,6 +185,35 @@ public final class MoveOrder implements Order {
      */
     static boolean isStalled(Motion motion) {
         return !motion.hasPath() && !motion.isPathPending() && motion.repathCooldown() > 0;
+    }
+
+    /**
+     * The goal a walking unit should actually be given for a requested destination: the destination
+     * itself, unless its tile is covered by a living building footprint. A click on a rock or into
+     * water stays reachable - the terrain rule blocks only the tile centre, so the unit presses the
+     * tile boundary and arrives within its arrival radius - but a footprint keeps the whole body a
+     * radius away from every tile of the building, so a destination on the footprint could never be
+     * reached and the unit would spend its whole budget grinding at the wall face without ever
+     * arriving. Such a destination resolves to the nearest tile the body can stand on, the same
+     * redirect the path service applies to its search target, and the walk ends parked beside the
+     * building.
+     *
+     * <p>Package visible because {@link FormationMoveOrder} and {@link AttackMoveOrder} resolve their
+     * destinations through the same rule.
+     *
+     * @param world       the world the walk happens in
+     * @param dimensionId the dimension of the walking unit
+     * @param destination the requested destination
+     * @return the destination, or the centre of the nearest standable tile when it lies on a footprint
+     */
+    static Vec2 walkableGoal(World world, io.github.sob1234509876.oc.rts.dimension.DimensionId dimensionId,
+            Vec2 destination) {
+        io.github.sob1234509876.oc.rts.dimension.Dimension dimension = world.dimension(dimensionId);
+        GridPos tile = destination.tile();
+        if (!dimension.isObstacleTile(tile.x(), tile.y())) {
+            return destination;
+        }
+        return PathService.walkableTarget(dimension.pathTerrain(), tile).center();
     }
 
     /** Human readable position, formatted without a locale so debug output is stable. */

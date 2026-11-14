@@ -33,6 +33,8 @@ import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
 import io.github.sob1234509876.oc.rts.order.BuildOrder;
 import io.github.sob1234509876.oc.rts.order.OrderContext;
 import io.github.sob1234509876.oc.rts.order.RepairOrder;
+import io.github.sob1234509876.oc.rts.visual.OrderLabels;
+import io.github.sob1234509876.oc.rts.visual.UnitTask;
 
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -844,19 +846,22 @@ public final class WorldHostCheck {
                     haulTask = taskOf(host, engineer);
                 }
             }
-            check.that("空闲".equals(idleTask)
-                            && buildTask != null && buildTask.equals("建造中 → " + site.displayName())
-                            && repairTask != null && repairTask.equals("修理中 → " + warehouse.displayName())
-                            && haulTask != null && haulTask.equals("搬运中 → " + barracks.displayName()),
-                    "任务行来自订单头：没有订单报告 空闲，建造/修理/搬运订单各报告 建造中/修理中/搬运中 → <建筑>，"
-                            + "且仓库能开出一次真实搬运任务");
+            check.that(UnitTask.IDLE.equals(idleTask)
+                            && buildTask != null && buildTask.equals(
+                                    OrderLabels.TOKEN_BUILD + " " + site.id().value())
+                            && repairTask != null && repairTask.equals(
+                                    OrderLabels.TOKEN_REPAIR + " " + warehouse.id().value())
+                            && haulTask != null && haulTask.equals(
+                                    OrderLabels.TOKEN_HAUL + " " + barracks.id().value()),
+                    "任务行是稳定 ASCII token：没有订单报告 idle，建造/修理/搬运订单各报告"
+                            + " build/repair/haul + 建筑实体 id，且仓库能开出一次真实搬运任务");
 
             engineer.orders().clear(context);
             Map<?, ?> soldierRow = entityRow(MiniJson.parseObject(host.snapshotJson()),
                     soldier.id().value());
-            check.that(taskOf(host, engineer).equals("空闲")
+            check.that(taskOf(host, engineer).equals(UnitTask.IDLE)
                             && soldierRow != null && !soldierRow.containsKey("task"),
-                    "订单清空后工程师回到 空闲，非工程师单位行省略 task");
+                    "订单清空后工程师回到 idle，非工程师单位行省略 task");
             validateSnapshot(check, host.snapshotJson(), "带任务行的快照");
         } finally {
             host.stop();

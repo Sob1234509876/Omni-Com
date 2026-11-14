@@ -1,5 +1,6 @@
 package io.github.sob1234509876.oc.rts.order;
 
+import io.github.sob1234509876.oc.rts.World;
 import io.github.sob1234509876.oc.rts.core.Vec2;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.movement.Motion;
@@ -36,6 +37,7 @@ public final class FormationMoveOrder implements Order {
     private final Vec2 slotOffset;
     private Vec2 anchor;
     private Unit unit;
+    private World world;
     private long startTick = -1L;
     private int stalledTicks;
 
@@ -107,18 +109,21 @@ public final class FormationMoveOrder implements Order {
         Vec2 slot = goal();
         if (motion.goal().distance(slot) >= ANCHOR_EPSILON) {
             motion.setFormation(formationId, slotOffset);
-            motion.setGoal(slot);
+            // The raw slot can land on a building footprint when the dragged anchor sits on one; the
+            // walk goal resolves to the nearest standable tile so the member still finishes beside it.
+            motion.setGoal(MoveOrder.walkableGoal(world, member.dimensionId(), slot));
         }
     }
 
     @Override
     public void onStart(OrderContext context) {
         this.unit = context.unit();
+        this.world = context.world();
         this.startTick = context.tick().number();
         this.stalledTicks = 0;
         Motion motion = unit.motion();
         motion.setFormation(formationId, slotOffset);
-        motion.setGoal(goal());
+        motion.setGoal(MoveOrder.walkableGoal(world, unit.dimensionId(), goal()));
     }
 
     @Override

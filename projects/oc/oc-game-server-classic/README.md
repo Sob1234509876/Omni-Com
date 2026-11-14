@@ -18,7 +18,7 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (513 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (522 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` plus **one PNG per material** under `assets/tiles/` and `assets/entities/` (animated entities are vertical strips) |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -370,20 +370,23 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 513 checks passed.
+classic plugin self check: all 522 checks passed.
 ```
 
-513 is the sum of twenty-five sections - the classic catalogue and its stat ladders, the armory tier gate,
+522 is the sum of twenty-six sections - the classic catalogue and its stat ladders, the armory tier gate,
 the turret with its upgrade ladder, repair and reclaim, mine and lumber income, the engineer-built
 warehouse, the opening base, the atlas, the world host and snapshot, the hell gate, the enemy outpost and
-AI, determinism, the bot players, the engineer pool and the plugin surface - with the
+AI, determinism, the bot players, the engineer pool, the first-TRAIN flow and the plugin surface - with the
 regressions kept after the owner's report: the
 default single-bot world must field at least six combat units and issue an attack order within 600 ticks,
 STOP must be followed by an applicable move and build against a real `CommandService`, each of the twelve
 classic buildings must own a distinct atlas cell, the three turret tiers must be buildable, upgrade in place and
 carry the documented weapon numbers, and the engineer pool must serve **every** arsenal in the same pass
-from a 24-tile crew, enrol a newly produced engineer without a restart and never assign one engineer to
-two arsenals. The gate section is the strict part: it proves
+from a 24-tile crew, enrol a newly produced engineer without a restart, never assign one engineer to
+two arsenals and never leave a demand unserved while an idle engineer stands in radius (the opening's
+single engineer hauls the first TRAIN's gold instead of waiting forever behind the builder reservation);
+the first-TRAIN section runs the real opening - one funded warehouse, one engineer, a finished empty
+armory - and proves the trained unit pops and a right-click ASSIST takes over a staged in-flight demand. The gate section is the strict part: it proves
 against a real `ProductionSystem` that a tier 1 armory cannot train `t4` or `t5`, not just that the catalogue
 says so; the upgrade section proves the same ladders are executable in a real engine, the AI section proves
 the enemy really reaches tier 2 through the command, and the bots section proves the default one-bot world is

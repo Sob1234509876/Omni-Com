@@ -133,6 +133,7 @@ public final class RtsScenario {
         checkWaypointsAndPaths(check);
         checkBuildingAnchors(check);
         checkObstacleDetourAndBody(check);
+        checkOwnWallWalk(check);
         checkOrderResumeAndRamp(check);
         checkMarchPastBuildings(check);
         checkHellAndVariants(check);
@@ -841,7 +842,7 @@ public final class RtsScenario {
      * <p>The check builds each order directly so the strings are pinned without a long simulation: a
      * {@link BuildOrder} on a real unfinished site, a {@link RepairOrder} on a damaged building, a
      * {@link HaulOrder} with a real reserved delivery job, and the idle case. It also asserts that a
-     * moving engineer with no economic order stays {@code 空闲} and that a non-engineer gets no task at all.
+     * moving engineer with no economic order stays {@code idle} and that a non-engineer gets no task at all.
      */
     private static void checkUnitTasks(Check check, ContentRegistry content) {
         check.section("5d) engineer task line: build, repair, haul and idle");
@@ -858,20 +859,23 @@ public final class RtsScenario {
         damaged.inventory().insert(iron, 50);
         Unit engineer = world.spawnUnit(content.unit(ScenarioContent.WORKER), player, new GridPos(6, 6).center());
         check.that(UnitTask.isEngineer(engineer) && UnitTask.of(engineer).orElseThrow().equals(UnitTask.IDLE),
-                "the scenario worker counts as an engineer, and one with no order reads 空闲");
-        check.that(UnitTask.describe(new BuildOrder(site)).equals("建造中 → " + site.displayName())
-                        && UnitTask.describe(new RepairOrder(damaged)).equals("修理中 → " + damaged.displayName()),
-                "a BuildOrder names its building after 建造中 and a RepairOrder after 修理中");
+                "the scenario worker counts as an engineer, and one with no order reads the idle token");
+        check.that(UnitTask.describe(new BuildOrder(site))
+                        .equals(OrderLabels.TOKEN_BUILD + " " + site.id().value())
+                        && UnitTask.describe(new RepairOrder(damaged))
+                                .equals(OrderLabels.TOKEN_REPAIR + " " + damaged.id().value()),
+                "a BuildOrder reads as the build token with its site id and a RepairOrder as the repair "
+                        + "token with its building id");
         Logistics.Reservation reservation = player.logistics().reserveOrThrow(ItemBundle.of(iron, 10));
         DeliveryJob job = new DeliveryJob(damaged, ItemBundle.of(iron, 10), reservation, world.tickNumber());
-        check.equal("搬运中 → " + damaged.displayName(), UnitTask.describe(new HaulOrder(job)),
-                "a HaulOrder names its delivery target after 搬运中");
+        check.equal(OrderLabels.TOKEN_HAUL + " " + damaged.id().value(), UnitTask.describe(new HaulOrder(job)),
+                "a HaulOrder reads as the haul token with its delivery target's id");
         Unit soldier = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new GridPos(8, 8).center());
         check.that(UnitTask.of(soldier).isEmpty(), "a combat unit has no engineer task");
         engineer.orders().push(new MoveOrder(new GridPos(30, 30).center()));
         engine.tick(1);
         check.equal(UnitTask.IDLE, UnitTask.of(engineer).orElseThrow(),
-                "a moving engineer without an economic order is still 空闲, not a movement task");
+                "a moving engineer without an economic order is still idle, not a movement task");
     }
 
     // ------------------------------------------------------------------ 5e) manual warehouse transfers
@@ -2628,8 +2632,13 @@ public final class RtsScenario {
                         + "because placement is synchronous, and queueing three 10 gold huts charges exactly 30 "
                         + "gold at placement time");
         List<String> labels = OrderLabels.of(builder);
-        check.equal(List.of("建造 Hut @ (16,10)", "建造 Hut @ (16,14)", "建造 Hut @ (16,18)"), labels,
-                "the snapshot labels list the queued builds in execution order");
+        check.equal(List.of(
+                        OrderLabels.TOKEN_BUILD + " " + sites.get(0).id().value() + " 16 10",
+                        OrderLabels.TOKEN_BUILD + " " + sites.get(1).id().value() + " 16 14",
+                        OrderLabels.TOKEN_BUILD + " " + sites.get(2).id().value() + " 16 18"),
+                labels,
+                "the snapshot labels list the queued builds as stable build tokens with the site id and "
+                        + "origin tile, in execution order");
         EntitySnapshot captured = engine.snapshot(new GridPos(16, 14), 32).entity(builder.id()).orElseThrow();
         check.equal(labels, captured.orderQueue(),
                 "the engine snapshot carries the same capped order list");
@@ -2672,10 +2681,10 @@ public final class RtsScenario {
         }
         List<String> capped = OrderLabels.of(longQueue);
         check.that(capped.size() == OrderLabels.MAX_ORDER_LABELS
-                        && capped.get(capped.size() - 1).equals("… 还有 3 项")
-                        && capped.get(0).equals("移动 → (1,0)"),
-                "a ten order queue is capped at 8 entries whose head is the first task and whose last entry is "
-                        + "the truncation marker, not a task");
+                        && capped.get(capped.size() - 1).equals(OrderLabels.TOKEN_MORE + " 3")
+                        && capped.get(0).equals(OrderLabels.TOKEN_MOVE + " 1 0"),
+                "a ten order queue is capped at 8 entries whose head is the first task token and whose last "
+                        + "entry is the truncation token, not a task");
     }
 
     // ------------------------------------------------------------------ 16b) the builder must arrive first
@@ -3335,20 +3344,32 @@ public final class RtsScenario {
         check.that(arrived,
                 "a unit ordered across a building wall detours around it and reaches the target behind it");
 
-        // The body rule is symmetric: heading east into a wall stops the same body width short of the
-        // face as heading south into one, and neither stops with the centre inside the footprint.
-        Unit fromWest = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 12.5f));
-        world.director().move(fromWest, new Vec2(15.5f, 12.5f));
+        // The body rule is symmetric: marching at a face the body cannot pass stops the unit exactly
+        // one body radius short of the face, the same width on both axes, and never with the centre
+        // inside a footprint. The destination sits in the one free tile of a sealed warehouse ring, so
+        // no detour exists and the walk really ends pressed against the face.
+        GridPos pen = new GridPos(37, 37);
+        world.spawnBuilding(warehouse, player, new GridPos(pen.x(), pen.y()));
+        world.spawnBuilding(warehouse, player, new GridPos(pen.x() + 6, pen.y()));
+        world.spawnBuilding(warehouse, player, new GridPos(pen.x(), pen.y() + 6));
+        world.spawnBuilding(warehouse, player, new GridPos(pen.x() + 6, pen.y() + 6));
+        world.spawnBuilding(warehouse, player, new GridPos(40, 37));
+        world.spawnBuilding(warehouse, player, new GridPos(40, 43));
+        world.spawnBuilding(warehouse, player, new GridPos(37, 40));
+        world.spawnBuilding(warehouse, player, new GridPos(43, 40));
+        Unit fromWest = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(35.5f, 41.5f));
+        world.director().move(fromWest, new Vec2(41.5f, 41.5f));
         engine.tick(400);
         float westStop = fromWest.position().x();
-        Unit fromNorth = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(15.5f, 6.5f));
-        world.director().move(fromNorth, new Vec2(15.5f, 12.5f));
+        Unit fromSouth = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(41.5f, 47.5f));
+        world.director().move(fromSouth, new Vec2(41.5f, 41.5f));
         engine.tick(400);
-        float northStop = fromNorth.position().y();
-        check.that(westStop >= 13.4f && westStop < 13.66f && northStop >= 7.4f && northStop < 7.66f
-                        && Math.abs((14f - westStop) - (8f - northStop)) <= 0.05f,
-                "walking into a wall stops the body radius short of the footprint face on both axes alike "
-                        + "(east stop " + westStop + ", south stop " + northStop + ")");
+        float southStop = fromSouth.position().y();
+        check.that(westStop >= 36.6f && westStop < 36.67f && southStop >= 46.33f && southStop < 46.4f
+                        && Math.abs((37f - westStop) - (southStop - 46f)) <= 0.05f,
+                "marching at a face the body cannot pass stops the unit one body radius short of it, the "
+                        + "same width on both axes alike (west stop " + westStop + ", south stop "
+                        + southStop + ")");
 
         // A centred unit still fits through a one tile wide gap: the two buildings at (24, 7) and
         // (24, 11) leave row 10 free, and the disc of a centred unit spans no other row.
@@ -3382,6 +3403,162 @@ public final class RtsScenario {
         boolean around = engine.tickUntil(unused -> crosser.position().x() >= 39.8f, 600);
         check.that(around,
                 "the re-planned route carries the unit to the target behind the building raised on its way");
+    }
+
+    // ------------------------------------------------------------------ 23b) own walls
+
+    /**
+     * The playtester repro "our units walk straight into our own buildings and crawl on them", run
+     * against own-faction walls on a real tick loop. Every walk of this section asserts the one
+     * invariant that must hold for any faction and any approach angle: the unit's body never overlaps
+     * a building footprint tile, the march never grinds to a long standstill and the unit arrives
+     * behind the wall.
+     *
+     * <ul>
+     *   <li>a diagonal march whose straight line grazes an own building corner exactly, the approach
+     *       where a bounding-box body rule lets the disc slip into the footprint;</li>
+     *   <li>a head-on march into an own wall face with the goal on the far side;</li>
+     *   <li>a diagonal march threading the one tile gap between two own buildings, two corners in
+     *       close succession;</li>
+     *   <li>a goal on the tile beside the far face, which forces the unit to round a corner and come
+     *       back to a destination it can see across the roof.</li>
+     * </ul>
+     */
+    private static void checkOwnWallWalk(Check check) {
+        check.section("23b) own walls: the body never overlaps a footprint, the march still arrives");
+        ContentRegistry content = ScenarioContent.omniCom();
+        OcRtsEngine engine = costEngine(content);
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        BuildingType warehouse = content.building(ScenarioContent.WAREHOUSE);
+
+        // One own 3x3 warehouse whose corner sits exactly on the straight line to the goal.
+        world.spawnBuilding(warehouse, player, new GridPos(14, 8));
+        Unit corner = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 5.5f));
+        world.director().move(corner, new Vec2(17.5f, 11.5f));
+        MarchTrace cornerWalk = marchKeepingClear(engine, corner, 1200);
+        check.that(cornerWalk.arrived() && cornerWalk.overlapTicks() == 0 && cornerWalk.worstRun() <= 12,
+                "a march grazing an own building corner detours around it and arrives behind the wall "
+                        + "without ever overlapping the footprint (overlap ticks " + cornerWalk.overlapTicks()
+                        + ", worst no-progress run " + cornerWalk.worstRun() + " ticks, arrived "
+                        + cornerWalk.arrived() + ", first overlap at " + cornerWalk.firstOverlap() + ")");
+
+        // Head-on into the wall face with the goal one tile behind it.
+        Unit frontal = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 9.5f));
+        Vec2 behindWall = new Vec2(18.5f, 9.5f);
+        world.director().move(frontal, behindWall);
+        MarchTrace frontalWalk = marchKeepingClear(engine, frontal, 1200);
+        check.that(frontalWalk.arrived() && frontal.position().distance(behindWall) <= 0.7f
+                        && frontalWalk.overlapTicks() == 0 && frontalWalk.worstRun() <= 12,
+                "a head-on march into an own wall detours and arrives at the goal behind it without "
+                        + "overlapping the footprint (overlap ticks " + frontalWalk.overlapTicks()
+                        + ", worst no-progress run " + frontalWalk.worstRun() + " ticks, final "
+                        + frontal.position() + ", first overlap at " + frontalWalk.firstOverlap() + ")");
+
+        // Two own buildings one row apart: the diagonal threads the gap, two corners in a row.
+        world.spawnBuilding(warehouse, player, new GridPos(14, 12));
+        Unit threader = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 8.5f));
+        world.director().move(threader, new Vec2(18.5f, 12.5f));
+        MarchTrace threaded = marchKeepingClear(engine, threader, 1200);
+        check.that(threaded.arrived() && threaded.overlapTicks() == 0 && threaded.worstRun() <= 12,
+                "a diagonal march threads the one tile gap between two own buildings without ever "
+                        + "overlapping either footprint (overlap ticks " + threaded.overlapTicks()
+                        + ", worst no-progress run " + threaded.worstRun() + " ticks, arrived "
+                        + threaded.arrived() + ", first overlap at " + threaded.firstOverlap() + ")");
+
+        // The goal stands beside the far face: the unit must round a corner and come back to it.
+        Unit shuttle = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 9.5f));
+        Vec2 beside = new Vec2(17.5f, 9.5f);
+        world.director().move(shuttle, beside);
+        MarchTrace shuttled = marchKeepingClear(engine, shuttle, 1200);
+        check.that(shuttled.arrived() && shuttle.position().distance(beside) <= 0.7f
+                        && shuttled.overlapTicks() == 0 && shuttled.worstRun() <= 12,
+                "a goal beside the far face of an own wall is reached around the corner without "
+                        + "overlapping the footprint (overlap ticks " + shuttled.overlapTicks()
+                        + ", worst no-progress run " + shuttled.worstRun() + " ticks, final "
+                        + shuttle.position() + ", first overlap at " + shuttled.firstOverlap() + ")");
+
+        // The right-click ON the own building: the goal is the footprint centre. The walk must still
+        // never overlap the footprint, and it must end parked beside the building, not on its roof.
+        Unit rightClick = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 9.5f));
+        Vec2 onBuilding = world.buildingsOf(player).get(0).occupiedTiles().center();
+        world.director().move(rightClick, onBuilding);
+        MarchTrace clicked = marchKeepingClear(engine, rightClick, 1200);
+        GridPos parkedTile = rightClick.position().tile();
+        boolean parkedOutside = !world.dimension(rightClick.dimensionId()).isObstacleTile(parkedTile.x(),
+                parkedTile.y());
+        check.that(clicked.arrived() && clicked.overlapTicks() == 0 && clicked.worstRun() <= 12 && parkedOutside
+                        && world.dimension(rightClick.dimensionId()).pathTerrain().isPassable(parkedTile),
+                "a move order onto an own building resolves to the nearest standable tile, walks there "
+                        + "without ever overlapping the footprint and completes parked beside the building "
+                        + "(overlap ticks " + clicked.overlapTicks() + ", worst no-progress run "
+                        + clicked.worstRun() + " ticks, arrived " + clicked.arrived() + ", parked at "
+                        + rightClick.position() + " outside: " + parkedOutside + ", first overlap at "
+                        + clicked.firstOverlap() + ")");
+    }
+
+    /** One watched march: whether it arrived, and how clean the walk was. */
+    private record MarchTrace(boolean arrived, int overlapTicks, int worstRun, Vec2 firstOverlap) {
+    }
+
+    /**
+     * Ticks a real march and watches the body: counts the ticks whose position overlaps a building
+     * footprint exactly (disc versus footprint tile), the first such position and the worst run of
+     * consecutive near-zero movement ticks.
+     */
+    private static MarchTrace marchKeepingClear(OcRtsEngine engine, Unit walker, int maxTicks) {
+        Vec2 previous = walker.position();
+        Vec2 firstOverlap = null;
+        int overlapTicks = 0;
+        int worstRun = 0;
+        int run = 0;
+        for (int i = 0; i < maxTicks; i++) {
+            engine.tick(1);
+            if (bodyOverlapsFootprint(engine.world(), walker)) {
+                overlapTicks++;
+                if (firstOverlap == null) {
+                    firstOverlap = walker.position();
+                }
+            }
+            if (walker.motion().isArrived()) {
+                return new MarchTrace(true, overlapTicks, worstRun, firstOverlap);
+            }
+            float step = previous.distance(walker.position());
+            previous = walker.position();
+            if (step < 0.02f) {
+                run++;
+                worstRun = Math.max(worstRun, run);
+            } else {
+                run = 0;
+            }
+        }
+        return new MarchTrace(false, overlapTicks, worstRun, firstOverlap);
+    }
+
+    /** Whether the unit's body currently overlaps a building footprint tile, disc versus tile exact. */
+    private static boolean bodyOverlapsFootprint(World world, Unit unit) {
+        Vec2 position = unit.position();
+        float radius = unit.radius();
+        float radiusSquared = radius * radius;
+        int minX = (int) Math.floor(position.x() - radius);
+        int maxX = (int) Math.floor(position.x() + radius);
+        int minY = (int) Math.floor(position.y() - radius);
+        int maxY = (int) Math.floor(position.y() + radius);
+        for (int ty = minY; ty <= maxY; ty++) {
+            for (int tx = minX; tx <= maxX; tx++) {
+                if (!world.dimension(unit.dimensionId()).isObstacleTile(tx, ty)) {
+                    continue;
+                }
+                float cx = Math.max(tx, Math.min(position.x(), tx + 1));
+                float cy = Math.max(ty, Math.min(position.y(), ty + 1));
+                float dx = position.x() - cx;
+                float dy = position.y() - cy;
+                if (dx * dx + dy * dy < radiusSquared) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

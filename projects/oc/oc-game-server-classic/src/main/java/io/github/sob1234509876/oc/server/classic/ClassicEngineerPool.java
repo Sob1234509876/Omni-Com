@@ -188,7 +188,15 @@ public final class ClassicEngineerPool implements WorldTickHook {
         }
         GridPos base = oldestOrigin(ownBuildings(world, player));
         for (Building arsenal : orderByBase(producers, base)) {
-            List<Unit> crew = recruitables(world, player, arsenal, hauling);
+            List<Unit> crew = recruitables(world, player, arsenal, hauling, true);
+            if (crew.isEmpty()) {
+                // The reserved builder was the only idle engineer in range. The convention prefers to
+                // keep that unit free for construction, but a demand never starves while an idle
+                // engineer stands in radius - a human opening has exactly one engineer, and under the
+                // strict convention its first TRAIN waited forever - so the convention yields and the
+                // reserved builder hauls this pass after all.
+                crew = recruitables(world, player, arsenal, hauling, false);
+            }
             if (crew.isEmpty()) {
                 // Nobody is close enough to this arsenal yet; a later pass retries it, and the other
                 // producers are still served in this one.
@@ -313,9 +321,13 @@ public final class ClassicEngineerPool implements WorldTickHook {
      * <p>The idle rule is the "do not interrupt" rule: only a unit with an empty order queue is
      * eligible. A unit already named by a pending job is excluded even if its queue has not been
      * filled yet, so two passes can never load one engineer with two arsenals.
+     *
+     * @param keepReservedBuilder whether the AI's dedicated builder (the oldest living builder) stays
+     *     out of the crew; the pass retries without the reservation when the reserved unit is the only
+     *     idle engineer in range, because a demand never starves while somebody could carry it
      */
     private static List<Unit> recruitables(World world, Player player, Building arsenal,
-            HaulingSystem hauling) {
+            HaulingSystem hauling, boolean keepReservedBuilder) {
         Set<Entity> assigned = new LinkedHashSet<>();
         for (DeliveryJob job : hauling.jobs()) {
             if (!job.isPending() || job.hauler().isEmpty()) {
@@ -326,7 +338,7 @@ public final class ClassicEngineerPool implements WorldTickHook {
                 assigned.add(entity);
             }
         }
-        long reservedBuilder = ClassicAi.oldestBuilderId(world, player);
+        long reservedBuilder = keepReservedBuilder ? ClassicAi.oldestBuilderId(world, player) : -1L;
         List<Unit> crew = new ArrayList<>();
         for (Unit unit : world.unitsOf(player)) {
             if (!unit.isAlive() || !unit.type().canHaul() || !unit.orders().isEmpty()) {

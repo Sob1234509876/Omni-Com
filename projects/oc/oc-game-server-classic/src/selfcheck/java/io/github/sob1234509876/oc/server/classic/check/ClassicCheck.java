@@ -25,6 +25,7 @@ import io.github.sob1234509876.oc.rts.entity.Entity;
 import io.github.sob1234509876.oc.rts.entity.Unit;
 import io.github.sob1234509876.oc.rts.event.Events;
 import io.github.sob1234509876.oc.rts.logistics.DeliveryJob;
+import io.github.sob1234509876.oc.rts.logistics.HaulOrder;
 import io.github.sob1234509876.oc.rts.logistics.HaulingSystem;
 import io.github.sob1234509876.oc.rts.map.FlatChunkGenerator;
 import io.github.sob1234509876.oc.rts.map.InfiniteTerrainMap;
@@ -34,6 +35,7 @@ import io.github.sob1234509876.oc.rts.order.CommandService;
 import io.github.sob1234509876.oc.rts.order.Order;
 import io.github.sob1234509876.oc.rts.order.UnitDirector;
 import io.github.sob1234509876.oc.rts.production.ProductionQueue;
+import io.github.sob1234509876.oc.rts.production.ProductionState;
 import io.github.sob1234509876.oc.rts.production.ProductionSystem;
 import io.github.sob1234509876.oc.server.OcGameServer;
 import io.github.sob1234509876.oc.server.check.Check;
@@ -177,6 +179,7 @@ public final class ClassicCheck {
         deterministicWorld(check);
         bots(check);
         engineerPool(check, classic, registry);
+        firstTrainedUnit(check, classic, registry);
         pluginSeam(check, classic, registry);
         loaderSeam(check);
         check.summary("classic plugin self check");
@@ -3083,6 +3086,109 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             job.hauler().ifPresent(id -> ids.add(id.value()));
         }
         return ids.size();
+    }
+
+    /**
+     * The playtester repro over the real opening and the real tick loop: one funded warehouse, the one
+     * builder unit a human player's starting base spawns, a finished empty armory, TRAIN the first unit -
+     * and the right-click ASSIST the player tries when nothing seems to happen.
+     *
+     * <p>Both halves must work end to end: some engineer hauls the gold from the warehouse so the first
+     * trained unit really pops, and an ASSIST on the short armory answers with a haul instead of
+     * claiming there is nothing to do. The pool hook runs its own pacing, exactly as the host runs it.
+     */
+    private static void firstTrainedUnit(Check check, ClassicContent classic, ContentRegistry registry) {
+        check.section("首训流程：TRAIN 第一个单位后工兵自动搬运，右键协助接手在途需求");
+        OcRtsEngine engine = OcRtsEngine.builder(registry)
+                .seed(11L)
+                .chunkSize(16)
+                .viewRadiusChunks(2)
+                .generator(new FlatChunkGenerator(registry.terrain(GRASS)))
+                .build();
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        Building depot = warehouse(world, registry, player, new GridPos(10, 10));
+        stock(check, registry, player, depot);
+        Building armory = world.spawnBuilding(registry.building(ClassicContent.ARMORY_T1), player,
+                new GridPos(16, 10));
+        // The real opening places the builder on a free tile beside its base, never on a footprint.
+        Unit engineer = world.spawnUnit(registry.unit(ClassicContent.ENGINEER), player, new GridPos(20, 12));
+        Recipe train = registry.recipe(ClassicContent.TRAIN_MELEE_T1);
+        engine.production().enqueue(armory, train, 1);
+        long goldBefore = goldOf(player, registry.item(ClassicContent.GOLD));
+        ClassicEngineerPool pool = new ClassicEngineerPool();
+        pool.install(world);
+        int ticks = 0;
+        while (engineer.orders().isEmpty() && ticks < 60) {
+            engine.tick(1);
+            ticks++;
+            pool.tick(world, ticks);
+        }
+        check.that(!engineer.orders().isEmpty() && engineer.orders().pending().get(0) instanceof HaulOrder,
+                "TRAIN 第一个单位后，开局唯一的工程师在 " + ticks + " tick 内领到搬运订单"
+                        + "（专职建造者约定不再让唯一的工兵永远轮空）");
+        long goldInArmory = 0L;
+        boolean goldCommitted = false;
+        for (int i = 0; i < 600 && !goldCommitted; i++) {
+            engine.tick(1);
+            ticks++;
+            pool.tick(world, ticks);
+            goldInArmory = asLong(armory.inventory().amount(registry.item(ClassicContent.GOLD)));
+            // The recipe's inputs leave the warehouse network for good once the haul delivers: the
+            // buffer itself is transient (production consumes them on the next tick).
+            goldCommitted = goldBefore - goldOf(player, registry.item(ClassicContent.GOLD))
+                    >= asLong(train.inputs().amount(registry.item(ClassicContent.GOLD)));
+        }
+        check.that(goldCommitted,
+                "金从仓库被真实搬出（网络余额减少 " + (goldBefore - goldOf(player,
+                        registry.item(ClassicContent.GOLD))) + "），原料进入生产");
+        boolean unitPopped = false;
+        for (int i = 0; i < 600 && !unitPopped; i++) {
+            engine.tick(1);
+            ticks++;
+            pool.tick(world, ticks);
+            unitPopped = countUnits(world, player, ClassicContent.MELEE_T1) == 1;
+        }
+        check.that(unitPopped, "原料到位后第一个受训单位真实走出兵营");
+
+        // The second TRAIN with the pool hook held back, exactly the moment a player right-clicks
+        // before the next pool pass: production has already staged the claim and only lacks a carrier.
+        engine.production().enqueue(armory, train, 1);
+        int staged = 0;
+        while (staged < 10) {
+            engine.tick(1);
+            staged++;
+            if (engine.production().queue(armory).orElseThrow().jobs().stream()
+                    .anyMatch(job -> job.state() == ProductionState.DELIVERING)) {
+                break;
+            }
+        }
+        WarehouseLogistics logistics = WarehouseLogistics.of(player);
+        HaulingSystem hauling = logistics == null ? null : logistics.hauling().orElse(null);
+        check.that(hauling != null, "测试世界挂着搬运系统");
+        if (hauling == null) {
+            return;
+        }
+        DeliveryJob stagedJob = hauling.jobs().stream()
+                .filter(job -> job.isPending() && job.target() == armory
+                        && job.state() == DeliveryJob.State.WAITING_HAULER)
+                .findFirst().orElse(null);
+        check.that(stagedJob != null,
+                "第二份 TRAIN 的原料预留已入账、只差搬运工（DELIVERING 且 WAITING_HAULER）");
+        int jobsBefore = allPendingJobs(hauling).size();
+        UnitDirector.AssistResult assist = engine.commands().tryAssist(engineer, armory);
+        check.that(assist.assisted() && UnitDirector.AssistResult.ACTION_HAUL.equals(assist.action())
+                        && stagedJob != null && stagedJob.hauler().isPresent()
+                        && stagedJob.hauler().orElseThrow().equals(engineer.id())
+                        && allPendingJobs(hauling).size() == jobsBefore,
+                "在途需求上右键协助回答 haul：把已入账的搬运任务交给点击的工程师，而不是重复预留一份"
+                        + "（任务数保持 " + jobsBefore + "，搬运工是工程师 e"
+                        + (stagedJob == null ? -1 : stagedJob.hauler().map(id -> id.value()).orElse(-1L)) + "）");
+        check.that(engineer.orders().pending().stream().anyMatch(order -> order instanceof HaulOrder),
+                "协助后工程师的队列里是一条真实的搬运订单");
+        UnitDirector.AssistResult nothing = engine.commands().tryAssist(engineer, depot);
+        check.that(!nothing.assisted() && nothing.refusal().contains("nothing to assist"),
+                "完工、完好且无缺料队列的仓库仍然回答 nothing to assist: " + nothing.refusal());
     }
 
     // ------------------------------------------------------------------ 9) the plugin seam

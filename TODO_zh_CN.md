@@ -13,7 +13,7 @@
   .\gradlew.bat --offline --no-daemon --console=plain :projects:oc:oc-googology:selfcheck :projects:oc:oc-rts-engine:scenario :projects:oc:oc-game-server:selfcheck :projects:oc:oc-game-server-debug:selfcheck :projects:oc:oc-game-server-hello:selfcheck :projects:oc:oc-game-server-classic:selfcheck
   cd web-client; pnpm check:render
   ```
-  工作区当前总数（2026-11-15），取自各模块与客户端 README：googology 878、engine 412、game server 834、debug 85、hello 126、classic 513、client 407。
+  工作区当前总数（2026-11-15），取自各模块与客户端 README：googology 878、engine 417、game server 895、debug 85、hello 126、classic 522、client 407。
 - **不得变红。** 任何提交都不得让检查失败，也不得删除或削弱现有检查来让新功能通过。总数变了，就 grep 旧数字并更新每一份引用它的文档。
 - **始终离线。** `.\gradlew.bat ... --offline` 必须在没有网络的机器上可用；需要下载的改动就是错误的改动。
 - **模拟内部保持确定性。** 模拟里不用 `java.util.Random`，不读墙钟，不起线程；用 `DeterministicRandom`、固定 tick 和显式的 id/坐标打破平局。只有服务器的节拍线程可以用时钟驱动模拟；传输与存储代码可以为时间戳读时钟。

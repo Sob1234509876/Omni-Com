@@ -188,11 +188,18 @@ public final class PathService implements SimulationSystem {
             int allowance = Math.min(budget, MAX_EXPANSIONS_PER_SEARCH);
             budget -= allowance;
             spentNodesLastTick += allowance;
-            GridPos start = unit.position().tile();
             // A search never crosses dimensions: the unit's own map and its own path finder are used, so a
             // goal that happens to share coordinates with another dimension cannot be walked to by mistake.
             // The obstacle-aware view redirects a goal onto a building footprint to the nearest free tile.
-            GridPos target = walkableTarget(world.dimension(unit.dimensionId()).pathTerrain(), goal.tile());
+            TerrainMap view = world.dimension(unit.dimensionId()).pathTerrain();
+            GridPos start = unit.position().tile();
+            if (!view.isPassable(start)) {
+                // A unit standing on a footprint tile (a building was placed on it) has no route from its
+                // own tile - the finder refuses an impassable start - so the search begins at the nearest
+                // standable tile instead, which is exactly the way out.
+                start = walkableTarget(view, start);
+            }
+            GridPos target = walkableTarget(view, goal.tile());
             Optional<Path> found = world.pathFinder(unit.dimensionId())
                     .findPath(start, target, request.options().withMaxExpansions(allowance));
             if (found.isPresent() && !found.get().waypoints().isEmpty()) {
@@ -210,9 +217,10 @@ public final class PathService implements SimulationSystem {
     /**
      * Closest walkable tile to the requested goal, searched in square rings around it so the result is
      * the same on every machine. The goal itself is returned when it can be walked on, which is the
-     * normal case and costs a single terrain lookup.
+     * normal case and costs a single terrain lookup. Public because the movement orders resolve a
+     * destination that lies on a building footprint to the same tile the search would target.
      */
-    static GridPos walkableTarget(TerrainMap map, GridPos goal) {
+    public static GridPos walkableTarget(TerrainMap map, GridPos goal) {
         if (map.isPassable(goal)) {
             return goal;
         }

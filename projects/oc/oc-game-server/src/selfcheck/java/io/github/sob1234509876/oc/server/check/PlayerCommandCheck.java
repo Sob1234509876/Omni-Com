@@ -246,10 +246,11 @@ public final class PlayerCommandCheck {
                         "BUILD " + builder.id().value() + " " + ARMORY_T1 + " 20 40 nope"),
                 "第五个 token 不是 queue 时回答 ERR bad arguments");
         String snapshot = host.snapshotJson();
-        check.that(snapshot.contains("\"orderQueue\":[") && snapshot.contains("建造 Armory T1")
+        check.that(snapshot.contains("\"orderQueue\":[\"build ")
                         && snapshot.contains("\"attackDamage\":10") && snapshot.contains("\"attackRange\":0.9"),
-                "快照为有任务的单位带 orderQueue 数组（标签由引擎的 OrderLabels 生成，含建筑显示名），"
-                        + "并为能攻击的单位带 attackDamage / attackRange");
+                "快照为有任务的单位带 orderQueue 数组与 task 行（由引擎的 OrderLabels / UnitTask 生成，"
+                        + "是稳定 ASCII token：build/repair/haul + 实体 id），并为能攻击的单位带"
+                        + " attackDamage / attackRange");
 
         check.section("玩家命令：BUILD 的射程由引擎判定");
         Natural goldAfterReach = human.logistics().amount(gold);
@@ -870,6 +871,29 @@ public final class PlayerCommandCheck {
                         && assistWorker.orders().pending().size() == 1
                         && assistWorker.orders().pending().get(0) instanceof HaulOrder,
                 "缺少原料的生产建筑回答 OK haul 并给单位一条搬运订单: " + haulAnswer);
+
+        // The staged-claim repro: the production system has already reserved the missing inputs of a
+        // queued recipe and the job only lacks a carrier (a policy-owned world keeps it
+        // WAITING_HAULER). The right-click must hand that staged job to the clicking engineer instead
+        // of answering "nothing to assist" and instead of reserving the same shelf a second time.
+        host.engine().production().enqueue(haulArmory, host.content().recipe(TRAIN_T1), 1);
+        io.github.sob1234509876.oc.rts.economy.WarehouseLogistics assistNetwork =
+                io.github.sob1234509876.oc.rts.economy.WarehouseLogistics.of(human);
+        assistNetwork.hauling().ifPresent(system -> system.setAutoHaulerAssignment(false));
+        host.step();
+        io.github.sob1234509876.oc.rts.logistics.DeliveryJob staged = assistNetwork.hauling().orElseThrow()
+                .jobs().stream()
+                .filter(job -> job.isPending() && job.target() == haulArmory
+                        && job.state() == io.github.sob1234509876.oc.rts.logistics.DeliveryJob.State.WAITING_HAULER)
+                .findFirst().orElse(null);
+        String stagedAnswer = run(dispatcher, host, first,
+                "ASSIST " + assistWorker.id().value() + " " + haulArmory.id().value());
+        check.that(staged != null && staged.hauler().isPresent()
+                        && staged.hauler().orElseThrow().equals(assistWorker.id())
+                        && stagedAnswer.startsWith("OK haul"),
+                "已经入账但还没有搬运工的在途需求上，ASSIST 仍然回答 OK haul 并把这份任务交给点击的"
+                        + "单位，不重复预留也不回答 nothing to assist: " + stagedAnswer);
+        assistNetwork.hauling().ifPresent(system -> system.setAutoHaulerAssignment(true));
         Building assistSite = world.placeBuilding(host.content().building(ARMORY_T1), human,
                 new GridPos(44, 4));
         String assistJoin = run(dispatcher, host, first,
