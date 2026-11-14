@@ -288,8 +288,6 @@ import {
 } from "../src/render/shadow.ts";
 import { isLanguageSetting } from "../src/settings.ts";
 import {
-  REPAIR_ACTION_LABEL,
-  RECLAIM_ACTION_LABEL,
   buildingActionModel,
   buildingCostLabel,
   reclaimLabel,
@@ -5482,7 +5480,7 @@ check(
     repairModel.repair &&
     !repairModel.reclaim &&
     repairModel.repairEnabled &&
-    repairModel.repairLabel === `${REPAIR_ACTION_LABEL} (金 30 · 木 0)` &&
+    repairModel.repairLabel === "修理 (金 30 · 木 0)" &&
     buildingCostLabel({ gold: 30, wood: 0 }) === "金 30 · 木 0",
   repairModel?.repairLabel ?? "null",
 );
@@ -5530,7 +5528,7 @@ check(
     unfinishedModel.reclaim &&
     !unfinishedModel.repair &&
     unfinishedModel.reclaimEnabled &&
-    unfinishedModel.reclaimLabel === `${RECLAIM_ACTION_LABEL} (金 50 · 木 10)` &&
+    unfinishedModel.reclaimLabel === "回收 (金 50 · 木 10)" &&
     reclaimLabel({ gold: 50, wood: 10 }) === "回收 (金 50 · 木 10)" &&
     repairLabel({ gold: 30, wood: 0 }) === "修理 (金 30 · 木 0)",
   unfinishedModel?.reclaimLabel ?? "null",
@@ -7314,10 +7312,14 @@ check(
       genericContentLabel("building.armory.t1") === "兵工厂 1 级" &&
       genericContentLabel("unit.melee.t1") === "普通" &&
       genericContentLabel("unit.engineer") === "工程师" &&
-      genericContentLabel("building.mine.t2") === "金矿·强化" &&
+      // The classic catalogue now resolves through the client dictionary (en reads as English),
+      // so the served name only wins for a path the client does not key.
+      genericContentLabel("building.mine.t2") === "矿井 强化" &&
       genericContentLabel("building.hell_gate") === "地狱门" &&
       dimensionLabel("overworld", "World") === "主世界" &&
       dimensionLabel("hell", "地狱") === "地狱";
+    registerServerKeyValues({ "content.building.plugin.tower": "插件塔" });
+    const serverFallback = genericContentLabel("building.plugin.tower") === "插件塔";
     // Placeholder exclusion: a row without the served `trains` field offers no menu at all, and the
     // served field is used verbatim when present — no client fallback ladder, no 战王/工程师 leakage.
     const servedRow = commandBuilding(20);
@@ -7350,7 +7352,7 @@ check(
           panel.includes("build-rail-section")
         );
       })();
-    return parsedOk === true && labelsResolve && noFallback && structureOk;
+    return parsedOk === true && labelsResolve && serverFallback && noFallback && structureOk;
   })(),
 );
 
@@ -7584,6 +7586,148 @@ check(
   "攻击路线以红色绘制（item 15）：ATTACK_PATH_COLOR 是归属红，普通路线保持白/灰",
   ATTACK_PATH_COLOR.startsWith("rgba(239, 68, 68") &&
     PATH_COLOR.startsWith("rgba(214, 214, 214"),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Playtester round: the classic content.* key set, the marker dimension filter, the movement-trail
+// gate, the gateway jump wiring, the login pending state and the 隐藏游戏画面 static key.
+// ---------------------------------------------------------------------------------------------
+
+check(
+  "经典清单 content.* 键齐全（en 读作英文名，zh 与服务器名一致）；标记按维度过滤、路线画给所有己方单位、传送门跳转与登录挂起态接线齐备、隐藏游戏画面走静态 i18n",
+  (() => {
+    const languageBefore = currentI18nLanguage();
+    const classicPaths = [
+      "building.armory.t1",
+      "building.armory.t2",
+      "building.mine.t1",
+      "building.mine.t2",
+      "building.mine.t3",
+      "building.lumbercamp.t1",
+      "building.lumbercamp.t2",
+      "building.lumbercamp.t3",
+      "building.warehouse",
+      "building.hell_gate",
+      "building.purgatory",
+      "building.turret.t1",
+      "building.turret.t2",
+      "building.turret.t3",
+      "building.turret.t4",
+      "unit.melee.t1",
+      "unit.melee.t2",
+      "unit.melee.t3",
+      "unit.melee.t4",
+      "unit.melee.t5",
+      "unit.engineer",
+      "unit.engineer.t2",
+      "unit.engineer.t3",
+      "unit.engineer.t4",
+      "unit.engineer.t5",
+      "unit.ranged.t1",
+      "unit.ranged.t2",
+      "unit.ranged.t3",
+      "unit.ranged.t4",
+      "unit.ranged.t5",
+      "unit.hell_hound",
+      "unit.abyss_brute",
+      "unit.hell.t1",
+      "unit.hell.t2",
+      "unit.hell.t3",
+      "unit.hell.t4",
+      "unit.hell.t5",
+    ];
+    const keysInBoth = classicPaths.every(
+      (path) =>
+        DICTIONARIES.en[`content.${path}`] !== undefined &&
+        DICTIONARIES["zh-CN"][`content.${path}`] !== undefined,
+    );
+    initI18n("en");
+    const enReads =
+      genericContentLabel("building.armory.t2") === "Armory T2" &&
+      genericContentLabel("building.mine.t3") === "Mine Lv 3" &&
+      genericContentLabel("building.lumbercamp.t2") === "Lumber camp Lv 2" &&
+      genericContentLabel("building.turret.t4") === "War-king Turret" &&
+      genericContentLabel("building.hell_gate") === "Hell Gate" &&
+      genericContentLabel("building.purgatory") === "Purgatory Factory" &&
+      genericContentLabel("unit.ranged.t5") === "Ranged T5" &&
+      genericContentLabel("unit.engineer.t3") === "Engineer T3" &&
+      genericContentLabel("unit.hell_hound") === "Hell Hound" &&
+      genericContentLabel("unit.abyss_brute") === "Abyss Brute" &&
+      genericContentLabel("unit.hell.t1") === "Hell Melee T1";
+    initI18n("zh-CN");
+    const zhReads =
+      genericContentLabel("building.armory.t2") === "兵营·强化" &&
+      genericContentLabel("building.turret.t2") === "哨塔·强化" &&
+      genericContentLabel("building.turret.t4") === "战王炮塔" &&
+      genericContentLabel("building.hell_gate") === "地狱门" &&
+      genericContentLabel("building.purgatory") === "炼狱工厂" &&
+      genericContentLabel("unit.ranged.t1") === "弓手·普通" &&
+      genericContentLabel("unit.engineer.t5") === "工程师·战王" &&
+      genericContentLabel("unit.hell_hound") === "地狱犬" &&
+      genericContentLabel("unit.abyss_brute") === "深渊魔" &&
+      genericContentLabel("unit.hell.t5") === "地狱·战王" &&
+      genericContentLabel("unit.melee.t4") === "将领";
+    const rendererTsText = readFileSync(
+      new URL("../src/render/renderer.ts", import.meta.url),
+      "utf8",
+    );
+    const minimapTsText = readFileSync(
+      new URL("../src/render/minimap.ts", import.meta.url),
+      "utf8",
+    );
+    // Movement trail again for every own unit: the selected-only gate is gone, ownership stays.
+    const trailForAllOwnUnits =
+      rendererTsText.includes("const points = pathPointsFor(entity);") &&
+      rendererTsText.includes('ownershipOf(entity.playerId, myPlayerId) !== "mine"') &&
+      !rendererTsText.includes(
+        [
+          "const selected = entity.selected === true || selectedIds.has(entity.id);",
+          "    if (!selected) {",
+          "      continue;",
+          "    }",
+          "    const points = pathPointsFor(entity);",
+        ].join("\n"),
+      );
+    // A marker only paints in the dimension it was placed in, on the canvas and on the minimap.
+    const markerDimensionFiltered =
+      rendererTsText.includes(
+        "!markerInDrawnDimension(marker, world) || !tileInWindow(world, marker.tile.x, marker.tile.y)",
+      ) &&
+      minimapTsText.includes(
+        "markerInDrawnDimension(marker, world) && tileInWindow(world, marker.tile.x, marker.tile.y)",
+      );
+    // The gateway building panel offers the jump: the button switches the view and centres the arrival.
+    const gatewayJump =
+      indexHtml.includes('id="gateway-section"') &&
+      indexHtml.includes('id="gateway-button"') &&
+      mainTsText.includes("switchView(target.to, target.arrival)") &&
+      mainTsText.includes("gatewaySection.hidden = gatewayTarget === undefined;");
+    // The login click shows a pending state (disabled + aria-busy) and yields one frame before the
+    // heavy panel/HUD repaint, so the exchange never reads as a freeze.
+    const loginPending =
+      mainTsText.includes("loginButton.disabled = true;") &&
+      mainTsText.includes('loginButton.setAttribute("aria-busy", "true");') &&
+      mainTsText.indexOf("await nextFrame();") >= 0 &&
+      mainTsText.indexOf("await nextFrame();") <
+        mainTsText.indexOf(["updateGameplayPanel();", "  updateHud(true);"].join("\n"));
+    // 隐藏游戏画面 rides the static i18n pass and the tab title follows the language.
+    const hideViewKeyed =
+      indexHtml.includes('id="toggle-view"') &&
+      indexHtml.includes('data-i18n="chrome.hideView"') &&
+      mainTsText.includes('document.title = t("chrome.docTitle")');
+    initI18n(languageBefore);
+    return (
+      keysInBoth &&
+      enReads &&
+      zhReads &&
+      trailForAllOwnUnits &&
+      markerDimensionFiltered &&
+      gatewayJump &&
+      loginPending &&
+      hideViewKeyed
+    );
+  })(),
+  "playtester round: content keys, marker dimensions, trails, gateway jump, login pending state",
 );
 
 // ---------------------------------------------------------------------------------------------

@@ -466,6 +466,7 @@ function applyLanguage(): void {
   const liveStatus = statusLine.textContent ?? "";
   applyI18n();
   statusLine.textContent = liveStatus;
+  document.title = t("chrome.docTitle");
   settingLanguageSelect.value = settings.language;
   updateViewToggleButton();
   updatePathsButton();
@@ -485,6 +486,8 @@ initI18n(resolveLanguage(settings.language, navigator.language));
 // later switch), so the <html lang> agrees with what the page actually prints.
 document.documentElement.lang = currentI18nLanguage();
 applyI18n();
+// The tab title carries the product name and the client tag in the UI language.
+document.title = t("chrome.docTitle");
 
 /** The saved server address is restored into the fields that moved to the settings panel. */
 hostInput.value = settings.connection.host;
@@ -1232,7 +1235,7 @@ function openConnection(): void {
         if (seq !== connectionSeq) {
           return;
         }
-        const message = `（没有对应的命令）${line}`;
+        const message = t("log.noCommand", { line });
         log("recv", message);
         toastMessage(message, "info");
       },
@@ -1368,15 +1371,34 @@ async function doCount(): Promise<void> {
   }
 }
 
+/**
+ * One frame of breathing room: resolves after the browser has had the chance to paint, so a
+ * caller that just did cheap state work can let the pending state reach the screen before its own
+ * heavier synchronous repaint runs on the same task.
+ */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
+
 /** Applies a successful `LOGIN` answer; shared verbatim by the manual and the automatic login. */
 async function applyLoginSuccess(user: string, answer: string): Promise<void> {
   loggedIn = true;
   loginName = user;
   myPlayerId = null;
   placementPath = null;
+  setStatus(t("auth.loginOk", { detail: answer.slice(2).trim() }), "ok");
+  // The panel and HUD repaints are the one big synchronous chunk on the login click's task; yielding
+  // one frame first lets the logged-in status paint before that chunk runs, so the click never reads
+  // as a freeze while both updates rebuild their DOM in one go.
+  await nextFrame();
   updateGameplayPanel();
   updateHud(true);
-  setStatus(t("auth.loginOk", { detail: answer.slice(2).trim() }), "ok");
   await fetchWhoAmI();
   // A successful login is a world join: fetch the static per-world data once (re-joins re-fetch it),
   // in parallel with the snapshot flow. A failure is retried at the next join, not per poll.
@@ -1402,16 +1424,26 @@ async function doLogin(): Promise<void> {
     reportError(error);
     return;
   }
-  const answer = await sendAnswered("LOGIN", line, t("log.loginHidden", { user }));
-  if (answer === undefined) {
-    return;
-  }
-  if (isOkAnswer(answer)) {
-    await applyLoginSuccess(user, answer);
-  } else {
-    loggedIn = false;
-    clearGameplayIdentity();
-    setStatus(t("auth.loginFail", { answer }), "error");
+  // Pending state while the LOGIN exchange is on the wire (playtester item): the button disables and
+  // marks itself busy, so a slow server answer reads as progress instead of a frozen click, and a
+  // double click cannot start a second LOGIN. The connect button follows the same pattern.
+  loginButton.disabled = true;
+  loginButton.setAttribute("aria-busy", "true");
+  try {
+    const answer = await sendAnswered("LOGIN", line, t("log.loginHidden", { user }));
+    if (answer === undefined) {
+      return;
+    }
+    if (isOkAnswer(answer)) {
+      await applyLoginSuccess(user, answer);
+    } else {
+      loggedIn = false;
+      clearGameplayIdentity();
+      setStatus(t("auth.loginFail", { answer }), "error");
+    }
+  } finally {
+    loginButton.disabled = false;
+    loginButton.removeAttribute("aria-busy");
   }
 }
 
@@ -2611,7 +2643,7 @@ function doWarehouseTransfer(): void {
   }
   const active = socket;
   if (active === null) {
-    refuse("还没有连接");
+    refuse(t("refuse.noConnection"));
     return;
   }
   setWarehouseTransferStatus(t("transfer.waiting"), "busy", false);
@@ -2811,7 +2843,7 @@ function updateMarkerRows(centre: TileCoord = camera.centerTile()): void {
           ? undefined
           : dimensionDisplayName(marker.dimension);
       button.textContent =
-        `${formatMarkerLabel(marker, centre, dimensionName)} · 瓦片 (${marker.tile.x},${marker.tile.y})`;
+        `${formatMarkerLabel(marker, centre, dimensionName)}${t("marker.tileSuffix", { x: marker.tile.x, y: marker.tile.y })}`;
     }
   });
   markerRows.hidden = markers.length === 0;
@@ -2958,7 +2990,7 @@ function updateHud(force = false, now = performance.now()): void {
   void renderLatexInto(hudFps, fps > 0 ? `${t("hud.fps")}：${Math.round(fps)}` : `${t("hud.fps")}：—`);
   const selection = selectedEntities();
   const only = selection.length === 1 ? selection[0] : undefined;
-  const groupPrefix = selectedGroup === null ? "" : `编队 ${selectedGroup} · `;
+  const groupPrefix = selectedGroup === null ? "" : t("hud.groupPrefix", { id: selectedGroup });
   // A unit's cargo is part of its selection HUD row. Any selected unit that carries something shows
   // what it holds, own or not: the inventory line describes the row, it does not imply the unit takes
   // orders. A building reports 库存 on the building row below instead (including warehouses).
@@ -3224,7 +3256,7 @@ async function sendGameplayBatch(
   }
   const active = socket;
   if (active === null) {
-    refuse("还没有连接");
+    refuse(t("refuse.noConnection"));
     return;
   }
   if (wireLines.length === 0) {
@@ -3584,7 +3616,10 @@ function updateGameplayPanel(): void {
     const skipDetail = batchUpgrade.skipped
       .map((skip) => `e${skip.buildingId} ${upgradeSkipText(skip.reason)}`)
       .join("、");
-    void renderLatexInto(upgradeTarget, `· ${selectedOwnBuildings.length} 座 ${kindLabel}`);
+    void renderLatexInto(
+      upgradeTarget,
+      t("upgrade.batchTarget", { count: selectedOwnBuildings.length, name: kindLabel }),
+    );
     const firstKind = contentLabel(selectedOwnBuildings[0]?.kind ?? "");
     const firstOffer = selectedOwnBuildings[0]?.upgrade?.options[batchUpgrade.variantIndex];
     void renderLatexInto(
@@ -3592,7 +3627,10 @@ function updateGameplayPanel(): void {
       upgradeBatchLabel(firstKind, firstOffer?.gold ?? 0, firstOffer?.wood ?? 0),
     );
     upgradeButton.title =
-      `${batchUpgrade.summary}：${batchUpgrade.lines.join("、")}` +
+      t("upgrade.batchTitle", {
+        summary: batchUpgrade.summary,
+        lines: batchUpgrade.lines.join(t("upgrade.join")),
+      }) +
       (skipDetail === "" ? "" : `${t("upgrade.skipDetail")}${skipDetail}`);
     upgradeButton.disabled = !(gameplayReady && batchUpgrade.lines.length > 0);
   } else if (upgradeOffer !== undefined) {
@@ -3637,7 +3675,10 @@ function updateGameplayPanel(): void {
         upgradeBatchLabel(variantKind, variantOffer?.gold ?? 0, variantOffer?.wood ?? 0),
       );
       button.title =
-        `${plan.summary}：${plan.lines.join("、")}` +
+        t("upgrade.batchTitle", {
+          summary: plan.summary,
+          lines: plan.lines.join(t("upgrade.join")),
+        }) +
         (skipDetail === "" ? "" : `${t("upgrade.skipDetail")}${skipDetail}`);
       button.disabled = !(gameplayReady && plan.lines.length > 0);
     } else {
@@ -3775,7 +3816,7 @@ function armAttackMove(): void {
   }
   const units = selectedOwnUnits();
   if (units.length === 0) {
-    refuse("先选中自己的单位，再点攻击移动");
+    refuse(t("refuse.selectForAttackMove"));
     return;
   }
   if (placementPath !== null) {
@@ -4038,7 +4079,11 @@ function doRepairBuilding(): void {
   void sendGameplayCommand(
     "REPAIR",
     repair(actions.engineerId, actions.buildingId),
-    `已让 e${actions.engineerId} 修理 e${actions.buildingId}（${actions.repairLabel ?? ""}）`,
+    t("confirm.repaired", {
+      engineer: actions.engineerId,
+      building: actions.buildingId,
+      cost: actions.repairLabel ?? "",
+    }),
   );
 }
 
@@ -4052,7 +4097,10 @@ function doReclaimBuilding(): void {
   void sendGameplayCommand(
     "RECLAIM",
     reclaim(actions.buildingId),
-    `已回收 e${actions.buildingId}（${actions.reclaimLabel ?? "回收"}）`,
+    t("confirm.reclaimed", {
+      building: actions.buildingId,
+      cost: actions.reclaimLabel ?? t("ctx.reclaim"),
+    }),
   );
 }
 
@@ -5164,8 +5212,13 @@ function applySnapshot(rawSnapshot: ServerWorldView): void {
   if (wasDemo) {
     log(
       "info",
-      `服务器世界已接管画面：窗口 ${snapshot.originX},${snapshot.originY} ` +
-        `${snapshot.width}×${snapshot.height}，tick ${snapshot.tick}`,
+      t("log.serverTakeover", {
+        x: snapshot.originX,
+        y: snapshot.originY,
+        width: snapshot.width,
+        height: snapshot.height,
+        tick: snapshot.tick,
+      }),
     );
   }
 }
@@ -5641,8 +5694,8 @@ function updatePathsButton(): void {
   togglePathsButton.classList.toggle("armed", showPaths);
   togglePathsButton.setAttribute("aria-pressed", showPaths ? "true" : "false");
   togglePathsButton.title = showPaths
-    ? "路径：显示选中单位的移动路径与待定路径点（点击关闭）"
-    : "路径：已隐藏（点击显示选中单位的移动路径与待定路径点）";
+    ? t("chrome.pathsTitleOn")
+    : t("chrome.pathsTitleOff");
 }
 
 togglePathsButton.addEventListener("click", () => {

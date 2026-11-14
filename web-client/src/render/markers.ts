@@ -283,8 +283,8 @@ export function formatMarkerLabel(
   const distance = tileDistance(centre, marker.tile);
   const sector = compassSector(marker.tile.x - centre.x, marker.tile.y - centre.y);
   const base = sector === null
-    ? `标记 ${marker.number}：距 ${distance} 格`
-    : `标记 ${marker.number}：距 ${distance} 格，${sector}`;
+    ? t("marker.labelDistance", { number: marker.number, distance })
+    : t("marker.labelSector", { number: marker.number, distance, sector });
   return dimensionName === undefined ? base : `${base} · ${dimensionName}`;
 }
 

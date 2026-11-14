@@ -22,6 +22,7 @@
  */
 
 import { isCombatKind } from "./selection.ts";
+import { t } from "../i18n.ts";
 import { isBuildingEntityKind, ownershipOf, type EntityView, type WorldView } from "./view.ts";
 
 /** How long one entity is quiet after producing an event. */
@@ -202,10 +203,13 @@ export function diffSnapshotEvents(
     const name = labelFor(entity.kind);
     let text: string;
     if (kind === "building-complete") {
-      text = `建筑完成：${name}`;
+      text = t("event.finished", { name });
     } else {
       const tier = attackerTierNear(entity, current.entities);
-      text = `遭到攻击：${name}（攻击者：${tier > 0 ? `t${tier}` : "未知"}）`;
+      text = t("event.attacked", {
+        name,
+        attacker: tier > 0 ? `t${tier}` : t("event.attackerUnknown"),
+      });
     }
     events.push({ kind, entityId: entity.id, text });
   }

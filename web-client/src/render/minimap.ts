@@ -19,6 +19,7 @@
  */
 
 import { CAMERA_SAFETY_BOUND_TILES, type Camera, type Point, type TileCoord } from "./camera.ts";
+import { t } from "../i18n.ts";
 import { FONT_STACK } from "./font.ts";
 import {
   compassSector,
@@ -28,6 +29,7 @@ import {
   type EnemyAnchorEntry,
 } from "./enemy.ts";
 import { terrainColor } from "./fallback.ts";
+import { markerInDrawnDimension } from "./markers.ts";
 import type { WindowBounds } from "./stream.ts";
 import { entityInWindow, ownershipColor, tileInWindow, type WorldView } from "./view.ts";
 
@@ -316,6 +318,8 @@ export interface MinimapMarker {
   readonly number: number;
   /** Absolute world tile. */
   readonly tile: TileCoord;
+  /** Dimension key the marker was placed in; only the drawn dimension's markers paint squares. */
+  readonly dimension: string;
 }
 
 /**
@@ -523,7 +527,9 @@ export class MinimapRenderer {
       this.drawHomeMarker(world, panelSize, overlay.homeAnchor);
     }
     for (const marker of overlay.markers) {
-      if (tileInWindow(world, marker.tile.x, marker.tile.y)) {
+      // Same dimension rule as the canvas squares: only a marker of the drawn dimension may appear
+      // inside the window; another dimension's marker stays an edge-arrow hint (markers.ts).
+      if (markerInDrawnDimension(marker, world) && tileInWindow(world, marker.tile.x, marker.tile.y)) {
         this.drawMarkerSquare(world, panelSize, marker);
       }
     }
@@ -533,12 +539,24 @@ export class MinimapRenderer {
     // stay visually apart: red with a white outline versus white with a dark outline.
     const arrow = minimapNearestEdgeArrow(world, camera, myPlayerId, panelSize);
     if (arrow !== null) {
-      this.drawEdgeArrow(arrow, panelSize, "#ef4444", "#ffffff", `${arrow.distance} 格`);
+      this.drawEdgeArrow(
+        arrow,
+        panelSize,
+        "#ef4444",
+        "#ffffff",
+        t("minimap.arrowDistance", { distance: arrow.distance }),
+      );
     }
     if (overlay.homeAnchor !== null) {
       const home = minimapEdgeGeometry(world, camera, overlay.homeAnchor, panelSize);
       if (home !== null) {
-        this.drawEdgeArrow(home, panelSize, "#ffffff", "rgba(0, 0, 0, 0.85)", `${home.distance} 格`);
+        this.drawEdgeArrow(
+          home,
+          panelSize,
+          "#ffffff",
+          "rgba(0, 0, 0, 0.85)",
+          t("minimap.arrowDistance", { distance: home.distance }),
+        );
       }
     }
     if (overlay.nearestOutsideMarker !== null) {

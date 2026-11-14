@@ -25,6 +25,7 @@ import {
   sizeLabel,
   unitTaskLabel,
 } from "./status.ts";
+import { t } from "../i18n.ts";
 import {
   isBuildingEntityKind,
   ownershipTag,
@@ -154,7 +155,7 @@ export function tooltipContent(
 ): TooltipContent {
   const detail: string[] = [];
   if (entity.healthRatio !== undefined && Number.isFinite(entity.healthRatio)) {
-    detail.push(`生命 ${formatProgressPercent(entity.healthRatio)}`);
+    detail.push(t("tooltip.health", { percent: formatProgressPercent(entity.healthRatio) }));
   }
   const lines: string[] = [];
   if (detail.length > 0) {

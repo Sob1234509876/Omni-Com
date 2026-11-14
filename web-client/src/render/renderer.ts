@@ -43,7 +43,7 @@ import {
   type SpriteRect,
 } from "./atlas";
 import type { Camera, TileCoord } from "./camera";
-import type { Marker } from "./markers.ts";
+import { markerInDrawnDimension, type Marker } from "./markers.ts";
 import type { ScreenRect } from "./marquee";
 import {
   CROSSHAIR_COLOR,
@@ -229,7 +229,10 @@ function drawMarkers(
   context.textAlign = "center";
   context.textBaseline = "bottom";
   for (const marker of markers) {
-    if (!tileInWindow(world, marker.tile.x, marker.tile.y)) {
+    // A marker belongs to the dimension it was placed in: a tile the same coordinates name in another
+    // dimension is a different place, so an overworld marker must never draw as a phantom square in the
+    // hell view (playtester item). The edge arrows carry the cross-dimension hint instead.
+    if (!markerInDrawnDimension(marker, world) || !tileInWindow(world, marker.tile.x, marker.tile.y)) {
       continue;
     }
     const centre = camera.worldToScreen(
@@ -448,14 +451,14 @@ function drawEntitySprite(
 }
 
 /**
- * Draws the route overlay: the committed path of every selected own unit and the pending waypoints.
+ * Draws the route overlay: the committed path of every own moving unit and the pending waypoints.
  *
- * The committed line is drawn only for a unit the local player owns and has selected, never for an enemy,
- * even if an enemy id somehow sits in `selectedIds`. It starts at the sprite (the view's fractional
- * position) and runs through the snapshot's remaining tile centres to the target dot. `路径` turns the
- * whole overlay off. Segments whose screen bounding box is entirely outside the padded canvas are
- * skipped, which is the cheap cull that keeps a long route from issuing hundreds of off-screen draw
- * calls; Canvas itself clips anything that survives the bounding-box test.
+ * The committed line is drawn for every unit the local player owns that carries a snapshot route,
+ * never for an enemy. It starts at the sprite (the view's fractional position) and runs through the
+ * snapshot's remaining tile centres to the target dot. `路径` turns the whole overlay off. Segments
+ * whose screen bounding box is entirely outside the padded canvas are skipped, which is the cheap cull
+ * that keeps a long route from issuing hundreds of off-screen draw calls; Canvas itself clips anything
+ * that survives the bounding-box test.
  */
 function drawPathOverlays(
   context: CanvasRenderingContext2D,
@@ -465,7 +468,6 @@ function drawPathOverlays(
   devicePixelRatio: number,
   width: number,
   height: number,
-  selectedIds: ReadonlySet<number>,
   myPlayerId: number | null,
   pendingPath: readonly TileCoord[],
   attackOrderedIds: ReadonlySet<number>,
@@ -492,10 +494,6 @@ function drawPathOverlays(
 
   for (const entity of world.entities) {
     if (ownershipOf(entity.playerId, myPlayerId) !== "mine") {
-      continue;
-    }
-    const selected = entity.selected === true || selectedIds.has(entity.id);
-    if (!selected) {
       continue;
     }
     const points = pathPointsFor(entity);
@@ -782,7 +780,6 @@ export class WorldRenderer {
         size.devicePixelRatio,
         size.width,
         size.height,
-        selectedIds,
         options.myPlayerId,
         options.pendingPath,
         options.attackOrderedIds ?? NO_ATTACK_ORDERED_IDS,

@@ -99,7 +99,7 @@ export function trainMenu(
       affordable,
       label: t("train.menuLabel", { name: train.name, gold: train.gold }),
       title: affordable
-        ? `${t("train.levelPrefix", { level: train.level })}TRAIN <建筑> ${train.path}`
+        ? t("train.example", { path: train.path })
         : t("train.affordFail", { name: train.name, gold: train.gold }),
     };
   });

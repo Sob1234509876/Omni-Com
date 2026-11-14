@@ -207,7 +207,12 @@ export function warehousePanelModel(
     summary = t("logistics.summaryNone");
   } else if (panelScope === "single" && single !== null) {
     const stock = rows.length === 0 ? t("logistics.summaryNoStock") : "";
-    summary = `仓库 #${single.id} · ${warehouseStorageLabel(single)} · ${warehouseInboundLabel(single)}${stock}`;
+    summary = t("logistics.summarySingle", {
+      id: single.id,
+      storage: warehouseStorageLabel(single),
+      inbound: warehouseInboundLabel(single),
+      stock,
+    });
   } else if (total.items.length === 0) {
     summary = t("logistics.summaryCountNoStock", { count: total.warehouseCount });
   } else if (total.warehouseCount === 0) {
@@ -399,7 +404,7 @@ export function transferAnswerLabel(
   }
   return {
     ok: false,
-    text: t("transfer.answer", { answer: trimmed === "" ? "（空）" : trimmed }),
+    text: t("transfer.answer", { answer: trimmed === "" ? t("transfer.emptyAnswer") : trimmed }),
   };
 }
 

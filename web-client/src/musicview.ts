@@ -22,6 +22,7 @@ import {
   type Track,
   type TrackSource,
 } from "./music";
+import { t } from "./i18n";
 
 type MusicStatusState = "idle" | "ok" | "error";
 
@@ -143,7 +144,7 @@ export class MusicPlayerView {
       this.handleEnded();
     });
     this.audio.addEventListener("error", () => {
-      this.setStatus("这个文件无法播放。", "error");
+      this.setStatus(t("music.cannotPlay"), "error");
       this.updatePlayButton();
     });
 
@@ -251,11 +252,18 @@ export class MusicPlayerView {
       if (this.currentIndex < 0) {
         this.loadTrack(0, false);
       }
-      const skipped = result.skipped > 0 ? `，跳过 ${result.skipped} 个重复文件` : "";
-      this.setStatus(`已加入 ${result.added.length} 个音频文件${skipped}。`, "ok");
+      
+      this.setStatus(
+        result.skipped > 0
+          ? t("music.addedSkipped", { count: result.added.length, skipped: result.skipped })
+          : t("music.added", { count: result.added.length }),
+        "ok",
+      );
     } else {
       this.setStatus(
-        result.skipped > 0 ? `这 ${result.skipped} 个文件已在播放列表里。` : "没有选择音频文件。",
+        result.skipped > 0
+          ? t("music.duplicates", { count: result.skipped })
+          : t("music.nonePicked"),
         "idle",
       );
     }
@@ -276,19 +284,19 @@ export class MusicPlayerView {
     this.tracks = [...result.tracks];
     if (this.tracks.length === 0) {
       this.stopAndUnload();
-      this.setStatus(`已移除 ${result.removed.name}；播放列表为空。`, "idle");
+      this.setStatus(t("music.removedPlaylistEmpty", { name: result.removed.name }), "idle");
     } else if (result.index === this.currentIndex) {
       const nextCurrent = Math.min(result.index, this.tracks.length - 1);
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
       this.loadTrack(nextCurrent, wasPlaying);
-      this.setStatus(`已移除 ${result.removed.name}，切换到下一首。`, "ok");
+      this.setStatus(t("music.removedNext", { name: result.removed.name }), "ok");
     } else {
       if (result.index < this.currentIndex) {
         this.currentIndex -= 1;
       }
-      this.setStatus(`已移除 ${result.removed.name}。`, "ok");
+      this.setStatus(t("music.removed", { name: result.removed.name }), "ok");
     }
     this.updatePlaylist();
     this.updatePlayButton();
@@ -337,7 +345,7 @@ export class MusicPlayerView {
 
   private toggle(): void {
     if (this.tracks.length === 0) {
-      this.setStatus("请先用“选择音频文件”加入本地音乐。", "error");
+      this.setStatus(t("music.needAddFirst"), "error");
       return;
     }
     if (this.currentIndex < 0) {
@@ -355,7 +363,7 @@ export class MusicPlayerView {
   private requestPlay(): void {
     const track = this.tracks[this.currentIndex];
     if (track === undefined) {
-      this.setStatus("请先选择音频文件。", "error");
+      this.setStatus(t("music.needSelection"), "error");
       return;
     }
     if (this.audio.src === "") {
@@ -366,14 +374,14 @@ export class MusicPlayerView {
       started = this.audio.play();
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
-      this.setStatus(`无法播放：${reason}。请点击“播放”再试一次。`, "error");
+      this.setStatus(t("music.playFailed", { reason }), "error");
       this.updatePlayButton();
       return;
     }
     if (started !== undefined) {
       void started.catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : String(error);
-        this.setStatus(`无法播放：${reason}。请点击“播放”再试一次。`, "error");
+        this.setStatus(t("music.playFailed", { reason }), "error");
         this.updatePlayButton();
       });
     }
@@ -381,7 +389,7 @@ export class MusicPlayerView {
 
   private next(): void {
     if (this.tracks.length === 0) {
-      this.setStatus("播放列表为空。", "error");
+      this.setStatus(t("music.empty"), "error");
       return;
     }
     const shouldPlay = this.currentIndex < 0 || !this.audio.paused;
@@ -394,7 +402,7 @@ export class MusicPlayerView {
             rand: Math.random,
           });
     if (target < 0) {
-      this.setStatus("已到播放列表末尾（不循环）。", "idle");
+      this.setStatus(t("music.endOfList"), "idle");
       return;
     }
     this.loadTrack(target, shouldPlay);
@@ -402,7 +410,7 @@ export class MusicPlayerView {
 
   private previous(): void {
     if (this.tracks.length === 0) {
-      this.setStatus("播放列表为空。", "error");
+      this.setStatus(t("music.empty"), "error");
       return;
     }
     const shouldPlay = this.currentIndex < 0 || !this.audio.paused;
@@ -415,7 +423,7 @@ export class MusicPlayerView {
             rand: Math.random,
           });
     if (target < 0) {
-      this.setStatus("已到播放列表开头（不循环）。", "idle");
+      this.setStatus(t("music.startOfList"), "idle");
       return;
     }
     this.loadTrack(target, shouldPlay);
@@ -433,7 +441,7 @@ export class MusicPlayerView {
       auto: true,
     });
     if (target < 0) {
-      this.setStatus("播放列表已结束。", "idle");
+      this.setStatus(t("music.playlistEnded"), "idle");
       this.updatePlayButton();
       return;
     }
@@ -463,7 +471,7 @@ export class MusicPlayerView {
     this.updateNowPlaying();
     this.updateClock();
     if (this.tracks.length === 0) {
-      this.setStatus("尚未选择文件。所有文件只在本机用对象 URL 播放。", "idle");
+      this.setStatus(t("music.noFilesYet"), "idle");
     }
   }
 
@@ -475,15 +483,15 @@ export class MusicPlayerView {
       name.type = "button";
       name.className = "music-track-name";
       name.textContent = track.name;
-      name.title = `播放 ${track.name}`;
+      name.title = t("music.rowPlayTitle", { name: track.name });
       name.addEventListener("click", () => {
         this.playIndex(index);
       });
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "music-track-remove";
-      remove.textContent = "移除";
-      remove.title = `从播放列表移除 ${track.name}`;
+      remove.textContent = t("music.rowRemove");
+      remove.title = t("music.rowRemoveTitle", { name: track.name });
       remove.addEventListener("click", () => {
         this.remove(track.id);
       });
@@ -500,17 +508,17 @@ export class MusicPlayerView {
 
   private updatePlayButton(): void {
     const playing = !this.audio.paused && this.audio.src !== "";
-    this.playButton.textContent = playing ? "暂停" : "播放";
+    this.playButton.textContent = playing ? t("music.pause") : t("music.play");
     this.playButton.setAttribute("aria-pressed", playing ? "true" : "false");
   }
 
   private updateNowPlaying(): void {
     const track = this.tracks[this.currentIndex];
     if (track === undefined) {
-      this.nowLine.textContent = "未播放";
+      this.nowLine.textContent = t("music.nowIdle");
       return;
     }
-    const prefix = this.audio.paused ? "已暂停" : "正在播放";
+    const prefix = this.audio.paused ? t("music.paused") : t("music.playing");
     this.nowLine.textContent = `${prefix}：${track.name}`;
   }
 

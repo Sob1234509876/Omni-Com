@@ -159,7 +159,13 @@ export function classifyNotice(text: string): MessageCategory {
   if (isErrorLine(value)) {
     return "error";
   }
-  if (value.startsWith("遭到攻击") || value.includes("受到攻击") || value.includes("被袭")) {
+  if (
+    value.startsWith("遭到攻击") ||
+    value.includes("受到攻击") ||
+    value.includes("被袭") ||
+    // The en wording of the client-derived event (the zh prefixes above stay for server text).
+    value.startsWith("Under attack")
+  ) {
     return "combat";
   }
   return "event";

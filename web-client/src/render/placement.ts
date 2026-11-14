@@ -20,6 +20,7 @@
  * Everything here is pure and DOM-free so `scripts/check-render-math.ts` can exercise it under Node.
  */
 
+import { t } from "../i18n.ts";
 import type { TileCoord } from "./camera.ts";
 import {
   entityCoversTile,
@@ -297,19 +298,19 @@ export function combinePlacementStates(states: readonly PlacementTileState[]): P
   return sawOutOfReach ? "out-of-reach" : "legal";
 }
 
-/** The exact status-line text for a reason. */
-const REASON_TEXT: Readonly<Record<PlacementReason, string>> = {
-  legal: "可建造",
-  "blocked-terrain": "地形不可建",
-  "blocked-occupied": "位置被占用",
-  "blocked-planned": "与刚下达的工地重叠",
-  "blocked-window": "超出已载入窗口",
-  "out-of-reach": "超出工兵范围 16 格",
+/** The i18n key of a placement reason; the dictionaries carry the exact status-line wording. */
+const REASON_KEYS: Readonly<Record<PlacementReason, string>> = {
+  legal: "place.legal",
+  "blocked-terrain": "place.blockedTerrain",
+  "blocked-occupied": "place.blockedOccupied",
+  "blocked-planned": "place.blockedPlanned",
+  "blocked-window": "place.blockedWindow",
+  "out-of-reach": "place.outOfReach",
 };
 
-/** The status-line text for a placement reason: `可建造`, `地形不可建`, ... */
+/** The status-line text for a placement reason: `可建造` / `buildable`, `地形不可建` / `terrain blocks building here`, ... */
 export function placementReasonText(reason: PlacementReason): string {
-  return REASON_TEXT[reason];
+  return t(REASON_KEYS[reason]);
 }
 
 /** Green fill of a legal footprint tile: 25% opacity, so the terrain stays readable under it. */

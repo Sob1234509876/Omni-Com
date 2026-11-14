@@ -27,12 +27,7 @@ import {
   type EntityView,
   type PlayerView,
 } from "./view.ts";
-
-/** The action word of the repair entry. */
-export const REPAIR_ACTION_LABEL = "修理";
-
-/** The action word of the reclaim entry. */
-export const RECLAIM_ACTION_LABEL = "回收";
+import { t } from "../i18n.ts";
 
 /** One context-panel state for the selected building. */
 export interface BuildingActionModel {
@@ -55,19 +50,19 @@ export interface BuildingActionModel {
   readonly reclaimLabel: string | null;
 }
 
-/** `金 30 · 木 0`, the same cost shape the upgrade entry uses. */
+/** `金 30 · 木 0` / `gold 30 · wood 0`, the same cost shape the upgrade entry uses. */
 export function buildingCostLabel(cost: BuildingCostView): string {
-  return `金 ${cost.gold} · 木 ${cost.wood}`;
+  return `${t("item.gold")} ${cost.gold} · ${t("item.wood")} ${cost.wood}`;
 }
 
-/** `修理 (金 30 · 木 0)`. */
+/** `修理 (金 30 · 木 0)` / `Repair (gold 30 · wood 0)`. */
 export function repairLabel(cost: BuildingCostView): string {
-  return `${REPAIR_ACTION_LABEL} (${buildingCostLabel(cost)})`;
+  return `${t("ctx.repair")} (${buildingCostLabel(cost)})`;
 }
 
-/** `回收 (金 50 · 木 10)`. */
+/** `回收 (金 50 · 木 10)` / `Reclaim (gold 50 · wood 10)`. */
 export function reclaimLabel(cost: BuildingCostView): string {
-  return `${RECLAIM_ACTION_LABEL} (${buildingCostLabel(cost)})`;
+  return `${t("ctx.reclaim")} (${buildingCostLabel(cost)})`;
 }
 
 /** Whether the local player's row can cover a service cost; a missing row counts as not affordable. */

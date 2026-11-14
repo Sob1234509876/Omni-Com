@@ -10,6 +10,8 @@
  * `src/main.ts`. This module stays DOM-free so `scripts/check-render-math.ts` can exercise it under Node.
  */
 
+import { t } from "./i18n.ts";
+
 /** Highest group number; the UI binds exactly 1 through 9. */
 export const CONTROL_GROUP_MAX = 9;
 
@@ -145,5 +147,7 @@ export function prune(groups: ControlGroups, livingIds: Iterable<number>): Contr
 export function describe(groups: ControlGroups, group: number): string {
   const key = requireControlGroup(group);
   const ids = groups.get(key) ?? [];
-  return ids.length === 0 ? `编队 ${key} 为空` : `编队 ${key}：${ids.length} 个实体`;
+  return ids.length === 0
+    ? t("group.empty", { key })
+    : t("group.summary", { key, count: ids.length });
 }
