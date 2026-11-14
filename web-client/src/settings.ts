@@ -207,28 +207,6 @@ export interface ConnectionSettings {
 }
 
 /**
- * Default radius, in tiles, of the Q9 inventory tag around the pointer.
- *
- * The owner asked for "about 10 tiles" and for the radius to live in the settings page. A selected unit
- * is always tagged whatever its distance; the radius only decides which *unselected* units show theirs.
- */
-export const DEFAULT_INVENTORY_RADIUS_TILES = 10;
-
-/** Smallest accepted radius: zero would make the pointer rule meaningless, so one tile is the floor. */
-export const MIN_INVENTORY_RADIUS_TILES = 1;
-
-/** Largest accepted radius; a wider value would tag most of a loaded window. */
-export const MAX_INVENTORY_RADIUS_TILES = 32;
-
-/** Clamps a radius to {@link MIN_INVENTORY_RADIUS_TILES}..{@link MAX_INVENTORY_RADIUS_TILES}. */
-export function clampInventoryRadius(value: number): number {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_INVENTORY_RADIUS_TILES;
-  }
-  return Math.min(MAX_INVENTORY_RADIUS_TILES, Math.max(MIN_INVENTORY_RADIUS_TILES, Math.round(value)));
-}
-
-/**
  * The UI language setting: a concrete language or `auto`, which resolves from `navigator.language`
  * (exact `zh-CN` match first, then the base `zh` language, else English — see `resolveLanguage` in
  * `src/i18n.ts`). English is the default everywhere: a fresh profile with no stored value resolves
@@ -250,8 +228,6 @@ export interface Settings {
   readonly showPaths: boolean;
   readonly viewHidden: boolean;
   readonly connection: ConnectionSettings;
-  /** Radius in tiles of the Q9 inventory tag around the pointer; see {@link clampInventoryRadius}. */
-  readonly inventoryRadiusTiles: number;
   /**
    * UI language: `auto` resolves from the browser, otherwise a concrete language. Optional on the
    * wire; a stored object without it parses as the `auto` default, so an existing profile keeps its
@@ -286,7 +262,6 @@ export function defaultSettings(): Settings {
     showPaths: true,
     viewHidden: false,
     connection: { host: "", port: "" },
-    inventoryRadiusTiles: DEFAULT_INVENTORY_RADIUS_TILES,
     language: "auto",
     accountName: "",
     accountPassword: "",
@@ -361,7 +336,6 @@ export function parseSettings(raw: string | null | undefined): Settings {
   const connection = readConnection(value["connection"]);
   const showPaths = value["showPaths"];
   const viewHidden = value["viewHidden"];
-  const inventoryRadiusTiles = value["inventoryRadiusTiles"];
   // The language follows the optional-string rule too: missing means `auto`, a non-string or an
   // unknown language value means the whole stored object is corrupt (the same all-or-nothing rule
   // every other field follows).
@@ -379,9 +353,6 @@ export function parseSettings(raw: string | null | undefined): Settings {
   if (viewHidden !== undefined && typeof viewHidden !== "boolean") {
     return fallback;
   }
-  if (inventoryRadiusTiles !== undefined && typeof inventoryRadiusTiles !== "number") {
-    return fallback;
-  }
   if (language !== undefined && (typeof language !== "string" || !isLanguageSetting(language))) {
     return fallback;
   }
@@ -396,9 +367,6 @@ export function parseSettings(raw: string | null | undefined): Settings {
     showPaths: showPaths ?? fallback.showPaths,
     viewHidden: viewHidden ?? fallback.viewHidden,
     connection,
-    inventoryRadiusTiles: inventoryRadiusTiles === undefined
-      ? fallback.inventoryRadiusTiles
-      : clampInventoryRadius(inventoryRadiusTiles),
     language: language ?? fallback.language,
     accountName: accountName ?? "",
     accountPassword: accountPassword ?? "",
@@ -426,7 +394,6 @@ export function serializeSettings(settings: Settings): string {
     },
     showPaths: settings.showPaths,
     viewHidden: settings.viewHidden,
-    inventoryRadiusTiles: settings.inventoryRadiusTiles,
     language: settings.language,
     connection: {
       host: settings.connection.host,

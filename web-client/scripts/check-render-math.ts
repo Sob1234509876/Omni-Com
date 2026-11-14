@@ -138,8 +138,8 @@ import {
   queueMarkerText,
   queueProgressRatio,
   sizeLabel,
-  stockTagVisible,
   cargoTagVisible,
+  orderLabel,
   unitCargoLabel,
   unitStockTagLabel,
   unitTaskLabel,
@@ -446,15 +446,11 @@ import {
 } from "../src/render/latex.ts";
 import {
   ALL_MESSAGES,
-  DEFAULT_INVENTORY_RADIUS_TILES,
   FILTER_PRESETS,
-  MAX_INVENTORY_RADIUS_TILES,
   MESSAGE_CATEGORIES,
   MESSAGE_CATEGORY_LABELS,
-  MIN_INVENTORY_RADIUS_TILES,
   SETTINGS_STORAGE_KEY,
   SETTINGS_VERSION,
-  clampInventoryRadius,
   classifyCommand,
   classifyNotice,
   classifyToast,
@@ -970,12 +966,38 @@ const detailedSnapshot = worldViewFromSnapshot({
       attackDamage: 18,
       attackRange: 6,
     },
+    {
+      id: 5,
+      kind: "worker",
+      x: 1,
+      y: 0,
+      player: 1,
+      w: 1,
+      h: 1,
+      task: "build → 兵工厂",
+      orderQueue: [
+        "move (3,4)",
+        "attack #9",
+        "attackmove",
+        "attack_move (2,2)",
+        "build",
+        "repair #42",
+        "haul → 仓库",
+        "transfer",
+        "travel",
+        "guard",
+        "hold",
+        "dance 5",
+        "… 还有 3 项",
+      ],
+    },
   ],
 });
 const detailedWarehouse = detailedSnapshot?.entities.find((entity) => entity.id === 1);
 const detailedBarracks = detailedSnapshot?.entities.find((entity) => entity.id === 2);
 const detailedWorker = detailedSnapshot?.entities.find((entity) => entity.id === 3);
 const detailedTurret = detailedSnapshot?.entities.find((entity) => entity.id === 4);
+const detailedTokenWorker = detailedSnapshot?.entities.find((entity) => entity.id === 5);
 check(
   "快照实体细节字段：footprint、progress/queue/queueTicks、queueItems 坏项丢弃、orderQueue 去空白、攻击字段",
   detailedWarehouse?.footprint?.width === 3 &&
@@ -5635,34 +5657,120 @@ check(
     unitStockTagLabel({ id: 4, kind: "unit.engineer", x: 0, y: 0 }) === null,
   String(unitStockTagLabel({ ...loadedUnit, contents: {} })),
 );
+// ---------------------------------------------------------------------------------------------
+// Playtester round: the order/task label table (the snapshot's stable ASCII tokens localize through
+// `order.*`, unknown tokens print raw, the legacy Chinese heads map onto the same keys), the cargo
+// tag simplification (every carrier shows its tag — no hover, no ownership gate) and the removal of
+// the Q9 pointer-radius rule. One combined section: the three rules were decided together.
+// ---------------------------------------------------------------------------------------------
+
 check(
-  "库存标签：选中总是显示；未选中只在鼠标半径内显示（边界含等号）",
-  stockTagVisible(loadedUnit, true, null, null, 10) &&
-    stockTagVisible(loadedUnit, true, 100, 100, 10) &&
-    stockTagVisible(loadedUnit, false, 10, 20, 10) &&
-    !stockTagVisible(loadedUnit, false, 10, 20.01, 10) &&
-    stockTagVisible(loadedUnit, false, 10, 10, 0) &&
-    !stockTagVisible(loadedUnit, false, null, null, 10) &&
-    !stockTagVisible({ ...loadedUnit, contents: {} }, true, null, null, 10) &&
-    !stockTagVisible(
-      { id: 5, kind: "building.warehouse", x: 10, y: 10, contents: { gold: 1 } },
-      true,
-      null,
-      null,
-      10,
-    ),
-  String(stockTagVisible(loadedUnit, false, 10, 20.01, 10)),
-);
-check(
-  "补给标签半径默认 10 格，可在设置里调，钳制到 1..32",
-  DEFAULT_INVENTORY_RADIUS_TILES === 10 &&
-    MIN_INVENTORY_RADIUS_TILES === 1 &&
-    MAX_INVENTORY_RADIUS_TILES === 32 &&
-    clampInventoryRadius(0) === 1 &&
-    clampInventoryRadius(33) === 32 &&
-    clampInventoryRadius(7.6) === 8 &&
-    clampInventoryRadius(Number.NaN) === 10,
-  String(clampInventoryRadius(33)),
+  "订单令牌表：order.<token> 本地化、未知令牌原样、旧中文映射到同键；货物标签有货即显（不分敌我、无悬停）；Q9 半径规则整体移除",
+  (() => {
+    const tokenQueue = [
+      "move (3,4)",
+      "attack #9",
+      "attackmove",
+      "attack_move (2,2)",
+      "build",
+      "repair #42",
+      "haul → 仓库",
+      "transfer",
+      "travel",
+      "guard",
+      "hold",
+      "dance 5",
+      "… 还有 3 项",
+    ];
+    // The token fixture parses verbatim (only blank entries are dropped) and the task survives.
+    const parseKeepsTokens =
+      detailedTokenWorker !== undefined &&
+      JSON.stringify(detailedTokenWorker.orderQueue) === JSON.stringify(tokenQueue) &&
+      detailedTokenWorker.task === "build → 兵工厂";
+
+    const previousLanguage = currentI18nLanguage();
+    // English: every expected token reads through `order.*`; an unknown token prints as sent; the
+    // legacy Chinese heads land on the same keys as their token.
+    initI18n("en");
+    const enTable =
+      orderLabel("move (3,4)") === "Move (3,4)" &&
+      orderLabel("attack #9") === "Attack #9" &&
+      orderLabel("attackmove") === "Attack-move" &&
+      orderLabel("attack_move (2,2)") === "Attack-move (2,2)" &&
+      orderLabel("build") === "Build" &&
+      orderLabel("repair #42") === "Repair #42" &&
+      orderLabel("haul") === "Haul" &&
+      orderLabel("transfer") === "Transfer" &&
+      orderLabel("travel") === "Travel" &&
+      orderLabel("guard") === "Guard" &&
+      orderLabel("hold") === "Hold position" &&
+      orderLabel("dance 5") === "dance 5" &&
+      orderLabel("… 还有 3 项") === "… 3 more" &&
+      orderLabel("建造 兵工厂 @ (12,5)") === "Build 兵工厂 @ (12,5)" &&
+      orderLabel("搬运中 → 仓库") === "Hauling → 仓库" &&
+      unitTaskLabel("build → 兵营") === "Task: Build → 兵营" &&
+      unitTaskLabel("空闲") === "Task: Idle";
+    // zh-CN: the legacy Chinese labels round-trip byte-for-byte (the page's original wording), and
+    // the tokens read through the same keys.
+    initI18n("zh-CN");
+    const zhTable =
+      orderLabel("移动 → (12,5)") === "移动 → (12,5)" &&
+      orderLabel("攻击 #42") === "攻击 #42" &&
+      orderLabel("攻击移动") === "攻击移动" &&
+      orderLabel("建造 兵工厂 @ (12,5)") === "建造 兵工厂 @ (12,5)" &&
+      orderLabel("修理 #42") === "修理 #42" &&
+      orderLabel("修理（已完成）") === "修理（已完成）" &&
+      orderLabel("建造（已完成）") === "建造（已完成）" &&
+      orderLabel("搬运 → 仓库") === "搬运 → 仓库" &&
+      orderLabel("搬运中 → 兵工厂") === "搬运中 → 兵工厂" &&
+      orderLabel("原地待命") === "原地待命" &&
+      orderLabel("空闲") === "空闲" &&
+      orderLabel("… 还有 5 项") === "… 还有 5 项" &&
+      orderLabel("move (3,4)") === "移动 (3,4)" &&
+      orderLabel("未知 7") === "未知 7" &&
+      unitTaskLabel("搬运中 → 兵工厂") === "任务：搬运中 → 兵工厂";
+    initI18n(previousLanguage);
+
+    // The cargo tag: every carrier shows it always, so the rule is now just `has cargo`; the Q9
+    // pointer-radius helper is gone from status.ts together with its plumbing.
+    const cargoUnit = {
+      id: 9,
+      kind: "unit.engineer",
+      x: 10,
+      y: 10,
+      playerId: 3,
+      contents: { gold: 80 },
+    } as EntityView;
+    const emptyUnit = { id: 10, kind: "unit.engineer", x: 10, y: 10, playerId: 3 } as EntityView;
+    const enemyHauler = {
+      id: 11,
+      kind: "unit.melee.t1",
+      x: 10,
+      y: 10,
+      playerId: 2,
+      contents: { gold: 5 },
+    } as EntityView;
+    const cargoBuilding = {
+      id: 12,
+      kind: "building.warehouse",
+      x: 10,
+      y: 10,
+      playerId: 3,
+      contents: { gold: 5 },
+    } as EntityView;
+    const statusTsText = readFileSync(new URL("../src/render/status.ts", import.meta.url), "utf8");
+    const cargoRules =
+      cargoTagVisible(cargoUnit) &&
+      !cargoTagVisible(emptyUnit) &&
+      !cargoTagVisible(cargoBuilding) &&
+      cargoTagVisible(enemyHauler) &&
+      statusTsText.includes("export function cargoTagVisible(entity: EntityView): boolean") &&
+      !statusTsText.includes("stockTagVisible") &&
+      !statusTsText.includes("radiusTiles");
+
+    return parseKeepsTokens && enTable && zhTable && cargoRules;
+  })(),
+  "order token table / cargo tag simplification / radius rule removal",
 );
 check(
   "工程师任务行带 任务： 前缀且忽略空白",
@@ -6156,16 +6264,14 @@ const savedSettings: Settings = {
   ...defaultSettings(),
   showPaths: false,
   viewHidden: true,
-  inventoryRadiusTiles: 12,
   filters: presetFilters("quiet"),
   connection: { host: "127.0.0.1", port: "25567" },
 };
 const restoredSettings = parseSettings(serializeSettings(savedSettings));
 check(
-  "设置序列化后按版本原样恢复（筛选、界面开关、补给半径与服务器地址）",
+  "设置序列化后按版本原样恢复（筛选、界面开关与服务器地址）",
   restoredSettings.showPaths === false &&
     restoredSettings.viewHidden === true &&
-    restoredSettings.inventoryRadiusTiles === 12 &&
     restoredSettings.connection.host === "127.0.0.1" &&
     restoredSettings.connection.port === "25567" &&
     MESSAGE_CATEGORIES.every(
@@ -6178,7 +6284,7 @@ check(
 check(
   "保存值带版本号，并且整份设置只使用一个固定的 localStorage 键",
   serializeSettings(savedSettings) ===
-    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"inventoryRadiusTiles":12,"language":"auto","connection":{"host":"127.0.0.1","port":"25567"},"accountName":"","accountPassword":""}` &&
+    `{"version":${SETTINGS_VERSION},"filters":${JSON.stringify(savedSettings.filters)},"showPaths":false,"viewHidden":true,"language":"auto","connection":{"host":"127.0.0.1","port":"25567"},"accountName":"","accountPassword":""}` &&
     SETTINGS_STORAGE_KEY === "omni-com.web-client.settings" &&
     SETTINGS_VERSION === 1,
   SETTINGS_STORAGE_KEY,
@@ -6240,20 +6346,21 @@ check(
 );
 
 check(
-  "补给半径：缺失补默认 10，超范围钳制，类型错误整份回退",
+  "旧档容错：存储里遗留的 inventoryRadiusTiles 字段被忽略，序列化时丢弃",
   parseSettings(
-    JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES }),
-  ).inventoryRadiusTiles === DEFAULT_INVENTORY_RADIUS_TILES &&
-    parseSettings(
-      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: 99 }),
-    ).inventoryRadiusTiles === MAX_INVENTORY_RADIUS_TILES &&
-    parseSettings(
-      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: 0 }),
-    ).inventoryRadiusTiles === MIN_INVENTORY_RADIUS_TILES &&
-    parseSettings(
-      JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: "wide" }),
-    ).inventoryRadiusTiles === DEFAULT_INVENTORY_RADIUS_TILES,
-  "inventory radius rules",
+    JSON.stringify({
+      version: SETTINGS_VERSION,
+      filters: ALL_MESSAGES,
+      inventoryRadiusTiles: 12,
+      showPaths: false,
+    }),
+  ).showPaths === false &&
+    !serializeSettings(
+      parseSettings(
+        JSON.stringify({ version: SETTINGS_VERSION, filters: ALL_MESSAGES, inventoryRadiusTiles: 12 }),
+      ),
+    ).includes("inventoryRadiusTiles"),
+  "legacy inventoryRadiusTiles tolerance",
 );
 
 check(
@@ -7727,12 +7834,16 @@ check(
       minimapTsText.includes(
         "markerInDrawnDimension(marker, world) && tileInWindow(world, marker.tile.x, marker.tile.y)",
       );
-    // The gateway building panel offers the jump: the button switches the view and centres the arrival.
+    // The gateway building panel offers the jump: the button switches the view and centres the
+    // arrival. The context column's `has-context` gate must count the gateway (and unit upgrade)
+    // sections — without it the column stays pointer-events:none and the button renders fine but
+    // every click falls through the transparent aside onto the canvas.
     const gatewayJump =
       indexHtml.includes('id="gateway-section"') &&
       indexHtml.includes('id="gateway-button"') &&
       mainTsText.includes("switchView(target.to, target.arrival)") &&
-      mainTsText.includes("gatewaySection.hidden = gatewayTarget === undefined;");
+      mainTsText.includes("gatewaySection.hidden = gatewayTarget === undefined;") &&
+      mainTsText.includes("!unitUpgradeSection.hidden || !gatewaySection.hidden");
     // The login click shows a pending state (disabled + aria-busy) and yields one frame before the
     // heavy panel/HUD repaint, so the exchange never reads as a freeze.
     const loginPending =
@@ -7768,7 +7879,7 @@ check(
 // ---------------------------------------------------------------------------------------------
 
 check(
-  "反回归网：src 里每个 t(\"字面量\") 同时存在于 en 与 zh-CN；contentLabel 客户端字典优先、清单名兜底；TRAIN 菜单路径名走同一解析；己方载货单位常显货物标签；阵营锚点只画在默认维度",
+  "反回归网：src 里每个 t(\"字面量\") 同时存在于 en 与 zh-CN；contentLabel 客户端字典优先、清单名兜底；TRAIN 菜单路径名走同一解析；载货单位常显货物标签（不分敌我）；阵营锚点只画在默认维度",
   (() => {
     // 1. The t()-key audit: every string literal handed to t() must resolve in BOTH shipped
     //    dictionaries, so a deleted key can never again print itself (the train.menuLabel bug).
@@ -7829,8 +7940,8 @@ check(
     const zhServedFallback = zhMenu[1]?.name === "强化" && zhMenu[1]?.label === "强化 · 金45";
     initI18n(previousLanguage);
 
-    // 3. The cargo tag decision: an own unit with cargo shows it always (no hover, no selection);
-    //    empty holds and buildings never; other owners keep the Q9 hover/selection rule.
+    // 3. The cargo tag decision: every carrier shows its tag always — own, enemy or neutral, no
+    //    hover, no selection, no ownership gate; empty holds and buildings never do.
     const cargoUnit = {
       id: 9,
       kind: "unit.engineer",
@@ -7861,14 +7972,11 @@ check(
       "utf8",
     );
     const cargoRules =
-      cargoTagVisible(cargoUnit, true, false, null, null, 10) === true &&
-      cargoTagVisible(emptyUnit, true, true, null, null, 10) === false &&
-      cargoTagVisible(cargoBuilding, true, true, null, null, 10) === false &&
-      cargoTagVisible(enemyHauler, false, false, 10.5, 10.5, 1) === true &&
-      cargoTagVisible(enemyHauler, false, false, 50, 50, 1) === false &&
-      cargoTagVisible(enemyHauler, false, true, null, null, 10) === true &&
-      rendererTsText.includes("cargoTagVisible(") &&
-      rendererTsText.includes('ownershipOf(entity.playerId, options.myPlayerId) === "mine"');
+      cargoTagVisible(cargoUnit) === true &&
+      cargoTagVisible(emptyUnit) === false &&
+      cargoTagVisible(cargoBuilding) === false &&
+      cargoTagVisible(enemyHauler) === true &&
+      rendererTsText.includes("if (cargoTagVisible(entity)) {");
 
     // 4. Faction anchors (player-row `anchor`) are overworld spawn tiles the server sends with every
     //    dimension's snapshot: drawn only while the default dimension is the drawn one, so hell no

@@ -887,7 +887,7 @@ export function drawQueueMarker(
 }
 
 /**
- * Compact stock tag above a selected, loaded unit: the first item and the total amount.
+ * Compact cargo tag above a loaded carrying unit: the first item and the total amount.
  *
  * It is the same achromatic language as the queue marker (translucent black, one pixel grey border,
  * white text) but smaller, and the caller places it above the unit's health bar so the two never

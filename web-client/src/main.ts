@@ -167,6 +167,7 @@ import {
   combatLabel,
   formatProgressPercent,
   itemDisplayName,
+  orderLabel,
   progressBarRatio,
   queueItemNumber,
   queueMarkerText,
@@ -234,7 +235,6 @@ import { MusicPlayerView } from "./musicview";
 import {
   FILTER_PRESETS,
   SETTINGS_STORAGE_KEY,
-  clampInventoryRadius,
   defaultSettings,
   isLanguageSetting,
   isMessageCategory,
@@ -389,7 +389,6 @@ const connectionSettingsLink = required<HTMLButtonElement>("#connection-settings
 const settingsConnectionPanel = required<HTMLButtonElement>("#settings-connection-panel");
 const settingPathsInput = required<HTMLInputElement>("#setting-paths");
 const settingViewInput = required<HTMLInputElement>("#setting-view");
-const settingInventoryRadiusInput = required<HTMLInputElement>("#setting-inventory-radius");
 const settingLanguageSelect = required<HTMLSelectElement>("#setting-language");
 const filterInputs: readonly HTMLInputElement[] = Array.from(
   document.querySelectorAll<HTMLInputElement>("[data-filter-category]"),
@@ -513,7 +512,6 @@ toastConsole.setFilter((category) => settings.filters[category]);
 function updateSettingsView(): void {
   settingPathsInput.checked = showPaths;
   settingViewInput.checked = viewHidden;
-  settingInventoryRadiusInput.value = String(settings.inventoryRadiusTiles);
   settingLanguageSelect.value = settings.language;
   for (const input of filterInputs) {
     const category = input.dataset["filterCategory"];
@@ -627,14 +625,6 @@ settingPathsInput.addEventListener("change", () => {
 settingViewInput.addEventListener("change", () => {
   setViewVisible(!settingViewInput.checked);
   updateSettingsView();
-});
-
-settingInventoryRadiusInput.addEventListener("change", () => {
-  const radius = clampInventoryRadius(Number(settingInventoryRadiusInput.value));
-  settings = { ...settings, inventoryRadiusTiles: radius };
-  settingInventoryRadiusInput.value = String(radius);
-  persistSettings();
-  setStatus(t("settings.radiusApplied", { radius }), "ok");
 });
 
 /** Applies the chosen language, saves it and repaints every label the page owns. */
@@ -3155,11 +3145,12 @@ function renderQueueList(building: EntityView | undefined): void {
 /**
  * Lists the selected own unit's capped order queue in execution order.
  *
- * <p>The strings are authored by the engine (`OrderLabels`) and arrive through the snapshot's
- * `orderQueue`; the client does not re-derive a task from movement, so the list says exactly what the
- * queue will run. A building, an idle unit, an enemy unit and an older snapshot have no array and the
- * panel hides. The eighth entry of a longer queue is the server's `… 还有 N 项` marker, and it is rendered
- * as an ordinary row so the truncation is visible rather than silent.
+ * <p>The strings arrive through the snapshot's `orderQueue`; the client does not re-derive a task from
+ * movement, so the list says exactly what the queue will run. Each row goes through {@link orderLabel}:
+ * a token-speaking server reads localized, the legacy Chinese labels map to the same keys, and an
+ * unknown token prints as sent. A building, an idle unit, an enemy unit and an older snapshot have no
+ * array and the panel hides. The eighth entry of a longer queue is the truncation marker, and it is
+ * rendered as an ordinary row so the truncation is visible rather than silent.
  */
 function renderOrderQueue(unit: EntityView | undefined): void {
   const labels =
@@ -3180,15 +3171,16 @@ function renderOrderQueue(unit: EntityView | undefined): void {
     if (label === undefined) {
       continue;
     }
+    const text = orderLabel(label);
     const row = document.createElement("div");
     row.className = "hud-queue-item";
-    row.title = label;
+    row.title = text;
     const number = document.createElement("span");
     number.className = "hud-queue-index";
     number.textContent = `${index + 1}.`;
     const name = document.createElement("span");
     name.className = "hud-queue-name";
-    void renderLatexInto(name, label);
+    void renderLatexInto(name, text);
     row.append(number, name);
     rows.push(row);
   }
@@ -3343,8 +3335,12 @@ let commandBarSignature = "";
  * BUILD rail instead (see `updateGameplayPanel`), so it must not keep this panel alive.
  */
 function updateCommandContextVisibility(): void {
+  // Every section that can live in the context column must be counted here: a section missed by this
+  // union leaves `.has-context` off, and the off state is `pointer-events: none` - the gateway button
+  // then rendered fine but every click fell through the transparent aside onto the canvas.
   const visible =
     !trainSection.hidden || !upgradeSection.hidden
+      || !unitUpgradeSection.hidden || !gatewaySection.hidden
       || !buildingActionsSection.hidden || !hudQueue.hidden || !hudOrders.hidden;
   commandContext.classList.toggle("has-context", visible);
 }
@@ -5413,7 +5409,6 @@ function animationFrame(now: number): void {
       markers,
       pops: activePops(popRecords, now),
       projectiles: trackProjectiles(projectileSeen, world.projectiles, now),
-      inventoryRadiusTiles: settings.inventoryRadiusTiles,
       followedId: lockedEntityId,
     });
     // The overview follows the same frame: terrain and dots from the drawn world, the camera rectangle

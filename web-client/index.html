@@ -2726,18 +2726,6 @@
             <label><input id="setting-view" type="checkbox" /> <span data-i18n="settings.hideView">隐藏游戏画面（与顶部“隐藏游戏画面”按钮同步）</span></label>
             <div class="settings-fields">
               <label>
-                <span data-i18n="settings.radiusLabel">补给标签半径（格）</span>
-                <input
-                  id="setting-inventory-radius"
-                  type="number"
-                  min="1"
-                  max="32"
-                  step="1"
-                  inputmode="numeric"
-                  data-i18n-title="settings.radiusTitle"
-                />
-              </label>
-              <label>
                 <span data-i18n="settings.language">语言</span>
                 <select id="setting-language">
                   <option value="auto" selected data-i18n="settings.langAuto">自动（跟随浏览器）</option>
@@ -2746,8 +2734,8 @@
                 </select>
               </label>
             </div>
-            <p class="settings-note" data-i18n="settings.radiusNote">
-              库存标签：选中的单位无论多远都显示；未选中的单位只在鼠标附近这个半径内显示。标签列出全部物品。
+            <p class="settings-note" data-i18n="settings.cargoTagNote">
+              携货单位的货物标签会一直显示（不分敌我，无需悬停），列出携带的每一件物品。
             </p>
           </section>
         </div>

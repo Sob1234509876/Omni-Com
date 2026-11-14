@@ -341,14 +341,6 @@ export interface RenderOptions {
    */
   readonly pops: readonly ActivePop[];
   /**
-   * Radius in tiles of the Q9 inventory tag around the pointer.
-   *
-   * A selected unit is always tagged; an unselected one only inside this radius of the pointer tile.
-   * The page reads it from the persisted settings (`inventoryRadiusTiles`, default 10, adjustable in
-   * the settings page), so the renderer stays a pure function of its options.
-   */
-  readonly inventoryRadiusTiles: number;
-  /**
    * The streamed-chunk set of the drawn dimension, keyed `"<chunkX>,<chunkY>"`, from the snapshot's
    * `loadedChunks`. A visible tile whose chunk is absent sits under the translucent shadow overlay;
    * `undefined` (older server, demo world) draws no shadow at all.
@@ -986,22 +978,9 @@ export class WorldRenderer {
           );
         }
       } else {
-        // A loaded unit's cargo tag: every own carrier shows it always (the load is at-a-glance
-        // information, not a hover secret); other units keep the Q9 rule — selected, or within the
-        // settings radius of the pointer.
-        const selected = entity.selected === true || selectedIds.has(entity.id);
-        const pointerX = options.hoverTile === null ? null : options.hoverTile.x + 0.5;
-        const pointerY = options.hoverTile === null ? null : options.hoverTile.y + 0.5;
-        if (
-          cargoTagVisible(
-            entity,
-            ownershipOf(entity.playerId, options.myPlayerId) === "mine",
-            selected,
-            pointerX,
-            pointerY,
-            options.inventoryRadiusTiles,
-          )
-        ) {
+        // A loaded unit's cargo tag: EVERY carrier shows it always — own, enemy or neutral, no hover
+        // and no ownership gate, because the load is at-a-glance information about the world.
+        if (cargoTagVisible(entity)) {
           const tag = unitStockTagLabel(entity);
           if (tag !== null) {
             drawUnitStockTag(

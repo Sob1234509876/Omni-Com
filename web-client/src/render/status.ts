@@ -146,62 +146,16 @@ export function unitStockTagLabel(
 }
 
 /**
- * Whether a unit's stock tag may be drawn.
- *
- * <p>Q9's rule: a unit that carries something shows its tag when it is **selected** (wherever it is on
- * the loaded map) or when it stands within `radiusTiles` of the **pointer**. The radius is a settings
- * value (default {@link DEFAULT_INVENTORY_RADIUS_TILES} in `settings.ts`); the pointer coordinates are
- * absolute world tiles, or `null` while the pointer is outside the canvas, in which case only the
- * selection rule applies. The distance is Euclidean and inclusive at the radius. Buildings never get the
- * tag: a building's stock belongs to the warehouse panel.
- */
-export function stockTagVisible(
-  entity: EntityView,
-  selected: boolean,
-  pointerX: number | null,
-  pointerY: number | null,
-  radiusTiles: number,
-): boolean {
-  if (isBuildingEntityKind(entity.kind)) {
-    return false;
-  }
-  if (carriedTotal(entity.contents) <= 0) {
-    return false;
-  }
-  if (selected) {
-    return true;
-  }
-  if (pointerX === null || pointerY === null) {
-    return false;
-  }
-  if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
-    return false;
-  }
-  const radius = Number.isFinite(radiusTiles) ? Math.max(0, radiusTiles) : 0;
-  return Math.hypot(entity.x - pointerX, entity.y - pointerY) <= radius;
-}
-
-/**
  * Whether a unit's cargo tag should be drawn this frame.
  *
- * <p>The playtester rule on top of Q9: an **own** unit that carries anything shows its tag always — a
- * hauler's load is information the operator reads at a glance, not a hover secret. Every other unit
- * (enemy, neutral) keeps the Q9 rule — selected, or within `radiusTiles` of the pointer — so the tag
- * never turns into clutter over somebody else's army. A building never gets the tag (its stock belongs
- * to the warehouse panel) and an empty hold never draws one.
+ * <p>The playtester rule: EVERY unit that carries anything shows its tag always — own, enemy or
+ * neutral, no hover and no ownership gate, because a hauler's load is at-a-glance information about
+ * the world, not a hover secret. The renderer only walks entities inside the loaded window, so "in
+ * window" is the caller's concern, not this predicate's. A building never gets the tag (its stock
+ * belongs to the warehouse panel) and an empty hold never draws one.
  */
-export function cargoTagVisible(
-  entity: EntityView,
-  own: boolean,
-  selected: boolean,
-  pointerX: number | null,
-  pointerY: number | null,
-  radiusTiles: number,
-): boolean {
-  if (own) {
-    return !isBuildingEntityKind(entity.kind) && carriedTotal(entity.contents) > 0;
-  }
-  return stockTagVisible(entity, selected, pointerX, pointerY, radiusTiles);
+export function cargoTagVisible(entity: EntityView): boolean {
+  return !isBuildingEntityKind(entity.kind) && carriedTotal(entity.contents) > 0;
 }
 
 /**
@@ -223,16 +177,86 @@ export function combatLabel(entity: EntityView): string | null {
 }
 
 /**
+ * The order/task vocabulary: leading token → `order.*` i18n key suffix.
+ *
+ * <p>The server is switching the snapshot's `orderQueue` / `task` strings from authored Chinese
+ * sentences to stable ASCII tokens; until the exact vocabulary lands this table accepts every token
+ * the client expects (`move` / `attack` / `attackMove` / `build` / `repair` / `haul` / `transfer` /
+ * `travel` / `guard`, plus the `hold` / `idle` / `more` bookkeeping the current labels imply) AND the
+ * legacy Chinese leading words the engine sends today, so an old server keeps rendering. ASCII heads
+ * are matched case-insensitively; anything else answers the raw string unchanged.
+ */
+const ORDER_TOKEN_KEYS: Readonly<Record<string, string>> = {
+  move: "move",
+  attack: "attack",
+  attackmove: "attackMove",
+  attack_move: "attackMove",
+  build: "build",
+  repair: "repair",
+  haul: "haul",
+  transfer: "transfer",
+  travel: "travel",
+  guard: "guard",
+  hold: "hold",
+  idle: "idle",
+  more: "more",
+  // The legacy Chinese heads (old-server tolerance): the verbs of `OrderLabels` and `UnitTask`.
+  "移动": "move",
+  "攻击": "attack",
+  "攻击移动": "attackMove",
+  "建造": "build",
+  "建造中": "building",
+  "建造（已完成）": "buildDone",
+  "修理": "repair",
+  "修理中": "repairing",
+  "修理（已完成）": "repairDone",
+  "搬运": "haul",
+  "搬运中": "hauling",
+  "原地待命": "hold",
+  "空闲": "idle",
+};
+
+/** The legacy truncation marker `… 还有 N 项`, whose count is re-rendered through `order.more`. */
+const LEGACY_TRUNCATION = /^…\s*还有\s*(\d+)\s*项$/;
+
+/**
+ * One localized order/task label from one raw snapshot string.
+ *
+ * <p>The head (everything before the first whitespace) is looked up in {@link ORDER_TOKEN_KEYS} —
+ * ASCII heads lowercased first — and replaced with the `order.<key>` label; the remainder is kept
+ * verbatim (an old server may carry a Chinese display name there, which the client must not invent a
+ * translation for). An unknown head answers the raw string unchanged, so a future server token the
+ * client does not know still prints instead of disappearing. The legacy truncation marker
+ * `… 还有 N 项` is matched whole and re-rendered with the count through `order.more`.
+ */
+export function orderLabel(raw: string): string {
+  const text = raw.trim();
+  const truncation = text.match(LEGACY_TRUNCATION);
+  if (truncation !== null) {
+    return t("order.more", { count: Number(truncation[1]) });
+  }
+  const split = text.search(/\s/u);
+  const head = split < 0 ? text : text.slice(0, split);
+  const rest = split < 0 ? "" : text.slice(split);
+  const asciiHead = head.toLowerCase();
+  const key = ORDER_TOKEN_KEYS[head] ?? ORDER_TOKEN_KEYS[asciiHead];
+  if (key === undefined) {
+    return text;
+  }
+  return t(`order.${key}`) + rest;
+}
+
+/**
  * The selected engineer's task line, `任务：搬运中 → 兵工厂`, or `null` when the row has no task.
  *
- * The server owns the task vocabulary; this helper only rejects a blank string and adds the HUD prefix,
- * so an unknown future task still reads correctly instead of being hidden.
+ * The task string goes through {@link orderLabel}, so a token-speaking server reads localized while an
+ * old Chinese-speaking server reads exactly as before; a blank string still hides the row.
  */
 export function unitTaskLabel(task: string | undefined): string | null {
   if (task === undefined || task.trim() === "") {
     return null;
   }
-  return t("status.taskLabel", { task: task.trim() });
+  return t("status.taskLabel", { task: orderLabel(task) });
 }
 
 /**
