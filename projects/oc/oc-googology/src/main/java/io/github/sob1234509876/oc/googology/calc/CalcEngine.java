@@ -39,9 +39,11 @@ import java.util.regex.Pattern;
  *       {@code ω}) or a plain number for a finite level;</li>
  *   <li>{@code rank x} - the hyperoperation rank of a tower and its level reduced at the tower's own
  *       height;</li>
- *   <li>{@code ord matrix}, {@code ordcmp a b}, {@code ordseq matrix [n]} - read a Bashicu ordinal, compare
- *       two, and print the first {@code n} fundamental sequence elements in the {@code ω[m] = m+1}
- *       convention;</li>
+ *   <li>{@code ord matrix}, {@code ordcmp a b}, {@code ordseq matrix [n]}, {@code ordexp matrix n} - read a
+ *       Bashicu ordinal, compare two (the exact lexicographic proof plus the verdict), print the first
+ *       {@code n} fundamental sequence elements in the {@code ω[m] = m+1} convention, and run the bad-root
+ *       expansion chain {@code S[n] = G ~ B_0 ~ ... ~ B_{n-1}} one element per line, where an element above
+ *       the notation's column bound reports as 不可物化 instead of crashing;</li>
  *   <li>{@code format plain|ascii|latex} - the output rendering, backed by {@link NaturalFormat};</li>
  *   <li>{@code help}, {@code quit}.</li>
  * </ul>
@@ -75,6 +77,7 @@ public final class CalcEngine {
     private static final List<String> COMMANDS = List.of(
             "<表达式>", "cmp a b", "log base x", "slog base x", "root d x", "hyperinv arrows base x",
             "hyp base level height", "rank x", "ord matrix", "ordcmp a b", "ordseq matrix [n]",
+            "ordexp matrix n（展开份数 0 到 64，超过 2048 列的项显示为不可物化）",
             "format plain|ascii|latex", "help");
 
     private String format = "ascii";
@@ -138,6 +141,8 @@ public final class CalcEngine {
                 return ordinalCompare(rest);
             case "ordseq":
                 return ordinalSequence(rest);
+            case "ordexp":
+                return ordinalExpansion(rest);
             default:
                 if (looksLikeCommand(head)) {
                     throw new CalcError("命令 " + head + " 需要参数，用法见 help");
@@ -148,7 +153,8 @@ public final class CalcEngine {
 
     private static boolean looksLikeCommand(String head) {
         return switch (head) {
-            case "cmp", "log", "slog", "root", "hyperinv", "hyp", "rank", "ord", "ordcmp", "ordseq", "format" -> true;
+            case "cmp", "log", "slog", "root", "hyperinv", "hyp", "rank", "ord", "ordcmp", "ordseq", "ordexp",
+                    "format" -> true;
             default -> false;
         };
     }
@@ -537,13 +543,27 @@ public final class CalcEngine {
                 + (value.finiteValue().isPresent() ? "，有限" : value.isLimit() ? "，极限" : "，后继");
     }
 
+    /**
+     * {@code ordcmp a b}: the lexicographic comparison of two Bashicu ordinals. The relation line keeps the
+     * signed order, and the verdict line reports the proof from
+     * {@link BmsOrdinal#compareMagnitude(BmsOrdinal)} - for BMS this is always one of the three exact
+     * proofs, never {@code UNKNOWN} and never a lean - with the verdict spelled out in words.
+     */
     private String ordinalCompare(String rest) {
         String[] parts = twoArguments(rest, "ordcmp");
         BmsOrdinal left = evalOrdinal(parts[0]);
         BmsOrdinal right = evalOrdinal(parts[1]);
+        ComparisonResult proof = left.compareMagnitude(right);
         int order = left.compareTo(right);
-        return order == 0 ? left + " = " + right
+        String relation = order == 0 ? left + " = " + right
                 : order < 0 ? left + " < " + right : left + " > " + right;
+        String verdict = switch (proof) {
+            case GREATER -> "GREATER（前者大）";
+            case LESS -> "LESS（后者大）";
+            case EQUAL -> "EQUAL（相等）";
+            default -> proof.toString();
+        };
+        return relation + "\n证明：" + verdict;
     }
 
     private String ordinalSequence(String rest) {
@@ -577,5 +597,68 @@ public final class CalcEngine {
             text.append("\n  [").append(index).append("] ").append(rendered);
         }
         return text.toString();
+    }
+
+    /**
+     * {@code ordexp matrix n}: the raw bad-root expansion of {@link BmsOrdinal#expand(int)}, presented the
+     * way the documentation does - the chain {@code S[n] = G ~ B_0 ~ ... ~ B_{n-1}} with {@code B_0 = B} -
+     * one element per line from {@code S[0] = G} up to {@code S[n]}, each line labelling the chain prefix
+     * it carries and showing the resulting matrix (with the identified ordinal name where the shape has
+     * one, so the reader sees {@code ω²} expand into {@code ω·2}, {@code ω·3}, ...). An element whose
+     * matrix would exceed {@link BmsOrdinalNotation#MAX_EXPANSION_COLUMNS} columns is not materialised:
+     * the line says 不可物化 instead, which is this implementation's documented bound rather than a
+     * mathematical claim. The matrix stays a single whitespace-delimited token and the count a plain
+     * integer, so the parenthesized-argument grammar never collides with the matrix writing.
+     */
+    private String ordinalExpansion(String rest) {
+        int split = splitIndex(rest);
+        if (split < 0) {
+            throw new CalcError("ordexp 需要矩阵和展开份数两个参数");
+        }
+        String matrix = rest.substring(0, split).trim();
+        String countText = rest.substring(split).trim();
+        int count;
+        try {
+            count = Integer.parseInt(countText);
+        } catch (NumberFormatException error) {
+            throw new CalcError("展开份数必须是整数：" + countText);
+        }
+        if (count < 0 || count > 64) {
+            throw new CalcError("展开份数要在 0 到 64 之间，是 " + count);
+        }
+        BmsOrdinal value = evalOrdinal(matrix);
+        if (!value.isLimit()) {
+            return value + " 不是极限序数，没有坏根展开";
+        }
+        StringBuilder text = new StringBuilder(value + " 的坏根展开（S[n] = G ~ B_0 ~ … ~ B_{n-1}，S[0] 到 S["
+                + count + "]）：");
+        for (int index = 0; index <= count; index++) {
+            Optional<BmsOrdinal> element = value.fundamentalSequence(index);
+            if (element.isEmpty()) {
+                text.append("\n  S[").append(index).append("] 不可物化（需要超过 ")
+                        .append(BmsOrdinalNotation.MAX_EXPANSION_COLUMNS).append(" 列，实现的上限）");
+                continue;
+            }
+            BmsOrdinal item = element.get();
+            text.append("\n  S[").append(index).append("] = ").append(chainLabel(index)).append(" = ")
+                    .append(item);
+            String rendered = item.render();
+            if (!rendered.equals(item.toString())) {
+                text.append("（").append(rendered).append("）");
+            }
+        }
+        return text.toString();
+    }
+
+    /** The chain label {@code G}, {@code G ~ B_0}, {@code G ~ B_0 ~ B_1}, ... for the expansion listing. */
+    private static String chainLabel(int index) {
+        if (index == 0) {
+            return "G";
+        }
+        StringBuilder label = new StringBuilder("G ~ B_0");
+        for (int copy = 1; copy < index; copy++) {
+            label.append(" ~ B_").append(copy);
+        }
+        return label.toString();
     }
 }

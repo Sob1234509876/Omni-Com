@@ -1235,6 +1235,28 @@ public final class GoogologyCheck {
         check("ordseq：ε₀ 的基本列错开一位（ε₀[0] = 1、ε₀[2] = ω^ω）",
                 engine.execute("ordseq (0)(1,1) 4").contains("ω^ω^ω"));
 
+        String expansion = engine.execute("ordexp (0)(1)(1) 3");
+        check("ordexp：ω² 的展开链按 S[n] = G ~ B_0 ~ … ~ B_{n-1} 给出，S[2] = ω·2",
+                expansion.contains("S[2] = G ~ B_0 ~ B_1 = (0)(1)(0)(1)（ω·2）")
+                        && expansion.contains("S[0] = G = ()（0）"));
+        check("ordexp：ω 的展开与 BmsCheck 的推导一致（S[1] = 1、S[3] = 3）",
+                engine.execute("ordexp (0)(1) 3").contains("S[3] = G ~ B_0 ~ B_1 ~ B_2 = (0)(0)(0)（3）"));
+        StringBuilder wideMatrix = new StringBuilder();
+        for (int column = 0; column <= 32; column++) {
+            wideMatrix.append('(').append(column).append(',').append(column).append(',').append(column)
+                    .append(')');
+        }
+        wideMatrix.append("(33,33,1)");
+        check("ordexp：坏部太宽时超 2048 列的项显示为不可物化而不是崩溃",
+                engine.execute("ordexp " + wideMatrix + " 64").contains("S[63] 不可物化"));
+        check("ordexp：份数缺失、不是整数或越界都给错误信息",
+                engine.execute("ordexp (0)(1)").startsWith("错误：")
+                        && engine.execute("ordexp (0)(1) x").startsWith("错误：")
+                        && engine.execute("ordexp (0)(1) 65").startsWith("错误："));
+        check("ordcmp：判定词与证明一起给出（GREATER（前者大））",
+                engine.execute("ordcmp (0)(1)(1) (0)(1)").contains("GREATER（前者大）"));
+        check("ordcmp：相等给 EQUAL（相等）", engine.execute("ordcmp (0)(1) (0)(1)").contains("EQUAL（相等）"));
+
         equal("括号覆盖优先级：(2+3)^2", Natural.of(25), engine.evalNatural("(2+3)^2"));
         equal("括号任意嵌套并与全部运算符组合：((2^3)^2)+(10/(2+3))", Natural.of(66),
                 engine.evalNatural("((2^3)^2)+(10/(2+3))"));
