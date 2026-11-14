@@ -95,6 +95,7 @@ import { alphaFor, interpolate, type Frame } from "./render/interpolate";
 import { marqueeTileRange, toggleSelection } from "./render/marquee";
 import { MinimapRenderer, minimapCameraTarget } from "./render/minimap";
 import {
+  applyBuildableTerrains,
   buildPlacementPreview,
   footprintForKind,
   placementReasonText,
@@ -4987,6 +4988,9 @@ let bootstrapFetchInFlight = false;
 function adoptWorldBootstrap(data: WorldBootstrap): void {
   setWorldBootstrap(data);
   registerCatalogueNames(data.content);
+  // The served `terrains` table decides which tiles the placement ghost calls buildable (hell_ground
+  // etc.); without it the demo-world fallback set applies. Same adoption points as the names.
+  applyBuildableTerrains(data.content?.terrains ?? new Map());
   // The server namespace just changed under buttons that were painted earlier: both rebuilders skip a
   // same-signature rebuild, so without this pass the BUILD rail and the TRAIN buttons would keep the
   // raw paths (or the pre-bootstrap labels) they were painted with. The same re-resolution the atlas
@@ -5163,7 +5167,10 @@ function applySnapshot(rawSnapshot: ServerWorldView): void {
   // The server's `content` catalogue is the i18n registry's server namespace (item 22): its names are
   // registered as key-values (`content.<path>`, `dim.<key>`) so display names resolve client
   // translation first, server name as fallback. A snapshot without the catalogue registers nothing.
+  // Its `terrains` table likewise drives the placement ghost's buildable set (old-server snapshot
+  // compatibility path — the bootstrap is the primary source).
   registerCatalogueNames(snapshot.content);
+  applyBuildableTerrains(snapshot.content?.terrains ?? new Map());
   refreshDimensionButtons(snapshot);
   const wasDemo = worldSource === "demo";
   if (wasDemo) {

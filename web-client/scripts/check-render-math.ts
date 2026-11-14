@@ -325,8 +325,10 @@ import {
   combinePlacementStates,
   entityFootprint,
   entityFootprintCovers,
+  applyBuildableTerrains,
   footprintForKind,
   footprintTiles,
+  isBuildableTerrain,
   isWithinBuildReach,
   placementFillColor,
   placementReasonText,
@@ -7399,6 +7401,31 @@ check(
       parseWorldBootstrap({}) === undefined &&
       parseWorldBootstrap({ buildable: ["  ", 42] }) === undefined
     );
+  })(),
+);
+
+check(
+  "服务端 terrains 表驱动放置幽灵的可建造集：buildable 事实生效（hell_ground 绿、lava 红）、空表回落演示世界兜底、非布尔标志按 false 处理",
+  (() => {
+    const catalogue = parseContentCatalogue({
+      terrains: {
+        grass: { name: "草地", buildable: true, passable: true },
+        hell_ground: { name: "地狱地", buildable: true, passable: true },
+        hell_lava: { name: "地狱熔岩", buildable: false, passable: false },
+        odd: { buildable: "yes" },
+      },
+    });
+    const before = isBuildableTerrain("grass") && !isBuildableTerrain("hell_ground");
+    if (catalogue === undefined) {
+      return false;
+    }
+    applyBuildableTerrains(catalogue.terrains);
+    const served = isBuildableTerrain("grass") && isBuildableTerrain("hell_ground") &&
+      !isBuildableTerrain("hell_lava") && !isBuildableTerrain("odd") &&
+      !isBuildableTerrain("forest");
+    applyBuildableTerrains(new Map());
+    const restored = !isBuildableTerrain("hell_ground") && isBuildableTerrain("grass");
+    return before && served && restored;
   })(),
 );
 

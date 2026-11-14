@@ -51,12 +51,24 @@ export interface RecipeInput {
   readonly amount: number;
 }
 
+/** One terrain row of the served `terrains` table: what the client's ghost may promise. */
+export interface TerrainFacts {
+  readonly buildable: boolean;
+  readonly passable: boolean;
+}
+
 /** The parsed content catalogue, or `undefined` when the snapshot carried none. */
 export interface ContentCatalogue {
   /** Dimension key to display name. */
   readonly dimensions: ReadonlyMap<string, string>;
   readonly units: ReadonlyMap<string, ContentEntry>;
   readonly buildings: ReadonlyMap<string, ContentBuildingEntry>;
+  /**
+   * Terrain id → placement facts, served so the placement ghost never guesses which terrains take
+   * buildings (the classic catalogue also builds on hell_ground/hell_ash). Absent on older
+   * servers; rows omitting a flag default it to `false`.
+   */
+  readonly terrains: ReadonlyMap<string, TerrainFacts>;
 }
 
 /** One building definition; buildings carry recipes the unit defs do not need on the client. */
@@ -279,6 +291,25 @@ function parseDimensions(value: unknown): Map<string, string> {
   return dimensions;
 }
 
+/** Reads the catalogue's `terrains` table (id → {buildable, passable}); map shape only. */
+function parseTerrains(value: unknown): Map<string, TerrainFacts> {
+  const terrains = new Map<string, TerrainFacts>();
+  if (!isRecord(value)) {
+    return terrains;
+  }
+  for (const [rawKey, rawRow] of Object.entries(value)) {
+    const key = cleanKey(rawKey);
+    if (key === null || !isRecord(rawRow)) {
+      continue;
+    }
+    terrains.set(key, {
+      buildable: rawRow["buildable"] === true,
+      passable: rawRow["passable"] === true,
+    });
+  }
+  return terrains;
+}
+
 /**
  * Parses the snapshot's optional top-level `content` object into the store.
  *
@@ -294,11 +325,13 @@ export function parseContentCatalogue(value: unknown): ContentCatalogue | undefi
     dimensions: parseDimensions(value["dimensions"]),
     units: parseSection(value["units"], ["path", "key", "id"]),
     buildings: parseSection(value["buildings"], ["path", "key", "id"]),
+    terrains: parseTerrains(value["terrains"]),
   };
   if (
     catalogue.dimensions.size === 0 &&
     catalogue.units.size === 0 &&
-    catalogue.buildings.size === 0
+    catalogue.buildings.size === 0 &&
+    catalogue.terrains.size === 0
   ) {
     return undefined;
   }

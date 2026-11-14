@@ -198,17 +198,39 @@ export function isWithinBuildReach(
 }
 
 /**
- * Terrains the scenario content declares `buildable()`: open grass and sand.
+ * Terrains the demo-world scenario declares `buildable()`: open grass and sand.
  *
- * `water` and `rock` are impassable, `forest` and `hill` are walkable but not buildable, and `void` is
- * the engine's fallback terrain outside the served content. A terrain a plugin added is not known to
- * the client and is treated as unbuildable too: the ghost stays red instead of promising a site the
- * server might refuse. Like the reach test, this is an approximation the server overrules.
+ * This is only the **fallback** for the demo world and pre-`terrains` servers: when the bootstrap
+ * catalogue carries a `terrains` table (installed by `applyBuildableTerrains`), the served facts
+ * win, so a plugin's extra buildable terrain (hell_ground/hell_ash in classic) ghosts green without
+ * a client update. Like the reach test, the server overrules the ghost either way.
  */
 export const BUILDABLE_TERRAINS: ReadonlySet<TerrainId> = new Set<TerrainId>(["grass", "sand"]);
 
+/** The served `terrains.buildable` facts, empty while only the fallback applies. */
+let servedBuildableTerrains: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Installs the buildable-terrain set parsed from the bootstrap catalogue's `terrains` table (id →
+ * `{buildable, passable}`). Passing an empty table restores the fallback set.
+ */
+export function applyBuildableTerrains(
+  terrains: ReadonlyMap<string, { readonly buildable: boolean }>,
+): void {
+  const buildable = new Set<string>();
+  for (const [id, facts] of terrains) {
+    if (facts.buildable) {
+      buildable.add(id);
+    }
+  }
+  servedBuildableTerrains = buildable;
+}
+
 /** Whether a snapshot terrain id is one the client treats as buildable. */
 export function isBuildableTerrain(terrain: TerrainId): boolean {
+  if (servedBuildableTerrains.size > 0) {
+    return servedBuildableTerrains.has(terrain);
+  }
   return BUILDABLE_TERRAINS.has(terrain);
 }
 
