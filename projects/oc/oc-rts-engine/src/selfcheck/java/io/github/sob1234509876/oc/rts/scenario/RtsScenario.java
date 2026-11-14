@@ -45,6 +45,8 @@ import io.github.sob1234509876.oc.rts.map.Path;
 import io.github.sob1234509876.oc.rts.map.PathOptions;
 import io.github.sob1234509876.oc.rts.map.PathFinder;
 import io.github.sob1234509876.oc.rts.map.TerrainMap;
+import io.github.sob1234509876.oc.rts.movement.SteeringSettings;
+import io.github.sob1234509876.oc.rts.movement.SteeringSystem;
 import io.github.sob1234509876.oc.rts.order.AttackMoveOrder;
 import io.github.sob1234509876.oc.rts.order.AttackOrder;
 import io.github.sob1234509876.oc.rts.order.BuildOrder;
@@ -129,6 +131,9 @@ public final class RtsScenario {
         checkBuilderArrival(check);
         checkRepairAndReclaim(check);
         checkWaypointsAndPaths(check);
+        checkBuildingAnchors(check);
+        checkObstacleDetourAndBody(check);
+        checkOrderResumeAndRamp(check);
         checkHellAndVariants(check);
         checkUnitUpgrades(check);
         checkPreStockedProduction(check, content);
@@ -3255,6 +3260,194 @@ public final class RtsScenario {
                 .viewRadiusChunks(3)
                 .directDelivery(true)
                 .build();
+    }
+
+    // ------------------------------------------------------------------ 22) anchors, walls and ramps
+
+    /**
+     * The one building anchor every interaction measures from: the bottom-centre tile of the footprint,
+     * for odd and even widths alike. Training output, hauling pickup and drop-off, builder stand tiles
+     * and rally points all read the resolved entrance, and the wire reports a spawn or a pickup as the
+     * unit row's own position, which the server computes from this same anchor - so a client that draws
+     * those moments at a footprint corner is misreading the row, not the simulation.
+     */
+    private static void checkBuildingAnchors(Check check) {
+        check.section("22) the building anchor: bottom-centre for odd and even widths alike");
+        ContentRegistry content = ScenarioContent.omniCom();
+        OcRtsEngine engine = costEngine(content);
+        World world = engine.world();
+        Player player = engine.players().get(0);
+
+        Building warehouse = world.spawnBuilding(content.building(ScenarioContent.WAREHOUSE), player,
+                new GridPos(20, 20));
+        Building silo = world.spawnBuilding(content.building(ScenarioContent.ORE_SILO), player,
+                new GridPos(40, 40));
+        Building workshop = world.spawnBuilding(content.building(ScenarioContent.WORKSHOP), player,
+                new GridPos(50, 50));
+        check.that(warehouse.entranceTile().equals(new GridPos(21, 23))
+                        && warehouse.entrance().equals(new Vec2(21.5f, 23.5f))
+                        && warehouse.rallyPoint().equals(new Vec2(21.5f, 23.0f))
+                        && silo.entranceTile().equals(new GridPos(41, 42))
+                        && silo.entrance().equals(new Vec2(41.5f, 42.5f))
+                        && silo.rallyPoint().equals(new Vec2(41.0f, 42.0f))
+                        && workshop.entranceTile().equals(new GridPos(52, 53)),
+                "the 3x3 warehouse anchors at origin + (1, 3), the 2x2 silo at origin + (1, 2) and the "
+                        + "4x3 workshop at origin + (2, 3): entrance x is origin.x + sizeX/2 for odd and "
+                        + "even widths, with the default rally point on the same centre line");
+        check.that(world.defaultDimension().entranceTile(warehouse).equals(warehouse.entranceTile())
+                        && world.defaultDimension().entranceTile(silo).equals(silo.entranceTile())
+                        && world.defaultDimension().entranceTile(workshop).equals(workshop.entranceTile()),
+                "while the preferred tile stands free the resolved entrance equals it, which is the tile "
+                        + "training output, hauling pickup, drop-off and repair all walk to");
+    }
+
+    /**
+     * A wall of buildings between a unit and its goal: the search treats the footprints as impassable and
+     * detours around them, the walker actually reaches the target behind the wall, and the collision rule
+     * is symmetric - a unit's body may not overlap any building tile, on either axis alike, while a
+     * centred unit still fits through a one tile wide gap.
+     */
+    private static void checkObstacleDetourAndBody(Check check) {
+        check.section("23) building walls: the search detours, and the body rule is symmetric");
+        ContentRegistry content = ScenarioContent.omniCom();
+        OcRtsEngine engine = costEngine(content);
+        World world = engine.world();
+        Player player = engine.players().get(0);
+        BuildingType warehouse = content.building(ScenarioContent.WAREHOUSE);
+
+        // A three building wall with no gap: footprints cover x 14..16, y 8..16.
+        for (int y = 8; y <= 14; y += 3) {
+            world.spawnBuilding(warehouse, player, new GridPos(14, y));
+        }
+        GridPos west = new GridPos(10, 12);
+        GridPos east = new GridPos(20, 12);
+        var route = engine.pathFinder().findPath(west, east, PathOptions.EXHAUSTIVE).orElseThrow();
+        boolean crossesFootprint = route.waypoints().stream().anyMatch(waypoint -> world.defaultDimension()
+                .isObstacleTile(waypoint.tile().x(), waypoint.tile().y()));
+        check.that(!crossesFootprint,
+                "the detour search treats building tiles as impassable: no waypoint of the route around the "
+                        + "wall stands on a footprint");
+
+        Unit walker = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, west.center());
+        world.director().move(walker, east.center());
+        boolean arrived = engine.tickUntil(unused -> walker.position().x() >= east.x() - 0.2f, 900);
+        check.that(arrived,
+                "a unit ordered across a building wall detours around it and reaches the target behind it");
+
+        // The body rule is symmetric: heading east into a wall stops the same body width short of the
+        // face as heading south into one, and neither stops with the centre inside the footprint.
+        Unit fromWest = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(11.5f, 12.5f));
+        world.director().move(fromWest, new Vec2(15.5f, 12.5f));
+        engine.tick(400);
+        float westStop = fromWest.position().x();
+        Unit fromNorth = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(15.5f, 6.5f));
+        world.director().move(fromNorth, new Vec2(15.5f, 12.5f));
+        engine.tick(400);
+        float northStop = fromNorth.position().y();
+        check.that(westStop >= 13.4f && westStop < 13.66f && northStop >= 7.4f && northStop < 7.66f
+                        && Math.abs((14f - westStop) - (8f - northStop)) <= 0.05f,
+                "walking into a wall stops the body radius short of the footprint face on both axes alike "
+                        + "(east stop " + westStop + ", south stop " + northStop + ")");
+
+        // A centred unit still fits through a one tile wide gap: the two buildings at (24, 7) and
+        // (24, 11) leave row 10 free, and the disc of a centred unit spans no other row.
+        world.spawnBuilding(warehouse, player, new GridPos(24, 7));
+        world.spawnBuilding(warehouse, player, new GridPos(24, 11));
+        Unit squeeze = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(22.5f, 10.5f));
+        world.director().move(squeeze, new Vec2(26.5f, 10.5f));
+        boolean through = engine.tickUntil(unused -> squeeze.position().x() >= 25.8f, 900);
+        check.that(through,
+                "a unit centred in a one tile wide gap between buildings passes through it unchanged");
+
+        // A building raised across an existing route re-plans within a few ticks: the blocked probe
+        // fires long before the displacement based stuck threshold would.
+        Unit crosser = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), player, new Vec2(30.5f, 20.5f));
+        world.director().move(crosser, new Vec2(40.5f, 20.5f));
+        engine.tickUntil(unused -> crosser.position().x() >= 34.0f, 400);
+        world.spawnBuilding(warehouse, player, new GridPos(35, 19));
+        int detourTick = -1;
+        for (int i = 0; i < 60 && detourTick < 0; i++) {
+            engine.tick(1);
+            if (Math.abs(crosser.position().y() - 20.5f) > 0.3f) {
+                detourTick = i;
+            }
+        }
+        check.that(detourTick >= 0 && detourTick < SteeringSettings.defaults().stuckTicksBeforeRepath(),
+                "a building raised across the route makes the unit leave the blocked line within a few "
+                        + "ticks, well before the stuck threshold (" + detourTick + " ticks; crosser at "
+                        + crosser.position() + ", path " + crosser.motion().hasPath() + ", cooldown "
+                        + crosser.motion().repathCooldown() + ", stuck " + crosser.motion().stuckTicks()
+                        + ", blocked " + crosser.motion().blockedTicks() + ")");
+        boolean around = engine.tickUntil(unused -> crosser.position().x() >= 39.8f, 600);
+        check.that(around,
+                "the re-planned route carries the unit to the target behind the building raised on its way");
+    }
+
+    /**
+     * Combat suspends instead of discarding: a unit that walks, acquires a target by itself and fights
+     * keeps its move order and its goal, and resumes the march once the fight is over. A stop still
+     * clears everything, and the movement speed ramps: the same acceleration builds the speed up from a
+     * standstill within a fraction of a second and brakes it back down into the destination.
+     */
+    private static void checkOrderResumeAndRamp(Check check) {
+        check.section("24) the fight suspends the march, and the speed ramps up and brakes");
+        ContentRegistry content = ScenarioContent.omniCom();
+        Player blue = Player.of(1, "Blue", 0xFF4FC3F7);
+        Player red = Player.of(2, "Red", 0xFFEF5350);
+        OcRtsEngine engine = combatEngine(content, blue, red);
+        World world = engine.world();
+        Vec2 destination = new Vec2(30.5f, 10.5f);
+        Unit marcher = world.spawnUnit(content.unit(ScenarioContent.SOLDIER), blue, new Vec2(10.5f, 10.5f));
+        Unit unarmed = world.spawnUnit(content.unit(ScenarioContent.MEDIC), red, new Vec2(20.5f, 10.5f));
+        world.director().move(marcher, destination);
+        engine.tickUntil(unused -> marcher.hasTarget(), 600);
+        check.that(marcher.hasTarget() && marcher.orders().current() instanceof MoveOrder
+                        && marcher.motion().hasGoal() && marcher.motion().goal().equals(destination),
+                "an enemy in range stops the march but leaves the move order and its goal untouched");
+
+        engine.tickUntil(unused -> !unarmed.isAlive(), 600);
+        check.that(!unarmed.isAlive() && marcher.motion().hasGoal() && marcher.motion().goal().equals(destination),
+                "the fight ends with the paused goal still the original destination");
+        boolean resumed = engine.tickUntil(unused -> marcher.motion().isArrived(), 900);
+        engine.tick(2);
+        check.that(resumed && marcher.orders().isEmpty() && marcher.position().distance(destination) <= 0.7f,
+                "the marcher resumes the route after the fight and completes the original order at the "
+                        + "destination (at " + marcher.position() + ", orders empty: "
+                        + marcher.orders().isEmpty() + ")");
+
+        world.director().move(marcher, new Vec2(40.5f, 10.5f));
+        engine.tick(1);
+        engine.commands().stop(marcher);
+        check.that(marcher.orders().isEmpty() && !marcher.motion().hasGoal() && !marcher.motion().isCombatPaused(),
+                "stop clears the order queue, the goal and any combat pause");
+
+        // The ramp is plain deterministic arithmetic: a standstill velocity reaches cruise speed in the
+        // configured acceleration time, and the same step brakes a full speed velocity towards zero.
+        SteeringSystem steering = new SteeringSystem(SteeringSettings.defaults());
+        float seconds = 1f / 20f;
+        Vec2 slow = Vec2.ZERO;
+        for (int i = 0; i < 8; i++) {
+            slow = steering.accelerate(slow, Vec2.of(2.4f, 0f), 2.4f, seconds);
+        }
+        Vec2 brake = steering.accelerate(Vec2.of(2.4f, 0f), Vec2.ZERO, 2.4f, seconds);
+        check.that(slow.length() >= 2.4f * 0.99f && brake.x() > 0f && brake.x() < 2.4f * 0.9f,
+                "eight acceleration steps of a twentieth of a second reach cruise speed, and one step brakes "
+                        + "a full speed velocity visibly without snapping to zero");
+
+        // And the world walks it: the first steps are far below cruise, cruise is reached quickly.
+        OcRtsEngine ramp = combatEngine(content, blue, red);
+        Unit runner = ramp.world().spawnUnit(content.unit(ScenarioContent.SOLDIER), blue, new Vec2(10.5f, 10.5f));
+        ramp.world().director().move(runner, new Vec2(40.5f, 10.5f));
+        List<Float> steps = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            Vec2 before = runner.position();
+            ramp.tick(1);
+            steps.add(before.distance(runner.position()));
+        }
+        float cruise = steps.get(steps.size() - 1);
+        check.that(cruise > 0.05f && steps.get(0) < cruise * 0.5f && steps.get(5) > cruise * 0.8f,
+                "a marching unit starts clearly below cruise speed and holds cruise within half a second "
+                        + "(first step " + steps.get(0) + ", sixth " + steps.get(5) + ", cruise " + cruise + ")");
     }
 
     // ------------------------------------------------------------------ 19) hell and variants

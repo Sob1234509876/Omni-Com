@@ -221,12 +221,26 @@ public final class SteeringSystem {
     }
 
     /**
-     * Moves the previous velocity a fraction of the way towards the desired one. Steering without this
-     * makes units snap between full speed and standstill, which looks like jitter and, worse, makes
-     * two units in contact trade the same push back and forth every tick.
+     * Moves the previous velocity towards the desired one by at most one acceleration step.
+     *
+     * <p>The step size is the cruise speed divided by the configured acceleration time, scaled by the
+     * tick length, so a unit reaches cruise speed from a standstill in that time and brakes into its
+     * goal over the same span - the deceleration is the same ramp applied while the desired velocity
+     * shrinks. Without this ramp units snap between full speed and standstill, which looks like jitter
+     * and, worse, makes two units in contact trade the same push back and forth every tick. The
+     * arithmetic is a plain deterministic vector addition, never a per frame random value.
      */
-    public Vec2 smooth(Vec2 previous, Vec2 desired) {
-        return previous.lerp(desired, settings.velocitySmoothing());
+    public Vec2 accelerate(Vec2 previous, Vec2 desired, float maxSpeed, float deltaSeconds) {
+        Vec2 delta = desired.minus(previous);
+        float length = delta.length();
+        if (length <= 1e-9f) {
+            return desired;
+        }
+        float step = maxSpeed / settings.accelerationTimeSeconds() * deltaSeconds;
+        if (length <= step) {
+            return desired;
+        }
+        return previous.plus(delta.scaled(step / length));
     }
 
     /**

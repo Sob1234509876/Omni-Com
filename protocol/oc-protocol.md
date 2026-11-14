@@ -313,7 +313,12 @@ Each command is validated when the world applies it, and a rejection names the r
   shade disperse as the camera keeps moving and the chunks load. The static `dimensions` roster (the
   switcher's entries) moved to the one-time bootstrap document, see the snapshot section. A gateway-tagged building row carries
   `gateway:{"to":"<dimensionKey>","arrival":[x,y]}`, the same jump a `TRAVEL` would take, which the
-  client turns into a fast view switch; the field is omitted while no route is open.
+  client turns into a fast view switch; the field is omitted while no route is open. The route is the
+  world's own gateway graph, so an unfinished gate site never opens one and never carries the field:
+  the classic world pairs *finished* gates per owner and, when a finished overworld gate has no hell
+  partner, the server raises a finished return gate of the same player at the hell arrival pad. Both
+  ends of a pairing measure from the gate's resolved entrance tile, so `arrival` names a tile a unit
+  can actually stand on, never a tile inside a footprint.
 - `UPGRADEUNIT <unitId> [tierPath]` is the unit counterpart of `UPGRADE`: it replaces an owned unit with
   the successor its content ladder names (`UnitType.upgradeTo()` / `upgradeCost()`). The cost is the
   **source** type's bundle, reserved through the same warehouse network and charged **once**, only after

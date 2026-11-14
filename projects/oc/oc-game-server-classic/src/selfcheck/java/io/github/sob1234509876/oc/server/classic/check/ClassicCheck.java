@@ -1218,9 +1218,21 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             BuildingType gateType = world.content().building(ClassicContent.HELL_GATE);
             Building overworldGate = world.spawnBuilding(gateType, owner, new GridPos(30, 30));
             new HellGates().tick(world, 10);
-            check.that(world.route(overworld, hell).isPresent()
-                            && world.route(hell, overworld).isPresent(),
-                    "一座主世界门让两个方向的路由都打开（反向落到地狱固定落点）");
+            Building returnGate = world.buildings(hell).stream()
+                    .filter(gate -> gate.isAlive() && gate.isConstructed()
+                            && gate.type().hasTag(ClassicContent.GATEWAY_TAG))
+                    .findFirst().orElse(null);
+            check.that(returnGate != null && returnGate.owner().equals(owner)
+                            && Math.max(Math.abs(returnGate.origin().x() - HellGates.HELL_PAD.x()),
+                                    Math.abs(returnGate.origin().y() - HellGates.HELL_PAD.y()))
+                                    <= HellGates.RETURN_GATE_SEARCH_RADIUS,
+                    "主世界门完工后，钩子在地狱门垫旁生成同主玩家拥有的完工回程门");
+            var route = world.route(overworld, hell).orElseThrow();
+            GridPos returnArrival = returnGate == null
+                    ? null : world.dimensionOf(returnGate).entranceTile(returnGate);
+            check.that(world.route(hell, overworld).isPresent()
+                            && route.get(route.size() - 1).arrival().equals(returnArrival),
+                    "两个方向的路由都打开，去程落在回程门的入口旁");
             String oneGate = host.snapshotJson();
             check.that(entityRow(oneGate, overworldGate.id().value())
                             .contains("\"gateway\":{\"to\":\"hell\""),
@@ -1233,14 +1245,36 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
             check.that(!entityRow(hellSnapshot, overworldGate.id().value()).contains("\"id\":"),
                     "主世界的门不出现在 hell 窗口里（逐维实体过滤）");
 
-            Building hellGate = world.spawnBuilding(hell, gateType, owner, new GridPos(4, 4));
+            // A construction site is no passage: the hook only pairs finished gates, so no link names the
+            // site's entrance and the open route still runs through the finished pair.
+            Building site = world.placeBuilding(gateType, owner, new GridPos(36, 30));
+            GridPos siteEntrance = world.dimensionOf(site).entranceTile(site);
             new HellGates().tick(world, 20);
-            var route = world.route(overworld, hell).orElseThrow();
-            check.equal(hellGate.origin(), route.get(route.size() - 1).arrival(),
-                    "两座门配对后， travellers 在地狱门旁落地");
+            check.that(world.gatewaysFrom(overworld).stream()
+                            .noneMatch(link -> link.at().equals(siteEntrance))
+                            && world.route(overworld, hell).orElseThrow().get(0).arrival()
+                                    .equals(returnArrival),
+                    "未完工的门工地不开路由，路由仍配对完工的回程门");
 
-            // Denizens: a hell gate alone still links to the overworld fallback, so creatures step out
-            // of it even with no overworld gate standing.
+            // TRAVEL over and back: the paired gates carry a unit to hell and home again.
+            Unit traveller = spawnWalkable(world, world.content(), ClassicContent.ENGINEER, owner,
+                    new GridPos(28, 33));
+            host.engine().commands().travel(traveller, hell);
+            boolean crossed = false;
+            for (int i = 0; i < 40 && !crossed; i++) {
+                host.engine().tick(20);
+                crossed = traveller.dimensionId().equals(hell);
+            }
+            check.that(crossed, "TRAVEL 穿过完工的门把单位送到地狱");
+            host.engine().commands().travel(traveller, overworld);
+            boolean back = false;
+            for (int i = 0; i < 40 && !back; i++) {
+                host.engine().tick(20);
+                back = traveller.dimensionId().equals(overworld);
+            }
+            check.that(back, "回程门让单位返回主世界（往返通道）");
+
+            // Denizens: while a gate stands the pad breeds creatures for the war on both worlds.
             new HellDenizens().tick(world, 180);
             check.that(world.units(hell).size() >= 1, "地狱门开着时，门垫附近刷新魔物: "
                     + world.units(hell).size());
@@ -1250,7 +1284,7 @@ check.equal((long) TILE_PIXELS, longOf(manifest.get("tilePixels")), "tilePixels 
 
             // Both gates gone: the passage closes and no new creatures step out.
             world.destroy(overworldGate);
-            world.destroy(hellGate);
+            world.destroy(returnGate);
             world.flush();
             new HellGates().tick(world, 30);
             check.that(world.route(overworld, hell).isEmpty(), "两边的门都倒塌后路由关闭");

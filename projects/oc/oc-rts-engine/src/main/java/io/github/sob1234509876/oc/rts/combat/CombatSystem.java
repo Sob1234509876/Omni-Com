@@ -53,14 +53,15 @@ import java.util.Objects;
  * {@link Events.EntityDestroyed} and the end of tick flush follow. The id of the dead unit or building is
  * then cleared from every unit's target, so no survivor is left aiming at a removed entity.
  *
- * <p><strong>Movement.</strong> A unit with a target in range stops where it stands: its movement goal is
- * dropped and its velocity zeroed, and it keeps auto-attacking whatever comes into range. The one
- * exception is {@link AttackMoveOrder}, which is allowed to keep its goal so the order itself can decide
- * when to halt for a fight and when to resume the march; a plain
- * {@link io.github.sob1234509876.oc.rts.order.MoveOrder} (or a formation move) is therefore ended by
- * combat taking over, which is the classic "a soldier defends itself" stance rather than a unit that
- * walks past an enemy. A travel order is unaffected in practice: it re-aims at its next gateway every
- * tick, so it simply keeps walking.
+ * <p><strong>Movement.</strong> A unit with a target in range stops where it stands: its velocity is
+ * zeroed and the movement system is told through the motion's combat pause to stop steering, while the
+ * goal, the route and the order queue stay untouched. The one exception is {@link AttackMoveOrder},
+ * which is allowed to keep steering so the order itself can decide when to halt for a fight and when to
+ * resume the march. Once no enemy is in reach any more the pause lifts and a plain
+ * {@link io.github.sob1234509876.oc.rts.order.MoveOrder} (or a formation move, or a build job) resumes
+ * exactly where it stopped, which is the classic "a soldier defends itself, then carries on" stance. A
+ * stop command or a fresh order clears the goal, and clearing the goal clears the pause, so an explicit
+ * order still replaces whatever the unit was doing.
  *
  * <p><strong>Determinism.</strong> Nothing here draws a random number or reads a clock. The nearest
  * enemy - unit or building - is chosen by squared distance and ties are broken by entity id, so the
@@ -116,6 +117,7 @@ public final class CombatSystem implements SimulationSystem {
             Entity target = nearestEnemyInRange(world, unit);
             if (target == null) {
                 unit.clearTarget();
+                resumeMovement(unit);
                 continue;
             }
             unit.setTargetId(target.id());
@@ -399,9 +401,13 @@ public final class CombatSystem implements SimulationSystem {
     }
 
     /**
-     * Stops a unit that is fighting. An attack-move keeps its goal: that order halts and resumes itself,
-     * so clearing its goal here would fight the order every tick. Everything else drops the goal (and
-     * with it any path) and stands still while it shoots.
+     * Stops a unit that is fighting without throwing its orders away. An attack-move keeps steering
+     * itself: that order halts and resumes on its own, so it is left untouched. Everything else pauses:
+     * the movement goal, the route and the order queue stay exactly as they were, and the movement
+     * system stands the unit still while the pause lasts, so when the target dies or walks out of reach
+     * the unit picks its previous order back up - a soldier that defended itself resumes the march
+     * instead of forgetting where it was going. A stop command or any new order clears the goal, which
+     * clears the pause with it.
      */
     private static void holdPosition(Unit unit) {
         if (unit.orders().current() instanceof AttackMoveOrder) {
@@ -409,8 +415,19 @@ public final class CombatSystem implements SimulationSystem {
         }
         Motion motion = unit.motion();
         if (motion.hasGoal()) {
-            motion.clearGoal();
+            motion.setCombatPaused(true);
         }
         motion.setVelocity(Vec2.ZERO);
+    }
+
+    /**
+     * Releases the combat pause of a unit that no longer has an enemy in reach, so a suspended order
+     * resumes. A unit with no goal at all (it was idle when the fight started) has nothing to resume.
+     */
+    private static void resumeMovement(Unit unit) {
+        Motion motion = unit.motion();
+        if (motion.isCombatPaused()) {
+            motion.setCombatPaused(false);
+        }
     }
 }

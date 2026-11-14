@@ -5,10 +5,10 @@ package io.github.sob1234509876.oc.rts.movement;
  * down for their goal and how long the movement system tolerates a unit that makes no progress.
  *
  * <p>All knobs live in one immutable record because they interact. A large {@code separationStrength}
- * with a small {@code velocitySmoothing} makes a crowd jitter, a large {@code waypointRadius} makes
- * units cut corners into obstacles and a small {@code congestionSpeedFloor} lets a jammed group crawl
- * to a halt. Keeping them together gives a single place to reason about - and a single object to pass
- * to a scenario or a test that wants a different balance.
+ * with a long {@code accelerationTimeSeconds} makes a crowd sluggish, a large {@code waypointRadius}
+ * makes units cut corners into obstacles and a small {@code congestionSpeedFloor} lets a jammed group
+ * crawl to a halt. Keeping them together gives a single place to reason about - and a single object to
+ * pass to a scenario or a test that wants a different balance.
  *
  * <p>Everything is expressed in tiles and in multiples of the unit speed, never in ticks, so the same
  * settings behave identically at any tick rate.
@@ -22,8 +22,10 @@ package io.github.sob1234509876.oc.rts.movement;
  * @param arrivalSpeedFloor     fraction of full speed a unit still has when it is right at its goal.
  * @param maxSpeedMultiplier    hard cap on the length of the steering vector, as a multiple of the unit
  *                              speed; separation may briefly exceed the cruise speed but never this.
- * @param velocitySmoothing     fraction of the desired velocity adopted per tick, which turns both
- *                              acceleration and separation into a smooth ramp instead of a jerky jump.
+ * @param accelerationTimeSeconds seconds a unit needs from standstill to its cruise speed, which makes
+ *                              both the speed up and the brake into the destination a visible ramp; the
+ *                              acceleration is the cruise speed divided by this time, so the same value
+ *                              reads as a harder kick for a faster unit.
  * @param waypointRadius        distance at which a waypoint counts as reached and is consumed.
  * @param formationCohesionWeight how strongly a blocked unit is pulled towards its formation neighbours.
  * @param congestionSpeedFloor  fraction of full speed a fully congested unit keeps; above zero so a
@@ -33,6 +35,9 @@ package io.github.sob1234509876.oc.rts.movement;
  * @param stuckDisplacementPerTick movement in tiles below which a tick counts as "no progress".
  * @param stuckRepathCooldown   ticks a unit waits after it was declared stuck before it may ask for a
  *                              path again, which bounds how often a jammed group re-plans.
+ * @param blockedTicksBeforeRepath consecutive ticks whose straight step ahead is blocked by an obstacle
+ *                              after which the unit re-plans at once, which detours a unit that grinds
+ *                              against a wall within a few ticks instead of the stuck threshold's seconds.
  */
 public record SteeringSettings(
         float separationRadiusScale,
@@ -41,13 +46,14 @@ public record SteeringSettings(
         float arrivalSlowdownDistance,
         float arrivalSpeedFloor,
         float maxSpeedMultiplier,
-        float velocitySmoothing,
+        float accelerationTimeSeconds,
         float waypointRadius,
         float formationCohesionWeight,
         float congestionSpeedFloor,
         int stuckTicksBeforeRepath,
         float stuckDisplacementPerTick,
-        int stuckRepathCooldown) {
+        int stuckRepathCooldown,
+        int blockedTicksBeforeRepath) {
 
     /** Factor on the sum of two radii at which units start to push each other apart. */
     public static final float DEFAULT_SEPARATION_RADIUS_SCALE = 1f;
@@ -61,8 +67,14 @@ public record SteeringSettings(
     public static final float DEFAULT_ARRIVAL_SPEED_FLOOR = 0.25f;
     /** Hard cap on the steering vector, as a multiple of the unit speed. */
     public static final float DEFAULT_MAX_SPEED_MULTIPLIER = 1.35f;
-    /** Fraction of the desired velocity adopted per tick. */
-    public static final float DEFAULT_VELOCITY_SMOOTHING = 0.5f;
+    /**
+     * Seconds from standstill to cruise speed.
+     *
+     * <p>Deliberately short, so the acceleration is large and the ramp reads as a kick rather than as
+     * sluggishness: about a third of a second of speed up, mirrored by the brake into the destination,
+     * is enough to see the phases without making a march feel heavy.
+     */
+    public static final float DEFAULT_ACCELERATION_TIME_SECONDS = 0.35f;
     /** Distance at which a waypoint counts as reached. */
     public static final float DEFAULT_WAYPOINT_RADIUS = 0.35f;
     /** Strength of the pull towards formation neighbours while a unit is blocked. */
@@ -81,6 +93,14 @@ public record SteeringSettings(
     public static final float DEFAULT_STUCK_DISPLACEMENT_PER_TICK = 0.02f;
     /** Ticks a stuck unit waits before it may re-plan its route. */
     public static final int DEFAULT_STUCK_REPATH_COOLDOWN = 30;
+    /**
+     * Consecutive blocked probes after which a unit re-plans at once.
+     *
+     * <p>Eight ticks is a few tenths of a second: long enough that a unit brushing a wall corner for one
+     * tick does not throw its route away, short enough that a unit pressed against a building detours
+     * well before the displacement based stuck threshold would fire.
+     */
+    public static final int DEFAULT_BLOCKED_TICKS_BEFORE_REPATH = 8;
 
     /**
      * Validates the settings; a value that would make the steering unusable is rejected here instead of
@@ -97,9 +117,7 @@ public record SteeringSettings(
         if (maxSpeedMultiplier < 1f) {
             throw new IllegalArgumentException("maxSpeedMultiplier must be at least 1, was " + maxSpeedMultiplier);
         }
-        if (velocitySmoothing <= 0f || velocitySmoothing > 1f) {
-            throw new IllegalArgumentException("velocitySmoothing must be in (0, 1], was " + velocitySmoothing);
-        }
+        requirePositive(accelerationTimeSeconds, "accelerationTimeSeconds");
         requirePositive(waypointRadius, "waypointRadius");
         if (formationCohesionWeight < 0f) {
             throw new IllegalArgumentException("formationCohesionWeight must not be negative, was "
@@ -115,6 +133,10 @@ public record SteeringSettings(
         if (stuckRepathCooldown < 0) {
             throw new IllegalArgumentException("stuckRepathCooldown must not be negative, was " + stuckRepathCooldown);
         }
+        if (blockedTicksBeforeRepath < 1) {
+            throw new IllegalArgumentException("blockedTicksBeforeRepath must be positive, was "
+                    + blockedTicksBeforeRepath);
+        }
     }
 
     /** Balanced settings for ground units of roughly one third of a tile in radius. */
@@ -126,36 +148,46 @@ public record SteeringSettings(
                 DEFAULT_ARRIVAL_SLOWDOWN_DISTANCE,
                 DEFAULT_ARRIVAL_SPEED_FLOOR,
                 DEFAULT_MAX_SPEED_MULTIPLIER,
-                DEFAULT_VELOCITY_SMOOTHING,
+                DEFAULT_ACCELERATION_TIME_SECONDS,
                 DEFAULT_WAYPOINT_RADIUS,
                 DEFAULT_FORMATION_COHESION_WEIGHT,
                 DEFAULT_CONGESTION_SPEED_FLOOR,
                 DEFAULT_STUCK_TICKS_BEFORE_REPATH,
                 DEFAULT_STUCK_DISPLACEMENT_PER_TICK,
-                DEFAULT_STUCK_REPATH_COOLDOWN);
+                DEFAULT_STUCK_REPATH_COOLDOWN,
+                DEFAULT_BLOCKED_TICKS_BEFORE_REPATH);
     }
 
     /** Same settings with a different separation radius factor, for tighter or looser crowds. */
     public SteeringSettings withSeparationRadiusScale(float value) {
         return new SteeringSettings(value, separationStrength, separationPressureCap, arrivalSlowdownDistance,
-                arrivalSpeedFloor, maxSpeedMultiplier, velocitySmoothing, waypointRadius, formationCohesionWeight,
-                congestionSpeedFloor, stuckTicksBeforeRepath, stuckDisplacementPerTick, stuckRepathCooldown);
+                arrivalSpeedFloor, maxSpeedMultiplier, accelerationTimeSeconds, waypointRadius,
+                formationCohesionWeight, congestionSpeedFloor, stuckTicksBeforeRepath, stuckDisplacementPerTick,
+                stuckRepathCooldown, blockedTicksBeforeRepath);
     }
 
     /** Same settings with a different cap on the steering vector. */
     public SteeringSettings withMaxSpeedMultiplier(float value) {
         return new SteeringSettings(separationRadiusScale, separationStrength, separationPressureCap,
-                arrivalSlowdownDistance, arrivalSpeedFloor, value, velocitySmoothing, waypointRadius,
-                formationCohesionWeight, congestionSpeedFloor, stuckTicksBeforeRepath, stuckDisplacementPerTick,
-                stuckRepathCooldown);
+                arrivalSlowdownDistance, arrivalSpeedFloor, maxSpeedMultiplier, accelerationTimeSeconds,
+                waypointRadius, formationCohesionWeight, congestionSpeedFloor, stuckTicksBeforeRepath,
+                stuckDisplacementPerTick, stuckRepathCooldown, blockedTicksBeforeRepath);
     }
 
     /** Same settings with a different stuck threshold, handy for tests that must not wait 90 ticks. */
     public SteeringSettings withStuckTicksBeforeRepath(int value) {
         return new SteeringSettings(separationRadiusScale, separationStrength, separationPressureCap,
-                arrivalSlowdownDistance, arrivalSpeedFloor, maxSpeedMultiplier, velocitySmoothing, waypointRadius,
-                formationCohesionWeight, congestionSpeedFloor, value, stuckDisplacementPerTick,
-                stuckRepathCooldown);
+                arrivalSlowdownDistance, arrivalSpeedFloor, maxSpeedMultiplier, accelerationTimeSeconds,
+                waypointRadius, formationCohesionWeight, congestionSpeedFloor, value, stuckDisplacementPerTick,
+                stuckRepathCooldown, blockedTicksBeforeRepath);
+    }
+
+    /** Same settings with a different blocked-probe threshold, for tests that pin the prompt re-plan. */
+    public SteeringSettings withBlockedTicksBeforeRepath(int value) {
+        return new SteeringSettings(separationRadiusScale, separationStrength, separationPressureCap,
+                arrivalSlowdownDistance, arrivalSpeedFloor, maxSpeedMultiplier, accelerationTimeSeconds,
+                waypointRadius, formationCohesionWeight, congestionSpeedFloor, stuckTicksBeforeRepath,
+                stuckDisplacementPerTick, stuckRepathCooldown, value);
     }
 
     private static void requirePositive(float value, String name) {

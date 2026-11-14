@@ -127,6 +127,17 @@ public final class Dimension {
         return buildingTiles.contains(key(tile.x(), tile.y()));
     }
 
+    /**
+     * Whether a living, non-gateway building covers the tile; the movement collision layer's query.
+     *
+     * <p>This is the same predicate the {@link #pathTerrain()} obstacle view applies on top of terrain
+     * passability, exposed so the movement system can keep a unit's body clear of building footprints
+     * even where only its centre tile is walkable. Gateways are never obstacles here either.
+     */
+    public boolean isObstacleTile(int x, int y) {
+        return buildingTiles.contains(key(x, y));
+    }
+
     private static long key(int x, int y) {
         return ((long) x << 32) ^ (y & 0xFFFFFFFFL);
     }
@@ -238,8 +249,9 @@ public final class Dimension {
     /**
      * The tile a building's units enter and leave through.
      *
-     * <p>The content layout names a <em>preferred</em> tile just outside the east side
-     * ({@link Building#entranceTile()}). It is free in the ordinary case. When a later building stands on
+     * <p>The content layout names a <em>preferred</em> tile just outside the south side, half the width
+     * across ({@link Building#entranceTile()}). It is free in the ordinary case. When a later building
+     * stands on
      * it - which is exactly what a legal flush placement can do - the entrance is moved to the nearest
      * free tile of the footprint's one-tile approach ring, in a fixed row-major scan with ties broken by
      * that order. The result is deterministic and always a passable tile not covered by a living

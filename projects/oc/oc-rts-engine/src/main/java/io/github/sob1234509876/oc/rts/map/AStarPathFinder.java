@@ -127,11 +127,11 @@ public final class AStarPathFinder implements PathFinder {
         float bestScore = Float.MAX_VALUE;
         float cheapest = minimumMoveCost();
         for (GridPos candidate : goal.neighbors8()) {
-            TerrainType terrain = map.terrainAt(candidate.x(), candidate.y());
-            if (!terrain.passable()) {
+            if (!map.isPassable(candidate)) {
                 continue;
             }
-            float score = candidate.chebyshevDistance(goal) * cheapest + terrain.moveCost() * 0.5f;
+            float score = candidate.chebyshevDistance(goal) * cheapest
+                    + map.terrainAt(candidate.x(), candidate.y()).moveCost() * 0.5f;
             if (score < bestScore || score == bestScore && best != null && candidate.compareTo(best) < 0) {
                 bestScore = score;
                 best = candidate;
@@ -371,8 +371,8 @@ public final class AStarPathFinder implements PathFinder {
                             continue;
                         }
                         if (!options.allowCornerCutting()
-                                && (!map.terrainAt(current.x + dx, current.y).passable()
-                                        || !map.terrainAt(current.x, current.y + dy).passable())) {
+                                && (!map.isPassable(current.x + dx, current.y)
+                                        || !map.isPassable(current.x, current.y + dy))) {
                             continue;
                         }
                     }
@@ -382,11 +382,13 @@ public final class AStarPathFinder implements PathFinder {
         }
 
         private void consider(Node current, int x, int y) {
-            TerrainType terrain = map.terrainAt(x, y);
-            if (!terrain.passable()) {
+            // The obstacle aware question, not the terrain one: a tile under a living building is a wall
+            // for the search even though its ground is plain grass, so the detour around a footprint is
+            // planned here instead of being left to the movement slide.
+            if (!map.isPassable(x, y)) {
                 return;
             }
-            float step = terrain.moveCost();
+            float step = map.terrainAt(x, y).moveCost();
             if (step <= 0f) {
                 step = 0.0001f;
             }

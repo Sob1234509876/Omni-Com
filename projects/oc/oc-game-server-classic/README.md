@@ -18,7 +18,7 @@ the server serves this world instead of the engine's sample catalogue; remove it
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS |
 | Dependencies | `oc-game-server` for the plugin API and `oc-rts-engine` for the catalogue types; the engine brings `oc-googology` |
-| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (510 checks) |
+| Self check | `./gradlew --offline :projects:oc:oc-game-server-classic:selfcheck` (513 checks) |
 | World content | `oc-classic` |
 | Art | `assets/manifest.json` plus **one PNG per material** under `assets/tiles/` and `assets/entities/` (animated entities are vertical strips) |
 | Help | [03 plugins](../oc-game-server/help/03-plugins.md) and [05 browser endpoint](../oc-game-server/help/05-browser-endpoint.md), in Chinese |
@@ -370,10 +370,10 @@ the same folder unless you know which one sorts first.
 The self check prints one line at the end:
 
 ```text
-classic plugin self check: all 510 checks passed.
+classic plugin self check: all 513 checks passed.
 ```
 
-510 is the sum of twenty-five sections - the classic catalogue and its stat ladders, the armory tier gate,
+513 is the sum of twenty-five sections - the classic catalogue and its stat ladders, the armory tier gate,
 the turret with its upgrade ladder, repair and reclaim, mine and lumber income, the engineer-built
 warehouse, the opening base, the atlas, the world host and snapshot, the hell gate, the enemy outpost and
 AI, determinism, the bot players, the engineer pool and the plugin surface - with the
@@ -411,7 +411,7 @@ known starting position, not a fog-of-war reveal.
 | `src/main/resources/omnicom-plugin.properties` | the descriptor: `id=oc-classic`, `version=1.0`, `main`, `description` |
 | `src/main/resources/assets/manifest.json` | the asset manifest the server merges (relative image paths) |
 | `src/main/resources/assets/tiles/*.png`, `assets/entities/*.png` | one image per terrain and per unit/building kind (vertical frames inside one file) |
-| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 510 check self check program |
+| `src/selfcheck/java/.../classic/check/ClassicCheck.java` | the 513 check self check program |
 | `build.gradle` | the `selfcheck` task and the server check reporter on its class path |
 
 ## Related

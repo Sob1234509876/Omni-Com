@@ -29,6 +29,8 @@ public final class Motion {
     private boolean pathPending;
     private int repathCooldown;
     private int stuckTicks;
+    private int blockedTicks;
+    private boolean combatPaused;
     private float travelledDistance;
     private int formationId;
     private Vec2 formationSlot = Vec2.ZERO;
@@ -46,14 +48,17 @@ public final class Motion {
         this.goal = goal;
         this.arrivalRadius = Math.max(0.05f, arrivalRadius);
         this.arrived = false;
+        this.combatPaused = false;
         clearPath();
         this.stuckTicks = 0;
+        this.blockedTicks = 0;
     }
 
     public void clearGoal() {
         this.goal = null;
         this.arrived = true;
         this.velocity = Vec2.ZERO;
+        this.combatPaused = false;
         clearPath();
     }
 
@@ -84,8 +89,10 @@ public final class Motion {
     public void markArrived() {
         this.arrived = true;
         this.velocity = Vec2.ZERO;
+        this.combatPaused = false;
         clearPath();
         this.stuckTicks = 0;
+        this.blockedTicks = 0;
     }
 
     /** True while the unit still has somewhere to go. */
@@ -190,6 +197,40 @@ public final class Motion {
 
     public void resetStuckTicks() {
         stuckTicks = 0;
+    }
+
+    /**
+     * Consecutive ticks whose next step towards the steering target was blocked by an obstacle.
+     *
+     * <p>The movement system counts them separately from the {@link #stuckTicks()}: a unit that grinds
+     * against a wall may still slide a little, so the displacement based counter never fills, while the
+     * blocked probe fires within a few ticks and makes the unit re-plan around the wall.
+     */
+    public int blockedTicks() {
+        return blockedTicks;
+    }
+
+    public void addBlockedTick() {
+        blockedTicks++;
+    }
+
+    public void resetBlockedTicks() {
+        blockedTicks = 0;
+    }
+
+    /**
+     * Whether combat has taken over this unit: an enemy is in range and the unit stands still to fight,
+     * while its orders and its movement goal wait unchanged for the fight to end. The movement system
+     * honours the pause by not steering, not consuming waypoints and not declaring arrival; the combat
+     * system clears it as soon as no enemy is in reach any more. Setting a new goal or clearing the goal
+     * clears the pause, so a stop or a fresh order always releases a fighting unit.
+     */
+    public boolean isCombatPaused() {
+        return combatPaused;
+    }
+
+    public void setCombatPaused(boolean combatPaused) {
+        this.combatPaused = combatPaused;
     }
 
     /** Total distance this unit has travelled, for statistics and tests. */
