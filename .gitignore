@@ -51,3 +51,6 @@ data/
 
 ### ZCode session state ###
 .zcode/
+
+### Python bytecode ###
+__pycache__/

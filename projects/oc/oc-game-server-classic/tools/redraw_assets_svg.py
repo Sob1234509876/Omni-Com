@@ -651,16 +651,26 @@ def redraw_unit(key: str, path: Path, frames: int, tile_pixels: int) -> None:
 
 
 # --------------------------------------------------------------------------
-# Buildings: port of drawBuildingShape on a 32x32 canvas (tilePixels 16)
+# Buildings: port of drawBuildingShape on a 32x32 canvas (tilePixels 16).
+# The manifest anchors buildings at [0.5, 0.5] — the server positions them by
+# their footprint centre — so every composition is geometrically centred on
+# the sheet's centre (16, 16): equal top/bottom margin around the body bbox.
 # --------------------------------------------------------------------------
+def centred_ground(body_height: float) -> float:
+    """Vertical base line that centres a body of ``body_height`` px (measured
+    from its base up to its highest drawn point) on the 32x32 sheet centre."""
+    return 16.0 + body_height / 2.0
+
+
 def building_frame(cv: SvgCanvas, roof: str, tier: int = 1, width_factor: float = 1.0,
                    windows: bool = True, chimney: bool = False) -> None:
     tp = 16.0
     cx = tp  # 32 px canvas, horizontal centre
-    ground = tp * 1.8  # anchor y = 0.9 * 32
     s = 1.0 + 0.06 * (tier - 1)
     width = tp * 1.5 * s * width_factor
     height = tp * 0.95 * s
+    body_height = height + tp * 0.34 * s  # wall base up to the roof peak
+    ground = centred_ground(body_height)
     left = cx - width / 2
     bottom = ground
     wall_top = bottom - height
@@ -701,10 +711,11 @@ def turret_frame(cv: SvgCanvas, tier: int) -> None:
     """Watchtower: stone base, gray-blue round turret tower on top."""
     tp = 16.0
     cx = tp
-    ground = tp * 1.8
     s = 1.0 + 0.06 * (tier - 1)
     width = tp * 1.5 * 0.62 * s
     height = tp * 0.95 * s
+    # base block up to the top of the drum (shaft rise + drum radius)
+    ground = centred_ground(height + tp * (0.22 + 0.3) * s)
     left = cx - width / 2
     wall_top = ground - height
 
@@ -735,9 +746,9 @@ def hell_gate_frame(cv: SvgCanvas) -> None:
     """Stone gate frame with a glowing orange portal opening instead of a door."""
     tp = 16.0
     cx = tp
-    ground = tp * 1.8
     width = tp * 1.5
     height = tp * 0.95
+    ground = centred_ground(height + 2.2)  # 2.2 = merlon rise above the wall top
     left = cx - width / 2
     wall_top = ground - height
 
