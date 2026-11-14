@@ -891,7 +891,11 @@ public final class GoogologyCheck {
     /**
      * {@link Natural#divide(Natural)} and {@link Natural#remainder(Natural)}: exact where both sides are
      * exact, height arithmetic for the single-arrow towers, the documented collapses above that, and no
-     * remainder where the notation cannot know one.
+     * remainder where the notation cannot know one. The structural-division family is exact as well: a
+     * power over its own base divides by exact exponent arithmetic ({@code (x^k)/x = x^(k-1)}), reachable
+     * because the structural-base comparison rule proves the dividend the larger value. A coefficient
+     * times a tower is not representable ({@code multiply} collapses it), so the {@code (x·k)/x} case has
+     * no pin.
      */
     private static void division() {
         section("16) 除法与余数");
@@ -954,6 +958,37 @@ public final class GoogologyCheck {
         check("相等结构形的商为一、余数为零", tower.divide(Natural.arrow(Natural.TEN, 2, Natural.TEN)).isOne()
                 && tower.remainder(Natural.arrow(Natural.TEN, 2, Natural.TEN)).orElseThrow().isZero());
         check("塔除以更大的塔给零", tower.divide(Natural.tetration(Natural.TEN, Natural.of(11))).isZero());
+        Natural powered = Natural.power(tower, Natural.TEN);
+        check("总序认得塔底的幂：(10↑↑10)^10 > 10↑↑10（结构底锚规则给出证明，曾是错误的零商的根源）",
+                powered.compareTo(tower) > 0
+                        && powered.compareMagnitude(tower) == ComparisonResult.GREATER);
+        check("结构除法主案例：(10↑↑10)^10 / (10↑↑10) = (10↑↑10)^9（精确结构商，不再给零）",
+                powered.divide(tower).equals(Natural.power(tower, Natural.of(9))));
+        Natural midTower = Natural.tetration(Natural.TEN, Natural.of(4));
+        check("(x^k)/x 同族：(10↑↑4)^10 / (10↑↑4) = (10↑↑4)^9",
+                Natural.power(midTower, Natural.of(10)).divide(midTower)
+                        .equals(Natural.power(midTower, Natural.of(9))));
+        check("(x^k)/x^m 按指数精确相减：(10↑↑4)^10 / (10↑↑4)^3 = (10↑↑4)^7，指数反向则给零",
+                Natural.power(midTower, Natural.of(10)).divide(Natural.power(midTower, Natural.of(3)))
+                        .equals(Natural.power(midTower, Natural.of(7)))
+                        && Natural.power(midTower, Natural.of(3)).divide(Natural.power(midTower, Natural.of(10)))
+                                .isZero());
+        check("被除数确实更小时给零（旧判定保持）：(10↑↑3)^10 / (10↑↑10) = 0",
+                Natural.power(Natural.tetration(Natural.TEN, Natural.of(3)), Natural.of(10))
+                        .divide(tower).isZero());
+        check("同塔不同高走坍缩通道：10↑↑5 / 10↑↑3 仍是 10↑↑5（真值 10^(10↑↑4 − 10^10) 写不出来，同 subtractClamped）",
+                Natural.tetration(Natural.TEN, Natural.of(5)).divide(Natural.tetration(Natural.TEN, Natural.of(3)))
+                        .equals(Natural.tetration(Natural.TEN, Natural.of(5))));
+        check("除数恰为底或底的精确幂：10^5000 / 10 = 10^4999、10^5000 / 1000 = 10^4997（精确恒等式而非凑整）",
+                Natural.power(Natural.TEN, Natural.of(5000)).divide(Natural.TEN)
+                        .equals(Natural.power(Natural.TEN, Natural.of(4999)))
+                        && Natural.power(Natural.TEN, Natural.of(5000)).divide(Natural.of(1000))
+                                .equals(Natural.power(Natural.TEN, Natural.of(4997))));
+        check("近平局的跨底相除落在真下取整上：3^3155 / 2^5000 = 1（真值 ≈ 1.47）、2^5000 / 3^3156 = 0（真值 ≈ 0.23）",
+                Natural.power(Natural.of(3), Natural.of(3155)).divide(Natural.power(Natural.TWO, Natural.of(5000)))
+                        .isOne()
+                        && Natural.power(Natural.TWO, Natural.of(5000))
+                                .divide(Natural.power(Natural.of(3), Natural.of(3156))).isZero());
         check("BEYOND 饱和：BEYOND 除以任何数仍是 BEYOND，任何数除以 BEYOND 是零",
                 Natural.BEYOND.divide(Natural.of(7)).isBeyond() && Natural.of(7).divide(Natural.BEYOND).isZero());
         check("BEYOND 的余数不可知；除数更大的余数是被除数",

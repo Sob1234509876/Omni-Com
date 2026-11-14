@@ -639,11 +639,12 @@ public final class Natural implements NaturalNumber {
      *
      * <p>The rules, in order: identical reduced forms are equal; two exact values compare as integers; a
      * truncated comparison decides a pair when one side is exact (and therefore below
-     * {@code 2^EXACT_BIT_LIMIT}) and the other is provably at least that large; and two towers over the
+     * {@code 2^EXACT_BIT_LIMIT}) and the other is provably at least that large; two towers over the
      * same base whose levels are both finite are decided by known monotonicity (the same level compares
-     * heights, a higher level wins when it can pay for the difference out of its own height). Everything
-     * else is {@code UNKNOWN}; the truncated evaluation never claims equality, because both sides reaching
-     * the threshold only means that both are huge.
+     * heights, a higher level wins when it can pay for the difference out of its own height); and the
+     * structural-base rule decides a tower against an opponent that does not exceed the tower's own base.
+     * Everything else is {@code UNKNOWN}; the truncated evaluation never claims equality, because both
+     * sides reaching the threshold only means that both are huge.
      *
      * @see #compareTo(Natural)
      */
@@ -708,6 +709,10 @@ public final class Natural implements NaturalNumber {
         ComparisonResult byLevels = compareSameBaseFiniteLevels(left, right, budget, depth);
         if (byLevels.isDecided()) {
             return byLevels;
+        }
+        ComparisonResult byBaseAnchor = compareBaseAnchored(left, right, budget, depth);
+        if (byBaseAnchor.isDecided()) {
+            return byBaseAnchor;
         }
         ComparisonResult byTransfiniteFloor = compareTransfiniteFloor(left, right, budget, depth);
         if (byTransfiniteFloor.isDecided()) {
@@ -920,6 +925,47 @@ public final class Natural implements NaturalNumber {
                 higher.height.subtractClamped(ONE));
         if (inner.compareMagnitude(lower.height, budget, depth - 1) == ComparisonResult.GREATER) {
             return leftArrows > rightArrows ? ComparisonResult.GREATER : ComparisonResult.LESS;
+        }
+        return ComparisonResult.UNKNOWN;
+    }
+
+    /**
+     * The structural-base rule: a tower is at least the square of its own base, so an opponent that does
+     * not exceed the base itself has already lost.
+     *
+     * <p>Every structural tower {@code B ↑^a h} built here has height at least two (smaller heights fold
+     * away at construction) and at least one arrow, so {@code B ↑^a h >= B^2} - at one arrow it is
+     * {@code B} to a power of at least two, above that it is at least {@code B ↑↑ 2 = B^B}. An opponent
+     * proved to be at most {@code B} therefore sits strictly below the tower, and the comparison of the
+     * opponent against the base is a strictly smaller question that recursion answers one level down.
+     *
+     * <p>This is what decides {@code (10↑↑10)^10 > 10↑↑10} and its whole division family
+     * ({@code (x^k)/x} among them): the dividend is a one-arrow tower <em>over the tower</em>
+     * {@code 10↑↑10}, so its hyperoperation rank is only exponentiation and the rank-first fallback of the
+     * total order would call it the smaller value - which the base anchor proves false before the
+     * fallback is reached. Finite levels only: a transfinite level has no cheap square bound, and the
+     * level rules handle those pairs.
+     */
+    private static ComparisonResult compareBaseAnchored(Natural left, Natural right, int budget, int depth) {
+        if (depth <= 0) {
+            return ComparisonResult.UNKNOWN;
+        }
+        ComparisonResult asLeft = baseAnchoredBeats(left, right, budget, depth);
+        if (asLeft.isDecided()) {
+            return asLeft;
+        }
+        return baseAnchoredBeats(right, left, budget, depth).reversed();
+    }
+
+    /** One direction of {@link #compareBaseAnchored}: the tower wins when the opponent fits under its base. */
+    private static ComparisonResult baseAnchoredBeats(Natural tower, Natural other, int budget, int depth) {
+        if (tower.kind != Kind.TOWER || tower.finiteLevel == null
+                || tower.height.compareTo(TWO) < 0) {
+            return ComparisonResult.UNKNOWN;
+        }
+        ComparisonResult under = other.compareMagnitude(tower.base, budget, depth - 1);
+        if (under == ComparisonResult.LESS || under == ComparisonResult.EQUAL) {
+            return ComparisonResult.GREATER;
         }
         return ComparisonResult.UNKNOWN;
     }
@@ -1142,9 +1188,12 @@ public final class Natural implements NaturalNumber {
      *
      * <ul>
      *   <li>a <b>single-arrow</b> dividend is divided by height arithmetic: the same base subtracts the
-     *       heights exactly ({@code 10^a / 10^b = 10^(a-b)} is an identity), and another base or a small
-     *       exact divisor rounds the quotient's base ten magnitude ({@code 10^5000 / 7} is {@code 10^4999},
-     *       the true magnitude being {@code 10^4999.15});</li>
+     *       heights exactly ({@code 10^a / 10^b = 10^(a-b)} is an identity), a divisor equal to the base
+     *       itself lowers the exponent by one exactly ({@code c^h / c = c^(h-1)}, structural bases
+     *       included - {@code ((10^^10)^10) / (10^^10)} is exactly {@code (10^^10)^9}), an exact divisor
+     *       that is an exact power of the base lowers it by that power's exponent, and another base or a
+     *       small exact divisor rounds the quotient's base ten magnitude ({@code 10^5000 / 7} is
+     *       {@code 10^4999}, the true magnitude being {@code 10^4999.15});</li>
      *   <li>a dividend of <b>two arrows and up</b> follows the resolution rule of
      *       {@link #subtractClamped(Natural)}: dividing by anything smaller leaves the magnitude
      *       unchanged, because the difference sits in the digits the notation does not keep.</li>
@@ -1183,6 +1232,22 @@ public final class Natural implements NaturalNumber {
                     && base.equals(other.base)) {
                 // c^a / c^b = c^(a-b) exactly, and comparison > 0 made sure a > b.
                 return arrow(base, 1, height.subtractClamped(other.height));
+            }
+            if (other.equals(base)) {
+                // c^h / c = c^(h-1) exactly - the anchor of the structural-division family: the dividend
+                // is a power over the divisor itself, so the exponent simply loses one. This is what keeps
+                // ((10^^10)^10) / (10^^10) the exact (10^^10)^9 instead of collapsing onto the dividend.
+                // height >= 2 on every structural tower, and comparison > 0 proved the dividend larger.
+                return arrow(base, 1, height.subtractClamped(ONE));
+            }
+            if (other.isExact() && base.isExact()) {
+                // c^h / c^m = c^(h-m) exactly when the divisor is an exact power of the base: the same
+                // identity as the same-base tower path, with the exponent recovered by the guarded search.
+                // An exact divisor caps m well below a structural height, so the subtraction stays sound.
+                long exponent = exactFloorLog(other.value, base.value);
+                if (base.value.pow((int) exponent).equals(other.value)) {
+                    return arrow(base, 1, height.subtractClamped(of(exponent)));
+                }
             }
             Optional<Natural> byMagnitude = quotientByMagnitude(other);
             if (byMagnitude.isPresent()) {
@@ -1519,8 +1584,11 @@ public final class Natural implements NaturalNumber {
     /**
      * Ordering by magnitude. Exact values are compared as integers; a structural value is greater than
      * every exact value (it can only exist above the exact range, unless it was built by
-     * {@link #tower(Natural, Ordinal, Natural)} without walking a limit level) and towers are compared by
-     * level first, then base, then height.
+     * {@link #tower(Natural, Ordinal, Natural)} without walking a limit level) and two towers are decided
+     * by every proof {@link #compareMagnitude(Natural)} can give before they fall back to the
+     * level-first-then-base-then-height order - the fallback alone would misorder a tower whose base is
+     * itself a tower, such as {@code (10↑↑10)^10}, whose rank is that of a mere exponentiation while its
+     * value dwarfs {@code 10↑↑10}.
      *
      * <p>Levels follow the ordinals: a finite level is below every transfinite level, and among transfinite
      * levels the ordinals decide - but each level is <em>reduced at the value's own height</em> first
@@ -1549,7 +1617,16 @@ public final class Natural implements NaturalNumber {
         return compareReduced(reduceForComparison(), other.reduceForComparison());
     }
 
-    /** {@link #compareTo(Natural)} on values that have already been through {@link #reduceForComparison()}. */
+    /**
+     * {@link #compareTo(Natural)} on values that have already been through {@link #reduceForComparison()}.
+     *
+     * <p>Two towers are first offered to the proof channels of {@link #compareMagnitude(Natural)}: every
+     * proof it returns is a true magnitude statement, so taking it can only correct the answer. This
+     * matters whenever a tower's base is itself a tower - {@code (10↑↑10)^10} has the rank of a mere
+     * exponentiation, and the rank-first fallback below would call it smaller than {@code 10↑↑10}, which
+     * the base anchor proves false. What survives unproven keeps the documented level-base-height order,
+     * which stays a deterministic total order by construction.
+     */
     private static int compareReduced(Natural left, Natural right) {
         if (left.kind == Kind.EXACT && right.kind == Kind.EXACT) {
             return left.value.compareTo(right.value);
@@ -1559,6 +1636,10 @@ public final class Natural implements NaturalNumber {
         }
         if (right.kind == Kind.EXACT) {
             return 1;
+        }
+        ComparisonResult proof = left.compareMagnitude(right);
+        if (proof.isProof()) {
+            return proof.signum();
         }
         int byRank = left.comparisonRank().compareTo(right.comparisonRank());
         if (byRank != 0) {
