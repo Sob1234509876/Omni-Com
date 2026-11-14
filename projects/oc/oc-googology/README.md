@@ -16,7 +16,7 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (843 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (850 checks, no test framework, no network) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
@@ -651,7 +651,7 @@ help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
 help/inaccessible-extension.md    the Chinese guide to the stage-five inaccessible extension
-src/selfcheck/java/.../check/GoogologyCheck.java    the 843 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 850 check self check program
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)
@@ -673,7 +673,10 @@ one-shot queries, and `quit` or the end of input exits. The grammar is forgiving
 crashes - bad input comes back as an error line.
 
 - natural expressions: `+ - * / mod` at the usual precedence, `^ ^^ ↑ ↑↑ ...` right associative on top,
-  atoms per `Natural.parse` (`1e100`, `beyond`);
+  `(...)` groups that nest arbitrarily and override every precedence, atoms per `Natural.parse`
+  (`1e100`, `beyond`); every expression argument slot (`cmp`, `log`, `slog`, `root`, `hyperinv`, `rank`,
+  and the `hyp` base and height) takes the same grammar, with the group's inner spaces kept together -
+  the `hyp` level slot stays a matrix token;
 - `cmp a b` - the total order, the four-valued proof (or `UNKNOWN`) and the lean;
 - `log base x`, `slog base x`, `root d x`, `hyperinv arrows base x` - the level-resolved inverses;
 - `hyp base level height` - `base{level}height` through `TransfiniteHyperoperation`, the level written as

@@ -26,8 +26,10 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>a <b>natural expression</b>: {@code + - * / mod} at the usual precedence, and the arrow family
- *       {@code ^, ^^, ↑, ↑↑, ...} right associative on top ({@code 2^3^2} is {@code 2^(3^2)}); atoms are
- *       whatever {@link Natural#parse(String)} reads - decimal digits, {@code 1e100}, {@code beyond};</li>
+ *       {@code ^, ^^, ↑, ↑↑, ...} right associative on top ({@code 2^3^2} is {@code 2^(3^2)}); a
+ *       parenthesized group {@code ( ... )} nests arbitrarily and overrides every operator precedence;
+ *       atoms are whatever {@link Natural#parse(String)} reads - decimal digits, {@code 1e100},
+ *       {@code beyond};</li>
  *   <li>{@code cmp a b} - the three comparison channels: the total order's sign, the four-valued proof
  *       (or {@code UNKNOWN}), and the documented lean;</li>
  *   <li>{@code log base x}, {@code slog base x}, {@code root d x}, {@code hyperinv arrows base x} - the
@@ -45,9 +47,10 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p><b>Forgiving by design.</b> Whitespace is optional around operators, every bad input produces a
- * message naming what went wrong, and no command mutates anything except the output format. Ordinal
- * arguments are single whitespace-delimited tokens: the parentheses of the matrix writing are not grouped
- * expressions, which keeps the two grammars from ever colliding.
+ * message naming what went wrong, and no command mutates anything except the output format. Every
+ * expression argument slot splits at whitespace outside parentheses, so {@code cmp (2 + 3) 6} keeps the
+ * group as one argument; ordinal arguments stay single whitespace-delimited tokens: the parentheses of
+ * the matrix writing are not grouped expressions, which keeps the two grammars from ever colliding.
  *
  * @see Calc
  * @since 2.0a
@@ -63,10 +66,11 @@ public final class CalcEngine {
     }
 
     /**
-     * Splits an expression into atoms and operators: runs of carets, runs of up arrows, the four written
-     * operators and {@code mod}. Kept as one pattern so the tokenizer and its arrow counting stay together.
+     * Splits an expression into atoms, operators and parentheses: runs of carets, runs of up arrows, the
+     * four written operators, {@code mod} and the two grouping brackets. Kept as one pattern so the
+     * tokenizer and its arrow counting stay together.
      */
-    private static final Pattern OPERATOR = Pattern.compile("(\\^+|↑+|\\+|\\*|/|mod|-)");
+    private static final Pattern OPERATOR = Pattern.compile("(\\^+|↑+|\\+|\\*|/|mod|\\(|\\)|-)");
 
     private static final List<String> COMMANDS = List.of(
             "<表达式>", "cmp a b", "log base x", "slog base x", "root d x", "hyperinv arrows base x",
@@ -159,7 +163,7 @@ public final class CalcEngine {
 
     private static String help() {
         StringBuilder text = new StringBuilder();
-        text.append("调试用大数计算器。表达式：+ - * / mod，幂与箭头 ^ ^^ ↑ ↑↑ …（右结合），1e100、beyond。命令：");
+        text.append("调试用大数计算器。表达式：+ - * / mod，幂与箭头 ^ ^^ ↑ ↑↑ …（右结合），括号 ( … ) 覆盖优先级，1e100、beyond。命令：");
         for (String command : COMMANDS) {
             text.append("\n  ").append(command);
         }
@@ -194,11 +198,13 @@ public final class CalcEngine {
     // ------------------------------------------------------------------ natural expressions
 
     /**
-     * Evaluates a natural expression: tokens the line into atoms and operators and runs the precedence
-     * climb from {@code + -} over {@code * / mod} to the arrows. Right associativity on the arrow level
-     * is what makes {@code 2^3^2} read as {@code 2^(3^2)}.
+     * Evaluates a natural expression: tokens the line into atoms, operators and parentheses and runs the
+     * precedence climb from {@code + -} over {@code * / mod} to the arrows, with {@code ( ... )} groups
+     * restarting the climb at the top. Right associativity on the arrow level is what makes {@code 2^3^2}
+     * read as {@code 2^(3^2)}.
      *
-     * @throws CalcError when any atom is not something {@link Natural#parse(String)} understands
+     * @throws CalcError when any atom is not something {@link Natural#parse(String)} understands or the
+     *         parentheses do not balance
      */
     public Natural evalNatural(String text) {
         List<String> tokens = tokenize(text);
@@ -208,7 +214,9 @@ public final class CalcEngine {
         Parser parser = new Parser(tokens);
         Natural value = parser.parseSum();
         if (!parser.done()) {
-            throw new CalcError("表达式没读完，多余的部分从 " + parser.peek() + " 开始：" + text);
+            throw new CalcError(parser.peek().equals(")")
+                    ? "括号不匹配：多余的 )：" + text
+                    : "表达式没读完，多余的部分从 " + parser.peek() + " 开始：" + text);
         }
         return value;
     }
@@ -300,9 +308,20 @@ public final class CalcEngine {
 
         private Natural parseAtom() {
             String token = next();
+            if (token.equals("(")) {
+                Natural value = parseSum();
+                if (!peek().equals(")")) {
+                    throw new CalcError("括号不匹配：( 之后缺少 )");
+                }
+                next();
+                return value;
+            }
+            if (token.equals(")")) {
+                throw new CalcError("括号不匹配：出现了没有开始括号的 )");
+            }
             Optional<Natural> parsed = Natural.parse(token);
             if (parsed.isEmpty()) {
-                throw new CalcError("无法解析 " + token + "（数字、1e100、beyond 或运算符）");
+                throw new CalcError("无法解析 " + token + "（数字、1e100、beyond、括号或运算符）");
             }
             return parsed.get();
         }
@@ -326,7 +345,7 @@ public final class CalcEngine {
         return evalNatural(text);
     }
 
-    /** Splits the rest of a two-argument command at the first whitespace run. */
+    /** Splits the rest of a two-argument command at the first whitespace run outside parentheses. */
     private static String[] twoArguments(String rest, String command) {
         int split = splitIndex(rest);
         if (split < 0) {
@@ -335,13 +354,50 @@ public final class CalcEngine {
         return new String[]{rest.substring(0, split).trim(), rest.substring(split).trim()};
     }
 
+    /** The first whitespace at paren depth zero: a {@code ( ... )} group keeps its inner spaces. */
     private static int splitIndex(String rest) {
+        int depth = 0;
         for (int index = 0; index < rest.length(); index++) {
-            if (Character.isWhitespace(rest.charAt(index))) {
+            char current = rest.charAt(index);
+            if (current == '(') {
+                depth++;
+            } else if (current == ')') {
+                depth = Math.max(0, depth - 1);
+            } else if (depth == 0 && Character.isWhitespace(current)) {
                 return index;
             }
         }
         return -1;
+    }
+
+    /**
+     * Splits the rest of a command into argument tokens at depth-zero whitespace runs, so a parenthesized
+     * expression stays one argument while the matrix writing {@code (0)(1)} still comes out as one token.
+     */
+    private static List<String> depthTokens(String rest) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder token = new StringBuilder();
+        int depth = 0;
+        for (int index = 0; index < rest.length(); index++) {
+            char current = rest.charAt(index);
+            if (current == '(') {
+                depth++;
+            } else if (current == ')') {
+                depth = Math.max(0, depth - 1);
+            }
+            if (depth == 0 && Character.isWhitespace(current)) {
+                if (token.length() > 0) {
+                    tokens.add(token.toString());
+                    token.setLength(0);
+                }
+            } else {
+                token.append(current);
+            }
+        }
+        if (token.length() > 0) {
+            tokens.add(token.toString());
+        }
+        return tokens;
     }
 
     // ------------------------------------------------------------------ comparison and inverses
@@ -396,7 +452,7 @@ public final class CalcEngine {
     }
 
     private String hyperInverse(String rest) {
-        List<String> arguments = List.of(rest.trim().split("\\s+"));
+        List<String> arguments = depthTokens(rest);
         if (arguments.size() != 3) {
             throw new CalcError("hyperinv 需要三个参数：arrows base value");
         }
@@ -418,7 +474,7 @@ public final class CalcEngine {
     // ------------------------------------------------------------------ transfinite levels
 
     private String hyperoperation(String rest) {
-        List<String> arguments = List.of(rest.trim().split("\\s+"));
+        List<String> arguments = depthTokens(rest);
         if (arguments.size() != 3) {
             throw new CalcError("hyp 需要三个参数：base level height（级别写 BMS 矩阵或数字）");
         }

@@ -1235,6 +1235,23 @@ public final class GoogologyCheck {
         check("ordseq：ε₀ 的基本列错开一位（ε₀[0] = 1、ε₀[2] = ω^ω）",
                 engine.execute("ordseq (0)(1,1) 4").contains("ω^ω^ω"));
 
+        equal("括号覆盖优先级：(2+3)^2", Natural.of(25), engine.evalNatural("(2+3)^2"));
+        equal("括号任意嵌套并与全部运算符组合：((2^3)^2)+(10/(2+3))", Natural.of(66),
+                engine.evalNatural("((2^3)^2)+(10/(2+3))"));
+        check("括号不改变无括号时的优先级：(2^10)+8 与 2^10+8 相等",
+                engine.evalNatural("(2^10)+8").equals(engine.evalNatural("2^10+8")));
+        check("cmp 的参数槽接受括号表达式：(2^10)^(2^10) > 1e9",
+                engine.execute("cmp (2^10)^(2^10) 1e9").contains("GREATER"));
+        check("cmp 的参数槽里括号内的空格不分家：(2 + 3) < 6",
+                engine.execute("cmp (2 + 3) 6").contains("LESS"));
+        check("log 与 hyp 的表达式参数槽接受括号：log_2((2^64)) = 64、hyp 2 (0)(1) (3) 仍是 ω 级别的 16",
+                engine.execute("log 2 (2^64)").contains("64")
+                        && engine.execute("hyp 2 (0)(1) (3)").contains("级别：ω"));
+        check("括号不平衡给错误信息：(2+3 缺右括号、2+3) 多右括号、出现孤立的 )",
+                engine.execute("(2+3").startsWith("错误：") && engine.execute("(2+3").contains("括号不匹配")
+                        && engine.execute("2+3)").contains("括号不匹配")
+                        && engine.execute("2+)*3").contains("括号不匹配"));
+
         check("format latex 切换后，幂用 LaTeX 上标输出",
                 engine.execute("format latex").contains("latex")
                         && engine.execute("10^5000").contains("10^{5000}"));
