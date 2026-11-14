@@ -33,7 +33,6 @@ import {
 import {
   MAX_MOVE_POINTS,
   assist,
-  build,
   buildPlacementBatch,
   orderAttack,
   orderAttackMove,
@@ -364,7 +363,6 @@ const togglePathsButton = required<HTMLButtonElement>("#toggle-paths");
 const followButton = required<HTMLButtonElement>("#follow-button");
 const buildingActionsSection = required<HTMLElement>("#building-actions-section");
 const buildingActionsTarget = required<HTMLSpanElement>("#building-actions-target");
-const continueBuildButton = required<HTMLButtonElement>("#continue-build-button");
 const repairButton = required<HTMLButtonElement>("#repair-button");
 const reclaimButton = required<HTMLButtonElement>("#reclaim-button");
 
@@ -3479,7 +3477,7 @@ function updateGameplayPanel(): void {
   );
   // The train menu comes from the building row's `trains` (content-driven); rebuild the buttons when
   // the menu itself changes, then refresh affordability per frame from the local player's row.
-  const menu = trainMenu(trainBuilding, myPlayerRow(), contentLabel);
+  const menu = trainMenu(trainBuilding, myPlayerRow());
   rebuildTrainButtons(menu);
   const trainAffordable = menu.every((entry) => entry.affordable);
   for (const button of trainButtons) {
@@ -3496,10 +3494,12 @@ function updateGameplayPanel(): void {
       .map((action) => action.path ?? "")
       .filter((path) => path !== ""),
   );
-  // The BUILD rail: while the build section is visible the page reserves its right-edge column and
-  // shifts the chrome over (see .build-rail / body.build-rail-open in the stylesheet); closed, the
-  // canvas keeps the whole window and the bottom context zone behaves exactly as before.
-  document.body.classList.toggle("build-rail-open", showBuild);
+  // The BUILD rail: while a build (engineer) or train (producing building) section is visible the page
+  // reserves its right-edge column and shifts the chrome over (see .build-rail / body.build-rail-open
+  // in the stylesheet); closed, the canvas keeps the whole window and the bottom context zone behaves
+  // exactly as before. BUILD and TRAIN are different selection types, so the two sections swap cleanly
+  // inside the same rail and never show together.
+  document.body.classList.toggle("build-rail-open", showBuild || showTrain);
   void renderLatexInto(
     buildTarget,
     showBuild && single !== undefined
@@ -3664,22 +3664,20 @@ function updateGameplayPanel(): void {
     }
   }
 
-  // Building services: 继续建造 / 修理 / 回收 / 调拨. The pure rule decides which entries exist and what
+  // Building services: 修理 / 回收 / 调拨. The pure rule decides which entries exist and what
   // they cost; this half only paints the buttons and keeps the engineer-less case visible but disabled.
+  // Resume-construction is deliberately absent: the ASSIST right-click already covers it.
   const buildingActions = selectedBuildingActions();
   const buildingTarget = selectedBuildingEntity();
   const ownWarehouseSelected =
     single !== undefined && isMine(single) && isWarehouseRow(single);
   const showBuildingActions =
-    (buildingActions !== null
-      && (buildingActions.continueBuild || buildingActions.repair || buildingActions.reclaim))
+    (buildingActions !== null && (buildingActions.repair || buildingActions.reclaim))
     || ownWarehouseSelected;
   buildingActionsSection.hidden = !showBuildingActions;
   if (!showBuildingActions || buildingActions === null) {
-    continueBuildButton.hidden = true;
     repairButton.hidden = true;
     reclaimButton.hidden = true;
-    continueBuildButton.disabled = true;
     repairButton.disabled = true;
     reclaimButton.disabled = true;
     if (ownWarehouseSelected) {
@@ -3699,13 +3697,6 @@ function updateGameplayPanel(): void {
         ? ""
         : `· e${buildingTarget.id} ${contentLabel(buildingTarget.kind)}`,
     );
-    continueBuildButton.hidden = !buildingActions.continueBuild;
-    continueBuildButton.disabled = !(gameplayReady && buildingActions.continueEnabled);
-    continueBuildButton.title =
-      buildingActions.engineerId === null
-        ? t("ctx.continueBuildNoEngineer")
-        : t("ctx.continueBuildTitle", { engineer: buildingActions.engineerId, kind: buildingActions.kind });
-    void renderLatexInto(continueBuildButton, buildingActions.continueLabel ?? t("ctx.continueBuild"));
 
     repairButton.hidden = !buildingActions.repair;
     repairButton.disabled = !(gameplayReady && buildingActions.repairEnabled);
@@ -4027,30 +4018,6 @@ function selectedBuildingEntity(): EntityView | undefined {
     return undefined;
   }
   return singleSelectedEntity();
-}
-
-/**
- * `继续建造`: sends the ordinary `BUILD <engineer> <kind> <originX> <originY>` for a selected half-built
- * site. The engine's join path recognises the unfinished site of the same type and attaches the engineer
- * without a second placement charge.
- */
-function doContinueBuild(): void {
-  const building = singleSelectedEntity();
-  const actions = selectedBuildingActions();
-  if (building === undefined || actions === null || !actions.continueBuild) {
-    refuse(t("refuse.continueBuild"));
-    return;
-  }
-  if (actions.engineerId === null) {
-    refuse(t("refuse.continueBuildNoEngineer"));
-    return;
-  }
-  const origin = entityFootprintOrigin(building);
-  void sendGameplayCommand(
-    "BUILD",
-    build(actions.engineerId, building.kind, origin.x, origin.y),
-    `已让 e${actions.engineerId} 继续建造 e${building.id} ${contentLabel(building.kind)}`,
-  );
 }
 
 /** `修理 (cost)`: sends `REPAIR <engineerId> <buildingId>` for the selected damaged own building. */
@@ -4968,6 +4935,11 @@ let bootstrapFetchInFlight = false;
 function adoptWorldBootstrap(data: WorldBootstrap): void {
   setWorldBootstrap(data);
   registerCatalogueNames(data.content);
+  // The server namespace just changed under buttons that were painted earlier: both rebuilders skip a
+  // same-signature rebuild, so without this pass the BUILD rail and the TRAIN buttons would keep the
+  // raw paths (or the pre-bootstrap labels) they were painted with. The same re-resolution the atlas
+  // arrival and a language switch run must also run here.
+  refreshContentLabels();
   log("info", t("log.bootstrapOk"));
   void pollWorldSnapshot();
 }
@@ -5588,8 +5560,9 @@ function rebuildVariantUpgradeButtons(count: number): void {
 /**
  * Re-labels the gameplay buttons from the atlas display names (or the generic i18n labels).
  *
- * The buttons are built once, before the atlas arrives; this runs again after `loadArtwork` and on a
- * language switch, so every button reads the current best name. A path neither the manifest nor the
+ * The buttons are built once, before the atlas arrives; this runs again after `loadArtwork`, after a
+ * bootstrap adoption fills the i18n server namespace ({@link adoptWorldBootstrap}) and on a language
+ * switch, so every button reads the current best name. A path neither the manifest nor the
  * dictionaries name keeps showing the raw path.
  */
 function refreshContentLabels(): void {
@@ -5660,7 +5633,6 @@ unitUpgradeButton.addEventListener("click", () => {
     }),
   );
 });
-continueBuildButton.addEventListener("click", doContinueBuild);
 repairButton.addEventListener("click", doRepairBuilding);
 reclaimButton.addEventListener("click", doReclaimBuilding);
 

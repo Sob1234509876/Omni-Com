@@ -990,7 +990,9 @@
         white-space: nowrap;
       }
 
-      #hud-world,
+      /* The top world display (世界：server · tick N) sizes to its content like every other HUD chip:
+         the old 72px clamp - inherited from the jump inputs it shared this rule with - squeezed the
+         label into a tiny truncated chip. Only the jump inputs stay clamped. */
       .jump-input {
         width: 72px;
       }
@@ -1015,6 +1017,16 @@
 
       #dimension-buttons:empty {
         display: none;
+      }
+
+      /* The dimension switcher buttons are the dimension indicator in the top chrome: give them a
+         proper readable size instead of the small 11px chrome-button default (playtester item). */
+      #dimension-buttons button {
+        padding: 6px 14px;
+        font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.4;
+        white-space: nowrap;
       }
 
       /* The deficit rows of the inventory panel: what the client computed that a selected building
@@ -2542,8 +2554,8 @@
                   </p>
                   <p class="footnote" data-i18n="help.commands">
                     底部命令栏：选中单位时出现 停止、攻击移动 与选中条；
-                    建筑选中时右下角是 TRAIN、队列与 修理 / 继续建造 / 回收，工兵选中时右侧是全高的
-                    BUILD 面板。修理与回收需要自己受损的完工建筑或未完工工地。右键点击传送门建筑且选中单位时发送
+                    建筑选中时 TRAIN 面板与队列进入右侧全高面板，右下角保留 修理 / 回收，工兵选中时同一右侧面板显示
+                    BUILD。修理与回收需要自己受损的完工建筑或未完工工地。右键点击传送门建筑且选中单位时发送
                     TRAVEL；右键点击建筑且选中工兵时发送 ASSIST，由服务器决定工兵做什么（继续建造、修理或补齐生产缺料）。
                     混合选择（单位 + 建筑）只提供单位动作，避免把 TRAIN/BUILD 混进群体命令。
                   </p>
@@ -2586,10 +2598,6 @@
           </section>
 
           <aside id="command-context" class="command-context" aria-label="上下文操作" data-i18n-aria-label="aria.context">
-            <section id="train-section" class="context-section" hidden>
-              <h3>TRAIN <span id="train-target"></span></h3>
-              <div id="train-buttons" class="context-buttons"></div>
-            </section>
             <section id="upgrade-section" class="context-section" hidden>
               <h3><span data-i18n="section.upgrade">升级</span> <span id="upgrade-target"></span></h3>
               <div id="upgrade-buttons" class="context-buttons">
@@ -2614,7 +2622,6 @@
             <section id="building-actions-section" class="context-section" hidden>
               <h3><span data-i18n="section.building">建筑</span> <span id="building-actions-target"></span></h3>
               <div id="building-action-buttons" class="context-buttons">
-                <button id="continue-build-button" type="button" disabled data-i18n="ctx.continueBuild">继续建造</button>
                 <button id="repair-button" type="button" disabled data-i18n="ctx.repair">修理</button>
                 <button id="reclaim-button" type="button" disabled data-i18n="ctx.reclaim">回收</button>
                 <button
@@ -2632,15 +2639,22 @@
           </aside>
         </div>
 
-        <!-- The BUILD rail: the full-height right-edge panel an engineer selection opens. The section
-             keeps its old ids (build-section / build-target / build-buttons); it only moved out of the
-             bottom context zone so the panel can show a tall, readable list of large buttons. While it
-             is open the stylesheet shifts the top-right column, the bottom bar and the toast stack left
+        <!-- The BUILD rail: the full-height right-edge panel an engineer or producer selection opens.
+             The sections keep their old ids (build-section / build-target / build-buttons and
+             train-section / train-target / train-buttons); they only moved out of the bottom context
+             zone so the panel can show a tall, readable list of large buttons. An engineer selection
+             shows BUILD, a selected producing building shows TRAIN (the two are different selection
+             types, so a clean swap; only one section is visible at a time). While it is open the
+             stylesheet shifts the top-right column, the bottom bar and the toast stack left
              (body.build-rail-open); closed, the rail is an empty pointer-transparent column. -->
-        <aside id="build-panel" class="build-rail" aria-label="BUILD 建造面板" data-i18n-aria-label="aria.buildPanel">
+        <aside id="build-panel" class="build-rail" aria-label="BUILD / TRAIN 面板" data-i18n-aria-label="aria.buildPanel">
           <section id="build-section" class="context-section build-rail-section" hidden>
             <h3>BUILD <span id="build-target"></span></h3>
             <div id="build-buttons" class="context-buttons build-rail-buttons"></div>
+          </section>
+          <section id="train-section" class="context-section build-rail-section" hidden>
+            <h3>TRAIN <span id="train-target"></span></h3>
+            <div id="train-buttons" class="context-buttons build-rail-buttons"></div>
           </section>
         </aside>
       </section>

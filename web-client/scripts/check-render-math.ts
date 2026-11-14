@@ -38,7 +38,6 @@ import {
   whoAmI,
 } from "../src/commands.ts";
 import { HEARTBEAT_MS, shouldHeartbeat } from "../src/heartbeat.ts";
-import { FALLBACK_TRAIN_PATHS } from "../src/render/commandbar.ts";
 import {
   CHUNK_SIZE_TILES,
   SHADOW_ALPHA,
@@ -289,7 +288,6 @@ import {
 } from "../src/render/shadow.ts";
 import { isLanguageSetting } from "../src/settings.ts";
 import {
-  CONTINUE_BUILD_ACTION_LABEL,
   REPAIR_ACTION_LABEL,
   RECLAIM_ACTION_LABEL,
   buildingActionModel,
@@ -386,6 +384,8 @@ import {
   healthBarRatio,
   selectionChipList,
   stopActionLabel,
+  trainMenu,
+  trainPathsFor,
 } from "../src/render/commandbar.ts";
 import {
   TOOLTIP_GAP_PX,
@@ -1954,13 +1954,28 @@ try {
 const classicRoot = recordTable(classicManifest);
 const classicTiles = classicRoot === null ? null : recordTable(classicRoot["tiles"]);
 const classicEntities = classicRoot === null ? null : recordTable(classicRoot["entities"]);
+
+/**
+ * The served `trains` menu the classic armory row carries: the historical melee ladder plus the
+ * engineer, exactly the rows the server's recipe list declares. The only TRAIN menu source now —
+ * a row without the field offers no menu, so no placeholder list can leak into the panel.
+ */
+const SERVED_ARMORY_TRAINS: NonNullable<EntityView["trains"]> = [
+  { path: "unit.melee.t1", name: "普通", gold: 20, level: 1 },
+  { path: "unit.melee.t2", name: "强化", gold: 45, level: 1 },
+  { path: "unit.melee.t3", name: "精锐", gold: 90, level: 2 },
+  { path: "unit.melee.t4", name: "勇士", gold: 180, level: 2 },
+  { path: "unit.melee.t5", name: "战王", gold: 320, level: 3 },
+  { path: "unit.engineer", name: "工程师", gold: 50, level: 1 },
+];
+
 check(
   "经典清单：24 地块与 37 实体，实体覆盖训练回退目录与经典建筑 kind，地块覆盖全部渲染地形与 void",
   classicTiles !== null &&
     Object.keys(classicTiles).length === 24 &&
     classicEntities !== null &&
     Object.keys(classicEntities).length === 37 &&
-    FALLBACK_TRAIN_PATHS.every((path) => classicEntities[path] !== undefined) &&
+    SERVED_ARMORY_TRAINS.every((row) => classicEntities[row.path] !== undefined) &&
     CLASSIC_BUILDING_KINDS.every((kind) => classicEntities[kind] !== undefined) &&
     TERRAIN_IDS.every((terrain) => classicTiles[terrain] !== undefined) &&
     classicTiles[TERRAIN_VOID] !== undefined,
@@ -2329,10 +2344,10 @@ check(
 );
 
 check(
-  "经典目录固定：训练回退目录六个条目、经典建筑 kind 都能生成 BUILD/TRAIN 行（BUILD 菜单本身只由快照 buildable 驱动）",
-  FALLBACK_TRAIN_PATHS.join(",") ===
+  "经典目录固定：served trains 目录六个条目、经典建筑 kind 都能生成 BUILD/TRAIN 行（BUILD 菜单本身只由快照 buildable 驱动）",
+  SERVED_ARMORY_TRAINS.map((row) => row.path).join(",") ===
     "unit.melee.t1,unit.melee.t2,unit.melee.t3,unit.melee.t4,unit.melee.t5,unit.engineer" &&
-    FALLBACK_TRAIN_PATHS.every((path) => train(1, path) === `TRAIN 1 ${path}`) &&
+    SERVED_ARMORY_TRAINS.every((row) => train(1, row.path) === `TRAIN 1 ${row.path}`) &&
     CLASSIC_BUILDING_KINDS.every((path) => build(1, path, 0, 0) === `BUILD 1 ${path} 0 0`),
 );
 
@@ -3766,7 +3781,15 @@ function commandBuilding(
   kind = "building.armory.t1",
   playerId = 1,
 ): EntityView {
-  return { id, kind, x: id, y: id, playerId, progress: 1 };
+  return {
+    id,
+    kind,
+    x: id,
+    y: id,
+    playerId,
+    progress: 1,
+    ...(kind === "building.armory.t1" && playerId === 1 ? { trains: SERVED_ARMORY_TRAINS } : {}),
+  };
 }
 
 const emptyCommand = commandBarModel([], 1);
@@ -3815,9 +3838,9 @@ const buildingCommand = commandBarModel([commandBuilding(4)], 1, {
   labelForPath: (path) => (path === "unit.melee.t1" ? "普通" : path),
 });
 check(
-  "选中自己的建筑时只给出 TRAIN 条目（右下角），没有单位动作；回退训练目录六个条目",
+  "选中自己的建筑时只给出 TRAIN 条目（右侧面板），没有单位动作；菜单只来自 served trains 六条",
   buildingCommand.kind === "building" &&
-    buildingCommand.actions.length === FALLBACK_TRAIN_PATHS.length &&
+    buildingCommand.actions.length === SERVED_ARMORY_TRAINS.length &&
     buildingCommand.actions.every(
       (action) => action.kind === "train" && action.zone === "context",
     ) &&
@@ -3834,7 +3857,7 @@ check(
   "选中多座同类型建筑仍给出 TRAIN，提示说明一次点击会并行排产",
   multiBuildingCommand.kind === "building" &&
     multiBuildingCommand.buildingCount === 3 &&
-    multiBuildingCommand.actions.length === FALLBACK_TRAIN_PATHS.length &&
+    multiBuildingCommand.actions.length === SERVED_ARMORY_TRAINS.length &&
     multiBuildingCommand.actions.every((action) => action.kind === "train") &&
     multiBuildingCommand.hint.includes("并行生产"),
   `${multiBuildingCommand.kind} / ${multiBuildingCommand.hint}`,
@@ -5457,7 +5480,6 @@ check(
   "受损的自有完工建筑提供 修理 (cost)",
   repairModel !== null &&
     repairModel.repair &&
-    !repairModel.continueBuild &&
     !repairModel.reclaim &&
     repairModel.repairEnabled &&
     repairModel.repairLabel === `${REPAIR_ACTION_LABEL} (金 30 · 木 0)` &&
@@ -5477,11 +5499,10 @@ check(
 );
 const engineerlessRepair = buildingActionModel(damagedBuilding, 3, servicePlayer, undefined);
 check(
-  "没有己方工兵时修理与继续建造禁用但可见",
+  "没有己方工兵时修理禁用但可见",
   engineerlessRepair !== null &&
     engineerlessRepair.repair &&
-    !engineerlessRepair.repairEnabled &&
-    engineerlessRepair.continueLabel === null,
+    !engineerlessRepair.repairEnabled,
   String(engineerlessRepair?.repairEnabled),
 );
 // The 强制搬运 (HAUL) entry is gone with the server's HAUL command: supplying a producer is now the
@@ -5504,14 +5525,11 @@ const unfinishedModel = buildingActionModel(
   serviceEngineer,
 );
 check(
-  "未完工的自有工地提供 继续建造 与 回收 (refund)",
+  "未完工的自有工地只提供 回收 (refund)：继续建造已删除（ASSIST 右键覆盖续建）",
   unfinishedModel !== null &&
-    unfinishedModel.continueBuild &&
     unfinishedModel.reclaim &&
     !unfinishedModel.repair &&
-    unfinishedModel.continueEnabled &&
     unfinishedModel.reclaimEnabled &&
-    unfinishedModel.continueLabel === CONTINUE_BUILD_ACTION_LABEL &&
     unfinishedModel.reclaimLabel === `${RECLAIM_ACTION_LABEL} (金 50 · 木 10)` &&
     reclaimLabel({ gold: 50, wood: 10 }) === "回收 (金 50 · 木 10)" &&
     repairLabel({ gold: 30, wood: 0 }) === "修理 (金 30 · 木 0)",
@@ -6945,7 +6963,7 @@ check(
       "building.lumbercamp.t1",
       "building.warehouse",
       "building.turret.t1",
-      ...FALLBACK_TRAIN_PATHS,
+      ...SERVED_ARMORY_TRAINS.map((row) => row.path),
     ];
     initI18n("zh-CN");
     const zhOk =
@@ -7198,6 +7216,141 @@ check(
       serverKeyValues().get("content.building.mine.t1") === "矿井";
     registerCatalogueNames(contentCatalogue);
     return stored && roundTripped && toppedUp && deficit !== undefined && oldServerKept && registered;
+  })(),
+);
+
+// Playtester round-trip in one place: the exact shape `WorldHost.buildBootstrapJson` emits → parse →
+// i18n registry → resolved display labels (never a raw path); the TRAIN menu comes only from the
+// served `trains` field (no placeholder ladder, so 战王 / 工程师 cannot leak into a row the server did
+// not declare); and the page structure keeps TRAIN and BUILD swapping inside the one BUILD rail while
+// 继续建造 stays deleted (the ASSIST right-click covers resume-construction).
+check(
+  "bootstrap 端到端：WorldHost 真实 JSON 形状 → 解析 → 服务器命名空间 → 标签解析出显示名；served trains 是唯一训练菜单来源；TRAIN/BUILD 同轨互换且 继续建造 已删除",
+  (() => {
+    const previousLanguage = currentI18nLanguage();
+    initI18n("zh-CN");
+    const serverShape = {
+      tilePixels: 24,
+      contentVersion: 3,
+      dimensions: [
+        { key: "overworld", name: "World" },
+        { key: "hell", name: "地狱" },
+      ],
+      // Only directly-constructible buildings; upgrade-only tiers carry "buildable":false and stay out.
+      buildable: [
+        "building.armory.t1",
+        "building.mine.t1",
+        "building.lumbercamp.t1",
+        "building.warehouse",
+        "building.turret.t1",
+        "building.hell_gate",
+      ],
+      content: {
+        dimensions: { overworld: { name: "World" }, hell: { name: "地狱" } },
+        items: { gold: { name: "金" }, wood: { name: "木" } },
+        buildings: {
+          "building.armory.t1": {
+            name: "兵工厂",
+            size: [3, 3],
+            health: 900,
+            cost: { gold: 200, wood: 80 },
+            buildTime: 600,
+            level: 1,
+            upgrades: [{ to: "building.armory.t2", cost: { gold: 400, wood: 160 } }],
+          },
+          "building.mine.t2": {
+            name: "金矿·强化",
+            size: [2, 2],
+            health: 400,
+            buildTime: 300,
+            level: 2,
+            buildable: false,
+          },
+          "building.hell_gate": { name: "地狱门", size: [3, 3], health: 2000, level: 1 },
+        },
+        units: {
+          "unit.melee.t1": {
+            name: "普通",
+            role: "melee",
+            health: 100,
+            speed: 1.5,
+            cost: { gold: 20, wood: 5 },
+            buildTime: 120,
+          },
+          "unit.engineer": {
+            name: "工程师",
+            role: "builder",
+            health: 60,
+            speed: 1.8,
+            cost: { gold: 30 },
+            buildTime: 150,
+            builder: true,
+          },
+        },
+        recipes: {
+          "recipe.melee.t1": {
+            producers: ["armory"],
+            inputs: { gold: 20 },
+            output: "unit.melee.t1",
+            duration: 120,
+            level: 1,
+          },
+        },
+      },
+    } satisfies Record<string, unknown>;
+    const doc = parseWorldBootstrap(serverShape);
+    const parsedOk =
+      doc !== undefined &&
+      doc.contentVersion === 3 &&
+      doc.buildable?.length === 6 &&
+      !doc.buildable.includes("building.mine.t2") &&
+      doc.dimensions?.length === 2 &&
+      doc.content?.buildings.size === 3 &&
+      doc.content?.units.size === 2 &&
+      doc.content?.dimensions.size === 2;
+    registerCatalogueNames(doc?.content);
+    const labelsResolve =
+      // Client dictionary first, server name as fallback, never the raw path.
+      genericContentLabel("building.armory.t1") === "兵工厂 1 级" &&
+      genericContentLabel("unit.melee.t1") === "普通" &&
+      genericContentLabel("unit.engineer") === "工程师" &&
+      genericContentLabel("building.mine.t2") === "金矿·强化" &&
+      genericContentLabel("building.hell_gate") === "地狱门" &&
+      dimensionLabel("overworld", "World") === "主世界" &&
+      dimensionLabel("hell", "地狱") === "地狱";
+    // Placeholder exclusion: a row without the served `trains` field offers no menu at all, and the
+    // served field is used verbatim when present — no client fallback ladder, no 战王/工程师 leakage.
+    const servedRow = commandBuilding(20);
+    const bareRow = { ...servedRow, trains: undefined } as EntityView;
+    const noFallback =
+      trainPathsFor(bareRow).length === 0 &&
+      trainMenu(bareRow, undefined).length === 0 &&
+      trainPathsFor(servedRow).join(",") === SERVED_ARMORY_TRAINS.map((row) => row.path).join(",");
+    registerCatalogueNames(contentCatalogue);
+    initI18n(previousLanguage);
+    // Train-rail swap presence: TRAIN now lives in the same full-height rail as BUILD, and the
+    // 继续建造 button is gone from the DOM, the wiring and the dictionaries.
+    const structureOk =
+      !indexHtml.includes("continue-build-button") &&
+      !indexHtml.includes('id="continue-build-button"') &&
+      !mainTsText.includes("continueBuildButton") &&
+      !mainTsText.includes("doContinueBuild") &&
+      !DICTIONARIES.en["ctx.continueBuild"] &&
+      !DICTIONARIES["zh-CN"]["ctx.continueBuild"] &&
+      mainTsText.includes('toggle("build-rail-open", showBuild || showTrain)') &&
+      mainTsText.includes("refreshContentLabels();") &&
+      indexHtml.includes('<aside id="build-panel"') &&
+      (() => {
+        const panelStart = indexHtml.indexOf('<aside id="build-panel"');
+        const panelEnd = indexHtml.indexOf("</aside>", panelStart);
+        const panel = indexHtml.slice(panelStart, panelEnd);
+        return (
+          panel.includes('id="build-section"') &&
+          panel.includes('id="train-section"') &&
+          panel.includes("build-rail-section")
+        );
+      })();
+    return parsedOk === true && labelsResolve && noFallback && structureOk;
   })(),
 );
 

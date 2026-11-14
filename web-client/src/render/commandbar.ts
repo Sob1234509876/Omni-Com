@@ -41,40 +41,15 @@ import {
 export const SELECTION_CHIP_LIMIT = 12;
 
 /**
- * The TRAIN menu a producer row without a `trains` field falls back to.
- *
- * The building row's `trains` array is the menu now; this list is the classic armory's recipes in the
- * historical training order, kept so a served armory that predates the field still offers the whole
- * melee ladder plus the engineer. Non-producer kinds never fall back to it.
- */
-export const FALLBACK_TRAIN_PATHS: readonly string[] = [
-  "unit.melee.t1",
-  "unit.melee.t2",
-  "unit.melee.t3",
-  "unit.melee.t4",
-  "unit.melee.t5",
-  "unit.engineer",
-];
-
-/** Whether a building kind is an armory-style producer under the classic fallback rule. */
-function classicProducerKind(kind: string | undefined): boolean {
-  return kind !== undefined && kindName(kind).startsWith("building.armory.");
-}
-
-/**
- * The TRAIN paths of one selected building: its served `trains` rows, else the classic fallback.
+ * The TRAIN paths of one selected building: exactly its served `trains` rows.
  *
  * A row that carries the field is the server's truth — an empty array means "trains nothing" and is
- * honoured as exactly that. A row without the field is an older server: armory-style kinds fall back
- * to the classic melee ladder, every other kind (mine, lumber camp, warehouse, an unknown plugin
- * building) trains nothing, so a building never paints a TRAIN section it cannot honour.
+ * honoured as exactly that. A row without the field (an unfinished site, a non-producer, an older
+ * snapshot) trains nothing: no client-side fallback list invents entries the server did not declare,
+ * so placeholder options (the classic melee ladder, the engineer) can never leak into the menu.
  */
 export function trainPathsFor(building: EntityView | undefined): readonly string[] {
-  const trains = building?.trains;
-  if (trains !== undefined) {
-    return trains.map((train) => train.path);
-  }
-  return classicProducerKind(building?.kind) ? FALLBACK_TRAIN_PATHS : [];
+  return (building?.trains ?? []).map((train) => train.path);
 }
 
 /** One entry of a building's TRAIN menu, ready for a button. */
@@ -87,9 +62,9 @@ export interface TrainMenuEntry {
   readonly gold?: number;
   /** Required building level, present only on a served `trains` entry. */
   readonly level?: number;
-  /** Whether the local player's gold covers the cost; `true` for a fallback entry with no cost. */
+  /** Whether the local player's gold covers the recipe's input cost. */
   readonly affordable: boolean;
-  /** Full button label: `训练普通 · 金20`, or the display name of a fallback path. */
+  /** Full button label: `训练普通 · 金20`. */
   readonly label: string;
   /** Tooltip: the wire line when affordable, the missing amount when not. */
   readonly title: string;
@@ -100,41 +75,34 @@ export interface TrainMenuEntry {
  *
  * A served `trains` row is rendered verbatim (`训练<name> · 金<n>`), and affordability is the client's
  * own comparison against the local player's gold; a missing player row counts as not affordable, which
- * shows the entry disabled instead of hiding it. The classic fallback (an armory row without the
- * field) keeps the historical bare-path buttons with no cost gate.
+ * shows the entry disabled instead of hiding it. A row without the field has no menu at all — the
+ * served `trains` array is the only source, so no invented placeholder entry can appear.
  */
 export function trainMenu(
   building: EntityView | undefined,
   player: PlayerView | undefined,
-  labelForPath: (path: string) => string = (path: string): string => path,
 ): TrainMenuEntry[] {
   const trains = building?.trains;
-  if (trains !== undefined) {
-    return trains.map((train): TrainMenuEntry => {
-      const affordable =
-        player !== undefined && Number.isFinite(player.gold) && player.gold >= train.gold;
-      return {
-        path: train.path,
-        name: train.name,
-        gold: train.gold,
-        level: train.level,
-        affordable,
-        label: t("train.menuLabel", { name: train.name, gold: train.gold }),
-        title: affordable
-          ? `${t("train.levelPrefix", { level: train.level })}TRAIN <建筑> ${train.path}`
-          : t("train.affordFail", { name: train.name, gold: train.gold }),
-      };
-    });
-  }
-  if (!classicProducerKind(building?.kind)) {
+  if (trains === undefined) {
+    // No served `trains` field, no menu: a row the server did not declare a recipe list for never
+    // paints placeholder entries (the classic melee ladder, the engineer) it cannot honour.
     return [];
   }
-  return FALLBACK_TRAIN_PATHS.map((path): TrainMenuEntry => ({
-    path,
-    affordable: true,
-    label: labelForPath(path),
-    title: `TRAIN <建筑> ${path}`,
-  }));
+  return trains.map((train): TrainMenuEntry => {
+    const affordable =
+      player !== undefined && Number.isFinite(player.gold) && player.gold >= train.gold;
+    return {
+      path: train.path,
+      name: train.name,
+      gold: train.gold,
+      level: train.level,
+      affordable,
+      label: t("train.menuLabel", { name: train.name, gold: train.gold }),
+      title: affordable
+        ? `${t("train.levelPrefix", { level: train.level })}TRAIN <建筑> ${train.path}`
+        : t("train.affordFail", { name: train.name, gold: train.gold }),
+    };
+  });
 }
 
 /** The wire action behind the command bar's stop button (`停止` / `Stop`). */

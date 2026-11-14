@@ -68,7 +68,7 @@ export const EN: Dictionary = {
   "aria.canvas": "Game world canvas",
   "aria.minimap": "Minimap: shows the loaded window; click or drag to move the camera",
   "aria.context": "Context actions",
-  "aria.buildPanel": "BUILD build panel",
+  "aria.buildPanel": "BUILD / TRAIN panel",
   "aria.jumpX": "Jump coordinate X",
   "aria.jumpY": "Jump coordinate Y",
   // Command bar hint lines.
@@ -264,7 +264,7 @@ export const EN: Dictionary = {
   "help.home":
     "Cannot find your base: press H or click Home at the top right and the camera centres on your own row's anchor in the snapshot. M places a personal marker on the tile under the cursor (the camera centre when the pointer is off-canvas), up to 12, one per tile; Shift+M removes the most recent one; Marker at the top right opens the list, where rows jump and Clear all empties it. Markers live only in this page session (no localStorage, never sent to the server) and nobody else sees them.",
   "help.commands":
-    "Bottom command bar: selecting units shows Stop, Attack-move and the selection strip; selecting a building puts TRAIN, the queue and Repair / Continue building / Reclaim in the bottom right, and selecting an engineer opens the full-height BUILD rail on the right edge. Repair and reclaim need your own damaged finished building or unfinished site. Right-clicking a gateway building with units selected sends TRAVEL; right-clicking a building with an engineer selected sends ASSIST and the server decides what the engineer does (resume construction, repair, or fetch the missing production inputs). A mixed selection (units + buildings) only offers the unit actions, so TRAIN/BUILD never leak into group orders.",
+    "Bottom command bar: selecting units shows Stop, Attack-move and the selection strip; selecting a building puts its TRAIN panel into the full-height right rail together with the queue, Repair and Reclaim in the bottom right, and selecting an engineer opens the same rail as the BUILD panel. Repair and reclaim need your own damaged finished building or unfinished site. Right-clicking a gateway building with units selected sends TRAVEL; right-clicking a building with an engineer selected sends ASSIST and the server decides what the engineer does (resume construction, repair, or fetch the missing production inputs). A mixed selection (units + buildings) only offers the unit actions, so TRAIN/BUILD never leak into group orders.",
   // Music panel.
   "music.title": "Music",
   "music.note":
@@ -337,12 +337,9 @@ export const EN: Dictionary = {
   "section.upgrade": "Upgrade",
   "section.gateway": "Gateway",
   "section.building": "Building",
-  "ctx.continueBuild": "Continue building",
   "ctx.repair": "Repair",
   "ctx.reclaim": "Reclaim",
   "ctx.transferFocus": "Transfer…",
-  "ctx.continueBuildNoEngineer": "Continue building: no own engineer in the loaded window",
-  "ctx.continueBuildTitle": "BUILD {engineer} {kind}: attaches to the unfinished site without charging again",
   "ctx.repairNoEngineer": "Repair: no own engineer in the loaded window",
   "ctx.repairTitle": "REPAIR {engineer} {building}: {cost}",
   "ctx.repairPoor": "Repair: cannot afford ({cost})",
@@ -475,8 +472,6 @@ export const EN: Dictionary = {
   "refuse.upgradeNoneVariant": "The selected building has no such upgrade variant",
   "refuse.upgradeNoneUnit": "The selected unit has no upgrade available",
   "refuse.cannotAfford": "Not enough resources: the upgrade needs {gold} gold and {wood} wood",
-  "refuse.continueBuild": "Select one of your own unfinished sites first, then continue building",
-  "refuse.continueBuildNoEngineer": "No own engineer in the loaded window: cannot continue building",
   "refuse.repair": "Select one of your own damaged finished buildings first, then repair",
   "refuse.repairNoEngineer": "No own engineer in the loaded window: cannot repair",
   "refuse.repairPoor": "Not enough resources: repairing needs {cost}",
@@ -594,7 +589,7 @@ export const ZH_CN: Dictionary = {
   "aria.canvas": "游戏世界画面",
   "aria.minimap": "小地图：显示已载入窗口，点击或拖动移动镜头",
   "aria.context": "上下文操作",
-  "aria.buildPanel": "BUILD 建造面板",
+  "aria.buildPanel": "BUILD / TRAIN 面板",
   "aria.jumpX": "跳转坐标 X",
   "aria.jumpY": "跳转坐标 Y",
   "hint.empty": "未选中任何单位 · 左键点选、拖动框选，或按 O 选中工兵",
@@ -772,7 +767,7 @@ export const ZH_CN: Dictionary = {
   "help.home":
     "找不到自己基地时：按 H 或点右上角 基地，镜头会居中到快照里你自己那一行的 anchor。M 在光标所在的地块（光标不在画布上时用镜头中心）放置个人标记，最多 12 个，同一地块不重复；Shift+M 删除最近放置的一个；右上角 标记 打开标记列表，可逐行跳转或 清除全部。标记只存在于本页会话（不写 localStorage、不发给服务器），别人看不到。",
   "help.commands":
-    "底部命令栏：选中单位时出现 停止、攻击移动 与选中条；建筑选中时右下角是 TRAIN、队列与 修理 / 继续建造 / 回收，工兵选中时右侧是全高的 BUILD 面板。修理与回收需要自己受损的完工建筑或未完工工地。右键点击传送门建筑会为选中的单位发送 TRAVEL；右键点击建筑且选中工兵时发送 ASSIST，由服务器决定工兵做什么（继续建造、修理或补齐生产缺料）。混合选择（单位 + 建筑）只提供单位动作，避免把 TRAIN/BUILD 混进群体命令。",
+    "底部命令栏：选中单位时出现 停止、攻击移动 与选中条；建筑选中时 TRAIN 面板与队列进入右侧全高面板，右下角保留 修理 / 回收，工兵选中时同一右侧面板显示 BUILD。修理与回收需要自己受损的完工建筑或未完工工地。右键点击传送门建筑会为选中的单位发送 TRAVEL；右键点击建筑且选中工兵时发送 ASSIST，由服务器决定工兵做什么（继续建造、修理或补齐生产缺料）。混合选择（单位 + 建筑）只提供单位动作，避免把 TRAIN/BUILD 混进群体命令。",
   "music.title": "音乐",
   "music.note":
     "只读取本机音频文件，用对象 URL 播放；不上传、不联网。刷新页面后播放列表会清空（文件输入没有可重新打开的路径）。",
@@ -840,12 +835,9 @@ export const ZH_CN: Dictionary = {
   "section.upgrade": "升级",
   "section.gateway": "传送门",
   "section.building": "建筑",
-  "ctx.continueBuild": "继续建造",
   "ctx.repair": "修理",
   "ctx.reclaim": "回收",
   "ctx.transferFocus": "调拨…",
-  "ctx.continueBuildNoEngineer": "继续建造：载入窗口内没有自己的工兵",
-  "ctx.continueBuildTitle": "BUILD {engineer} {kind}：附着到半成品工地，不再次收费",
   "ctx.repairNoEngineer": "修理：载入窗口内没有自己的工兵",
   "ctx.repairTitle": "REPAIR {engineer} {building}：{cost}",
   "ctx.repairPoor": "修理：资源不足（{cost}）",
@@ -969,8 +961,6 @@ export const ZH_CN: Dictionary = {
   "refuse.upgradeNoneVariant": "选中的建筑没有这个升级变体",
   "refuse.upgradeNoneUnit": "选中的单位没有可用的升级",
   "refuse.cannotAfford": "资源不足：升级需要金 {gold}、木 {wood}",
-  "refuse.continueBuild": "先选中自己未完工的工地，再继续建造",
-  "refuse.continueBuildNoEngineer": "载入窗口内没有自己的工兵：无法继续建造",
   "refuse.repair": "先选中自己受损的完工建筑，再修理",
   "refuse.repairNoEngineer": "载入窗口内没有自己的工兵：无法修理",
   "refuse.repairPoor": "资源不足：修理需要 {cost}",

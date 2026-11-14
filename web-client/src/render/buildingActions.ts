@@ -1,23 +1,19 @@
 /**
- * Pure rules for the context panel's building services: repair, continue building and reclaim.
+ * Pure rules for the context panel's building services: repair and reclaim.
  *
  * The snapshot advertises the two priced services (`repair`, `reclaim`) and the rest is ownership and
  * construction state the client already has. Keeping the decision here means the panel, the command
  * builders and `scripts/check-render-math.ts` all agree about when an entry appears and what it says:
  *
- * - **继续建造** is offered for one of the local player's unfinished sites. The wire has no "join by
- *   building id" command, so the click reuses `BUILD <engineer> <kind> <originX> <originY>`: the engine's
- *   join path recognises the unfinished site of the same type and sends the engineer to it. A selected
- *   engineer in the loaded window supplies the id; when there is none the entry is shown disabled rather
- *   than hidden, because the site still needs a builder and the reason must be visible.
  * - **修理 (cost)** is offered for one of the local player's finished buildings whose snapshot carries a
  *   `repair` price, i.e. a damaged building whose content declares a repair cost. It is disabled when the
  *   player row cannot cover the price or no own engineer is in the window.
  * - **回收 (refund)** is offered for one of the local player's unfinished sites whose snapshot carries a
  *   `reclaim` refund. It has no additional cost.
  *
- * The former `强制搬运` (HAUL) entry is gone: the server deleted the command, and supplying a producer
- * is now the ASSIST contextual command's job (the server decides what the engineer does).
+ * The former `继续建造` entry is gone: the ASSIST contextual command (right-clicking a building with an
+ * engineer selected) already covers resume-construction, so a dedicated button would duplicate it. The
+ * former `强制搬运` (HAUL) entry is gone for the same reason — the server deleted the command.
  *
  * Labels include both amounts in the same `金 X · 木 Y` shape the upgrade entry uses. An enemy or neutral
  * building never offers anything, and a legacy snapshot without `repair` / `reclaim` omits both.
@@ -38,23 +34,16 @@ export const REPAIR_ACTION_LABEL = "修理";
 /** The action word of the reclaim entry. */
 export const RECLAIM_ACTION_LABEL = "回收";
 
-/** The label of the continue-building entry. */
-export const CONTINUE_BUILD_ACTION_LABEL = "继续建造";
-
 /** One context-panel state for the selected building. */
 export interface BuildingActionModel {
   /** Entity id the commands name. */
   readonly buildingId: number;
-  /** Content path of the selected building, used by the `BUILD` join line. */
+  /** Content path of the selected building. */
   readonly kind: string;
-  /** `继续建造` is relevant (own unfinished site). */
-  readonly continueBuild: boolean;
   /** A `修理 (cost)` entry exists. */
   readonly repair: boolean;
   /** A `回收 (refund)` entry exists. */
   readonly reclaim: boolean;
-  /** Whether the continue entry may be clicked (an own engineer is available). */
-  readonly continueEnabled: boolean;
   /** Whether the repair entry may be clicked (engineer available and affordable). */
   readonly repairEnabled: boolean;
   /** Whether the reclaim entry may be clicked (it has no cost, so only ownership matters). */
@@ -62,7 +51,6 @@ export interface BuildingActionModel {
   /** Engine id of the engineer the click will send, or `null` when none is in the window. */
   readonly engineerId: number | null;
   /** Labels for the visible entries, or `null` when the entry is not offered. */
-  readonly continueLabel: string | null;
   readonly repairLabel: string | null;
   readonly reclaimLabel: string | null;
 }
@@ -101,7 +89,7 @@ function affordable(cost: BuildingCostView, player: PlayerView | undefined): boo
  * @param entity      the single selected entity, if exactly one is selected
  * @param myPlayerId  the local player id answered by `WHOAMI`, or `null`
  * @param player      the local player's own snapshot row, if the snapshot carries one
- * @param engineer    an own engineer in the loaded window to receive `REPAIR` / the `BUILD` join, if any
+ * @param engineer    an own engineer in the loaded window to receive `REPAIR`, if any
  */
 export function buildingActionModel(
   entity: EntityView | undefined,
@@ -121,22 +109,18 @@ export function buildingActionModel(
   const reclaimCost = entity.reclaim;
   const repair = !unfinished && repairCost !== undefined;
   const reclaim = unfinished && reclaimCost !== undefined;
-  const continueBuild = unfinished;
-  if (!repair && !reclaim && !continueBuild) {
+  if (!repair && !reclaim) {
     return null;
   }
   return {
     buildingId: entity.id,
     kind: entity.kind,
-    continueBuild,
     repair,
     reclaim,
-    continueEnabled: continueBuild && engineerId !== null,
     repairEnabled: repair && engineerId !== null && repairCost !== undefined
       && affordable(repairCost, player),
     reclaimEnabled: reclaim,
     engineerId,
-    continueLabel: continueBuild ? CONTINUE_BUILD_ACTION_LABEL : null,
     repairLabel: repair && repairCost !== undefined ? repairLabel(repairCost) : null,
     reclaimLabel: reclaim && reclaimCost !== undefined ? reclaimLabel(reclaimCost) : null,
   };
