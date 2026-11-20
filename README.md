@@ -2,19 +2,24 @@ English | [简体中文](README_zh_CN.md)
 
 # Omni Com
 
-Monorepo for the Omni Com project. The Java modules are built with Gradle and use no third-party
-dependencies; the optional browser client is built with pnpm. Idea by Sob1234509876, made possible thanks
-to Deepseek.
+Monorepo for the Omni Com project. The Java modules are built with Gradle: the `projects:oc:*` modules
+use no third-party dependencies, while the `projects:os*` modules — merged from the
+[Omni-Spring-Library-N-Service](https://github.com/Sob1234509876/Omni-Spring-Library-N-Service)
+repository on 2026-11-20 — are built on Spring Boot. Idea by Sob1234509876, made possible thanks to
+Deepseek.
 
-> **Rewrite in progress (2026-11-20).** Every project except `oc-googology` and
+> **Rewrite in progress (2026-11-20).** Every `oc` project except `oc-googology` and
 > `oc-googology-ordinal` has been deleted by owner decision — the Java modules, the plugins and the
 > `web-client/` pnpm project — and the stack is being rewritten from scratch. The previous
 > implementation lives in git history at commit `636e2e4`
-> (`git show 636e2e4:<path>` / `git checkout 636e2e4 -- <path>` brings any of it back). The module
-> list below is historical until the rewrite lands. See
-> [projects/oc/README.md](projects/oc/README.md).
+> (`git show 636e2e4:<path>` / `git checkout 636e2e4 -- <path>` brings any of it back). The `oc`
+> module list below is historical until the rewrite lands. See
+> [projects/oc/README.md](projects/oc/README.md). The merged `os*` modules are not affected by the
+> rewrite.
 
 ## Modules
+
+### Omni Com (`projects:oc`)
 
 - `projects:oc:oc-googology` — small library of very large natural numbers: exact `BigInteger` values up
   to 4096 bits, hyperoperation (up arrow) notation beyond that, and transfinite hyperoperation levels up
@@ -38,18 +43,36 @@ to Deepseek.
   channel, 60 s anti-replay window) and reports server, JVM and engine facts from a throwaway `World`. It
   cannot reach a live game or change anything, and only a logged-in client may ask.
 
-The Java modules are dependency free: they build and run their self checks offline.
-`./gradlew build --offline` never touches the network and never invokes npm or pnpm.
+The `oc` engine and server modules above were removed by the rewrite and are shown for reference only.
 
-The optional browser client lives in [`web-client/`](web-client/README.md). It needs Node.js and pnpm, is
-built with pnpm, needs network access for its first `pnpm install`, and is never invoked by the Gradle build.
-The neutral wire contract both sides implement is [`protocol/oc-protocol.md`](protocol/oc-protocol.md).
+### Omni Spring Library N Service (`projects:os*`, merged 2026-11-20)
+
+- `projects:osa:osa-server` — Omni Spring Authorization Server: a Spring Boot 3.5.6 server (Java 17, JPMS)
+  for authorization and user information: web controllers, Spring Security with JWT logins, MongoDB user
+  storage and FTP-backed avatar storage built on `osftp-library`. See the top-level `readme` file for the
+  upstream project history.
+- `projects:osc:osc-server` — Omni Spring Chat Server: a Spring Boot chatroom service. Upstream currently
+  ships a build script only (no sources yet), so it contributes no jar yet.
+- `projects:osftp:osftp-library` — a lightweight FTP client library (Spring Boot + commons-net), used by
+  OSA to store user avatars.
+
+The `projects:oc:*` modules are dependency free: they build and run their self checks offline.
+The `projects:os*` modules need network access on their first build (the Spring Boot plugin and the Spring
+artifacts are fetched from the Gradle Plugin Portal and Maven Central, then cached), after which offline
+builds work again.
+
+The optional browser client lived in `web-client/` and was removed by the rewrite; its pnpm build was never
+invoked by the Gradle build. The neutral wire contract both sides implemented was `protocol/oc-protocol.md`,
+also removed — re-establish it when the rewrite lands.
 
 ## Build
 
 ```shell
-./gradlew build --offline
+./gradlew build
 ```
+
+The first build needs network access (the Spring Boot plugin and artifacts of the `os*` modules); once they
+are cached, `./gradlew build --offline` works without touching the network again.
 
 The Gradle wrapper keeps its user home inside the checkout: when `GRADLE_USER_HOME` is unset,
 `gradlew` / `gradlew.bat` point it at `.gradle-user-home/` (the wrapper distribution, caches and daemon
@@ -57,12 +80,10 @@ logs live there; the directory is git-ignored). A sandboxed build therefore need
 `%USERPROFILE%\.gradle`, and nothing generated lands in the user profile. Set `GRADLE_USER_HOME`
 yourself before invoking the wrapper to use another location.
 
-Self checks (no test framework, no network):
+Self checks (no test framework; `oc` modules only until the rewrite returns the others):
 
 ```shell
 ./gradlew --offline \
     :projects:oc:oc-googology:selfcheck \
-    :projects:oc:oc-rts-engine:scenario \
-    :projects:oc:oc-game-server:selfcheck \
-    :projects:oc:oc-game-server-debug:selfcheck
+    :projects:oc:oc-googology-ordinal:selfcheck
 ```

@@ -626,7 +626,11 @@ plugins {
     id 'java-library'
     id 'org.springframework.boot' version '3.5.6'
     id 'io.spring.dependency-management' version '1.1.7'
-    id 'org.graalvm.buildtools.native' version '0.10.6'
+    // org.graalvm.buildtools.native is deliberately not applied here: with osa-server also
+    // applying it, Gradle 8.13 cannot create this module's collectReachabilityMetadata task
+    // (the plugin class loads in two project classloader scopes and the task property refuses
+    // the cross-scope provider), which broke every root-level build. An empty module has no
+    // native image to build anyway; re-add it together with real sources if ever needed.
 }
 
 group = 'io.github.sob1234509876.osc'
@@ -660,6 +664,18 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Upstream ships no sources for this module yet, so the Spring Boot jar tasks are disabled:
+// bootJar would find no main class, and its GraalVM reachability metadata task clashes with
+// the plugin classloader of the osa-server project in a multi-project build. The plain jar
+// keeps the module on the build until real code lands.
+bootJar {
+    enabled = false
+}
+
+jar {
+    enabled = true
 }
 
 test {
