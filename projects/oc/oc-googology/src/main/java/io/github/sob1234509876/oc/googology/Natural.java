@@ -402,7 +402,12 @@ public final class Natural implements NaturalNumber {
         if (trimmed.equalsIgnoreCase("beyond") || trimmed.equals("∞")) {
             return Optional.of(BEYOND);
         }
+        // The scientific shorthand accepts either case of the separator, so 1e100 and 1E100 both parse;
+        // the BEYOND keyword handled above is already case-insensitive.
         int eIndex = trimmed.indexOf('e');
+        if (eIndex < 0) {
+            eIndex = trimmed.indexOf('E');
+        }
         if (eIndex > 0 && isDigits(trimmed.substring(0, eIndex)) && isDigits(trimmed.substring(eIndex + 1))) {
             Optional<Natural> mantissa = parse(trimmed.substring(0, eIndex));
             Optional<Natural> exponent = parse(trimmed.substring(eIndex + 1));
@@ -1085,7 +1090,11 @@ public final class Natural implements NaturalNumber {
         }
     }
 
-    /** The share of {@code whole} this value represents, in {@code [0, 1]}, for health bars and the like. */
+    /**
+     * The share of {@code whole} this value represents, in {@code [0, 1]}, for health bars and the like.
+     * A zero or {@link #BEYOND} whole, and a value at or above its whole, yields {@code 1f}: when the
+     * capacity is unbounded or the value already fills it, a full bar is the safe rendering.
+     */
     public float fractionOf(Natural whole) {
         Objects.requireNonNull(whole, "whole");
         if (whole.isZero() || whole.isBeyond() || this.isBeyond()) {
@@ -1998,29 +2007,13 @@ public final class Natural implements NaturalNumber {
         return levelText.replace("ω", "\\omega").replace("·", "\\cdot").replace("↑", "\\uparrow");
     }
 
-    /** A sentence describing the value, its representation and, when possible, its decimal size. */
+    /**
+     * A sentence describing the value, its representation and, when possible, its decimal size. The one
+     * implementation lives in {@link NaturalFormat#describe(Natural)} so the two entry points can never
+     * drift apart; see there for the exact wording.
+     */
     public String describe() {
-        switch (kind) {
-            case EXACT:
-                return value + " (exact, " + value.bitLength() + " bits)";
-            case TOWER:
-                StringBuilder text = new StringBuilder();
-                text.append(this).append(" (structural ");
-                if (level != null) {
-                    text.append("hyperoperation of level ").append(level.render());
-                } else if (finiteLevel.isOne()) {
-                    text.append("exponentiation");
-                } else if (finiteLevel.equals(TWO)) {
-                    text.append("tetration");
-                } else {
-                    text.append(finiteLevel).append(" arrows");
-                }
-                decimalDigits().ifPresent(digits -> text.append(", ").append(digits).append(" decimal digits"));
-                text.append(")");
-                return text.toString();
-            default:
-                return "BEYOND (larger than any value of this notation)";
-        }
+        return NaturalFormat.describe(this);
     }
 
     /** Renders a run of up arrows, e.g. {@code ↑↑↑} for three. */

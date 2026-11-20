@@ -297,6 +297,16 @@ public final class InaccessibleCheck {
         equal("尾随 beta 的记法 I(1 @ 0, 1)", "I(1 @ 0, 1)",
                 InaccessibleCardinal.coefficient(0, 1, 1).toString());
 
+        // Regression: the ENTRY layer used to compare its coefficient ordinal with ==, so two separately
+        // built I(a @ b) were compareTo-equal but not equals-equal. Pin the value semantics shut.
+        check("分别构造的相同系数条目 equals、哈希一致且 compareTo 为零",
+                entryAtZero.equals(InaccessibleCardinal.coefficient(0, 1, 0))
+                        && entryAtZero.hashCode() == InaccessibleCardinal.coefficient(0, 1, 0).hashCode()
+                        && IndexLevel.entry(1, IndexLevel.ordinal(notation.zero()))
+                                .equals(IndexLevel.entry(1, IndexLevel.ordinal(notation.zero())))
+                        && IndexLevel.entry(1, IndexLevel.ordinal(notation.zero()))
+                                .compareTo(IndexLevel.entry(1, IndexLevel.ordinal(notation.zero()))) == 0);
+
         check("同一层级按系数比较：I(1 @ 1) < I(2 @ 1) < I(3 @ 1)",
                 InaccessibleCardinal.coefficient(1, 1, 0)
                                 .compareTo(InaccessibleCardinal.coefficient(1, 2, 0)) < 0

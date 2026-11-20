@@ -29,6 +29,8 @@ public enum HyperOperation {
     HEPTATION(7, "heptation", "七级运算", "a↑↑↑↑↑b"),
     OCTATION(8, "octation", "八级运算", "a↑↑↑↑↑↑b");
 
+    private static final Natural ONE = Natural.ONE;
+
     private final int rank;
     private final String label;
     private final String chineseLabel;
@@ -102,6 +104,4 @@ public enum HyperOperation {
                 return Natural.arrow(a, arrows(), b);
         }
     }
-
-    private static final Natural ONE = Natural.ONE;
 }

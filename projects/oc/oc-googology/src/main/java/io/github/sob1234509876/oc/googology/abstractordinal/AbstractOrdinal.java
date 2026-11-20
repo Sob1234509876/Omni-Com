@@ -32,7 +32,7 @@ import java.util.Objects;
  * <p><b>Why there is no {@code PSI_OMEGA_OMEGA}-style constant.</b> The BMS reference's own last nodes
  * below the limit - {@code ψ(Ω^Ω) = FSO = Γ₀} written {@code (0)(1,1)(2,1)(3,1)}, {@code ψ(M_ω) = SMO}
  * written {@code (0)(1,1,1)(2,1,1)(3,1,1)(3,1,1)} and {@code ψ(ω-Projection) = TSSO} written
- * {@code (0,0,0,0)(1,1,1,1)} - are BMS-representable matrices. A register who's every entry is
+ * {@code (0,0,0,0)(1,1,1,1)} - are BMS-representable matrices. A register whose every entry is
  * <em>above every BMS value</em> cannot contain them: the "greater than BMS" axiom below would be false
  * for them. They are listed as the rungs just below the limit in
  * {@code help/abstract-ordinals.md}, where their matrix forms make the boundary concrete. The enum begins

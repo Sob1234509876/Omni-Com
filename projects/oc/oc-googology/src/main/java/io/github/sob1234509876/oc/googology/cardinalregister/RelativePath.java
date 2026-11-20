@@ -23,6 +23,13 @@ import java.util.Objects;
  * {@code documents/Human/Ordinals.md}. That makes the same constant work under both working directories
  * without a hard-coded absolute path.
  *
+ * <p><b>Outside a repository checkout.</b> The lookup is only meaningful in a development checkout.
+ * Packaged elsewhere, the first {@link #resolve()} throws {@link IllegalStateException} and
+ * {@link #exists()} answers {@code false}. Both the found root and the failure are remembered for the
+ * process, so repeated calls never re-walk the directory tree, and a caller that changes the working
+ * directory after the first call keeps seeing the first answer. Verifying that the linked files and
+ * headings really exist is the self check's job, not a runtime duty of this class.
+ *
  * <p>The section is stored without the leading {@code #} characters and without the Markdown heading level,
  * for example {@code "2. $\\alpha$-Mahlo cardinals"}. The check compares it with the document's headings
  * without regard to case or repeated whitespace, so the stored text has to be a heading that really is in the
@@ -35,6 +42,12 @@ public final class RelativePath {
 
     /** The marker the register uses to find the repository root from any working directory. */
     private static final String ROOT_MARKER = "documents/Human/Ordinals.md";
+
+    /** The repository root the first lookup found, {@code null} until then; read once per call. */
+    private static volatile Path cachedRepositoryRoot;
+
+    /** Whether the first lookup failed, so later calls throw the same answer without re-walking the tree. */
+    private static volatile boolean repositoryRootMissing;
 
     private final Path path;
     private final String section;
@@ -89,6 +102,7 @@ public final class RelativePath {
     /**
      * The absolute path of the document, found from the current working directory by walking up to the first
      * ancestor that contains {@code documents/Human/Ordinals.md} and then resolving this reference there.
+     * The walk runs once and the found root is then remembered for the rest of the process.
      *
      * @return the absolute path of the document
      * @throws IllegalStateException if no ancestor of the current directory is the repository root
@@ -122,13 +136,23 @@ public final class RelativePath {
     }
 
     private static Path repositoryRoot() {
+        Path cached = cachedRepositoryRoot;
+        if (cached != null) {
+            return cached;
+        }
+        if (repositoryRootMissing) {
+            throw new IllegalStateException("cannot locate the repository root: no ancestor of "
+                    + Path.of("").toAbsolutePath() + " contains " + ROOT_MARKER);
+        }
         Path current = Path.of("").toAbsolutePath().normalize();
         while (current != null) {
             if (Files.isRegularFile(current.resolve(ROOT_MARKER))) {
+                cachedRepositoryRoot = current;
                 return current;
             }
             current = current.getParent();
         }
+        repositoryRootMissing = true;
         throw new IllegalStateException("cannot locate the repository root: no ancestor of "
                 + Path.of("").toAbsolutePath() + " contains " + ROOT_MARKER);
     }

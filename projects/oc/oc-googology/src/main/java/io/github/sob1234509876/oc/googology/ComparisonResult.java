@@ -10,7 +10,7 @@ package io.github.sob1234509876.oc.googology;
  *
  * <ul>
  *   <li>{@link #LESS}, {@link #EQUAL} and {@link #GREATER} are <strong>proofs</strong>: exact arithmetic, an
- *       exact degenerate identity, a truncated bound, a monoticity certificate, or a documented
+ *       exact degenerate identity, a truncated bound, a monotonicity certificate, or a documented
  *       well-behavedness property cross checked against a larger budget. This is what
  *       {@link Natural#compareMagnitude(Natural)} returns, and it never returns anything else except
  *       {@link #UNKNOWN}.</li>

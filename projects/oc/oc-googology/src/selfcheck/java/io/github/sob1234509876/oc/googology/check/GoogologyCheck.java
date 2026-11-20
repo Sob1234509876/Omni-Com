@@ -203,10 +203,12 @@ public final class GoogologyCheck {
         check("库存容量运算保持精确（24 格 × 每格 60）", totalCapacity.equals(Natural.of(1440)) && totalCapacity.isExact());
         check("库存上限与实际库存可以直接比较", stock.compareTo(totalCapacity) < 0);
 
-        section("10) 与 BigInteger 的等价性（固定种子的随机对照）");
-        Random random = new Random(20240202L);
+        section("10) 与 BigInteger 的等价性（随机对照；种子与轮数可用 -Dgoogology.check.seed / -Dgoogology.check.rounds 覆盖）");
+        long equivalenceSeed = Long.getLong("googology.check.seed", 20240202L);
+        int equivalenceRounds = Integer.getInteger("googology.check.rounds", 2000);
+        Random random = new Random(equivalenceSeed);
         int compared = 0;
-        for (int round = 0; round < 2000; round++) {
+        for (int round = 0; round < equivalenceRounds; round++) {
             BigInteger a = new BigInteger(1 + random.nextInt(200), random);
             BigInteger b = new BigInteger(1 + random.nextInt(200), random);
             Natural na = Natural.of(a);
@@ -224,8 +226,8 @@ public final class GoogologyCheck {
             }
             compared++;
         }
-        check("2000 轮随机对照里，" + compared + " 轮的加减乘、min/max、比较与解析往返与 BigInteger 完全一致",
-                compared == 2000);
+        check(equivalenceRounds + " 轮随机对照里，" + compared + " 轮的加减乘、min/max、比较与解析往返与 BigInteger 完全一致",
+                compared == equivalenceRounds);
         int boundary = 0;
         for (int bits = 4080; bits <= 4110; bits++) {
             Natural power = Natural.power(two, Natural.of(bits));

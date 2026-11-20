@@ -13,7 +13,9 @@
 | 基础包 | `io.github.sob1234509876.oc.googology` |
 | 组 / 版本 | `io.github.sob1234509876.oc` / `2.0a` |
 | 构建 | `java-library`、Java 17 工具链、JPMS、**无第三方依赖** |
-| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（878 项检查，无测试框架，无网络） |
+| 自检 | `./gradlew :projects:oc:oc-googology:selfcheck`（879 项检查，无测试框架，无网络） |
+| 性能工作台 | `./gradlew :projects:oc:oc-googology:workbench` —— 无依赖的性能基准（`-Dworkbench.filter='tower bms'` 可选负载） |
+| 随机审计 | `./gradlew :projects:oc:oc-googology:randomaudit` —— 覆盖全部值形态的随机运算、详细输出与内置一致性检查（`-Drandomaudit.seed` / `-Drandomaudit.count`） |
 | 序数 | [`help/ordinals.md`](help/ordinals.md) —— 记法、基本列、超限超运算，以及塔是如何比较的 |
 | BMS | [`help/bms.md`](help/bms.md) —— Bashicu 矩阵标准式、字典序、展开规则与非递归变体 |
 | 抽象序数 | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) —— BMS 极限之上（及极限本身）的具名阶段名册 |
@@ -505,7 +507,9 @@ help/abstract-ordinals.md        BMS 之上名册的中文指南
 help/ordinal-ladder.md           阶段一至阶段三序数阶梯（含 Q7b 迭代下标）的中文指南
 help/cardinal-register.md        阶段四基数寄存器的中文指南
 help/inaccessible-extension.md   阶段五不可达扩展的中文指南
-src/selfcheck/java/.../check/GoogologyCheck.java    878 项检查的自检程序
+src/selfcheck/java/.../check/GoogologyCheck.java    879 项检查的自检程序
+src/selfcheck/java/.../check/Workbench.java         性能工作台（gradlew workbench）
+src/selfcheck/java/.../check/RandomAudit.java       随机运算审计器（gradlew randomaudit）
 src/selfcheck/java/.../check/BmsCheck.java          其中的 BMS 三节（第 16–18 节）
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  其中的抽象序数两节（第 19–20 节）
 src/selfcheck/java/.../check/LadderCheck.java       其中的阶梯十一节（第 21–31 节）

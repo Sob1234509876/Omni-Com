@@ -54,16 +54,18 @@ public final class Calc {
                 if (line == null) {
                     return;
                 }
-                print(engine, line);
-                if (engine.execute(line).equals("quit")) {
+                if (print(engine, line).equals("quit")) {
                     return;
                 }
             }
         }
     }
 
-    /** Executes one line and prints the output; a blanket catch keeps the loop alive on anything unexpected. */
-    private static void print(CalcEngine engine, String line) {
+    /**
+     * Executes one line, prints the output and returns it, so the caller can spot {@code quit} without
+     * executing the line twice; a blanket catch keeps the loop alive on anything unexpected.
+     */
+    private static String print(CalcEngine engine, String line) {
         String output;
         try {
             output = engine.execute(line);
@@ -74,5 +76,6 @@ public final class Calc {
             System.out.println(output);
             System.out.flush();
         }
+        return output;
     }
 }

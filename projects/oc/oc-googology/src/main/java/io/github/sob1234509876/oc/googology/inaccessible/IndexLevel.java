@@ -290,7 +290,8 @@ public final class IndexLevel implements Comparable<IndexLevel> {
     public String toString() {
         return switch (layer) {
             case PLAIN -> tupleSyntax ? renderTuple(prefix) : prefix.get(0).render();
-            case ENTRY -> coefficient.render() + " @ " + renderEntryLevel(level);            case LIMIT -> renderLimit(nestingLinks);
+            case ENTRY -> coefficient.render() + " @ " + renderEntryLevel(level);
+            case LIMIT -> renderLimit(nestingLinks);
             default -> throw new AssertionError("unknown level layer " + layer);
         };
     }
@@ -349,7 +350,7 @@ public final class IndexLevel implements Comparable<IndexLevel> {
         }
         return switch (layer) {
             case PLAIN -> prefix.equals(level.prefix);
-            case ENTRY -> coefficient == level.coefficient && this.level.equals(level.level);
+            case ENTRY -> coefficient.equals(level.coefficient) && this.level.equals(level.level);
             case LIMIT -> true;
             default -> false;
         };

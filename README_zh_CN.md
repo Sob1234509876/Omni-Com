@@ -4,6 +4,12 @@
 
 Omni Com 项目的单体仓库。Java 模块使用 Gradle 构建，不依赖任何第三方库；可选的浏览器客户端使用 pnpm 构建。创意来自 Sob1234509876，感谢 Deepseek 使之成为可能。
 
+> **重写中（2026-11-20）。** 除 `oc-googology` 与 `oc-googology-ordinal` 外的所有项目已按业主
+> 决定删除——Java 模块、各插件与 `web-client/` pnpm 项目——整个技术栈正在从零重写。旧实现保存在
+> git 历史的提交 `636e2e4` 里（`git show 636e2e4:<路径>` / `git checkout 636e2e4 -- <路径>` 可找回）。
+> 下文的模块列表在重写落地前仅为历史参考。参见
+> [projects/oc/README.md](projects/oc/README.md)。
+
 ## 模块
 
 - `projects:oc:oc-googology` —— 极大自然数的小型库：最高 4096 位的精确 `BigInteger` 值，超出后使用超运算（上箭头）记法，并通过可插拔的序数记法支持直到 `ε₀` 的超限超运算层级。纯 Java 17（JPMS、`java-library`，无第三方依赖）。

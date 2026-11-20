@@ -8,5 +8,8 @@
  * {@code Natural}, the comparison channels, the level-resolved inverses, transfinite levels through
  * {@code TransfiniteHyperoperation}, and Bashicu ordinal inspection. This package only adds the forgiving
  * command grammar and the never-crash loop, so it stays a debugging aid and never a second arithmetic.
+ *
+ * <p>The module deliberately does <strong>not</strong> export this package: it is an internal debugging
+ * aid, unreachable from outside {@code oc.projects.oc.googology} and never part of the published API.
  */
 package io.github.sob1234509876.oc.googology.calc;

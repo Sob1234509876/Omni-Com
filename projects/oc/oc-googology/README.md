@@ -16,7 +16,9 @@ type the RTS engine uses for item amounts, capacities, hit points and damage.
 | Base package | `io.github.sob1234509876.oc.googology` |
 | Group / version | `io.github.sob1234509876.oc` / `2.0a` |
 | Build | `java-library`, Java 17 toolchain, JPMS, **no third-party dependencies** |
-| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (878 checks, no test framework, no network) |
+| Self check | `./gradlew :projects:oc:oc-googology:selfcheck` (879 checks, no test framework, no network) |
+| Workbench | `./gradlew :projects:oc:oc-googology:workbench` — the dependency free performance workbench (`-Dworkbench.filter='tower bms'` selects workloads) |
+| Random audit | `./gradlew :projects:oc:oc-googology:randomaudit` — random operations across every value shape with detailed output and built-in consistency checks (`-Drandomaudit.seed` / `-Drandomaudit.count`) |
 | Ordinals | [`help/ordinals.md`](help/ordinals.md) — the notation, fundamental sequences, the transfinite hyperoperation and how towers are compared |
 | BMS | [`help/bms.md`](help/bms.md) — Bashicu matrix standard forms, their lexicographic order, the expansion rules and the non-recursive variant |
 | Abstract ordinals | [`help/abstract-ordinals.md`](help/abstract-ordinals.md) — the register of named stages at and above the BMS limit |
@@ -651,7 +653,9 @@ help/abstract-ordinals.md         the Chinese guide to the register above BMS
 help/ordinal-ladder.md            the Chinese guide to stages one to three of the ordinal ladder
 help/cardinal-register.md         the Chinese guide to the stage-four cardinal register
 help/inaccessible-extension.md    the Chinese guide to the stage-five inaccessible extension
-src/selfcheck/java/.../check/GoogologyCheck.java    the 878 check self check program
+src/selfcheck/java/.../check/GoogologyCheck.java    the 879 check self check program
+src/selfcheck/java/.../check/Workbench.java         the performance workbench (gradlew workbench)
+src/selfcheck/java/.../check/RandomAudit.java       the random operation auditor (gradlew randomaudit)
 src/selfcheck/java/.../check/BmsCheck.java          its BMS section (sections 16-18)
 src/selfcheck/java/.../check/AbstractOrdinalCheck.java  its abstract-ordinal section (sections 19-20)
 src/selfcheck/java/.../check/LadderCheck.java       its ladder section (sections 21-31)

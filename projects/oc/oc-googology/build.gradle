@@ -49,11 +49,43 @@ sourceSets {
     }
 }
 
+// Gradle does not forward -D flags from the Gradle CLI into a forked JavaExec JVM, so the tool tasks
+// pick up the documented tuning properties themselves (-Dgoogology.check.seed / googology.check.rounds,
+// -Drandomaudit.seed / randomaudit.count, -Dworkbench.filter).
+def toolSystemProperties() {
+    System.getProperties().findAll { key, _ ->
+        def name = key.toString()
+        name.startsWith('googology.check.') || name.startsWith('randomaudit.') || name.startsWith('workbench.')
+    }
+}
+
 tasks.register('selfcheck', JavaExec) {
     group = 'verification'
     description = 'Runs the googology library self check.'
     classpath = sourceSets.selfCheck.runtimeClasspath
     mainClass = 'io.github.sob1234509876.oc.googology.check.GoogologyCheck'
+    systemProperties(toolSystemProperties())
+}
+
+// The performance workbench: a dependency free micro benchmark over the library's own value shapes.
+// Runs with: ./gradlew :projects:oc:oc-googology:workbench  (-Dworkbench.filter='tower bms' selects)
+tasks.register('workbench', JavaExec) {
+    group = 'verification'
+    description = 'Runs the performance workbench over the googology values.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.googology.check.Workbench'
+    systemProperties(toolSystemProperties())
+}
+
+// The random operation auditor: random computations across every value shape with detailed output and
+// the documented consistency checks. Runs with: ./gradlew :projects:oc:oc-googology:randomaudit
+// (-Drandomaudit.seed / -Drandomaudit.count make a run reproducible and sized)
+tasks.register('randomaudit', JavaExec) {
+    group = 'verification'
+    description = 'Runs the random big-number operation auditor.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.googology.check.RandomAudit'
+    systemProperties(toolSystemProperties())
 }
 
 // The owner's debugging calculator: an interactive REPL over the googology layer. stdin is inherited, so

@@ -277,7 +277,8 @@ public final class BmsMatrix {
         return values;
     }
 
-    private static List<List<Integer>> copy(int[][] columns) {        List<List<Integer>> raw = new ArrayList<>(columns.length);
+    private static List<List<Integer>> copy(int[][] columns) {
+        List<List<Integer>> raw = new ArrayList<>(columns.length);
         for (int index = 0; index < columns.length; index++) {
             int[] column = columns[index];
             if (column == null) {

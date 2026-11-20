@@ -6,6 +6,14 @@ Monorepo for the Omni Com project. The Java modules are built with Gradle and us
 dependencies; the optional browser client is built with pnpm. Idea by Sob1234509876, made possible thanks
 to Deepseek.
 
+> **Rewrite in progress (2026-11-20).** Every project except `oc-googology` and
+> `oc-googology-ordinal` has been deleted by owner decision — the Java modules, the plugins and the
+> `web-client/` pnpm project — and the stack is being rewritten from scratch. The previous
+> implementation lives in git history at commit `636e2e4`
+> (`git show 636e2e4:<path>` / `git checkout 636e2e4 -- <path>` brings any of it back). The module
+> list below is historical until the rewrite lands. See
+> [projects/oc/README.md](projects/oc/README.md).
+
 ## Modules
 
 - `projects:oc:oc-googology` — small library of very large natural numbers: exact `BigInteger` values up

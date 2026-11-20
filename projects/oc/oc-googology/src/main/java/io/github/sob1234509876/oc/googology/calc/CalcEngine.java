@@ -85,7 +85,8 @@ public final class CalcEngine {
     /**
      * Executes one line and returns the output, empty for a blank line or a silent success. This is the
      * one entry point both the REPL and the self check drive, and it never throws: a rejected input comes
-     * back as an {@code 错误：...} line.
+     * back as an {@code 错误：...} line, and so does an unexpected runtime failure or a pathologically
+     * deep expression. Only fatal {@link Error}s such as {@link OutOfMemoryError} can still escape.
      */
     public String execute(String line) {
         if (line == null) {
@@ -102,6 +103,12 @@ public final class CalcEngine {
         } catch (IllegalArgumentException | IllegalStateException | UnsupportedOperationException
                 | ArithmeticException error) {
             return "错误：" + error.getMessage();
+        } catch (RuntimeException error) {
+            // Contract backstop: a bug such as a NullPointerException must not escape the never-throws
+            // entry point. The message of an unexpected error can be null, so render the whole exception.
+            return "错误：" + error;
+        } catch (StackOverflowError deep) {
+            return "错误：表达式嵌套过深";
         }
     }
 
