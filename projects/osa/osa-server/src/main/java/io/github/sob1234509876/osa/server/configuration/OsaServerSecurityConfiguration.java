@@ -61,6 +61,7 @@ public class OsaServerSecurityConfiguration {
                     cfg.setAllowedMethods(List.of("GET", "POST", "DELETE", "PUT", "OPTIONS"));
                     cfg.setAllowedOriginPatterns(List.of("*"));
                     cfg.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+                    cfg.setAllowCredentials(true);
 
                     var src = new UrlBasedCorsConfigurationSource();
                     src.registerCorsConfiguration("/**", cfg);

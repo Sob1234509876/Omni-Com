@@ -12,7 +12,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.format.FormatterRegistry;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Slf4j
@@ -57,11 +56,4 @@ public class OsaServerControllerConfiguration implements WebMvcConfigurer {
         registry.addConverter((StringToGrantedAuthorityConverter) (SimpleGrantedAuthority::new));
     }
 
-    @Override
-    public void addCorsMappings(@NonNull CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowCredentials(true)
-                .allowedOriginPatterns("*")
-                .allowedMethods("GET", "POST", "DELETE", "PUT");
-    }
 }

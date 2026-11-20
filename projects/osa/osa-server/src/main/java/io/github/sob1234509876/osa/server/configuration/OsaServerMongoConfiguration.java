@@ -1,7 +1,6 @@
 package io.github.sob1234509876.osa.server.configuration;
 
 import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
 import io.github.sob1234509876.osa.server.dao.mongo.OsaServerMongoUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -23,12 +22,6 @@ public class OsaServerMongoConfiguration {
     @NonNull
     public MongoTemplate mongoTemplate(@NonNull MongoClient mongoClient) {
         return new MongoTemplate(mongoClient, DB_NAME);
-    }
-
-    @Bean
-    @NonNull
-    public MongoClient mongoClient() {
-        return MongoClients.create();
     }
 
     @Bean
