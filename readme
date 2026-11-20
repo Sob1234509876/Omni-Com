@@ -1,0 +1,15 @@
+# Omni Spring Library N Service
+A simple library and service collection. Licenses are different for each project.
+
+## Updates
+
+### Alpha 1.0
+Previously there were a lot of stuff, but through some deleting (removing lots of useless projects that are just toys, including a quite old aged project: OSP), now only left with 2 projects: OSFTP and OSA.
+OSFTP is a light-weight FTP client library. Used by OSA to storing user avatars.
+OSA is a simple authorization and user information database server. Implement to start.
+
+### Alpha 1.1
+There is a BUG in the OSA-Server project, where one changes it's name will cause it's avatar data lose sync and couldn't be recognized by the FTP DAO
+
+### Alpha 1.2
+Refactored a lot of stuffs and added JWT token to OSA-Server and removed HTTP Basic plus form login. Also added the client for OSA server (index: (host)/public/osa/index.html) from my repository called Clients.

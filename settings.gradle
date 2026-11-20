@@ -2,3 +2,9 @@ rootProject.name = 'oc'
 
 include 'projects:oc:oc-googology'
 include 'projects:oc:oc-googology-ordinal'
+
+include 'projects:osa:osa-server'
+
+include 'projects:osc:osc-server'
+
+include 'projects:osftp:osftp-library'

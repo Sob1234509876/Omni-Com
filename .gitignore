@@ -9,6 +9,9 @@ build/
 plugins/*.jar
 **/plugins/*.jar
 
+### OSA runtime state ###
+**/osa_generated_key.txt
+
 ### STS ###
 .apt_generated
 .classpath
