@@ -14,12 +14,13 @@ import java.util.TimerTask;
 
 // Extremely inefficient
 @Slf4j
-@Data
+@Getter
+@ToString
 @NoArgsConstructor
 @RequiredArgsConstructor
 public class FtpTemplate implements FtpOperations {
 
-    private static Timer HEARTBEAT = new Timer(true);
+    private static final Timer HEARTBEAT = new Timer(true);
 
     @NonNull
     private FTPClient client;
@@ -29,7 +30,7 @@ public class FtpTemplate implements FtpOperations {
 
     private boolean connected;
 
-    private TimerTask heartbeatTask = new TimerTask() {
+    private final TimerTask heartbeatTask = new TimerTask() {
         @Override
         public void run() {
 
@@ -39,8 +40,15 @@ public class FtpTemplate implements FtpOperations {
             try {
                 client.noop();
                 log.info("Beep");
-            } catch (@NonNull IOException e) {
-                throw new RuntimeException(e);
+            } catch (@NonNull Throwable t) {
+                connected = false;
+
+                try {
+                    client.disconnect();
+                } catch (@NonNull IOException ignored) {
+
+                }
+                log.warn("Heartbeat failed", t);
             }
         }
     };
@@ -205,6 +213,7 @@ public class FtpTemplate implements FtpOperations {
 
     @Override
     public void destroy() throws Exception {
+        heartbeatTask.cancel();
         disconnect();
     }
 

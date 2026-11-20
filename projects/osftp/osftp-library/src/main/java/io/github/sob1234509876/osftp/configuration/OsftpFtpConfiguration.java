@@ -28,14 +28,14 @@ public class OsftpFtpConfiguration {
     @ConditionalOnMissingBean(FTPClient.class)
     @Bean
     @NonNull
-    public FTPClient defaultFtpsClient() {
+    public FTPClient defaultFtpClient() {
         return new CustomFtpClient();
     }
 
     @ConditionalOnMissingBean(FtpTemplate.class)
     @Bean
     @NonNull
-    public FtpTemplate defaultFTPTemplate(@NonNull FTPClient ftpClient, @NonNull OsftpLibraryProperty osftpLibraryProperty) {
+    public FtpTemplate defaultFtpTemplate(@NonNull FTPClient ftpClient, @NonNull OsftpLibraryProperty osftpLibraryProperty) {
         return new FtpTemplate(ftpClient, osftpLibraryProperty);
     }
 }

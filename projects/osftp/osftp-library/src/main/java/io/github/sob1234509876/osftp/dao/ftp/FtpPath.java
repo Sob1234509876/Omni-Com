@@ -35,6 +35,8 @@ public class FtpPath {
 
     public void toParent() {
         var dir = getDir();
+        if (dir.isEmpty())
+            return;
         dir.remove(dir.size() - 1);
     }
 
