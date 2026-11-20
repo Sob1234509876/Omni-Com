@@ -53,3 +53,7 @@ Gradle wrapper 把用户目录放在仓库内：未设置 `GRADLE_USER_HOME` 时
     :projects:oc:oc-googology:selfcheck \
     :projects:oc:oc-googology-ordinal:selfcheck
 ```
+
+## 许可证
+
+整个单体仓库以 GNU 通用公共许可证 v3.0（GPL-3.0）授权；见 [LICENSE](LICENSE)。

@@ -87,3 +87,8 @@ Self checks (no test framework; `oc` modules only until the rewrite returns the 
     :projects:oc:oc-googology:selfcheck \
     :projects:oc:oc-googology-ordinal:selfcheck
 ```
+
+## License
+
+The whole monorepo is licensed under the GNU General Public License v3.0; see
+[LICENSE](LICENSE).
