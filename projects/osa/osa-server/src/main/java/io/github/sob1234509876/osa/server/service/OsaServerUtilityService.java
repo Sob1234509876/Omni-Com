@@ -26,7 +26,7 @@ public class OsaServerUtilityService {
     @NonNull
     private PasswordEncoder passwordEncoder;
 
-    private WeakHashMap<String, String> avatarFtpPathCache = new WeakHashMap<>();
+    private WeakHashMap<@NonNull String, @NonNull String> avatarFtpPathCache = new WeakHashMap<>();
 
     public void toSafeUser(@NonNull OsaApiUser original, @NonNull OsaApiUser user) {
         user.setAuthorities(original.getAuthorities());
@@ -59,6 +59,7 @@ public class OsaServerUtilityService {
     }
 
     // Random use of cache, I think string concat operations are inefficient, so I added this.
+    @NonNull
     public String getAvatarFtpPath(@NonNull String id) {
         if (avatarFtpPathCache.containsKey(id))
             return avatarFtpPathCache.get(id);
@@ -68,6 +69,7 @@ public class OsaServerUtilityService {
         return tmp;
     }
 
+    @NonNull
     public String newAvatarFtpPath(@NonNull String id) {
         return osaServerPropertyComponent.getAvatarFtpPathPrefix() + "/" + id;
     }

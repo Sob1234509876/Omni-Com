@@ -70,7 +70,7 @@ public class OsaServerFtpAvatarDao implements OsaApiAvatarDao, InitializingBean 
     }
 
     @Override
-    public @NonNull Iterable<OsaApiAvatar> findAll() {
+    public @NonNull Iterable<@NonNull OsaApiAvatar> findAll() {
         var path = osaServerPropertyComponent.getAvatarFtpPathPrefix();
         var res = new LinkedList<OsaApiAvatar>();
 
@@ -87,7 +87,7 @@ public class OsaServerFtpAvatarDao implements OsaApiAvatarDao, InitializingBean 
     }
 
     @Override
-    public @NonNull Iterable<OsaApiAvatar> findAllById(@NonNull Iterable<Long> strings) {
+    public @NonNull Iterable<@NonNull OsaApiAvatar> findAllById(@NonNull Iterable<Long> strings) {
         var res = new LinkedList<OsaApiAvatar>();
 
         for (var s : strings) {

@@ -23,13 +23,15 @@ public class OsaServerDeleteController {
     @NonNull
     private OsaServerDeleteService osaServerDeleteService;
 
+    @NonNull
     @DeleteMapping("/private/profile/delete")
-    public ResponseEntity<Void> deleteProfile(@AuthenticationPrincipal UserDetails user, @ModelAttribute("password") @NonNull String password) {
+    public ResponseEntity<Void> deleteProfile(@AuthenticationPrincipal @NonNull UserDetails user, @ModelAttribute("password") @NonNull String password) {
         return osaServerDeleteService.deleteProfile(user, password);
     }
 
+    @NonNull
     @DeleteMapping("/private/avatar/delete")
-    public ResponseEntity<Void> deleteAvatar(@AuthenticationPrincipal UserDetails user) {
+    public ResponseEntity<Void> deleteAvatar(@AuthenticationPrincipal @NonNull UserDetails user) {
         return osaServerDeleteService.deleteAvatar(user);
     }
 

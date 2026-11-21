@@ -28,13 +28,15 @@ public class OsaServerUpdateController {
     @NonNull
     private OsaServerUpdateService osaServerUpdateService;
 
+    @NonNull
     @PostMapping("/private/profile/update")
-    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal UserDetails user, @RequestParam(value = "changeSensitiveField", required = false, defaultValue = "false") boolean changeSensitiveField, @NonNull OsaApiStringUserSecurePair nUser) {
+    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal @NonNull UserDetails user, @RequestParam(value = "changeSensitiveField", required = false, defaultValue = "false") boolean changeSensitiveField, @NonNull OsaApiStringUserSecurePair nUser) {
         return osaServerUpdateService.updateProfile(user, changeSensitiveField, nUser);
     }
 
+    @NonNull
     @PostMapping("/private/avatar/update")
-    public ResponseEntity<Void> updateAvatar(@AuthenticationPrincipal UserDetails user, @ModelAttribute("avatar") @NonNull MultipartFile avatar) throws IOException {
+    public ResponseEntity<Void> updateAvatar(@AuthenticationPrincipal @NonNull UserDetails user, @ModelAttribute("avatar") @NonNull MultipartFile avatar) throws IOException {
         return osaServerUpdateService.updateAvatar(user, avatar);
     }
 

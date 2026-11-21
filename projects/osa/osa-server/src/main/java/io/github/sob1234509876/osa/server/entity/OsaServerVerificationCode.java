@@ -3,6 +3,7 @@ package io.github.sob1234509876.osa.server.entity;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.data.annotation.Id;
 
 import java.nio.charset.StandardCharsets;
@@ -21,14 +22,21 @@ public class OsaServerVerificationCode {
     public static final String EXPIRES_AT_FIELD = "expiresAt";
 
     @Id
+    @Nullable
     private String id;
+    @NonNull
     private String email;
+    @NonNull
     private String codeHash;
+    @NonNull
     private String purpose;
+    @NonNull
     private Instant createdAt;
+    @NonNull
     private Instant expiresAt;
     private int attempts;
 
+    @NonNull
     public static String hash(@NonNull String code) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");

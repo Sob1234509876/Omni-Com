@@ -27,18 +27,21 @@ public class OsaServerCreateController {
     @NonNull
     private OsaServerCreateService osaServerCreateService;
 
+    @NonNull
     @PostMapping("/anonymous/register/email")
     public ResponseEntity<Void> registerEmail(@ModelAttribute("email") @NonNull String email) {
         return osaServerCreateService.requestRegisterEmail(email);
     }
 
+    @NonNull
     @PostMapping("/anonymous/register")
-    public ResponseEntity<Long> register(@ModelAttribute("email") @NonNull String email, @ModelAttribute("code") @NonNull String code, @NonNull OsaApiUser user) {
+    public ResponseEntity<@NonNull Long> register(@ModelAttribute("email") @NonNull String email, @ModelAttribute("code") @NonNull String code, @NonNull OsaApiUser user) {
         return osaServerCreateService.register(email, code, user);
     }
 
+    @NonNull
     @PostMapping("/private/avatar/upload")
-    public ResponseEntity<Void> uploadAvatar(@AuthenticationPrincipal UserDetails user, @ModelAttribute("avatar") @NonNull MultipartFile avatar) throws IOException {
+    public ResponseEntity<Void> uploadAvatar(@AuthenticationPrincipal @NonNull UserDetails user, @ModelAttribute("avatar") @NonNull MultipartFile avatar) throws IOException {
         return osaServerCreateService.uploadAvatar(user, avatar);
     }
 

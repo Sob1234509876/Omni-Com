@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.lang.Nullable;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -38,6 +39,7 @@ public class OsaServerVerificationCodeDao implements InitializingBean {
         mongoTemplate.save(code);
     }
 
+    @Nullable
     public OsaServerVerificationCode find(@NonNull String email, @NonNull String purpose) {
         var criteria = Criteria.where(OsaServerVerificationCode.EMAIL_FIELD)
                 .is(email)

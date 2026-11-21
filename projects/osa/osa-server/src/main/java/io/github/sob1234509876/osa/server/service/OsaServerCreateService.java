@@ -48,6 +48,7 @@ public class OsaServerCreateService {
     @NonNull
     private OsaServerMailService osaServerMailService;
 
+    @NonNull
     public ResponseEntity<Void> requestRegisterEmail(@NonNull String email) {
         if (!EMAIL_PATTERN.matcher(email).matches())
             return ResponseEntity.badRequest()
@@ -71,7 +72,8 @@ public class OsaServerCreateService {
         return ResponseEntity.ok(null);
     }
 
-    public ResponseEntity<Long> register(@NonNull String email, @NonNull String code, @NonNull OsaApiUser user) {
+    @NonNull
+    public ResponseEntity<@NonNull Long> register(@NonNull String email, @NonNull String code, @NonNull OsaApiUser user) {
         if (user.isUnsafe())
             return ResponseEntity.badRequest()
                     .build();

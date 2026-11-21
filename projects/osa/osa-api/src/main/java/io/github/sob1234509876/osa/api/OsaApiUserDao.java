@@ -9,5 +9,5 @@ import java.util.List;
 public interface OsaApiUserDao extends CrudRepository<OsaApiUser, Long> {
 
     @NonNull
-    List<OsaApiUser> findByUsernameContaining(@NonNull String username, @NonNull Pageable pageable);
+    List<@NonNull OsaApiUser> findByUsernameContaining(@NonNull String username, @NonNull Pageable pageable);
 }

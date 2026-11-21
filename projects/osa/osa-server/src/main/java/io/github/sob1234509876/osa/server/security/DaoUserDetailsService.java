@@ -21,6 +21,7 @@ public class DaoUserDetailsService implements UserDetailsService {
     @NonNull
     private OsaApiUserDao userDao;
 
+    @NonNull
     @Override
     public UserDetails loadUserByUsername(@NonNull String id) throws UsernameNotFoundException {
         var tmp = userDao.findById(Long.valueOf(id));

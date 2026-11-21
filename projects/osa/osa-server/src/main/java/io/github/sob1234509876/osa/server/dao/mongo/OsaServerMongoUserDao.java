@@ -42,7 +42,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public @NonNull Optional<OsaApiUser> findById(@NonNull Long s) {
+    public @NonNull Optional<@NonNull OsaApiUser> findById(@NonNull Long s) {
         return Optional.ofNullable(mongoTemplate.findById(s, OsaApiUser.class));
     }
 
@@ -55,12 +55,12 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public @NonNull Iterable<OsaApiUser> findAll() {
+    public @NonNull Iterable<@NonNull OsaApiUser> findAll() {
         return mongoTemplate.findAll(OsaApiUser.class);
     }
 
     @Override
-    public @NonNull Iterable<OsaApiUser> findAllById(@NonNull Iterable<Long> strings) {
+    public @NonNull Iterable<@NonNull OsaApiUser> findAllById(@NonNull Iterable<Long> strings) {
         var res = new LinkedList<OsaApiUser>();
 
         for (var s : strings) {
@@ -76,7 +76,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public @NonNull List<OsaApiUser> findByUsernameContaining(@NonNull String username, @NonNull Pageable pageable) {
+    public @NonNull List<@NonNull OsaApiUser> findByUsernameContaining(@NonNull String username, @NonNull Pageable pageable) {
         var criteria = Criteria.where(OsaApiUser.USERNAME_FIELD)
                 .regex(Pattern.quote(username), "i");
 

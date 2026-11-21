@@ -84,7 +84,7 @@ public class OsaServerReadService {
     }
 
     @NonNull
-    public ResponseEntity<List<OsaApiUser>> searchByUsername(@NonNull String username) {
+    public ResponseEntity<@NonNull List<@NonNull OsaApiUser>> searchByUsername(@NonNull String username) {
         var res = userDao.findByUsernameContaining(username, PageRequest.of(0, SEARCH_RESULT_LIMIT));
 
         for (var u : res)

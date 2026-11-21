@@ -41,7 +41,7 @@ public class OsaServerReadController {
 
     @GetMapping("/public/user/search")
     @NonNull
-    public ResponseEntity<List<OsaApiUser>> search(@ModelAttribute("username") @NonNull String username) {
+    public ResponseEntity<@NonNull List<@NonNull OsaApiUser>> search(@ModelAttribute("username") @NonNull String username) {
         return osaServerReadService.searchByUsername(username);
     }
 

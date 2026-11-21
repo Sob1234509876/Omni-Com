@@ -38,6 +38,7 @@ public class OsaServerUpdateService {
     private PasswordEncoder passwordEncoder;
 
     @SuppressWarnings("ConstantValue")
+    @NonNull
     public ResponseEntity<Void> updateProfile(@NonNull UserDetails user, boolean changeSensitiveField, @NonNull OsaApiStringUserSecurePair nUser) {
         var tmp = new OsaApiUser(user);
         var body = nUser.getBody();

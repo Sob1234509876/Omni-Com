@@ -25,7 +25,7 @@ public class OsaServerWellKnownService {
     private OsaServerPropertyComponent osaServerPropertyComponent;
 
     @NonNull
-    public ResponseEntity<String> jwks() {
+    public ResponseEntity<@NonNull String> jwks() {
         var publicJwk = Jwks.builder()
                 .key(osaServerPropertyComponent.getJwtVerifyingKey())
                 .id(osaServerPropertyComponent.getJwtTokenKid())

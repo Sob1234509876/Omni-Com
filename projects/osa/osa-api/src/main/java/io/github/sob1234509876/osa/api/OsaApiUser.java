@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.lang.Nullable;
 import org.springframework.data.annotation.Id;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -30,6 +31,7 @@ public class OsaApiUser implements UserDetails {
     private String password;
     @NonNull
     private String username;
+    @Nullable
     private String email;
 
     public OsaApiUser(@NonNull UserDetails user) {
