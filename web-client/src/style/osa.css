@@ -1,0 +1,157 @@
+div.login-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.login-ul {
+  background-color: #202020;
+  height: auto;
+  width: 480px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.debug-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.debug-ul {
+  background-color: #202020;
+  height: auto;
+  width: 384px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.logout-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.logout-ul {
+  background-color: #202020;
+  height: auto;
+  width: 160px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.personal-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.personal-ul {
+  background-color: #202020;
+  height: auto;
+  width: 448px;
+  margin: 0;
+  padding-top: 32px;
+  padding-left: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.register-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.register-ul {
+  background-color: #202020;
+  height: auto;
+  width: 480px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.delete-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.delete-ul {
+  background-color: #202020;
+  height: auto;
+  width: 352px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+div.profile-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.profile-ul {
+  background-color: #202020;
+  height: auto;
+  width: 352px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+ul.inner-profile-ul {
+  height: auto;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+}
+
+div.update-div {
+  display: grid;
+  place-items: center;
+}
+
+ul.update-avatar-ul {
+  background-color: #202020;
+  height: auto;
+  width: 384px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}
+
+ul.update-profile-ul {
+  background-color: #202020;
+  height: auto;
+  width: 512px;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  border: 1px solid #303030;
+  border-radius: 16px;
+}

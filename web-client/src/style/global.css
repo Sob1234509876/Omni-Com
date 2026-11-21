@@ -1,0 +1,95 @@
+@font-face {
+  font-family: jetbrains;
+  src: url("../fonts/JetBrainsMono-Medium.ttf");
+}
+
+@keyframes toast-animation {
+  0% {
+    right: -834px;
+  }
+
+  100% {
+    right: 16px;
+  }
+}
+
+@-webkit-keyframes toast-animation {
+  0% {
+    right: -834px;
+  }
+
+  100% {
+    right: 16px;
+  }
+}
+
+body {
+  background-color: #101010;
+  font-family: jetbrains;
+  margin: 0;
+  overflow: hidden;
+}
+
+input {
+  padding: 0;
+  border: 1px solid #303030;
+  background-color: #101010;
+  color: #e0e0e0;
+  height: 32px;
+}
+
+div.toast-div {
+  animation-name: toast-animation;
+  animation-duration: 1s;
+  animation-fill-mode: forwards;
+
+  -webkit-animation-name: toast-animation;
+  -webkit-animation-duration: 1s;
+  -webkit-animation-fill-mode: forwards;
+
+  position: absolute;
+  cursor: pointer;
+  width: 800px;
+  height: 16px;
+  right: -834px;
+  top: 16px;
+  background-color: #402020;
+  color: #ffe0e0;
+  border: 1px solid #503030;
+  padding: 16px;
+}
+
+div.app-div {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 10% 90%;
+}
+
+.button {
+  color: #e0e0e0;
+  width: auto;
+  cursor: pointer;
+  text-align: center;
+  height: 16px;
+}
+
+.button:hover {
+  filter: brightness(75%);
+}
+
+ul.navigator-ul {
+  background-color: #202020;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+  overflow: auto;
+  height: 100%;
+  width: 100%;
+  border-right: 1px solid #303030;
+}
+
+li.navigator-li {
+  display: block;
+  width: 9.9vw;
+}
