@@ -1,8 +1,8 @@
 package io.github.sob1234509876.osa.server.service;
 
-import io.github.sob1234509876.osa.server.api.AvatarDao;
-import io.github.sob1234509876.osa.server.api.User;
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
+import io.github.sob1234509876.osa.api.OsaApiUser;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -23,16 +23,16 @@ import org.springframework.stereotype.Service;
 public class OsaServerReadService {
 
     @NonNull
-    private UserDao userDao;
+    private OsaApiUserDao userDao;
 
     @NonNull
-    private AvatarDao avatarDao;
+    private OsaApiAvatarDao avatarDao;
 
     @NonNull
     private OsaServerUtilityService osaServerUtilityService;
 
     @NonNull
-    public ResponseEntity<@NonNull User> getProfile(long id) {
+    public ResponseEntity<@NonNull OsaApiUser> getProfile(long id) {
         var res = userDao.findById(id);
 
         if (res.isEmpty())
@@ -41,7 +41,7 @@ public class OsaServerReadService {
                     .build();
 
         var user = res.get();
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         osaServerUtilityService.toSecureUser(tmp);
 
@@ -70,15 +70,15 @@ public class OsaServerReadService {
     }
 
     @NonNull
-    public ResponseEntity<@NonNull User> getProfile(@NonNull UserDetails user) {
-        var tmp = new User(user);
+    public ResponseEntity<@NonNull OsaApiUser> getProfile(@NonNull UserDetails user) {
+        var tmp = new OsaApiUser(user);
 
         return getProfile(tmp.getId());
     }
 
     @NonNull
     public ResponseEntity<@NonNull Resource> getAvatar(@NonNull UserDetails user) {
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         return getAvatar(tmp.getId());
     }

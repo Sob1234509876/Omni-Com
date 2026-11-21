@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osa.server.dao.mongo;
 
-import io.github.sob1234509876.osa.server.api.User;
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiUser;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -22,7 +22,7 @@ import java.util.Optional;
 @NoArgsConstructor
 @RequiredArgsConstructor
 @Repository
-public class OsaServerMongoUserDao implements UserDao {
+public class OsaServerMongoUserDao implements OsaApiUserDao {
     @NonNull
     private MongoTemplate mongoTemplate;
 
@@ -41,21 +41,21 @@ public class OsaServerMongoUserDao implements UserDao {
 
     @Override
     public @NonNull Optional<UserDetails> findById(@NonNull Long s) {
-        return Optional.ofNullable(mongoTemplate.findById(s, User.class));
+        return Optional.ofNullable(mongoTemplate.findById(s, OsaApiUser.class));
     }
 
     @Override
     public boolean existsById(@NonNull Long s) {
-        var query = Criteria.where(User.ID_FIELD)
+        var query = Criteria.where(OsaApiUser.ID_FIELD)
                 .is(s);
 
-        return mongoTemplate.exists(new Query(query), User.class);
+        return mongoTemplate.exists(new Query(query), OsaApiUser.class);
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public @NonNull Iterable<UserDetails> findAll() {
-        return (Iterable<UserDetails>) (Iterable<?>) mongoTemplate.findAll(User.class);
+        return (Iterable<UserDetails>) (Iterable<?>) mongoTemplate.findAll(OsaApiUser.class);
     }
 
     @Override
@@ -76,15 +76,15 @@ public class OsaServerMongoUserDao implements UserDao {
 
     @Override
     public long count() {
-        return mongoTemplate.count(new Query(), User.class);
+        return mongoTemplate.count(new Query(), OsaApiUser.class);
     }
 
     @Override
     public void deleteById(@NonNull Long s) {
-        var query = Criteria.where(User.ID_FIELD)
+        var query = Criteria.where(OsaApiUser.ID_FIELD)
                 .is(s);
 
-        mongoTemplate.remove(new Query(query), User.class);
+        mongoTemplate.remove(new Query(query), OsaApiUser.class);
     }
 
     @Override
@@ -106,6 +106,6 @@ public class OsaServerMongoUserDao implements UserDao {
 
     @Override
     public void deleteAll() {
-        mongoTemplate.remove(new Query(), User.class);
+        mongoTemplate.remove(new Query(), OsaApiUser.class);
     }
 }

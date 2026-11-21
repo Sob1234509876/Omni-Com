@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.controller;
 
-import io.github.sob1234509876.osa.server.api.User;
+import io.github.sob1234509876.osa.api.OsaApiUser;
 import io.github.sob1234509876.osa.server.service.OsaServerReadService;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -27,7 +27,7 @@ public class OsaServerReadController {
 
     @GetMapping("/public/profile")
     @NonNull
-    public ResponseEntity<@NonNull User> getProfile(@ModelAttribute("id") long id) {
+    public ResponseEntity<@NonNull OsaApiUser> getProfile(@ModelAttribute("id") long id) {
         return osaServerReadService.getProfile(id);
     }
 
@@ -39,7 +39,7 @@ public class OsaServerReadController {
 
     @GetMapping("/private/profile")
     @NonNull
-    public ResponseEntity<@NonNull User> getProfile(@AuthenticationPrincipal @NonNull UserDetails user) {
+    public ResponseEntity<@NonNull OsaApiUser> getProfile(@AuthenticationPrincipal @NonNull UserDetails user) {
         return osaServerReadService.getProfile(user);
     }
 

@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.controller;
 
-import io.github.sob1234509876.osa.server.api.User;
+import io.github.sob1234509876.osa.api.OsaApiUser;
 import io.github.sob1234509876.osa.server.service.OsaServerCreateService;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -28,7 +28,7 @@ public class OsaServerCreateController {
     private OsaServerCreateService osaServerCreateService;
 
     @PostMapping("/anonymous/register")
-    public ResponseEntity<Long> register(@NonNull User user) {
+    public ResponseEntity<Long> register(@NonNull OsaApiUser user) {
         return osaServerCreateService.register(user);
     }
 

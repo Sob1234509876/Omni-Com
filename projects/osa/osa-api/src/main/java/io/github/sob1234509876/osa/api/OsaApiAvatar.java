@@ -1,4 +1,4 @@
-package io.github.sob1234509876.osa.server.api;
+package io.github.sob1234509876.osa.api;
 
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -7,7 +7,7 @@ import org.springframework.data.annotation.Id;
 
 @Data
 @NoArgsConstructor
-public class Avatar {
+public class OsaApiAvatar {
 
     private byte @NonNull [] image;
 

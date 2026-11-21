@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osa.server.dao.ftp;
 
-import io.github.sob1234509876.osa.server.api.Avatar;
-import io.github.sob1234509876.osa.server.api.AvatarDao;
+import io.github.sob1234509876.osa.api.OsaApiAvatar;
+import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.github.sob1234509876.osa.server.service.OsaServerUtilityService;
 import io.github.sob1234509876.osftp.dao.ftp.FtpTemplate;
@@ -22,7 +22,7 @@ import java.util.Optional;
 @NoArgsConstructor
 @RequiredArgsConstructor
 @Repository
-public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
+public class OsaServerFtpAvatarDao implements OsaApiAvatarDao, InitializingBean {
 
     @NonNull
     private FtpTemplate ftpTemplate;
@@ -34,7 +34,7 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     private OsaServerPropertyComponent osaServerPropertyComponent;
 
     @Override
-    public <S extends Avatar> @NonNull S save(@NonNull S entity) {
+    public <S extends OsaApiAvatar> @NonNull S save(@NonNull S entity) {
         var path = osaServerUtilityService.getAvatarFtpPath(String.valueOf(entity.getId()));
 
         ftpTemplate.writeFile(path, entity.getImage());
@@ -43,7 +43,7 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public <S extends Avatar> @NonNull Iterable<S> saveAll(@NonNull Iterable<S> entities) {
+    public <S extends OsaApiAvatar> @NonNull Iterable<S> saveAll(@NonNull Iterable<S> entities) {
         for (var e : entities)
             save(e);
 
@@ -51,12 +51,12 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public @NonNull Optional<Avatar> findById(@NonNull Long s) {
+    public @NonNull Optional<OsaApiAvatar> findById(@NonNull Long s) {
         if (!existsById(s))
             return Optional.empty();
 
         var path = osaServerUtilityService.getAvatarFtpPath(String.valueOf(s));
-        var tmp = new Avatar();
+        var tmp = new OsaApiAvatar();
         tmp.setId(s);
         tmp.setImage(ftpTemplate.readFile(path));
 
@@ -70,13 +70,13 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public @NonNull Iterable<Avatar> findAll() {
+    public @NonNull Iterable<OsaApiAvatar> findAll() {
         var path = osaServerPropertyComponent.getAvatarFtpPathPrefix();
-        var res = new LinkedList<Avatar>();
+        var res = new LinkedList<OsaApiAvatar>();
 
         for (var f : ftpTemplate.listFiles(path)) {
             var p = osaServerUtilityService.getAvatarFtpPath(f.getName());
-            var tmp = new Avatar();
+            var tmp = new OsaApiAvatar();
             tmp.setId(Long.parseLong(f.getName()));
             tmp.setImage(ftpTemplate.readFile(p));
 
@@ -87,8 +87,8 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public @NonNull Iterable<Avatar> findAllById(@NonNull Iterable<Long> strings) {
-        var res = new LinkedList<Avatar>();
+    public @NonNull Iterable<OsaApiAvatar> findAllById(@NonNull Iterable<Long> strings) {
+        var res = new LinkedList<OsaApiAvatar>();
 
         for (var s : strings) {
             var r = findById(s);
@@ -116,7 +116,7 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public void delete(@NonNull Avatar entity) {
+    public void delete(@NonNull OsaApiAvatar entity) {
         deleteById(entity.getId());
     }
 
@@ -127,7 +127,7 @@ public class OsaServerFtpAvatarDao implements AvatarDao, InitializingBean {
     }
 
     @Override
-    public void deleteAll(@NonNull Iterable<? extends Avatar> entities) {
+    public void deleteAll(@NonNull Iterable<? extends OsaApiAvatar> entities) {
         for (var e : entities)
             delete(e);
     }

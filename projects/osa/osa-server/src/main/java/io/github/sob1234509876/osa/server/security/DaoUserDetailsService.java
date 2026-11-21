@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.security;
 
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 public class DaoUserDetailsService implements UserDetailsService {
 
     @NonNull
-    private UserDao userDao;
+    private OsaApiUserDao userDao;
 
     @Override
     public UserDetails loadUserByUsername(@NonNull String id) throws UsernameNotFoundException {

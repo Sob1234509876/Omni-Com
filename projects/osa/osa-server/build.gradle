@@ -28,6 +28,7 @@ repositories {
 }
 
 dependencies {
+    api project(':projects:osa:osa-api')
     api project(':projects:osftp:osftp-library')
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-security'

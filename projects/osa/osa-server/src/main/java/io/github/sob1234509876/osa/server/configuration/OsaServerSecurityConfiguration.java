@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.configuration;
 
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.github.sob1234509876.osa.server.security.DaoUserDetailsService;
 import io.github.sob1234509876.osa.server.security.filter.OsaServerJwtFilter;
@@ -76,7 +76,7 @@ public class OsaServerSecurityConfiguration {
 
     @Bean
     @NonNull
-    public DaoUserDetailsService daoUserDetailsService(@NonNull UserDao userDao) {
+    public DaoUserDetailsService daoUserDetailsService(@NonNull OsaApiUserDao userDao) {
         return new DaoUserDetailsService(userDao);
     }
 

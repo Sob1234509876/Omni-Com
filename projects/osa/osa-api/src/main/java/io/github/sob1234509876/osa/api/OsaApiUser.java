@@ -1,4 +1,4 @@
-package io.github.sob1234509876.osa.server.api;
+package io.github.sob1234509876.osa.api;
 
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -13,7 +13,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @RequiredArgsConstructor
-public class User implements UserDetails {
+public class OsaApiUser implements UserDetails {
 
     public static final String ID_FIELD = "id";
 
@@ -30,10 +30,10 @@ public class User implements UserDetails {
     @NonNull
     private String username;
 
-    public User(@NonNull UserDetails user) {
+    public OsaApiUser(@NonNull UserDetails user) {
         setId(-1);
 
-        if (user instanceof User u)
+        if (user instanceof OsaApiUser u)
             setId(u.getId());
 
         setAccountNonExpired(user.isAccountNonExpired());

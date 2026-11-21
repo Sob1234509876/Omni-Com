@@ -13,6 +13,7 @@ module osl.projects.osa.server {
     requires spring.web;
     requires spring.core;
     requires spring.beans;
+    requires osl.projects.osa.api;
     requires osl.projects.osftp.library;
     requires spring.webmvc;
     requires org.slf4j;
@@ -27,6 +28,5 @@ module osl.projects.osa.server {
     exports io.github.sob1234509876.osa.server;
     exports io.github.sob1234509876.osa.server.dao.ftp;
     exports io.github.sob1234509876.osa.server.dao.mongo;
-    exports io.github.sob1234509876.osa.server.api;
     exports io.github.sob1234509876.osa.server.security.filter;
 }

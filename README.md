@@ -47,6 +47,9 @@ The `oc` engine and server modules above were removed by the rewrite and are sho
 
 ### Omni Spring Library N Service (`projects:os*`, merged 2026-11-20)
 
+- `projects:osa:osa-api` — Omni Spring Authorization API (1.0a): the shared user/avatar contracts
+  (`OsaApiUser`, `OsaApiAvatar`, their DAO interfaces and the profile-update wire object), consumed by
+  `osa-server` and future servers such as `osc-server`.
 - `projects:osa:osa-server` — Omni Spring Authorization Server: a Spring Boot 3.5.6 server (Java 17, JPMS)
   for authorization and user information: web controllers, Spring Security with JWT logins, MongoDB user
   storage and FTP-backed avatar storage built on `osftp-library`. See the top-level `readme` file for the

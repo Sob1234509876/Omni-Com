@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.controller;
 
-import io.github.sob1234509876.osa.server.api.User;
+import io.github.sob1234509876.osa.api.OsaApiUser;
 import io.github.sob1234509876.osa.server.service.OsaServerLoginService;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -21,7 +21,7 @@ public class OsaServerLoginController {
 
     @NonNull
     @PostMapping("/anonymous/login")
-    public ResponseEntity<@NonNull String> login(@NonNull User user) {
+    public ResponseEntity<@NonNull String> login(@NonNull OsaApiUser user) {
         return osaServerLoginService.login(user);
     }
 

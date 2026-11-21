@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.controller;
 
-import io.github.sob1234509876.osa.server.api.StringUserSecurePair;
+import io.github.sob1234509876.osa.api.OsaApiStringUserSecurePair;
 import io.github.sob1234509876.osa.server.service.OsaServerUpdateService;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -28,7 +28,7 @@ public class OsaServerUpdateController {
     private OsaServerUpdateService osaServerUpdateService;
 
     @PostMapping("/private/profile/update")
-    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal UserDetails user, @NonNull StringUserSecurePair nUser) {
+    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal UserDetails user, @NonNull OsaApiStringUserSecurePair nUser) {
         return osaServerUpdateService.updateProfile(user, nUser);
     }
 

@@ -1,8 +1,8 @@
 package io.github.sob1234509876.osa.server.service;
 
-import io.github.sob1234509876.osa.server.api.AvatarDao;
-import io.github.sob1234509876.osa.server.api.User;
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
+import io.github.sob1234509876.osa.api.OsaApiUser;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -21,17 +21,17 @@ import org.springframework.stereotype.Service;
 public class OsaServerDeleteService {
 
     @NonNull
-    private UserDao userDao;
+    private OsaApiUserDao userDao;
 
     @NonNull
-    private AvatarDao avatarDao;
+    private OsaApiAvatarDao avatarDao;
 
     @NonNull
     private PasswordEncoder passwordEncoder;
 
     @NonNull
     public ResponseEntity<Void> deleteProfile(@NonNull UserDetails user, @NonNull String password) {
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         if (!passwordEncoder.matches(password, user.getPassword()))
             return ResponseEntity.status(401)
@@ -46,7 +46,7 @@ public class OsaServerDeleteService {
 
     @NonNull
     public ResponseEntity<Void> deleteAvatar(@NonNull UserDetails user) {
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         if (!avatarDao.existsById(tmp.getId()))
             return ResponseEntity.badRequest()

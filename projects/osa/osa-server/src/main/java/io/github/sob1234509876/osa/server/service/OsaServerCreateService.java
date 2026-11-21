@@ -1,9 +1,9 @@
 package io.github.sob1234509876.osa.server.service;
 
-import io.github.sob1234509876.osa.server.api.Avatar;
-import io.github.sob1234509876.osa.server.api.AvatarDao;
-import io.github.sob1234509876.osa.server.api.User;
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiAvatar;
+import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
+import io.github.sob1234509876.osa.api.OsaApiUser;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -24,16 +24,16 @@ import java.io.IOException;
 public class OsaServerCreateService {
 
     @NonNull
-    private UserDao userDao;
+    private OsaApiUserDao userDao;
 
     @NonNull
-    private AvatarDao avatarDao;
+    private OsaApiAvatarDao avatarDao;
 
     @NonNull
     private OsaServerUtilityService osaServerUtilityService;
 
     @NonNull
-    public ResponseEntity<Long> register(@NonNull User user) {
+    public ResponseEntity<Long> register(@NonNull OsaApiUser user) {
         if (user.isUnsafe())
             return ResponseEntity.badRequest()
                     .build();
@@ -46,7 +46,7 @@ public class OsaServerCreateService {
 
     @NonNull
     public ResponseEntity<Void> uploadAvatar(@NonNull UserDetails user, @NonNull MultipartFile avatar) throws IOException {
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         if (avatarDao.existsById(tmp.getId()))
             return ResponseEntity.badRequest()
@@ -64,7 +64,7 @@ public class OsaServerCreateService {
                     .header("description", "Bad content type")
                     .build();
 
-        var t = new Avatar();
+        var t = new OsaApiAvatar();
         t.setId(tmp.getId());
         t.setImage(avatar.getBytes());
 

@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osa.server.configuration;
 
-import io.github.sob1234509876.osa.server.api.AvatarDao;
-import io.github.sob1234509876.osa.server.api.UserDao;
+import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
+import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.github.sob1234509876.osa.server.service.*;
 import lombok.Data;
@@ -24,21 +24,21 @@ public class OsaServerServiceConfiguration {
 
     @Bean
     @NonNull
-    public OsaServerCreateService osaServerCreateService(@NonNull UserDao userDao, @NonNull AvatarDao avatarDao,
+    public OsaServerCreateService osaServerCreateService(@NonNull OsaApiUserDao userDao, @NonNull OsaApiAvatarDao avatarDao,
                                                          @NonNull OsaServerUtilityService osaServerUtilityService) {
         return new OsaServerCreateService(userDao, avatarDao, osaServerUtilityService);
     }
 
     @Bean
     @NonNull
-    public OsaServerReadService osaServerReadService(@NonNull UserDao userDao, @NonNull AvatarDao avatarDao,
+    public OsaServerReadService osaServerReadService(@NonNull OsaApiUserDao userDao, @NonNull OsaApiAvatarDao avatarDao,
                                                      @NonNull OsaServerUtilityService osaServerUtilityService) {
         return new OsaServerReadService(userDao, avatarDao, osaServerUtilityService);
     }
 
     @Bean
     @NonNull
-    public OsaServerUpdateService osaServerUpdateService(@NonNull UserDao userDao, @NonNull AvatarDao avatarDao,
+    public OsaServerUpdateService osaServerUpdateService(@NonNull OsaApiUserDao userDao, @NonNull OsaApiAvatarDao avatarDao,
                                                          @NonNull OsaServerUtilityService osaServerUtilityService,
                                                          @NonNull PasswordEncoder passwordEncoder) {
         return new OsaServerUpdateService(userDao, avatarDao, osaServerUtilityService, passwordEncoder);
@@ -46,7 +46,7 @@ public class OsaServerServiceConfiguration {
 
     @Bean
     @NonNull
-    public OsaServerDeleteService osaServerDeleteService(@NonNull UserDao userDao, @NonNull AvatarDao avatarDao,
+    public OsaServerDeleteService osaServerDeleteService(@NonNull OsaApiUserDao userDao, @NonNull OsaApiAvatarDao avatarDao,
                                                          @NonNull PasswordEncoder passwordEncoder) {
         return new OsaServerDeleteService(userDao, avatarDao, passwordEncoder);
     }

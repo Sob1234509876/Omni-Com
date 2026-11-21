@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.service;
 
-import io.github.sob1234509876.osa.server.api.User;
+import io.github.sob1234509876.osa.api.OsaApiUser;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.jsonwebtoken.Jwts;
 import lombok.Data;
@@ -27,7 +27,7 @@ public class OsaServerLoginService {
 
     @SuppressWarnings("ConstantValue")
     @NonNull
-    public ResponseEntity<@NonNull String> login(@NonNull User user) {
+    public ResponseEntity<@NonNull String> login(@NonNull OsaApiUser user) {
 
         if (user.getPassword() == null)
             return ResponseEntity.badRequest()

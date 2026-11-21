@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osa.server.service;
 
-import io.github.sob1234509876.osa.server.api.*;
+import io.github.sob1234509876.osa.api.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -22,10 +22,10 @@ import java.io.IOException;
 public class OsaServerUpdateService {
 
     @NonNull
-    private UserDao userDao;
+    private OsaApiUserDao userDao;
 
     @NonNull
-    private AvatarDao avatarDao;
+    private OsaApiAvatarDao avatarDao;
 
     @NonNull
     private OsaServerUtilityService osaServerUtilityService;
@@ -34,8 +34,8 @@ public class OsaServerUpdateService {
     private PasswordEncoder passwordEncoder;
 
     @NonNull
-    public ResponseEntity<Void> updateProfile(@NonNull UserDetails user, @NonNull StringUserSecurePair nUser) {
-        var tmp = new User(user);
+    public ResponseEntity<Void> updateProfile(@NonNull UserDetails user, @NonNull OsaApiStringUserSecurePair nUser) {
+        var tmp = new OsaApiUser(user);
 
         if (nUser.getBody()
                 .isUnsafe())
@@ -66,7 +66,7 @@ public class OsaServerUpdateService {
     // Copied from OsaServerCreateService, added some tweaks
     @NonNull
     public ResponseEntity<Void> updateAvatar(@NonNull UserDetails user, @NonNull MultipartFile avatar) throws IOException {
-        var tmp = new User(user);
+        var tmp = new OsaApiUser(user);
 
         if (!avatarDao.existsById(tmp.getId()))
             return ResponseEntity.notFound()
@@ -84,7 +84,7 @@ public class OsaServerUpdateService {
                     .header("description", "Avatar has a non image content type")
                     .build();
 
-        var t = new Avatar();
+        var t = new OsaApiAvatar();
         t.setId(tmp.getId());
         t.setImage(avatar.getBytes());
 
