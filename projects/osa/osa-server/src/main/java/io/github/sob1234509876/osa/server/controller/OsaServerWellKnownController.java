@@ -20,10 +20,10 @@ public class OsaServerWellKnownController {
     @NonNull
     private OsaServerWellKnownService osaServerWellKnownService;
 
-    @GetMapping("/public/well-known/pk.json")
+    @GetMapping("/.well-known/jwks.json")
     @NonNull
-    public ResponseEntity<String> pk() {
-        return osaServerWellKnownService.pk();
+    public ResponseEntity<String> jwks() {
+        return osaServerWellKnownService.jwks();
     }
 
 }

@@ -47,6 +47,8 @@ public class OsaServerSecurityConfiguration {
                         .authenticated()
                         .requestMatchers("/public/**")
                         .permitAll()
+                        .requestMatchers("/.well-known/**")
+                        .permitAll()
                         .requestMatchers("/anonymous/**")
                         .anonymous()
                         .requestMatchers("/error")
