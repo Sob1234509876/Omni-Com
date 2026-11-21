@@ -2,11 +2,10 @@ plugins {
     id 'java-library'
     id 'org.springframework.boot' version '3.5.6'
     id 'io.spring.dependency-management' version '1.1.7'
-    // org.graalvm.buildtools.native is deliberately not applied here: with osa-server also
-    // applying it, Gradle 8.13 cannot create this module's collectReachabilityMetadata task
-    // (the plugin class loads in two project classloader scopes and the task property refuses
-    // the cross-scope provider), which broke every root-level build. An empty module has no
-    // native image to build anyway; re-add it together with real sources if ever needed.
+    id "de.jjohannes.extra-java-module-info" version "0.16"
+    // org.graalvm.buildtools.native is deliberately not applied here: the owner never planned
+    // native images for the OSLNS servers (the plugin was an upstream leftover and was removed
+    // from osa-server as well). Re-add it together with real sources if ever needed.
 }
 
 group = 'io.github.sob1234509876.osc'
@@ -17,6 +16,7 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+    modularity.inferModulePath = true
 }
 
 configurations {
@@ -30,28 +30,33 @@ repositories {
 }
 
 dependencies {
-    api project(':projects:osftp:osftp-library'), project(':projects:osa:osa-server')
+    api project(':projects:osc:osc-api')
+    api project(':projects:osa:osa-api')
+    api project(':projects:osftp:osftp-library')
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-security'
     api 'org.springframework.boot:spring-boot-starter-data-mongodb'
-    api 'org.springframework.boot:spring-boot-starter-data-websocket'
+    api 'org.springframework.boot:spring-boot-starter-websocket'
 
+    api 'io.jsonwebtoken:jjwt:0.13.0'
+
+    compileOnly 'org.jetbrains:annotations:26.0.2'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-// Upstream ships no sources for this module yet, so the Spring Boot jar tasks are disabled:
-// bootJar would find no main class, and its GraalVM reachability metadata task clashes with
-// the plugin classloader of the osa-server project in a multi-project build. The plain jar
-// keeps the module on the build until real code lands.
-bootJar {
-    enabled = false
-}
-
-jar {
-    enabled = true
+extraJavaModuleInfo {
+    module('jjwt-api-0.13.0.jar','jjwt.api','0.13.0') {
+        exports('io.jsonwebtoken')
+        exports('io.jsonwebtoken.security')
+        exports('io.jsonwebtoken.io')
+        exports('io.jsonwebtoken.lang')
+    }
+    module('jjwt-0.13.0.jar','jjwt','0.13.0')
+    module('jjwt-jackson-0.13.0.jar','jjwt.jackson','0.13.0')
+    module('jjwt-impl-0.13.0.jar','jjwt.impl','0.13.0')
 }
 
 test {
