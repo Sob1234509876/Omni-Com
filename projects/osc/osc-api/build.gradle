@@ -1,0 +1,40 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'io.github.sob1234509876.osc'
+version = '1.0a'
+description = 'Omni Spring Chat API gives shared chatroom contracts for OSLNS servers.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    modularity.inferModulePath = true
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:3.5.6'
+    }
+}
+
+dependencies {
+    api 'org.springframework.security:spring-security-core'
+    api 'org.springframework.data:spring-data-commons'
+    api 'org.jetbrains:annotations:26.0.2'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+}

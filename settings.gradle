@@ -6,6 +6,7 @@ include 'projects:oc:oc-googology-ordinal'
 include 'projects:osa:osa-api'
 include 'projects:osa:osa-server'
 
+include 'projects:osc:osc-api'
 include 'projects:osc:osc-server'
 
 include 'projects:osftp:osftp-library'
