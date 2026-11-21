@@ -3,9 +3,11 @@ package io.github.sob1234509876.osc.server.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.sob1234509876.osc.api.OscApiChatUser;
+import io.github.sob1234509876.osc.server.security.OscServerUserHandshakeInterceptor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
@@ -21,11 +23,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @EqualsAndHashCode(callSuper = true)
 @Data
+@RequiredArgsConstructor
 @Service
 public class OscServerEventBusService extends TextWebSocketHandler {
 
     @NonNull
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private ObjectMapper objectMapper;
 
     @NonNull
     private Map<@NonNull Long, @NonNull Set<@NonNull WebSocketSession>> sessions = new ConcurrentHashMap<>();
@@ -75,7 +78,8 @@ public class OscServerEventBusService extends TextWebSocketHandler {
     }
 
     private long userId(@NonNull WebSocketSession session) {
-        var principal = session.getPrincipal();
+        var principal = session.getAttributes()
+                .get(OscServerUserHandshakeInterceptor.OSC_USER_ATTRIBUTE);
 
         if (principal instanceof OscApiChatUser user)
             return user.getId();

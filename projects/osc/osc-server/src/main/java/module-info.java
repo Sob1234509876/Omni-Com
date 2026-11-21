@@ -30,6 +30,7 @@ module osl.projects.osc.server {
     exports io.github.sob1234509876.osc.server.configuration;
     exports io.github.sob1234509876.osc.server.controller;
     exports io.github.sob1234509876.osc.server.dao.mongo;
+    exports io.github.sob1234509876.osc.server.security;
     exports io.github.sob1234509876.osc.server.security.filter;
     exports io.github.sob1234509876.osc.server.service;
 }

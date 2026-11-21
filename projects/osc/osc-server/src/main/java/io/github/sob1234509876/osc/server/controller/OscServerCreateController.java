@@ -14,7 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,7 +32,7 @@ public class OscServerCreateController {
     @PostMapping("/private/room/create-room")
     @Nullable
     public ResponseEntity<OscApiRoom> createRoom(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                 @ModelAttribute("name") @NonNull String name,
+                                                 @RequestParam("name") @NonNull String name,
                                                  @RequestParam(value = "info", required = false) String info) {
         return oscServerCreateService.createRoom(me, name, info);
     }
@@ -44,7 +43,7 @@ public class OscServerCreateController {
                                                        @RequestParam(value = "userId", required = false) Long userId,
                                                        @RequestParam(value = "chatId", required = false) Long chatId,
                                                        @RequestParam(value = "roomId", required = false) Long roomId,
-                                                       @ModelAttribute("type") @NonNull String type,
+                                                       @RequestParam("type") @NonNull String type,
                                                        @RequestParam(value = "content", required = false) String content,
                                                        @RequestParam(value = "fileId", required = false) Long fileId) {
         return oscServerCreateService.uploadMessage(me, userId, chatId, roomId, type, content, fileId);
@@ -53,21 +52,21 @@ public class OscServerCreateController {
     @PostMapping("/private/upload-file")
     @Nullable
     public ResponseEntity<OscApiFileResource> uploadFile(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                         @ModelAttribute("file") @NonNull MultipartFile file) {
+                                                         @RequestParam("file") @NonNull MultipartFile file) {
         return oscServerCreateService.uploadFile(me, file);
     }
 
     @PostMapping("/private/request/operation/request-be-friends")
     @Nullable
     public ResponseEntity<OscApiRequest> requestBeFriends(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                          @ModelAttribute("userId") long userId) {
+                                                          @RequestParam("userId") long userId) {
         return oscServerCreateService.requestBeFriends(me, userId);
     }
 
     @PostMapping("/private/request/operation/request-join-room")
     @Nullable
     public ResponseEntity<OscApiRequest> requestJoinRoom(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                         @ModelAttribute("roomId") long roomId) {
+                                                         @RequestParam("roomId") long roomId) {
         return oscServerCreateService.requestJoinRoom(me, roomId);
     }
 

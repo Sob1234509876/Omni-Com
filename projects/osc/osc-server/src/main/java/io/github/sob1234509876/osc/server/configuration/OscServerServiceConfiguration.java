@@ -1,5 +1,6 @@
 package io.github.sob1234509876.osc.server.configuration;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.sob1234509876.osc.api.OscApiChatDao;
 import io.github.sob1234509876.osc.api.OscApiChatUserDao;
 import io.github.sob1234509876.osc.api.OscApiFileResourceDao;
@@ -40,8 +41,8 @@ public class OscServerServiceConfiguration {
 
     @Bean
     @NonNull
-    public OscServerEventBusService oscServerEventBusService() {
-        return new OscServerEventBusService();
+    public OscServerEventBusService oscServerEventBusService(@NonNull ObjectMapper objectMapper) {
+        return new OscServerEventBusService(objectMapper);
     }
 
     @Bean

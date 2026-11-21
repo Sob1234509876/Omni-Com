@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -39,7 +38,7 @@ public class OscServerUpdateController {
     @PostMapping("/private/room/update-room")
     @Nullable
     public ResponseEntity<OscApiRoom> updateRoom(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                 @ModelAttribute("roomId") long roomId,
+                                                 @RequestParam("roomId") long roomId,
                                                  @RequestParam(value = "name", required = false) String name,
                                                  @RequestParam(value = "info", required = false) String info) {
         return oscServerUpdateService.updateRoom(me, roomId, name, info);
@@ -48,8 +47,8 @@ public class OscServerUpdateController {
     @PostMapping("/private/room/update-user")
     @Nullable
     public ResponseEntity<OscApiRoomUser> updateRoomUser(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                         @ModelAttribute("roomId") long roomId,
-                                                         @ModelAttribute("userId") long userId,
+                                                         @RequestParam("roomId") long roomId,
+                                                         @RequestParam("userId") long userId,
                                                          @RequestParam(value = "title", required = false) String title,
                                                          @RequestParam(value = "admin", required = false) Boolean admin) {
         return oscServerUpdateService.updateRoomUser(me, roomId, userId, title, admin);
@@ -58,39 +57,39 @@ public class OscServerUpdateController {
     @PostMapping("/private/room/check-in")
     @Nullable
     public ResponseEntity<OscApiRoomUser> checkIn(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                  @ModelAttribute("roomId") long roomId) {
+                                                  @RequestParam("roomId") long roomId) {
         return oscServerUpdateService.checkIn(me, roomId);
     }
 
     @PostMapping("/private/room/mute")
     @Nullable
     public ResponseEntity<OscApiRoomUser> mute(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                               @ModelAttribute("roomId") long roomId,
-                                               @ModelAttribute("userId") long userId,
-                                               @ModelAttribute("minutes") Long minutes) {
+                                               @RequestParam("roomId") long roomId,
+                                               @RequestParam("userId") long userId,
+                                               @RequestParam("minutes") Long minutes) {
         return oscServerUpdateService.mute(me, roomId, userId, minutes);
     }
 
     @PostMapping("/private/room/give-nickname")
     @Nullable
     public ResponseEntity<OscApiRoomUser> giveNickname(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                       @ModelAttribute("roomId") long roomId,
-                                                       @ModelAttribute("userId") long userId,
-                                                       @ModelAttribute("title") @NonNull String title) {
+                                                       @RequestParam("roomId") long roomId,
+                                                       @RequestParam("userId") long userId,
+                                                       @RequestParam("title") @NonNull String title) {
         return oscServerUpdateService.giveNickname(me, roomId, userId, title);
     }
 
     @PostMapping("/private/request/accept-request")
     @Nullable
     public ResponseEntity<OscApiRequest> acceptRequest(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                       @ModelAttribute("requestId") long requestId) {
+                                                       @RequestParam("requestId") long requestId) {
         return oscServerUpdateService.acceptRequest(me, requestId);
     }
 
     @PostMapping("/private/request/reject-request")
     @Nullable
     public ResponseEntity<OscApiRequest> rejectRequest(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                       @ModelAttribute("requestId") long requestId) {
+                                                       @RequestParam("requestId") long requestId) {
         return oscServerUpdateService.rejectRequest(me, requestId);
     }
 

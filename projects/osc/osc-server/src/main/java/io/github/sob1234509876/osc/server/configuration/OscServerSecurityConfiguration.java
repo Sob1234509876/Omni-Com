@@ -50,6 +50,7 @@ public class OscServerSecurityConfiguration {
                     cfg.setAllowedMethods(List.of("*"));
                     cfg.setAllowedOrigins(List.of("*"));
                     cfg.setAllowedHeaders(List.of("*"));
+                    cfg.setExposedHeaders(List.of("description"));
 
                     var src = new UrlBasedCorsConfigurationSource();
                     src.registerCorsConfiguration("/**", cfg);

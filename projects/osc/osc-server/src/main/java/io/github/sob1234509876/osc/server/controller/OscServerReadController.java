@@ -17,7 +17,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -35,37 +34,37 @@ public class OscServerReadController {
 
     @GetMapping("/public/chat-user")
     @Nullable
-    public ResponseEntity<OscApiChatUser> getChatUser(@ModelAttribute("id") long id) {
+    public ResponseEntity<OscApiChatUser> getChatUser(@RequestParam("id") long id) {
         return oscServerReadService.getChatUser(id);
     }
 
     @GetMapping("/public/chat")
     @Nullable
-    public ResponseEntity<OscApiChat> getChat(@ModelAttribute("id") long id) {
+    public ResponseEntity<OscApiChat> getChat(@RequestParam("id") long id) {
         return oscServerReadService.getChat(id);
     }
 
     @GetMapping("/public/room")
     @Nullable
-    public ResponseEntity<OscApiRoom> getRoom(@ModelAttribute("id") long id) {
+    public ResponseEntity<OscApiRoom> getRoom(@RequestParam("id") long id) {
         return oscServerReadService.getRoom(id);
     }
 
     @GetMapping("/public/room-user")
     @Nullable
-    public ResponseEntity<OscApiRoomUser> getRoomUser(@ModelAttribute("roomId") long roomId, @ModelAttribute("userId") long userId) {
+    public ResponseEntity<OscApiRoomUser> getRoomUser(@RequestParam("roomId") long roomId, @RequestParam("userId") long userId) {
         return oscServerReadService.getRoomUser(roomId, userId);
     }
 
     @GetMapping("/public/search/chat-user")
     @Nullable
-    public ResponseEntity<List<@NonNull OscApiChatUser>> searchChatUsers(@ModelAttribute("username") @NonNull String username) {
+    public ResponseEntity<List<@NonNull OscApiChatUser>> searchChatUsers(@RequestParam("username") @NonNull String username) {
         return oscServerReadService.searchChatUsers(username);
     }
 
     @GetMapping("/public/search/room")
     @NonNull
-    public ResponseEntity<@NonNull List<@NonNull OscApiRoom>> searchRooms(@ModelAttribute("name") @NonNull String name) {
+    public ResponseEntity<@NonNull List<@NonNull OscApiRoom>> searchRooms(@RequestParam("name") @NonNull String name) {
         return oscServerReadService.searchRooms(name);
     }
 
@@ -80,14 +79,14 @@ public class OscServerReadController {
 
     @GetMapping("/public/resource/file")
     @Nullable
-    public ResponseEntity<Resource> getResourceFile(@ModelAttribute("id") long id) {
+    public ResponseEntity<Resource> getResourceFile(@RequestParam("id") long id) {
         return oscServerReadService.getResourceFile(id);
     }
 
     @GetMapping("/private/request")
     @Nullable
     public ResponseEntity<OscApiRequest> getRequest(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                    @ModelAttribute("requestId") long requestId) {
+                                                    @RequestParam("requestId") long requestId) {
         return oscServerReadService.getRequest(me, requestId);
     }
 
