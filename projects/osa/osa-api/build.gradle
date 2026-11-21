@@ -33,6 +33,7 @@ dependencyManagement {
 dependencies {
     api 'org.springframework.security:spring-security-core'
     api 'org.springframework.data:spring-data-commons'
+    api 'org.jetbrains:annotations:26.0.2'
 
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

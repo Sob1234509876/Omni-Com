@@ -5,6 +5,7 @@ module osl.projects.osa.server {
     requires spring.security.config;
     requires spring.security.web;
     requires static lombok;
+    requires org.jetbrains.annotations;
 
     requires spring.security.core;
     requires spring.security.crypto;
