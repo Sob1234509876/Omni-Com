@@ -5,7 +5,7 @@
   "keywords": [
     "Client"
   ],
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "author": "Sob1234509876",
   "type": "commonjs",
   "main": "index.js",

@@ -56,14 +56,22 @@ The `oc` engine and server modules above were removed by the rewrite and are sho
 - `projects:osftp:osftp-library` — a lightweight FTP client library (Spring Boot + commons-net), used by
   OSA to store user avatars.
 
+### Browser client (`web-client`)
+
+- `web-client` — the browser client for the OSA server, merged from the
+  [Clients](https://github.com/Sob1234509876/Clients) repository on 2026-11-21. A plain TypeScript +
+  webpack project (npm, no framework): `npm install && npm run build` bundles each client page into
+  `dist/`, which OSA serves under `static/public/osa/`. The npm build is never invoked by the Gradle
+  build.
+
 The `projects:oc:*` modules are dependency free: they build and run their self checks offline.
 The `projects:os*` modules need network access on their first build (the Spring Boot plugin and the Spring
 artifacts are fetched from the Gradle Plugin Portal and Maven Central, then cached), after which offline
 builds work again.
 
-The optional browser client lived in `web-client/` and was removed by the rewrite; its pnpm build was never
-invoked by the Gradle build. The neutral wire contract both sides implemented was `protocol/oc-protocol.md`,
-also removed — re-establish it when the rewrite lands.
+The rewrite removed the former OC game client (the neutral wire contract it implemented,
+`protocol/oc-protocol.md`, is likewise gone until the rewrite re-establishes it); the `web-client`
+directory now holds the OSA client.
 
 ## Build
 

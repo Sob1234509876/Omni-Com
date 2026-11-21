@@ -29,9 +29,13 @@ Omni Com 项目的单体仓库。Java 模块使用 Gradle 构建：`projects:oc:
 - `projects:osc:osc-server` —— Omni Spring Chat Server：基于 Spring Boot 的聊天室服务。上游目前只有构建脚本（尚无源码），因此暂时不产出 jar。
 - `projects:osftp:osftp-library` —— 轻量级 FTP 客户端库（Spring Boot + commons-net），供 OSA 存储用户头像。
 
+### 浏览器客户端（`web-client`）
+
+- `web-client` —— OSA 服务器的浏览器客户端，2026-11-21 自 [Clients](https://github.com/Sob1234509876/Clients) 仓库合并而来。纯 TypeScript + webpack 项目（npm、无框架）：`npm install && npm run build` 把各客户端页面打包进 `dist/`，由 OSA 部署到 `static/public/osa/` 下提供。npm 构建从不被 Gradle 构建调用。
+
 `projects:oc:*` 模块无依赖：它们可以离线构建并运行自检。`projects:os*` 模块首次构建需要网络访问（Spring Boot 插件与依赖要从 Gradle Plugin Portal 与 Maven Central 拉取并缓存），之后离线构建即可恢复工作。
 
-可选的浏览器客户端曾位于 `web-client/`，已被重写删除；其 pnpm 构建从不被 Gradle 构建调用。双方曾共同实现的中立线路契约是 `protocol/oc-protocol.md`，同样已被删除——重写落地时重新建立即可。
+重写删除了原先的 OC 游戏客户端（它实现的中立线路契约 `protocol/oc-protocol.md` 同样消失，待重写重新建立）；`web-client` 目录现在承载的是 OSA 客户端。
 
 ## 构建
 
