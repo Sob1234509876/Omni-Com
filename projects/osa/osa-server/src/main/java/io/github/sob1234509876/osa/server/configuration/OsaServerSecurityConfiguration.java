@@ -58,10 +58,9 @@ public class OsaServerSecurityConfiguration {
                 .cors(httpSecurityCorsConfigurer -> {
                     var cfg = new CorsConfiguration();
 
-                    cfg.setAllowedMethods(List.of("GET", "POST", "DELETE", "PUT", "OPTIONS"));
-                    cfg.setAllowedOriginPatterns(List.of("*"));
-                    cfg.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-                    cfg.setAllowCredentials(true);
+                    cfg.setAllowedMethods(List.of("*"));
+                    cfg.setAllowedOrigins(List.of("*"));
+                    cfg.setAllowedHeaders(List.of("*"));
 
                     var src = new UrlBasedCorsConfigurationSource();
                     src.registerCorsConfiguration("/**", cfg);
