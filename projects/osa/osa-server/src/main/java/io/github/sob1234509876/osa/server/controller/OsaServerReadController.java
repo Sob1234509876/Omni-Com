@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,14 +29,14 @@ public class OsaServerReadController {
     private OsaServerReadService osaServerReadService;
 
     @GetMapping("/public/profile")
-    @NonNull
-    public ResponseEntity<@NonNull OsaApiUser> getProfile(@ModelAttribute("id") long id) {
+    @Nullable
+    public ResponseEntity<OsaApiUser> getProfile(@ModelAttribute("id") long id) {
         return osaServerReadService.getProfile(id);
     }
 
     @GetMapping("/public/avatar")
-    @NonNull
-    public ResponseEntity<@NonNull Resource> getAvatar(@ModelAttribute("id") long id) {
+    @Nullable
+    public ResponseEntity<Resource> getAvatar(@ModelAttribute("id") long id) {
         return osaServerReadService.getAvatar(id);
     }
 

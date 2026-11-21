@@ -12,6 +12,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -72,8 +73,8 @@ public class OsaServerCreateService {
         return ResponseEntity.ok(null);
     }
 
-    @NonNull
-    public ResponseEntity<@NonNull Long> register(@NonNull String email, @NonNull String code, @NonNull OsaApiUser user) {
+    @Nullable
+    public ResponseEntity<Long> register(@NonNull String email, @NonNull String code, @NonNull OsaApiUser user) {
         if (user.isUnsafe())
             return ResponseEntity.badRequest()
                     .build();

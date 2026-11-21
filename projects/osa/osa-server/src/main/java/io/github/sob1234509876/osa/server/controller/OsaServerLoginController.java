@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -19,9 +20,9 @@ public class OsaServerLoginController {
     @NonNull
     private OsaServerLoginService osaServerLoginService;
 
-    @NonNull
+    @Nullable
     @PostMapping("/anonymous/login")
-    public ResponseEntity<@NonNull String> login(@NonNull OsaApiUser user) {
+    public ResponseEntity<String> login(@NonNull OsaApiUser user) {
         return osaServerLoginService.login(user);
     }
 

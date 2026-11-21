@@ -42,7 +42,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public @NonNull Optional<@NonNull OsaApiUser> findById(@NonNull Long s) {
+    public @NonNull Optional<OsaApiUser> findById(@NonNull Long s) {
         return Optional.ofNullable(mongoTemplate.findById(s, OsaApiUser.class));
     }
 

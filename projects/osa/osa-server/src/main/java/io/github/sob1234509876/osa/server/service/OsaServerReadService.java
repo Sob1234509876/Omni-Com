@@ -13,6 +13,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
@@ -36,8 +37,8 @@ public class OsaServerReadService {
     @NonNull
     private OsaServerUtilityService osaServerUtilityService;
 
-    @NonNull
-    public ResponseEntity<@NonNull OsaApiUser> getProfile(long id) {
+    @Nullable
+    public ResponseEntity<OsaApiUser> getProfile(long id) {
         var res = userDao.findById(id);
 
         if (res.isEmpty())
@@ -53,8 +54,8 @@ public class OsaServerReadService {
         return ResponseEntity.ok(tmp);
     }
 
-    @NonNull
-    public ResponseEntity<@NonNull Resource> getAvatar(long id) {
+    @Nullable
+    public ResponseEntity<Resource> getAvatar(long id) {
         if (!avatarDao.existsById(id))
             return ResponseEntity.notFound()
                     .build();

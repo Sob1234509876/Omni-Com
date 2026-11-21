@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Service;
 
@@ -26,8 +27,8 @@ public class OsaServerLoginService {
     private OsaServerPropertyComponent osaServerPropertyComponent;
 
     @SuppressWarnings("ConstantValue")
-    @NonNull
-    public ResponseEntity<@NonNull String> login(@NonNull OsaApiUser user) {
+    @Nullable
+    public ResponseEntity<String> login(@NonNull OsaApiUser user) {
 
         if (user.getPassword() == null)
             return ResponseEntity.badRequest()

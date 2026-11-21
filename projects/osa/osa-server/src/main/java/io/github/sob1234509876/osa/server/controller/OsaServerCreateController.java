@@ -8,6 +8,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -33,9 +34,9 @@ public class OsaServerCreateController {
         return osaServerCreateService.requestRegisterEmail(email);
     }
 
-    @NonNull
     @PostMapping("/anonymous/register")
-    public ResponseEntity<@NonNull Long> register(@ModelAttribute("email") @NonNull String email, @ModelAttribute("code") @NonNull String code, @NonNull OsaApiUser user) {
+    @Nullable
+    public ResponseEntity<Long> register(@ModelAttribute("email") @NonNull String email, @ModelAttribute("code") @NonNull String code, @NonNull OsaApiUser user) {
         return osaServerCreateService.register(email, code, user);
     }
 
