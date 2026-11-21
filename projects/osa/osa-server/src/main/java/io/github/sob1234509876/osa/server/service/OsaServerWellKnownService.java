@@ -1,15 +1,15 @@
 package io.github.sob1234509876.osa.server.service;
 
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
+import io.jsonwebtoken.security.Jwks;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-
-import java.util.Map;
 
 @Slf4j
 @Data
@@ -25,12 +25,18 @@ public class OsaServerWellKnownService {
     private OsaServerPropertyComponent osaServerPropertyComponent;
 
     @NonNull
-    public ResponseEntity<Map<String, String>> pk() {
+    public ResponseEntity<String> pk() {
+        var publicJwk = Jwks.builder()
+                .key(osaServerPropertyComponent.getJwtVerifyingKey())
+                .id(osaServerPropertyComponent.getJwtTokenKid())
+                .algorithm(OsaServerPropertyComponent.JWT_SIGNATURE_ALGORITHM)
+                .publicKeyUse("sig")
+                .build();
+
         return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
                 .header(CACHE_CONTROL_HEADER, CACHE_CONTROL_VALUE)
-                .body(Map.of("alg", OsaServerPropertyComponent.JWT_SIGNATURE_ALGORITHM,
-                        "kid", osaServerPropertyComponent.getJwtTokenKid(),
-                        "publicKey", osaServerPropertyComponent.getJwtPublicKey()));
+                .body("{\"keys\":[" + Jwks.json(publicJwk) + "]}");
     }
 
 }
