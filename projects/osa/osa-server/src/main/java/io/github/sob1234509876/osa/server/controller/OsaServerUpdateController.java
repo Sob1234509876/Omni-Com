@@ -12,6 +12,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,8 +29,8 @@ public class OsaServerUpdateController {
     private OsaServerUpdateService osaServerUpdateService;
 
     @PostMapping("/private/profile/update")
-    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal UserDetails user, @NonNull OsaApiStringUserSecurePair nUser) {
-        return osaServerUpdateService.updateProfile(user, nUser);
+    public ResponseEntity<Void> updateProfile(@AuthenticationPrincipal UserDetails user, @RequestParam(value = "changeSensitiveField", required = false, defaultValue = "false") boolean changeSensitiveField, @NonNull OsaApiStringUserSecurePair nUser) {
+        return osaServerUpdateService.updateProfile(user, changeSensitiveField, nUser);
     }
 
     @PostMapping("/private/avatar/update")

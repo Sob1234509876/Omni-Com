@@ -3,14 +3,17 @@ package io.github.sob1234509876.osa.server.configuration;
 import io.github.sob1234509876.osa.api.OsaApiAvatarDao;
 import io.github.sob1234509876.osa.api.OsaApiUserDao;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
+import io.github.sob1234509876.osa.server.dao.mongo.OsaServerVerificationCodeDao;
 import io.github.sob1234509876.osa.server.service.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -25,8 +28,10 @@ public class OsaServerServiceConfiguration {
     @Bean
     @NonNull
     public OsaServerCreateService osaServerCreateService(@NonNull OsaApiUserDao userDao, @NonNull OsaApiAvatarDao avatarDao,
-                                                         @NonNull OsaServerUtilityService osaServerUtilityService) {
-        return new OsaServerCreateService(userDao, avatarDao, osaServerUtilityService);
+                                                         @NonNull OsaServerUtilityService osaServerUtilityService,
+                                                         @NonNull OsaServerVerificationCodeDao osaServerVerificationCodeDao,
+                                                         @NonNull OsaServerMailService osaServerMailService) {
+        return new OsaServerCreateService(userDao, avatarDao, osaServerUtilityService, osaServerVerificationCodeDao, osaServerMailService);
     }
 
     @Bean
@@ -56,6 +61,12 @@ public class OsaServerServiceConfiguration {
     public OsaServerLoginService osaServerLoginService(@NonNull UserDetailsService userDetailsService,
                                                        @NonNull OsaServerPropertyComponent osaServerPropertyComponent) {
         return new OsaServerLoginService(userDetailsService, osaServerPropertyComponent);
+    }
+
+    @Bean
+    @NonNull
+    public OsaServerMailService osaServerMailService(@NonNull ObjectProvider<JavaMailSender> javaMailSender) {
+        return new OsaServerMailService(javaMailSender);
     }
 
     @Bean

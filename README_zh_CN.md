@@ -25,7 +25,7 @@ Omni Com 项目的单体仓库。Java 模块使用 Gradle 构建：`projects:oc:
 
 ### Omni Spring Library N Service（`projects:os*`，2026-11-20 合并）
 
-- `projects:osa:osa-api` —— Omni Spring Authorization API（1.0a）：共享的用户/头像契约（`OsaApiUser`、`OsaApiAvatar`、对应 DAO 接口与资料更新线上包装对象），供 `osa-server` 以及将来的 `osc-server` 等消费。
+- `projects:osa:osa-api` —— Omni Spring Authorization API（1.1a）：共享的用户/头像契约（`OsaApiUser`、`OsaApiAvatar`、对应 DAO 接口与资料更新线上包装对象），供 `osa-server` 以及将来的 `osc-server` 等消费。
 - `projects:osa:osa-server` —— Omni Spring Authorization Server：基于 Spring Boot 3.5.6 的服务器（Java 17、JPMS），提供授权与用户信息：Web 控制器、带 JWT 登录的 Spring Security、MongoDB 用户存储，以及构建在 `osftp-library` 之上的 FTP 头像存储。上游项目历史见仓库根目录的 `readme` 文件。
 - `projects:osc:osc-server` —— Omni Spring Chat Server：基于 Spring Boot 的聊天室服务。上游目前只有构建脚本（尚无源码），因此暂时不产出 jar。
 - `projects:osftp:osftp-library` —— 轻量级 FTP 客户端库（Spring Boot + commons-net），供 OSA 存储用户头像。

@@ -33,6 +33,7 @@ dependencies {
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-security'
     api 'org.springframework.boot:spring-boot-starter-data-mongodb'
+    api 'org.springframework.boot:spring-boot-starter-mail'
 
     api 'io.jsonwebtoken:jjwt:0.13.0'
 

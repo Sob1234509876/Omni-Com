@@ -7,15 +7,17 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collections;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Data
@@ -27,12 +29,12 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     private MongoTemplate mongoTemplate;
 
     @Override
-    public <S extends UserDetails> @NonNull S save(@NonNull S entity) {
+    public <S extends OsaApiUser> @NonNull S save(@NonNull S entity) {
         return mongoTemplate.save(entity);
     }
 
     @Override
-    public <S extends UserDetails> @NonNull Iterable<S> saveAll(@NonNull Iterable<S> entities) {
+    public <S extends OsaApiUser> @NonNull Iterable<S> saveAll(@NonNull Iterable<S> entities) {
         for (var s : entities)
             save(s);
 
@@ -40,7 +42,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public @NonNull Optional<UserDetails> findById(@NonNull Long s) {
+    public @NonNull Optional<OsaApiUser> findById(@NonNull Long s) {
         return Optional.ofNullable(mongoTemplate.findById(s, OsaApiUser.class));
     }
 
@@ -52,15 +54,14 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
         return mongoTemplate.exists(new Query(query), OsaApiUser.class);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public @NonNull Iterable<UserDetails> findAll() {
-        return (Iterable<UserDetails>) (Iterable<?>) mongoTemplate.findAll(OsaApiUser.class);
+    public @NonNull Iterable<OsaApiUser> findAll() {
+        return mongoTemplate.findAll(OsaApiUser.class);
     }
 
     @Override
-    public @NonNull Iterable<UserDetails> findAllById(@NonNull Iterable<Long> strings) {
-        var res = new LinkedList<UserDetails>();
+    public @NonNull Iterable<OsaApiUser> findAllById(@NonNull Iterable<Long> strings) {
+        var res = new LinkedList<OsaApiUser>();
 
         for (var s : strings) {
             var r = findById(s);
@@ -72,6 +73,14 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
         }
 
         return Collections.unmodifiableList(res);
+    }
+
+    @Override
+    public @NonNull List<OsaApiUser> findByUsernameContaining(@NonNull String username, @NonNull Pageable pageable) {
+        var criteria = Criteria.where(OsaApiUser.USERNAME_FIELD)
+                .regex(Pattern.quote(username), "i");
+
+        return mongoTemplate.find(new Query(criteria).with(pageable), OsaApiUser.class);
     }
 
     @Override
@@ -88,7 +97,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public void delete(@NonNull UserDetails entity) {
+    public void delete(@NonNull OsaApiUser entity) {
         mongoTemplate.remove(entity);
     }
 
@@ -99,7 +108,7 @@ public class OsaServerMongoUserDao implements OsaApiUserDao {
     }
 
     @Override
-    public void deleteAll(@NonNull Iterable<? extends UserDetails> entities) {
+    public void deleteAll(@NonNull Iterable<? extends OsaApiUser> entities) {
         for (var e : entities)
             delete(e);
     }

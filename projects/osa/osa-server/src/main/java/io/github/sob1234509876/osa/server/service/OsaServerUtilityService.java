@@ -29,8 +29,6 @@ public class OsaServerUtilityService {
     private WeakHashMap<String, String> avatarFtpPathCache = new WeakHashMap<>();
 
     public void toSafeUser(@NonNull OsaApiUser original, @NonNull OsaApiUser user) {
-        user.setPassword(passwordEncoder.encode(user.getPassword()));
-
         user.setAuthorities(original.getAuthorities());
         user.setAccountNonLocked(original.isAccountNonLocked());
         user.setAccountNonExpired(original.isAccountNonExpired());
@@ -51,8 +49,13 @@ public class OsaServerUtilityService {
     }
 
     public void toSecureUser(@NonNull OsaApiUser user) {
-        user.setPassword(String.valueOf(Character.SPACE_SEPARATOR)); // Actually sets to the string "21"
+        user.setPassword(" "); // Actually sets to the string "21"
         user.setAuthorities(List.of());
+
+        var email = user.getEmail();
+
+        if (email != null && email.contains("@"))
+            user.setEmail(email.charAt(0) + "***" + email.substring(email.indexOf('@')));
     }
 
     // Random use of cache, I think string concat operations are inefficient, so I added this.

@@ -10,10 +10,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Slf4j
 @Data
@@ -21,6 +24,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Service
 public class OsaServerReadService {
+
+    public static final int SEARCH_RESULT_LIMIT = 50;
 
     @NonNull
     private OsaApiUserDao userDao;
@@ -37,7 +42,7 @@ public class OsaServerReadService {
 
         if (res.isEmpty())
             return ResponseEntity.notFound()
-                    .header("description","User not found")
+                    .header("description", "User not found")
                     .build();
 
         var user = res.get();
@@ -58,7 +63,7 @@ public class OsaServerReadService {
 
         if (res.isEmpty())
             return ResponseEntity.notFound()
-                    .header("description","Avatar not found")
+                    .header("description", "Avatar not found")
                     .build();
 
         var img = new ByteArrayResource(res.get()
@@ -70,17 +75,22 @@ public class OsaServerReadService {
     }
 
     @NonNull
-    public ResponseEntity<@NonNull OsaApiUser> getProfile(@NonNull UserDetails user) {
+    public ResponseEntity<@NonNull OsaApiUser> whoami(@NonNull UserDetails user) {
         var tmp = new OsaApiUser(user);
 
-        return getProfile(tmp.getId());
+        osaServerUtilityService.toSecureUser(tmp);
+
+        return ResponseEntity.ok(tmp);
     }
 
     @NonNull
-    public ResponseEntity<@NonNull Resource> getAvatar(@NonNull UserDetails user) {
-        var tmp = new OsaApiUser(user);
+    public ResponseEntity<List<OsaApiUser>> searchByUsername(@NonNull String username) {
+        var res = userDao.findByUsernameContaining(username, PageRequest.of(0, SEARCH_RESULT_LIMIT));
 
-        return getAvatar(tmp.getId());
+        for (var u : res)
+            osaServerUtilityService.toSecureUser(u);
+
+        return ResponseEntity.ok(res);
     }
 
 }

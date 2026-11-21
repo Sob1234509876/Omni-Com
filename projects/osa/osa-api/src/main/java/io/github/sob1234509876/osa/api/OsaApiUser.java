@@ -16,6 +16,7 @@ import java.util.List;
 public class OsaApiUser implements UserDetails {
 
     public static final String ID_FIELD = "id";
+    public static final String USERNAME_FIELD = "username";
 
     @Id
     private long id;
@@ -29,6 +30,7 @@ public class OsaApiUser implements UserDetails {
     private String password;
     @NonNull
     private String username;
+    private String email;
 
     public OsaApiUser(@NonNull UserDetails user) {
         setId(-1);
@@ -43,6 +45,9 @@ public class OsaApiUser implements UserDetails {
         setAuthorities(List.copyOf(user.getAuthorities()));
         setPassword(user.getPassword());
         setUsername(user.getUsername());
+
+        if (user instanceof OsaApiUser u)
+            setEmail(u.getEmail());
     }
 
     @SuppressWarnings("ConstantValue")

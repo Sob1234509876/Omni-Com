@@ -19,6 +19,9 @@ module osl.projects.osa.server {
     requires org.slf4j;
     requires org.apache.tomcat.embed.core;
     requires jjwt.api;
+    requires spring.context.support;
+
+    opens io.github.sob1234509876.osa.server.entity;
 
     exports io.github.sob1234509876.osa.server.configuration;
     exports io.github.sob1234509876.osa.server.component;

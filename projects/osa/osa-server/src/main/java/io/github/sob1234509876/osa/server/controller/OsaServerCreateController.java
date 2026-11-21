@@ -27,9 +27,14 @@ public class OsaServerCreateController {
     @NonNull
     private OsaServerCreateService osaServerCreateService;
 
+    @PostMapping("/anonymous/register/email")
+    public ResponseEntity<Void> registerEmail(@ModelAttribute("email") @NonNull String email) {
+        return osaServerCreateService.requestRegisterEmail(email);
+    }
+
     @PostMapping("/anonymous/register")
-    public ResponseEntity<Long> register(@NonNull OsaApiUser user) {
-        return osaServerCreateService.register(user);
+    public ResponseEntity<Long> register(@ModelAttribute("email") @NonNull String email, @ModelAttribute("code") @NonNull String code, @NonNull OsaApiUser user) {
+        return osaServerCreateService.register(email, code, user);
     }
 
     @PostMapping("/private/avatar/upload")

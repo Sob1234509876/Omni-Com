@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @Slf4j
 @Data
 @NoArgsConstructor
@@ -37,16 +39,16 @@ public class OsaServerReadController {
         return osaServerReadService.getAvatar(id);
     }
 
-    @GetMapping("/private/profile")
+    @GetMapping("/public/user/search")
     @NonNull
-    public ResponseEntity<@NonNull OsaApiUser> getProfile(@AuthenticationPrincipal @NonNull UserDetails user) {
-        return osaServerReadService.getProfile(user);
+    public ResponseEntity<List<OsaApiUser>> search(@ModelAttribute("username") @NonNull String username) {
+        return osaServerReadService.searchByUsername(username);
     }
 
-    @GetMapping("/private/avatar")
+    @GetMapping("/private/whoami")
     @NonNull
-    public ResponseEntity<@NonNull Resource> getAvatar(@AuthenticationPrincipal @NonNull UserDetails user) {
-        return osaServerReadService.getAvatar(user);
+    public ResponseEntity<@NonNull OsaApiUser> whoami(@AuthenticationPrincipal @NonNull UserDetails user) {
+        return osaServerReadService.whoami(user);
     }
 
 }
