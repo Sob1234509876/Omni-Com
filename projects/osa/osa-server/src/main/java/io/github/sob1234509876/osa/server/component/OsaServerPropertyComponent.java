@@ -11,8 +11,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
+import java.security.*;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.LinkedList;
 import java.util.List;
@@ -24,8 +25,9 @@ import java.util.List;
 @Component
 public class OsaServerPropertyComponent {
 
-    public static final int DEFAULT_JWT_TOKEN_SECRET_SIZE = 32;
-    public static final String RANDOM_KEY_FILE = "osa_generated_key.txt";
+    public static final String JWT_KEY_ALGORITHM = "Ed25519";
+    public static final String JWT_SIGNATURE_ALGORITHM = "EdDSA";
+    public static final String KEY_PAIR_FILE = "osa_generated_key.txt";
 
     private String avatarFtpPathPrefix = "avatar";
 
@@ -33,43 +35,89 @@ public class OsaServerPropertyComponent {
 
     private long jwtTokenExpiration = 86400 * 1000;
 
-    private String jwtTokenSecret;
+    private String jwtPrivateKey;
+
+    private String jwtPublicKey;
 
     {
 
-        var ogk = new File(RANDOM_KEY_FILE);
+        var ogk = new File(KEY_PAIR_FILE);
 
         if (ogk.isFile()) {
             try (var is = new FileInputStream(ogk)) {
-                jwtTokenSecret = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                var lines = new String(is.readAllBytes(), StandardCharsets.UTF_8).split("\\r?\\n");
+
+                if (lines.length == 2)
+                    try {
+                        Base64.getDecoder().decode(lines[0]);
+                        Base64.getDecoder().decode(lines[1]);
+
+                        jwtPrivateKey = lines[0];
+                        jwtPublicKey = lines[1];
+                    } catch (@NonNull IllegalArgumentException e) {
+                        jwtPrivateKey = null;
+                        jwtPublicKey = null;
+                    }
             } catch (@NonNull IOException e) {
                 throw new RuntimeException(e);
             }
-        } else {
-            var buffer = new byte[DEFAULT_JWT_TOKEN_SECRET_SIZE];
+        }
 
+        if (jwtPrivateKey == null || jwtPublicKey == null) {
             try {
-                SecureRandom.getInstanceStrong()
-                        .nextBytes(buffer);
+                var keyPair = KeyPairGenerator.getInstance(JWT_KEY_ALGORITHM)
+                        .generateKeyPair();
+
+                jwtPrivateKey = Base64.getEncoder().encodeToString(keyPair.getPrivate().getEncoded());
+                jwtPublicKey = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
+
+                try {
+                    if (!ogk.createNewFile() && !ogk.isFile())
+                        throw new IOException("Failed to create file  " + KEY_PAIR_FILE);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+
+                try (var os = new FileOutputStream(ogk)) {
+                    os.write((jwtPrivateKey + "\n" + jwtPublicKey).getBytes(StandardCharsets.UTF_8));
+                } catch (@NonNull IOException e) {
+                    throw new RuntimeException(e);
+                }
             } catch (@NonNull NoSuchAlgorithmException e) {
                 throw new RuntimeException(e);
             }
+        }
+    }
 
-            jwtTokenSecret = Base64.getEncoder()
-                    .encodeToString(buffer);
+    @NonNull
+    public PrivateKey getJwtSigningKey() {
+        try {
+            return KeyFactory.getInstance(JWT_KEY_ALGORITHM)
+                    .generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(jwtPrivateKey)));
+        } catch (@NonNull GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
-            try {
-                if (!ogk.createNewFile())
-                    throw new IOException("Failed to create file  " + RANDOM_KEY_FILE);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+    @NonNull
+    public PublicKey getJwtVerifyingKey() {
+        try {
+            return KeyFactory.getInstance(JWT_KEY_ALGORITHM)
+                    .generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(jwtPublicKey)));
+        } catch (@NonNull GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
-            try (var os = new FileOutputStream(ogk)) {
-                os.write(jwtTokenSecret.getBytes(StandardCharsets.UTF_8));
-            } catch (@NonNull IOException e) {
-                throw new RuntimeException(e);
-            }
+    @NonNull
+    public String getJwtTokenKid() {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256")
+                    .digest(Base64.getDecoder().decode(jwtPublicKey));
+            return Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(digest);
+        } catch (@NonNull NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
         }
     }
 

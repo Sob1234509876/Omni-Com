@@ -51,6 +51,12 @@ public class OsaServerControllerConfiguration implements WebMvcConfigurer {
         return new OsaServerLoginController(osaServerLoginService);
     }
 
+    @Bean
+    @NonNull
+    public OsaServerWellKnownController osaServerWellKnownController(@NonNull OsaServerWellKnownService osaServerWellKnownService) {
+        return new OsaServerWellKnownController(osaServerWellKnownService);
+    }
+
     @Override
     public void addFormatters(@NonNull FormatterRegistry registry) {
         registry.addConverter((StringToGrantedAuthorityConverter) (SimpleGrantedAuthority::new));

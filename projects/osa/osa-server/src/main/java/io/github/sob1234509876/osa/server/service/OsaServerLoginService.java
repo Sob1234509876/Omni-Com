@@ -3,7 +3,6 @@ package io.github.sob1234509876.osa.server.service;
 import io.github.sob1234509876.osa.server.api.User;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -12,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
 @Data
@@ -45,10 +43,12 @@ public class OsaServerLoginService {
         }
 
         var token = Jwts.builder()
+                .header()
+                .keyId(osaServerPropertyComponent.getJwtTokenKid())
+                .and()
                 .expiration(new Date(System.currentTimeMillis() + osaServerPropertyComponent.getJwtTokenExpiration()))
                 .subject(String.valueOf(user.getId()))
-                .signWith(Keys.hmacShaKeyFor(osaServerPropertyComponent.getJwtTokenSecret()
-                        .getBytes(StandardCharsets.UTF_8)))
+                .signWith(osaServerPropertyComponent.getJwtSigningKey())
                 .compact();
 
         return ResponseEntity.ok(token);

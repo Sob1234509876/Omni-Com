@@ -3,7 +3,6 @@ package io.github.sob1234509876.osa.server.security.filter;
 import io.github.sob1234509876.osa.server.component.OsaServerPropertyComponent;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,7 +17,6 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
 @Slf4j
@@ -63,8 +61,7 @@ public class OsaServerJwtFilter extends OncePerRequestFilter {
         Claims claims;
         try {
             claims = Jwts.parser()
-                    .verifyWith(Keys.hmacShaKeyFor(osaServerPropertyComponent.getJwtTokenSecret()
-                            .getBytes(StandardCharsets.UTF_8)))
+                    .verifyWith(osaServerPropertyComponent.getJwtVerifyingKey())
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();

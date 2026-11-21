@@ -57,4 +57,10 @@ public class OsaServerServiceConfiguration {
                                                        @NonNull OsaServerPropertyComponent osaServerPropertyComponent) {
         return new OsaServerLoginService(userDetailsService, osaServerPropertyComponent);
     }
+
+    @Bean
+    @NonNull
+    public OsaServerWellKnownService osaServerWellKnownService(@NonNull OsaServerPropertyComponent osaServerPropertyComponent) {
+        return new OsaServerWellKnownService(osaServerPropertyComponent);
+    }
 }
