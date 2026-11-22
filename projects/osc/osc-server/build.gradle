@@ -2,7 +2,7 @@ plugins {
     id 'java-library'
     id 'org.springframework.boot' version '3.5.6'
     id 'io.spring.dependency-management' version '1.1.7'
-    id "de.jjohannes.extra-java-module-info" version "0.16"
+    id "org.gradlex.extra-java-module-info" version "1.14.2"
     // org.graalvm.buildtools.native is deliberately not applied here: the owner never planned
     // native images for the OSLNS servers (the plugin was an upstream leftover and was removed
     // from osa-server as well). Re-add it together with real sources if ever needed.
