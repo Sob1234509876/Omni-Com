@@ -1,0 +1,64 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.sob1234509876.oc'
+version = '1.0a'
+description = 'Omni Com Collection Library gives the observable collections the engine is built on.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    modularity.inferModulePath = true
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api 'org.jetbrains:annotations:26.0.2'
+
+    compileOnly 'org.projectlombok:lombok:1.18.40'
+    annotationProcessor 'org.projectlombok:lombok:1.18.40'
+}
+
+// Comments and descriptions may contain non-ASCII text, so the build must not fall back to the
+// platform encoding, which is GBK on a Chinese Windows install.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+javadoc {
+    options {
+        encoding = "UTF-8"
+        charSet = "UTF-8"
+        docEncoding = "UTF-8"
+    }
+    options.addBooleanOption('Xdoclint:all,-missing', true)
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
+// The self check is a runnable program rather than a framework based test suite, so it lives in its own
+// source set and the standard test task stays source free (Gradle 9 fails a test task that discovers
+// sources but executes no tests). Runs with: ./gradlew :projects:oc:oc-collection-library:selfcheck
+sourceSets {
+    selfCheck {
+        java.srcDir 'src/selfcheck/java'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+tasks.register('selfcheck', JavaExec) {
+    group = 'verification'
+    description = 'Runs the collection library self check.'
+    classpath = sourceSets.selfCheck.runtimeClasspath
+    mainClass = 'io.github.sob1234509876.oc.collection.check.CollectionCheck'
+}

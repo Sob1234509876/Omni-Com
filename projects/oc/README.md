@@ -4,14 +4,19 @@
 
 Modules of the `projects:oc` group.
 
-> **Rewrite in progress (2026-11-20).** Everything except the two googology modules was deleted on
-> this date by owner decision (`oc-rts-engine`, `oc-game-server`, `oc-game-server-classic`,
+> **Rewrite under way (started 2026-11-22).** Everything except the two googology modules was deleted on
+> 2026-11-20 by owner decision (`oc-rts-engine`, `oc-game-server`, `oc-game-server-classic`,
 > `oc-game-server-debug`, `oc-game-server-hello`, and the `web-client/` pnpm project) — the whole
-> stack is being rewritten from scratch. The previous implementation lives in git history at commit
+> stack is being rewritten from scratch, and `oc-collection-library` is the rewrite's first new module.
+> The previous implementation lives in git history at commit
 > `636e2e4` (`git show 636e2e4:<path>` or `git checkout 636e2e4 -- <path>` brings any of it back).
 
 ## Modules
 
+- `oc-collection-library` — observable extensions of the Java collections framework (`Observable<T>` plus
+  `ObservableCollection`/`ObservableSet`/`ObservableList`/`ObservableMap` decorators firing events for
+  every real change) and the foundation the Spring-Boot-based Omni Com engine rewrite is built on. See
+  [its README](oc-collection-library/README.md).
 - `oc-googology` — small library of very large natural numbers: exact `BigInteger` values up to 4096 bits,
   hyperoperation (up arrow) notation beyond that, and transfinite hyperoperation levels up to `ε₀` through
   a pluggable ordinal notation. See [its README](oc-googology/README.md) and the Chinese

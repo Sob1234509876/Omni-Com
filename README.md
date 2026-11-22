@@ -3,17 +3,19 @@ English | [简体中文](README_zh_CN.md)
 # Omni Com
 
 Monorepo for the Omni Com project. The Java modules are built with Gradle: the `projects:oc:*` modules
-use no third-party dependencies, while the `projects:os*` modules — merged from the
+use no runtime third-party dependencies (JetBrains annotations and Lombok in `oc-collection-library`
+are compile-time only), while the `projects:os*` modules — merged from the
 [Omni-Spring-Library-N-Service](https://github.com/Sob1234509876/Omni-Spring-Library-N-Service)
 repository on 2026-11-20 — are built on Spring Boot. Idea by Sob1234509876, made possible thanks to
 Deepseek.
 
-> **Rewrite in progress (2026-11-20).** Every `oc` project except `oc-googology` and
-> `oc-googology-ordinal` has been deleted by owner decision — the Java modules, the plugins and the
-> `web-client/` pnpm project — and the stack is being rewritten from scratch. The previous
-> implementation lives in git history at commit `636e2e4`
-> (`git show 636e2e4:<path>` / `git checkout 636e2e4 -- <path>` brings any of it back). The `oc`
-> module list below is historical until the rewrite lands. See
+> **Rewrite under way (started 2026-11-22).** Every `oc` project except `oc-googology` and
+> `oc-googology-ordinal` was deleted by owner decision on 2026-11-20 — the Java modules, the plugins
+> and the `web-client/` pnpm project — and the stack is being rewritten from scratch;
+> `oc-collection-library` is the first rebuilt module. The previous implementation lives in git
+> history at commit `636e2e4`
+> (`git show 636e2e4:<path>` / `git checkout 636e2e4 -- <path>` brings any of it back). The rest of
+> the `oc` module list below is historical until the rewrite lands. See
 > [projects/oc/README.md](projects/oc/README.md). The merged `os*` modules are not affected by the
 > rewrite.
 
@@ -21,6 +23,10 @@ Deepseek.
 
 ### Omni Com (`projects:oc`)
 
+- `projects:oc:oc-collection-library` — observable extensions of the Java collections framework
+  (`Observable<T>` plus `ObservableCollection`/`ObservableSet`/`ObservableList`/`ObservableMap`
+  decorators firing events for every real change) and the foundation the Spring-Boot-based Omni Com
+  engine rewrite is built on.
 - `projects:oc:oc-googology` — small library of very large natural numbers: exact `BigInteger` values up
   to 4096 bits, hyperoperation (up arrow) notation beyond that, and transfinite hyperoperation levels up
   to `ε₀` through a pluggable ordinal notation. Plain Java 17 (JPMS, `java-library`, no third-party
@@ -61,20 +67,26 @@ The `oc` engine and server modules above were removed by the rewrite and are sho
 
 ### Browser client (`web-client`)
 
-- `web-client` — the browser client for the OSA server, merged from the
-  [Clients](https://github.com/Sob1234509876/Clients) repository on 2026-11-21. A plain TypeScript +
-  webpack project (npm, no framework): `npm install && npm run build` bundles each client page into
-  `dist/`, which OSA serves under `static/public/osa/`. The npm build is never invoked by the Gradle
-  build.
+- `web-client` — the browser client shell, a Vue 3 + Vite + TypeScript project (Pinia for state,
+  vue-i18n for localization, vue-router with hash history). It is a micro-frontend host: each client
+  (the OSA client is the first) lives in `src/plugins/<id>/` and registers itself in
+  `src/registry/plugins.ts`, which feeds the shared sidebar navigation and router. `npm install &&
+  npm run build` (vue-tsc + vite) bundles everything into `dist/`; in development the Vite dev server
+  proxies the OSA API path prefixes to `localhost:8080`. The npm build is never invoked by the Gradle
+  build. The former plain TypeScript + webpack OSA client (merged from the
+  [Clients](https://github.com/Sob1234509876/Clients) repository) was retired on 2026-11-21 and lives
+  in git history (`8d3d39d`).
 
-The `projects:oc:*` modules are dependency free: they build and run their self checks offline.
+The `projects:oc:*` modules have no runtime third-party dependencies (JetBrains annotations and Lombok
+in `oc-collection-library` are compile-time only): they build and run their self checks offline once
+those two small artifacts are cached.
 The `projects:os*` modules need network access on their first build (the Spring Boot plugin and the Spring
 artifacts are fetched from the Gradle Plugin Portal and Maven Central, then cached), after which offline
 builds work again.
 
 The rewrite removed the former OC game client (the neutral wire contract it implemented,
 `protocol/oc-protocol.md`, is likewise gone until the rewrite re-establishes it); the `web-client`
-directory now holds the OSA client.
+directory now hosts the Vue shell with the OSA client as its first plugin.
 
 ## Build
 
@@ -96,7 +108,8 @@ Self checks (no test framework; `oc` modules only until the rewrite returns the 
 ```shell
 ./gradlew --offline \
     :projects:oc:oc-googology:selfcheck \
-    :projects:oc:oc-googology-ordinal:selfcheck
+    :projects:oc:oc-googology-ordinal:selfcheck \
+    :projects:oc:oc-collection-library:selfcheck
 ```
 
 ## License
