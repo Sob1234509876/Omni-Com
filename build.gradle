@@ -1,0 +1,104 @@
+import java.net.Socket
+import java.util.concurrent.TimeUnit
+
+// Root-level quick launch tasks: each service runs in its own console window so the logs
+// stay readable side by side. Every window runs its own Gradle invocation ('bootRun' or
+// 'pnpm run dev'), so these tasks only splice windows open and then wait until the
+// servers report ready. Stop a service with Ctrl+C inside its window.
+// Windows only: the tasks manage console windows, which is a Windows concept.
+
+def rootDirectory = rootProject.projectDir
+def webClientDirectory = new File(rootDirectory, 'web-client')
+def onWindows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+
+def openConsoleWindow = { String title, File workingDirectory, List<String> command ->
+    // 'start' opens a new console window and returns immediately; the inner 'cmd /k' keeps
+    // that window open after the service exits, so shutdown and crash logs stay readable.
+    // The title carries its own quotes ('start' needs them: an unquoted first argument is
+    // taken as the program to run) and no argument contains spaces, so the command line
+    // survives every quoting layer untouched; the working directory reaches the new window
+    // through the spawning process instead of a quoted 'start /D' path.
+    Process spawner = new ProcessBuilder((['cmd', '/c', 'start', "\"$title\"", 'cmd', '/k'] + command) as String[])
+            .directory(workingDirectory)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .start()
+    if (spawner.waitFor(10, TimeUnit.SECONDS) && spawner.exitValue() != 0) {
+        throw new GradleException("Failed to open the console window '${title}' (exit code ${spawner.exitValue()}); see the output above.")
+    }
+}
+
+def waitUntilPortOpens = { int port, int timeoutSeconds ->
+    long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L
+    // 'localhost' is bound differently per service: Vite listens on whichever loopback
+    // family Node resolves first (here ::1 only), while Spring Boot binds both families.
+    // Probe IPv4 and IPv6 explicitly and accept either.
+    while (true) {
+        for (String loopback in ['127.0.0.1', '::1']) {
+            try {
+                new Socket(loopback, port).close()
+                return
+            } catch (IOException familyNotListening) {
+                // fall through to the other family or retry after the sleep below
+            }
+        }
+        if (System.currentTimeMillis() > deadline) {
+            throw new GradleException("Port ${port} did not open within ${timeoutSeconds}s - check the service's console window for its error.")
+        }
+        Thread.sleep(1000)
+    }
+}
+
+def requireWindows = {
+    if (!onWindows) {
+        throw new GradleException('The quick launch tasks open separate console windows and support Windows only.')
+    }
+}
+
+def osaWindowCommand = ['gradlew.bat', ':projects:osa:osa-server:bootRun', '--console=plain']
+def oscWindowCommand = ['gradlew.bat', ':projects:osc:osc-server:bootRun', '--console=plain']
+
+tasks.register('runOsa') {
+    group = 'application'
+    description = "Quick-start the OSA server in its own console window (http://localhost:8080); returns once it is up."
+    doLast {
+        requireWindows()
+        openConsoleWindow('OSA-8080', rootDirectory, osaWindowCommand)
+        waitUntilPortOpens(8080, 90)
+        println 'OSA server is up on http://localhost:8080.'
+    }
+}
+
+tasks.register('runOsaOsc') {
+    group = 'application'
+    description = "Quick-start the OSA (:8080) and OSC (:8081) servers, each in its own console window; OSC waits for OSA."
+    doLast {
+        requireWindows()
+        openConsoleWindow('OSA-8080', rootDirectory, osaWindowCommand)
+        waitUntilPortOpens(8080, 90)
+        println 'OSA server is up on http://localhost:8080.'
+        openConsoleWindow('OSC-8081', rootDirectory, oscWindowCommand)
+        waitUntilPortOpens(8081, 120)
+        println 'OSC server is up on http://localhost:8081.'
+    }
+}
+
+tasks.register('runOsaOscClient') {
+    group = 'application'
+    description = "Quick-start OSA (:8080), OSC (:8081) and the web client dev server (:5173, 'pnpm run dev'), each in its own console window."
+    doLast {
+        requireWindows()
+        if (!new File(webClientDirectory, 'node_modules').isDirectory()) {
+            throw new GradleException('web-client/node_modules is missing - run pnpm install inside web-client first.')
+        }
+        openConsoleWindow('OSA-8080', rootDirectory, osaWindowCommand)
+        waitUntilPortOpens(8080, 90)
+        println 'OSA server is up on http://localhost:8080.'
+        openConsoleWindow('OSC-8081', rootDirectory, oscWindowCommand)
+        waitUntilPortOpens(8081, 120)
+        println 'OSC server is up on http://localhost:8081.'
+        openConsoleWindow('CLIENT-5173', webClientDirectory, ['pnpm', 'run', 'dev'])
+        waitUntilPortOpens(5173, 60)
+        println 'Web client dev server is up on http://localhost:5173.'
+    }
+}
