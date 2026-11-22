@@ -15,7 +15,5 @@ public class OscApiChatUser {
     private long id;
     @Nullable
     private String bio;
-    @Nullable
-    private Long avatarFileId;
 
 }
