@@ -20,7 +20,7 @@ OSC 用户是 OSA 用户的**懒创建扩展**：
 
 - JWT Filter 用 OSA JWKS 公钥（Ed25519）验签，token 取 `Authorization: Bearer` 头或 query 参数 `token`（后者供 WebSocket 握手用，浏览器原生 WS 无法带头）
 - 验出 OSA 用户 id 后查 OSC 用户表，查无则自动创建（OSC 用户 id = OSA 用户 id）
-- OSC 用户不重复存 OSA 已有字段（用户名等经 OSA 查询），自有字段仅 `bio` / `avatarFileId`
+- OSC 用户不重复存 OSA 已有字段（用户名、头像均经 OSA 查询——头像走 OSA `/public/avatar?id=`），自有字段仅 `bio`
 
 ## 端点
 
@@ -32,6 +32,7 @@ OSC 用户是 OSA 用户的**懒创建扩展**：
 | `GET /public/chat?id=` | 按 ID 查对话 |
 | `GET /public/room?id=` | 按 ID 查群聊 |
 | `GET /public/room-user?roomId=&userId=` | 查群成员（称号/等级/活跃分/加入时间/禁言） |
+| `GET /public/room-users?roomId=` | 列举某群全部成员（群不存在 404 `Room not found`） |
 | `GET /public/search/chat-user?username=` | 经 OSA 用户名搜索（先查 OSA 再过滤出有 OSC 账号的，保持 OSA 结果顺序） |
 | `GET /public/search/room?name=` | 群名部分串搜索（大小写不敏感，上限 50） |
 | `GET /public/message?chatId=｜roomId=&before=&limit=` | 消息分页，新→旧；`before` 为消息 ID 游标；默认/上限 64 条（`osc.server.message-page-size` 可配） |
@@ -41,7 +42,7 @@ OSC 用户是 OSA 用户的**懒创建扩展**：
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
-| `/private/update-chat-user` | POST | 改自己的 `bio` / `avatarFileId`（缺省=不改，传空串=清空 bio） |
+| `/private/update-chat-user` | POST | 改自己的 `bio`（缺省=不改，传空串=清空 bio） |
 | `/private/upload-message` | POST | 发消息：`userId`（对人，无对话则自动建对话）/ `chatId` / `roomId` 恰传一个 + `type` + `content` 或 `fileId` |
 | `/private/upload-file` | POST | multipart 字段 `file`，存 FTP 后返回文件记录 |
 | `/private/chat/delete-chat` | DELETE | 删除对话（双方均可），级联删消息；之后仍可重新发起对话 |

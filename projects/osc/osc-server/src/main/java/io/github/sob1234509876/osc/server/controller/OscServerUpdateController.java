@@ -30,9 +30,8 @@ public class OscServerUpdateController {
     @PostMapping("/private/update-chat-user")
     @NonNull
     public ResponseEntity<@NonNull OscApiChatUser> updateChatUser(@AuthenticationPrincipal @NonNull OscApiChatUser me,
-                                                                  @RequestParam(value = "bio", required = false) String bio,
-                                                                  @RequestParam(value = "avatarFileId", required = false) Long avatarFileId) {
-        return oscServerUpdateService.updateChatUser(me, bio, avatarFileId);
+                                                                  @RequestParam(value = "bio", required = false) String bio) {
+        return oscServerUpdateService.updateChatUser(me, bio);
     }
 
     @PostMapping("/private/room/update-room")

@@ -56,6 +56,12 @@ public class OscServerReadController {
         return oscServerReadService.getRoomUser(roomId, userId);
     }
 
+    @GetMapping("/public/room-users")
+    @Nullable
+    public ResponseEntity<List<@NonNull OscApiRoomUser>> getRoomUsers(@RequestParam("roomId") long roomId) {
+        return oscServerReadService.getRoomUsers(roomId);
+    }
+
     @GetMapping("/public/search/chat-user")
     @Nullable
     public ResponseEntity<List<@NonNull OscApiChatUser>> searchChatUsers(@RequestParam("username") @NonNull String username) {

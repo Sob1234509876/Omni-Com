@@ -125,6 +125,18 @@ public class OscServerReadService {
     }
 
     @Nullable
+    public ResponseEntity<List<@NonNull OscApiRoomUser>> getRoomUsers(long roomId) {
+        var roomRes = roomDao.findById(roomId);
+
+        if (roomRes.isEmpty())
+            return ResponseEntity.notFound()
+                    .header("description", "Room not found")
+                    .build();
+
+        return ResponseEntity.ok(roomUserDao.findByRoomId(roomId));
+    }
+
+    @Nullable
     public ResponseEntity<List<@NonNull OscApiChatUser>> searchChatUsers(@NonNull String username) {
         var uri = UriComponentsBuilder.fromUriString(oscServerPropertyComponent.getOsaBaseUri() + OscServerPropertyComponent.USER_SEARCH_PATH)
                 .queryParam("username", username)

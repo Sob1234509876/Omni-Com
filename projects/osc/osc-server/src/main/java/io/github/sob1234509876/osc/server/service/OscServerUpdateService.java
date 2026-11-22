@@ -54,12 +54,9 @@ public class OscServerUpdateService {
     private OscServerEventBusService oscServerEventBusService;
 
     @NonNull
-    public ResponseEntity<@NonNull OscApiChatUser> updateChatUser(@NonNull OscApiChatUser me, String bio, Long avatarFileId) {
+    public ResponseEntity<@NonNull OscApiChatUser> updateChatUser(@NonNull OscApiChatUser me, String bio) {
         if (bio != null)
             me.setBio(bio);
-
-        if (avatarFileId != null)
-            me.setAvatarFileId(avatarFileId);
 
         var res = chatUserDao.save(me);
 
