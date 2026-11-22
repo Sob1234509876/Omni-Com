@@ -1,0 +1,256 @@
+/** osa 命名空间双语键值对；index.ts 启动时 mergeLocaleMessage 挂到全局 i18n 实例 */
+export const osaMessages: Record<"zh-CN" | "en-US", object> = {
+  "zh-CN": {
+    nav: {
+      login: "登录",
+      register: "注册",
+      search: "搜索",
+      me: "个人主页",
+      profileEdit: "修改资料",
+      avatar: "头像管理",
+      logout: "登出",
+      delete: "注销账号",
+    },
+    common: {
+      loading: "加载中…",
+    },
+    login: {
+      title: "登录 OSA",
+      id: "用户 ID",
+      password: "密码",
+      submit: "登录",
+      serverSection: "服务器地址",
+      serverHint: "留空使用当前站点地址",
+      saveServer: "保存地址",
+      registerHint: "还没有账号？去注册",
+    },
+    register: {
+      title: "注册 OSA 账号",
+      email: "邮箱",
+      sendCode: "发送验证码",
+      codeSent: "验证码已发送",
+      code: "验证码",
+      username: "用户名",
+      password: "密码",
+      submit: "注册",
+      back: "重填邮箱",
+      devCodeHint:
+        "服务器未配置邮件服务，验证码打印在服务器控制台日志（10 分钟有效，错 5 次作废）",
+      success: "注册成功，你的登录 ID 是 {id}，已自动登录",
+      loginHint: "已有账号？去登录",
+      invalidEmail: "邮箱格式不正确",
+    },
+    me: {
+      title: "个人主页",
+      id: "ID",
+      username: "用户名",
+      email: "邮箱（已脱敏）",
+    },
+    search: {
+      title: "搜索用户",
+      username: "用户名（包含匹配）",
+      submit: "搜索",
+      empty: "没有找到用户",
+      count: "共 {count} 个结果",
+    },
+    user: {
+      title: "用户资料",
+      notFound: "用户不存在",
+    },
+    profileEdit: {
+      title: "修改资料",
+      username: "用户名",
+      sensitive: "同时修改密码 / 邮箱（需旧密码）",
+      oldPassword: "旧密码",
+      newPassword: "新密码",
+      email: "新邮箱（留空则不改）",
+      submit: "保存",
+      success: "资料已更新",
+      usernameRequired: "用户名不能为空",
+      sensitiveRequired: "敏感模式下旧密码与新密码都必须填写",
+    },
+    avatar: {
+      title: "头像管理",
+      pick: "选择图片",
+      upload: "上传头像",
+      update: "更换头像",
+      remove: "删除头像",
+      uploadSuccess: "头像已上传",
+      autoReplaced: "服务器已有头像，已自动转用更换接口完成上传",
+      updateSuccess: "头像已更换",
+      removeSuccess: "头像已删除",
+      needFile: "请先选择一张图片",
+    },
+    logout: {
+      title: "登出",
+      submit: "确认登出",
+      success: "已登出",
+    },
+    delete: {
+      title: "注销账号",
+      password: "密码",
+      confirmTitle: "确认注销",
+      confirmBody: "账号与头像将被永久删除，且无法恢复。继续吗？",
+      submit: "注销账号",
+      success: "账号已注销",
+    },
+    error: {
+      network: {
+        title: "连不上服务器",
+        detail:
+          "请确认 osa-server 已启动（默认端口 8080）、登录页“服务器地址”填写正确、本机能访问该主机。（技术细节：{reason}）",
+      },
+      forbidden: {
+        title: "访问被拒绝（403）",
+        detail:
+          "若是已登录操作，通常是令牌缺失或过期（约 24 小时有效），请重新登录；若刚修改过密码，请使用新密码。",
+      },
+      unauthorized: {
+        title: "验证未通过（401）",
+        detail: "请检查密码 / 验证码是否正确。",
+      },
+      badRequest: {
+        title: "请求被拒绝（400）",
+        detail: "请检查表单填写是否完整、格式是否正确。",
+      },
+      notFound: {
+        title: "资源不存在（404）",
+        detail: "请确认 ID 或地址是否正确。",
+      },
+      server: {
+        title: "服务器错误（{status}）",
+        detail: "服务端内部故障，详情请查看服务器日志。",
+      },
+      unknown: "操作失败",
+      numberOnly: "请输入数字 ID",
+    },
+  },
+  "en-US": {
+    nav: {
+      login: "Login",
+      register: "Register",
+      search: "Search",
+      me: "My Profile",
+      profileEdit: "Edit Profile",
+      avatar: "Avatar",
+      logout: "Logout",
+      delete: "Delete Account",
+    },
+    common: {
+      loading: "Loading…",
+    },
+    login: {
+      title: "Login to OSA",
+      id: "User ID",
+      password: "Password",
+      submit: "Login",
+      serverSection: "Server address",
+      serverHint: "Leave empty to use this site's origin",
+      saveServer: "Save address",
+      registerHint: "No account yet? Register",
+    },
+    register: {
+      title: "Register an OSA account",
+      email: "Email",
+      sendCode: "Send verification code",
+      codeSent: "Verification code sent",
+      code: "Verification code",
+      username: "Username",
+      password: "Password",
+      submit: "Register",
+      back: "Change email",
+      devCodeHint:
+        "No mail service configured on the server; the code is printed to the server console (valid 10 minutes, invalidated after 5 wrong attempts)",
+      success: "Registered. Your login ID is {id}; you are now logged in",
+      loginHint: "Already have an account? Login",
+      invalidEmail: "Invalid email address",
+    },
+    me: {
+      title: "My Profile",
+      id: "ID",
+      username: "Username",
+      email: "Email (masked)",
+    },
+    search: {
+      title: "Search Users",
+      username: "Username (contains match)",
+      submit: "Search",
+      empty: "No users found",
+      count: "{count} result(s)",
+    },
+    user: {
+      title: "User Profile",
+      notFound: "User not found",
+    },
+    profileEdit: {
+      title: "Edit Profile",
+      username: "Username",
+      sensitive: "Also change password / email (old password required)",
+      oldPassword: "Old password",
+      newPassword: "New password",
+      email: "New email (leave empty to keep)",
+      submit: "Save",
+      success: "Profile updated",
+      usernameRequired: "Username must not be empty",
+      sensitiveRequired:
+        "Old and new passwords are both required in sensitive mode",
+    },
+    avatar: {
+      title: "Avatar",
+      pick: "Pick an image",
+      upload: "Upload avatar",
+      update: "Replace avatar",
+      remove: "Delete avatar",
+      uploadSuccess: "Avatar uploaded",
+      autoReplaced:
+        "An avatar already exists on the server; uploaded via the replace endpoint instead",
+      updateSuccess: "Avatar replaced",
+      removeSuccess: "Avatar deleted",
+      needFile: "Pick an image first",
+    },
+    logout: {
+      title: "Logout",
+      submit: "Confirm logout",
+      success: "Logged out",
+    },
+    delete: {
+      title: "Delete Account",
+      password: "Password",
+      confirmTitle: "Confirm deletion",
+      confirmBody:
+        "Your account and avatar will be permanently deleted. Continue?",
+      submit: "Delete account",
+      success: "Account deleted",
+    },
+    error: {
+      network: {
+        title: "Cannot reach the server",
+        detail:
+          "Make sure osa-server is running (default port 8080), the server address on the login page is correct, and this machine can reach it. (Technical detail: {reason})",
+      },
+      forbidden: {
+        title: "Access denied (403)",
+        detail:
+          "For signed-in operations this usually means the token is missing or expired (about 24 hours). Please log in again; if you just changed your password, use the new one.",
+      },
+      unauthorized: {
+        title: "Not authorized (401)",
+        detail: "Check your password / verification code.",
+      },
+      badRequest: {
+        title: "Request rejected (400)",
+        detail: "Check that the form is complete and correctly formatted.",
+      },
+      notFound: {
+        title: "Not found (404)",
+        detail: "Check the ID or address.",
+      },
+      server: {
+        title: "Server error ({status})",
+        detail: "Internal server failure, see the server log for details.",
+      },
+      unknown: "Operation failed",
+      numberOnly: "Please enter a numeric ID",
+    },
+  },
+};

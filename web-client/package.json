@@ -1,28 +1,23 @@
 {
-  "name": "clients",
-  "version": "1.0.0",
-  "description": "Clients for OSLNS and OC",
-  "keywords": [
-    "Client"
-  ],
-  "license": "GPL-3.0-only",
-  "author": "Sob1234509876",
-  "type": "commonjs",
-  "main": "index.js",
+  "name": "clients-shell",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "build": "prettier . -w && webpack"
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "css-loader": "^7.1.4",
-    "file-loader": "^6.2.0",
-    "html-webpack-plugin": "^5.6.7",
-    "prettier": "^3.9.1",
-    "style-loader": "^4.0.0",
-    "ts-loader": "^9.6.2",
-    "typescript": "^6.0.3",
-    "webpack": "^5.108.1"
+    "pinia": "^4.1.0",
+    "vue": "^3.5.13",
+    "vue-i18n": "^11.4.23",
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "webpack-cli": "^7.1.0"
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0",
+    "vue-tsc": "^3.0.1"
   }
 }

@@ -1,0 +1,66 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 800px at 72% -12%, rgb(96 96 255 / 5%), transparent 60%),
+    var(--oc-bg);
+  color: var(--oc-text);
+  font-family: "JetBrains Mono", monospace;
+}
+
+::selection {
+  background-color: var(--oc-accent);
+  color: #ffffff;
+}
+
+input {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--oc-border);
+  background-color: var(--oc-field);
+  color: var(--oc-text);
+  font-family: inherit;
+  font-size: 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:focus-visible {
+  outline: none;
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-soft);
+}
+
+/* 壳布局：左侧导航栏（Spec §2 的 10% 列，加 160px 下限保证 brand 完整显示）、右侧内容区 */
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: max(160px, 10%) 1fr;
+}
+
+/* 页面容器：内容双居中（对应 Spec §3.2 的 div.xxx-div 模式） */
+.page-area {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+}
+
+/* 暗色细滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--oc-border);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #404040;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

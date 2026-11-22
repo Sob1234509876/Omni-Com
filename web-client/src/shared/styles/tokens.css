@@ -1,0 +1,36 @@
+/* 设计 token —— 取自 Client-Style-Spec.md §1，全部入册为 CSS 变量；
+   层次感体系：底(#101010) → 卡片(#202020) → 抬升面(#242424/#2a2a2a) 三级面 + 阴影 */
+:root {
+  --oc-bg: #101010;
+  --oc-surface: #202020;
+  --oc-surface-2: #242424;
+  --oc-surface-3: #2a2a2a;
+  --oc-field: #1a1a1a;
+  --oc-border: #303030;
+  --oc-hairline: rgb(255 255 255 / 6%);
+  --oc-text: #e0e0e0;
+  --oc-text-dim: rgb(224 224 224 / 55%);
+  --oc-accent: #6060ff;
+  --oc-accent-soft: rgb(96 96 255 / 14%);
+  --oc-toast-bg: #402020;
+  --oc-toast-text: #ffe0e0;
+  --oc-toast-border: #503030;
+  /* 警告（黄）：与报错红同构——暗色调底 + 亮色调字 + 略亮边框 */
+  --oc-warn-bg: #40380f;
+  --oc-warn-text: #ffefb8;
+  --oc-warn-border: #5f5620;
+  /* 默认（灰黑）：普通信息/成功提示 */
+  --oc-info-bg: #2a2a2a;
+  --oc-info-text: #e0e0e0;
+  --oc-info-border: #404040;
+  --oc-space-sm: 16px;
+  --oc-space-md: 32px;
+  --oc-radius: 16px;
+  --oc-shadow-1: 0 4px 16px rgb(0 0 0 / 35%);
+  --oc-shadow-2: 0 12px 32px rgb(0 0 0 / 50%);
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../assets/fonts/JetBrainsMono-Medium.ttf") format("truetype");
+}
