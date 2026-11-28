@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osc.server.security;
 
-import io.github.sob1234509876.osc.api.OscApiChatUser;
+import io.github.sob1234509876.osc.api.social.OscApiChatUser;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.Nullable;

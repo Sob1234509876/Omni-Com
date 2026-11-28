@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osc.server.dao.mongo;
 
-import io.github.sob1234509876.osc.api.OscApiFriendLink;
-import io.github.sob1234509876.osc.api.OscApiFriendLinkDao;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLink;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLinkDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;

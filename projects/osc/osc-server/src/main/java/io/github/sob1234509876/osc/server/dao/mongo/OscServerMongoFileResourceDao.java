@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osc.server.dao.mongo;
 
-import io.github.sob1234509876.osc.api.OscApiFileResource;
-import io.github.sob1234509876.osc.api.OscApiFileResourceDao;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResource;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResourceDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;

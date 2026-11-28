@@ -3,5 +3,7 @@ module osl.projects.osc.api {
     requires static lombok;
     requires org.jetbrains.annotations;
 
-    exports io.github.sob1234509876.osc.api;
+    exports io.github.sob1234509876.osc.api.resource;
+    exports io.github.sob1234509876.osc.api.social;
+    exports io.github.sob1234509876.osc.api.request;
 }

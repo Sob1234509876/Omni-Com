@@ -1,6 +1,6 @@
 package io.github.sob1234509876.osc.server.configuration;
 
-import io.github.sob1234509876.osc.api.OscApiChatUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiChatUserDao;
 import io.github.sob1234509876.osc.server.security.filter.OscServerJwtFilter;
 import io.github.sob1234509876.osc.server.service.OscServerOsaJwksService;
 import lombok.Data;

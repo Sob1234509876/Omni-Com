@@ -2,7 +2,7 @@ package io.github.sob1234509876.osc.server.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.sob1234509876.osc.api.OscApiChatUser;
+import io.github.sob1234509876.osc.api.social.OscApiChatUser;
 import io.github.sob1234509876.osc.server.security.OscServerUserHandshakeInterceptor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;

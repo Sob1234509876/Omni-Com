@@ -1,23 +1,22 @@
 package io.github.sob1234509876.osc.server.service;
 
-import io.github.sob1234509876.osc.api.OscApiChat;
-import io.github.sob1234509876.osc.api.OscApiChatUser;
-import io.github.sob1234509876.osc.api.OscApiChatDao;
-import io.github.sob1234509876.osc.api.OscApiFileResource;
-import io.github.sob1234509876.osc.api.OscApiFileResourceDao;
-import io.github.sob1234509876.osc.api.OscApiFriendLink;
-import io.github.sob1234509876.osc.api.OscApiFriendLinkDao;
-import io.github.sob1234509876.osc.api.OscApiMessage;
-import io.github.sob1234509876.osc.api.OscApiMessageDao;
-import io.github.sob1234509876.osc.api.OscApiMessageType;
-import io.github.sob1234509876.osc.api.OscApiRequest;
-import io.github.sob1234509876.osc.api.OscApiRequestDao;
-import io.github.sob1234509876.osc.api.OscApiRequestStatus;
-import io.github.sob1234509876.osc.api.OscApiRequestType;
-import io.github.sob1234509876.osc.api.OscApiRoom;
-import io.github.sob1234509876.osc.api.OscApiRoomDao;
-import io.github.sob1234509876.osc.api.OscApiRoomUser;
-import io.github.sob1234509876.osc.api.OscApiRoomUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiChat;
+import io.github.sob1234509876.osc.api.social.OscApiChatUser;
+import io.github.sob1234509876.osc.api.social.OscApiChatDao;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResource;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResourceDao;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLinkDao;
+import io.github.sob1234509876.osc.api.resource.OscApiMessage;
+import io.github.sob1234509876.osc.api.resource.OscApiMessageDao;
+import io.github.sob1234509876.osc.api.resource.OscApiMessageType;
+import io.github.sob1234509876.osc.api.request.OscApiRequest;
+import io.github.sob1234509876.osc.api.request.OscApiRequestDao;
+import io.github.sob1234509876.osc.api.request.OscApiRequestStatus;
+import io.github.sob1234509876.osc.api.request.OscApiRequestType;
+import io.github.sob1234509876.osc.api.social.OscApiRoom;
+import io.github.sob1234509876.osc.api.social.OscApiRoomDao;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUser;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUserDao;
 import io.github.sob1234509876.osc.server.component.OscServerPropertyComponent;
 import io.github.sob1234509876.osftp.dao.ftp.FtpTemplate;
 import lombok.Data;
@@ -35,7 +34,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
-import java.util.Map;
 
 @Slf4j
 @Data

@@ -1,7 +1,7 @@
 package io.github.sob1234509876.osc.server.dao.mongo;
 
-import io.github.sob1234509876.osc.api.OscApiRoomUser;
-import io.github.sob1234509876.osc.api.OscApiRoomUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUser;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;

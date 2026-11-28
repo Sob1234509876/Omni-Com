@@ -1,17 +1,17 @@
 package io.github.sob1234509876.osc.server.service;
 
-import io.github.sob1234509876.osc.api.OscApiChatUser;
-import io.github.sob1234509876.osc.api.OscApiChatUserDao;
-import io.github.sob1234509876.osc.api.OscApiFriendLink;
-import io.github.sob1234509876.osc.api.OscApiFriendLinkDao;
-import io.github.sob1234509876.osc.api.OscApiRequest;
-import io.github.sob1234509876.osc.api.OscApiRequestDao;
-import io.github.sob1234509876.osc.api.OscApiRequestStatus;
-import io.github.sob1234509876.osc.api.OscApiRequestType;
-import io.github.sob1234509876.osc.api.OscApiRoom;
-import io.github.sob1234509876.osc.api.OscApiRoomDao;
-import io.github.sob1234509876.osc.api.OscApiRoomUser;
-import io.github.sob1234509876.osc.api.OscApiRoomUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiChatUser;
+import io.github.sob1234509876.osc.api.social.OscApiChatUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLink;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLinkDao;
+import io.github.sob1234509876.osc.api.request.OscApiRequest;
+import io.github.sob1234509876.osc.api.request.OscApiRequestDao;
+import io.github.sob1234509876.osc.api.request.OscApiRequestStatus;
+import io.github.sob1234509876.osc.api.request.OscApiRequestType;
+import io.github.sob1234509876.osc.api.social.OscApiRoom;
+import io.github.sob1234509876.osc.api.social.OscApiRoomDao;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUser;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUserDao;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -24,7 +24,6 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
-import java.util.Map;
 
 @Slf4j
 @Data

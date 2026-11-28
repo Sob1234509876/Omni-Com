@@ -1,10 +1,10 @@
 package io.github.sob1234509876.osc.server.controller;
 
-import io.github.sob1234509876.osc.api.OscApiChatUser;
-import io.github.sob1234509876.osc.api.OscApiFileResource;
-import io.github.sob1234509876.osc.api.OscApiMessage;
-import io.github.sob1234509876.osc.api.OscApiRequest;
-import io.github.sob1234509876.osc.api.OscApiRoom;
+import io.github.sob1234509876.osc.api.social.OscApiChatUser;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResource;
+import io.github.sob1234509876.osc.api.resource.OscApiMessage;
+import io.github.sob1234509876.osc.api.request.OscApiRequest;
+import io.github.sob1234509876.osc.api.social.OscApiRoom;
 import io.github.sob1234509876.osc.server.service.OscServerCreateService;
 import lombok.Data;
 import lombok.NoArgsConstructor;

@@ -1,9 +1,9 @@
 package io.github.sob1234509876.osc.server.dao.mongo;
 
-import io.github.sob1234509876.osc.api.OscApiRequest;
-import io.github.sob1234509876.osc.api.OscApiRequestDao;
-import io.github.sob1234509876.osc.api.OscApiRequestStatus;
-import io.github.sob1234509876.osc.api.OscApiRequestType;
+import io.github.sob1234509876.osc.api.request.OscApiRequest;
+import io.github.sob1234509876.osc.api.request.OscApiRequestDao;
+import io.github.sob1234509876.osc.api.request.OscApiRequestStatus;
+import io.github.sob1234509876.osc.api.request.OscApiRequestType;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;

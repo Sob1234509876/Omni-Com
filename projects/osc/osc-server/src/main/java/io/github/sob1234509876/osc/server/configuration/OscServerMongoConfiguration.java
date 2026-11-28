@@ -1,14 +1,14 @@
 package io.github.sob1234509876.osc.server.configuration;
 
 import com.mongodb.client.MongoClient;
-import io.github.sob1234509876.osc.api.OscApiChatDao;
-import io.github.sob1234509876.osc.api.OscApiChatUserDao;
-import io.github.sob1234509876.osc.api.OscApiFileResourceDao;
-import io.github.sob1234509876.osc.api.OscApiFriendLinkDao;
-import io.github.sob1234509876.osc.api.OscApiMessageDao;
-import io.github.sob1234509876.osc.api.OscApiRequestDao;
-import io.github.sob1234509876.osc.api.OscApiRoomDao;
-import io.github.sob1234509876.osc.api.OscApiRoomUserDao;
+import io.github.sob1234509876.osc.api.social.OscApiChatDao;
+import io.github.sob1234509876.osc.api.social.OscApiChatUserDao;
+import io.github.sob1234509876.osc.api.resource.OscApiFileResourceDao;
+import io.github.sob1234509876.osc.api.social.OscApiFriendLinkDao;
+import io.github.sob1234509876.osc.api.resource.OscApiMessageDao;
+import io.github.sob1234509876.osc.api.request.OscApiRequestDao;
+import io.github.sob1234509876.osc.api.social.OscApiRoomDao;
+import io.github.sob1234509876.osc.api.social.OscApiRoomUserDao;
 import io.github.sob1234509876.osc.server.dao.mongo.OscServerMongoChatDao;
 import io.github.sob1234509876.osc.server.dao.mongo.OscServerMongoChatUserDao;
 import io.github.sob1234509876.osc.server.dao.mongo.OscServerMongoFileResourceDao;
